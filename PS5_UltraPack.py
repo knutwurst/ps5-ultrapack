@@ -115,7 +115,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import ultra_core  # noqa: E402
 from ultra_core import *  # noqa: E402,F401,F403
-from ui_kit import (Kit, IconButton, IconView, ArtView, ProgressBar, QueueList,  # noqa: E402
+from ui_kit import (Kit, IconButton, IconView, ArtView, ProgressBar, QueueList, unpack_touchpad_delta,  # noqa: E402
                     Chips, StepStrip, LogText, Tile, RoundBox, ctk_pair, apply_ctk_theme, PALETTE)
 
 
@@ -276,6 +276,33 @@ class ScrollFrame(ctk.CTkScrollableFrame):
         self._sb_job = None
         self._parent_canvas.bind("<Configure>", lambda e: self._queue_sb_check(), add="+")
         self.bind("<Configure>", lambda e: self._queue_sb_check(), add="+")
+        # CustomTkinter binds only <MouseWheel>; Tk 9 on macOS sends a trackpad swipe as
+        # <TouchpadScroll> (pixel deltas), so without this the pages scroll with a wheel but
+        # not with two fingers. Same containment rule as CTk's own handler.
+        try:
+            self.bind_all("<TouchpadScroll>", self._touchpad_all, add=True)
+        except tk.TclError:
+            pass                                   # Tk 8.6: no such event
+
+    def _touchpad_all(self, event):
+        try:
+            if not self._check_if_valid_scroll(event.widget):
+                return
+            cv = self._parent_canvas
+            lo, hi = cv.yview()
+            if hi - lo >= 0.999:
+                return
+            dx, dy = unpack_touchpad_delta(event.delta)
+            if not dy:
+                return
+            region = cv.cget("scrollregion")
+            parts = [float(v) for v in str(region).split()] if region else []
+            height = (parts[3] - parts[1]) if len(parts) == 4 else 0.0
+            if height <= 0:
+                return
+            cv.yview_moveto(max(0.0, min(1.0, lo - dy / height)))   # Tk's rule: scroll -dy pixels
+        except tk.TclError:
+            pass
 
     def _queue_sb_check(self):
         if self._sb_job is None:
@@ -1766,7 +1793,9 @@ class SettingsView:
                      text_color=WHITE).pack(anchor="w", padx=4, pady=(10, 4))
 
     def _browse_folder(self, var, settings_key, title):
-        p = filedialog.askdirectory(title=title)
+        current = (var.get() or "").strip()
+        kw = {"initialdir": current} if current and Path(current).is_dir() else {}
+        p = filedialog.askdirectory(title=title, **kw)
         if p:
             var.set(p)
             save_settings({settings_key: p})
@@ -3056,7 +3085,16 @@ class JobDialog(EmbeddedDialog):
         src0 = init_src or ""
         if item is not None:
             src0 = str(getattr(item, "archive_path", None) or getattr(item, "path", "") or "")
+        elif not src0:
+            # Add job without a drop: pre-fill with the last source the user picked, so
+            # the typical workflow (same library folder, add every new download) is one
+            # press less. An invalid or missing path is dropped silently.
+            _last = str(settings.get("last_source", "") or "").strip()
+            if _last and Path(_last).exists():
+                src0 = _last
         self.src_var = tk.StringVar(value=src0)
+        # The folder the file / folder pickers open in: the parent of the last source.
+        self._last_src_dir = str(settings.get("last_source_dir", "") or "").strip()
         self.detect_var = tk.StringVar(value="Choose or drop a source.")
         self.help_var = tk.StringVar(value=self._HELP_IDLE)
         self.sign_var = tk.BooleanVar(value=(bool(getattr(item, "chain_sign", False))
@@ -3421,17 +3459,44 @@ class JobDialog(EmbeddedDialog):
             _walk(w)
 
     # ── pickers ──────────────────────────────────────────────────────────────
+    def _initial_dir(self) -> str | None:
+        """Where the source pickers open: the folder of what is in the source field, else
+        the folder the last source came from."""
+        for cand in (self.src_var.get().strip(), self._last_src_dir):
+            if not cand:
+                continue
+            path = Path(cand)
+            try:
+                parent = path if path.is_dir() else path.parent
+                if parent.is_dir():
+                    return str(parent)
+            except OSError:
+                continue
+        return None
+
+    def _remember_source(self, p: str) -> None:
+        """Save the chosen source and the folder it came from, so the next Add job starts
+        there."""
+        self.src_var.set(p)
+        try:
+            path = Path(p)
+            self._last_src_dir = str(path if path.is_dir() else path.parent)
+            save_settings({"last_source": p, "last_source_dir": self._last_src_dir})
+        except Exception:
+            pass
+
     def _pick_file(self):
-        p = filedialog.askopenfilename(parent=self, title="Choose a source file",
+        p = filedialog.askopenfilename(parent=self, title="Choose a source file", initialdir=self._initial_dir(),
                                        filetypes=[("PS5 sources", "*.ffpfsc *.ffpfs *.pkg *.exfat *.ffpkg *.zip *.rar *.7z"),
                                                   ("All files", "*.*")])
         if p:
-            self.src_var.set(p)
+            self._remember_source(p)
 
     def _pick_folder(self):
-        p = filedialog.askdirectory(parent=self, title="Choose a game folder or a parent folder of games")
+        p = filedialog.askdirectory(parent=self, title="Choose a game folder or a parent folder of games",
+                                    initialdir=self._initial_dir())
         if p:
-            self.src_var.set(p)
+            self._remember_source(p)
 
     def _pick_patch_file(self):
         p = filedialog.askopenfilename(parent=self, title="Choose the patch archive",
@@ -3987,7 +4052,14 @@ class JobDialog(EmbeddedDialog):
         self._defaults[self._kind] = {"to": to, "sign": bool(self.sign_var.get()),
                                       "backport": bool(self.backport_on_var.get()),
                                       "backport_target": self.backport_target_var.get()}
-        upd = {"job_dialog_defaults": self._defaults}
+        upd = {"job_dialog_defaults": self._defaults,
+               "last_source": str(p),
+               "last_source_dir": str(p if p.is_dir() else p.parent),
+               # the recipe Rescan reuses on new sources from the same folder:
+               "rescan_template": {"to": to, "output": out, "sign": bool(self.sign_var.get()),
+                                   "backport_target": target, "patch_source": patch or None,
+                                   "keep_source": keep, "organize": organize, "ff_level": ff_level,
+                                   "pkg_params": pkg_params if to == "pkg" else None}}
         if target:
             upd["backport_target_default"] = target
         try:
@@ -4052,8 +4124,11 @@ class JobDialog(EmbeddedDialog):
                              "pkg_content_size", "extracted_size", "header_locked"):
                     if hasattr(old, attr):
                         setattr(new, attr, getattr(old, attr))
-            if getattr(old, "status", "") not in ("Done",):
-                new.status = "Pending Extract" if getattr(new, "archive_path", None) else "Queued"
+            new.status = "Pending Extract" if getattr(new, "archive_path", None) else "Queued"
+            # the new settings must be checked anew against the output folder
+            new._output_checked = False
+            new._replace_output = False
+            new._keep_both = False
             try:
                 idx = self.app.queue.index(old)
                 self.app.queue[idx] = new
@@ -5000,20 +5075,23 @@ class App:
         self._clear_btn.grid(row=0, column=0, padx=(0, 6))
         for seq in ("<Button-2>", "<Button-3>", "<Control-Button-1>"):
             self._clear_btn.bind(seq, self._clear_menu, add="+")
+        self._rescan_btn = self._small(btns, "Rescan", "refresh", self.rescan_last_source,
+                                       tooltip="Scan the last source folder for new downloads and add the ones that are not already here.")
+        self._rescan_btn.grid(row=0, column=1, padx=(0, 6))
         self._add_btn = self._small(btns, "Add job", "plus", self.open_job_dialog, variant="secondary",
                                     tooltip=f"Pick a source, what to change in it and what comes out  {SHORTCUT['add']}")
-        self._add_btn.grid(row=0, column=1, padx=(0, 6))
+        self._add_btn.grid(row=0, column=2, padx=(0, 6))
         self.start_btn = self._small(btns, "Start", "play", self.start, variant="primary",
                                      tooltip=f"Run the jobs from the top  {SHORTCUT['start']}")
-        self.start_btn.grid(row=0, column=2)
+        self.start_btn.grid(row=0, column=3)
         # While the queue runs, Stop takes Start's place, so stopping works with the details closed.
         self.stop_btn = self._small(btns, "Stop", "stop", self.cancel, variant="danger",
                                     tooltip=f"Cancel the running job and stop the queue  {SHORTCUT['stop']}")
-        self.stop_btn.grid(row=0, column=2)
+        self.stop_btn.grid(row=0, column=3)
         self.stop_btn.grid_remove()
         self._details_btn = self._small(btns, "", "sidebar-right", self.toggle_inspector,
                                         tooltip=f"Show or hide the details  {SHORTCUT['details']}")
-        self._details_btn.grid(row=0, column=3, padx=(8, 0))
+        self._details_btn.grid(row=0, column=4, padx=(8, 0))
         self._q_head, self._q_title = head, head.grid_slaves(row=0, column=0)[0]
         head.bind("<Configure>", self._fit_queue_header, add="+")
         self.queue_listbox = QueueList(
@@ -5093,16 +5171,23 @@ class App:
             full = self.queue_total_var.get()
             short = full.split("  ·  ")[0]         # "3 jobs" without the size, as a last step
             run = self.stop_btn if self.stop_btn.winfo_ismapped() else self.start_btn
-            for sub, clear_t, add_t in ((full, "Clear completed", "Add job"), (full, "", "Add job"),
-                                        (full, "", ""), (short, "", "")):
+            for sub, clear_t, rescan_t, add_t in (
+                    (full, "Clear completed", "Rescan", "Add job"),
+                    (full, "Clear completed", "", "Add job"),
+                    (full, "", "", "Add job"),
+                    (full, "", "", ""),
+                    (short, "", "", "")):
                 if self._q_sub_var.get() != sub:
                     self._q_sub_var.set(sub)
                 if self._clear_btn._text != clear_t:
                     self._clear_btn.configure(text=clear_t)
+                if self._rescan_btn._text != rescan_t:
+                    self._rescan_btn.configure(text=rescan_t)
                 if self._add_btn._text != add_t:
                     self._add_btn.configure(text=add_t)
                 title_w = max(w.winfo_reqwidth() for w in self._q_title.winfo_children())
-                need = sum(b.winfo_reqwidth() for b in (self._clear_btn, self._add_btn, run, self._details_btn)) + 20
+                need = sum(b.winfo_reqwidth() for b in (self._clear_btn, self._rescan_btn,
+                                                       self._add_btn, run, self._details_btn)) + 20
                 if title_w + 16 + need <= width:
                     break
         except Exception:
@@ -7602,11 +7687,8 @@ class App:
             self.log("WARN", "Cannot edit the currently running job.")
             return
         status = (getattr(item, "status", "") or "").lower()
-        if status in ("done",):
-            self.log("INFO", "This job is already done — remove and re-add to run it again with new settings.")
-            return
-        if status in ("failed", "skipped", "cancelled"):
-            # its extracted copy may be gone: the editor then shows the archive it came from
+        if status in ("failed", "skipped", "cancelled", "done"):
+            # the extracted copy may be gone: the editor then shows the archive it came from
             self._rearm_from_archive(item)
 
         # One editor for every kind of job: it shows the job as source → changes → output,
@@ -10236,6 +10318,182 @@ class App:
         self.log("INFO", f"Retry: {name}.")
         self.start(rearm_failed=False)
 
+    @staticmethod
+    def _source_key(path) -> str:
+        """One key for 'is this the same source': a RAR volume's first part, else the
+        resolved path. Case-insensitive so a case-only rename counts as the same file."""
+        if not path:
+            return ""
+        try:
+            p = Path(str(path))
+            if p.is_file() and p.suffix.lower() in (".rar",):
+                p = ArchiveExtractor._first_volume(p)
+            return str(p.resolve()).lower()
+        except OSError:
+            return str(path).lower()
+
+    _TITLE_ID_IN_NAME = re.compile(r"\b(PPSA\d{5}|CUSA\d{5}|UP\d{4}|EP\d{4})\b", re.I)
+
+    @classmethod
+    def _title_id_from_path(cls, path) -> str:
+        """The PPSA/CUSA id from a path's name, upper-case; '' when there is none. Reads
+        the file name, every parent folder name, and (if present) a title id already
+        stored on the GameItem; so an item built from an unpacked folder still carries it."""
+        for part in reversed(Path(str(path) if path else "").parts):
+            m = cls._TITLE_ID_IN_NAME.search(part or "")
+            if m:
+                return m.group(1).upper()
+        return ""
+
+    @staticmethod
+    def _item_title_id(item) -> str:
+        tid = str(getattr(item, "title_id", "") or getattr(item, "archive_title_id", "") or "").strip().upper()
+        return tid if tid.startswith(("PPSA", "CUSA")) else ""
+
+    def _known_signatures(self) -> tuple[set[str], set[str]]:
+        """What Rescan matches a new source against: (resolved source paths, title ids).
+        Each entry comes from the queue (any status) or from the history, so a job that
+        is already queued, is done, failed, was skipped or ran in an earlier session is
+        found again — the archive at the same path, the same release renamed, and the
+        folder output of an unpacked archive all match."""
+        paths: set[str] = set()
+        tids: set[str] = set()
+        for it in self.queue:
+            for cand in (getattr(it, "archive_path", None), getattr(it, "origin_archive", None),
+                         getattr(it, "path", None)):
+                k = self._source_key(cand)
+                if k:
+                    paths.add(k)
+                tid = self._title_id_from_path(cand)
+                if tid:
+                    tids.add(tid)
+            # the display name / stem may still carry it after extraction (archive_path and path
+            # both go to None once the extracted copy is cleaned up on a done run)
+            for label in (getattr(it, "display_name", None), getattr(it, "name", None),
+                          getattr(it, "archive_title", None)):
+                tid = self._title_id_from_path(label)
+                if tid:
+                    tids.add(tid)
+            tid = self._item_title_id(it)
+            if tid:
+                tids.add(tid)
+        try:
+            for row in load_history() or []:
+                for field in ("source", "origin_archive", "input", "output"):
+                    k = self._source_key(row.get(field))
+                    if k:
+                        paths.add(k)
+                    tid = self._title_id_from_path(row.get(field))
+                    if tid:
+                        tids.add(tid)
+                tid = str(row.get("title_id") or "").strip().upper()
+                if tid.startswith(("PPSA", "CUSA")):
+                    tids.add(tid)
+        except Exception:
+            pass
+        return paths, tids
+
+    @staticmethod
+    def _output_already_has(out_root, tid: str) -> bool:
+        """True when a file or a folder for *tid* is already under *out_root* (the
+        auto-organized "<Title> [TID] [v…]" folder, or any .ffpfsc/.ffpfs/.pkg carrying it
+        in its name). The scan is cheap: one iterdir at the root and, when the entry is a
+        plain folder with no suffix, its direct children only."""
+        if not (out_root and tid):
+            return False
+        try:
+            root = Path(out_root)
+            if not root.is_dir():
+                return False
+            tag = f"[{tid}]".lower()
+            for p in root.iterdir():
+                if tag in p.name.lower():
+                    return True
+                if p.is_dir() and not p.suffix:
+                    try:
+                        for q in p.iterdir():
+                            if tag in q.name.lower() and q.suffix.lower() in (".ffpfs", ".ffpfsc", ".pkg"):
+                                return True
+                    except OSError:
+                        continue
+        except OSError:
+            return False
+        return False
+
+    def rescan_last_source(self) -> None:
+        """Scan the folder of the last Add job for new sources and queue the ones that are
+        not already here or in the history. The settings of the last Add job are reused;
+        no editor is opened. Nothing is added when nothing is new. Runs on a worker (the
+        folder walk and the archive header reads can take a moment)."""
+        settings = load_settings()
+        last_dir = (settings.get("last_source_dir") or "").strip()
+        last = (settings.get("last_source") or "").strip()
+        if not (last_dir or last):
+            messagebox.showinfo("Rescan", "No source to rescan yet. Add a job once, then Rescan "
+                                           "finds new downloads in that folder.")
+            return
+        # last_source_dir is set by _add() to the parent of a file source or to the folder
+        # itself; a folder as source means a single game, so the parent is what Rescan uses.
+        folder = Path(last_dir) if last_dir else (Path(last).parent if Path(last).is_file() else Path(last).parent)
+        if not folder.is_dir():
+            messagebox.showerror("Rescan", f"The last source folder is gone:\n{folder}")
+            return
+        tpl = (settings.get("rescan_template") or {})
+        if not tpl.get("to"):
+            messagebox.showinfo("Rescan", "Add a job once with the output and the changes you want, "
+                                           "then Rescan reuses those for new sources in the same folder.")
+            return
+
+        known_paths, known_tids = self._known_signatures()
+        out_root = (tpl.get("output") or "").strip() or None
+        self.log("INFO", f"Rescan: looking for new sources in {folder}…")
+        self.status_update("Scanning", f"Rescan: reading {folder}…", "Scanning Files",
+                           0, 0, "00:00", "—", "—", side=True)
+
+        def work():
+            try:
+                found = find_job_sources(folder)
+            except Exception as e:
+                self.scan_q.put(("rescan-error", str(e)))
+                return
+            new, skipped = [], 0
+            for p in found:
+                if self._source_key(p) in known_paths:
+                    skipped += 1
+                    continue
+                tid = self._title_id_from_path(p)
+                if tid and (tid in known_tids or self._output_already_has(out_root, tid)):
+                    skipped += 1
+                    continue
+                new.append(p)
+            self.scan_q.put(("rescan-found", {"folder": str(folder), "sources": new, "tpl": tpl,
+                                              "scanned": len(found), "skipped": skipped}))
+        self._launch_scan(work)
+
+    def _rescan_make(self, tpl: dict):
+        """A `make(source)` callable like JobDialog._add uses, built from *tpl* (the saved
+        Add job settings): produces a chain job + fPKG params + compression + organize."""
+        to = str(tpl.get("to") or "ffpfsc")
+        out = str(tpl.get("output") or "")
+        sign = bool(tpl.get("sign")) and to != "pkg"
+        target = tpl.get("backport_target") or None
+        patch = tpl.get("patch_source") or None
+        keep = bool(tpl.get("keep_source"))
+        pkg_params = tpl.get("pkg_params") or {}
+        ff_level = int(tpl.get("ff_level") or 7)
+        organize = bool(tpl.get("organize"))
+
+        def make(src):
+            it = GameItem.from_chain(src, to=to, output_path=out or None, sign=sign,
+                                     patch_source=patch, backport_target=target,
+                                     backport_libs_root=None, delete_source=not keep)
+            if to == "pkg" and pkg_params:
+                self._apply_fpkg_params(it, pkg_params)
+            it.compression_level = ff_level if to == "ffpfsc" else None
+            it.auto_organize = organize
+            return it
+        return make
+
     def _add_jobs_async(self, sources, make) -> None:
         """Build the jobs for *sources* on a worker thread and hand them to the main loop one
         at a time (_drain_add_q): each appears in the queue as soon as it is ready, a line
@@ -11190,6 +11448,23 @@ class App:
         try:
             while True:
                 status, payload = self.scan_q.get_nowait()
+                if status == "rescan-found":
+                    folder = payload["folder"]; sources = payload["sources"]; tpl = payload["tpl"]
+                    scanned, skipped = payload.get("scanned", 0), payload.get("skipped", 0)
+                    tail = (f" ({skipped} already queued, done or in the output folder)" if skipped else "")
+                    if not sources:
+                        msg = (f"Nothing new in {folder}{tail}." if scanned
+                               else f"Rescan found no sources in {folder}.")
+                        self.log("INFO", msg)
+                        self.status_update("Ready", msg, "Ready", 0, 0, "00:00", "—", "—", side=True)
+                    else:
+                        self.log("OK", f"Rescan: {len(sources)} new source(s) in {folder}{tail}.")
+                        self._add_jobs_async(list(sources), self._rescan_make(tpl))
+                    continue
+                if status == "rescan-error":
+                    self.log("ERROR", f"Rescan failed: {payload}")
+                    self.status_update("Error", f"Rescan failed: {payload}", "Error", 0, 0, "00:00", "—", "—", side=True)
+                    continue
                 if status == "archive":
                     item = payload
                     self.queue.append(item)

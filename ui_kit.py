@@ -211,6 +211,105 @@ def _retry_icon():
 ICONS["retry"] = _retry_icon()
 
 
+def _refresh_icon():
+    """Two arcs chasing each other, each ending in an arrow head: the sync symbol."""
+    cx, cy, r = 12, 12, 7
+    def arc(start, extent, head_dir):
+        pts = []
+        for k in range(13):
+            a = math.radians(start + extent * k / 12)
+            pts += [round(cx + r * math.cos(a), 2), round(cy + r * math.sin(a), 2)]
+        ex, ey = pts[-2], pts[-1]
+        a = math.radians(start + extent)
+        tx, ty = -math.sin(a), math.cos(a)
+        if head_dir < 0:
+            tx, ty = -tx, -ty
+        nx, ny = -ty, tx
+        head = [round(ex - 4 * tx + 3 * nx, 2), round(ey - 4 * ty + 3 * ny, 2), ex, ey,
+                round(ex - 4 * tx - 3 * nx, 2), round(ey - 4 * ty - 3 * ny, 2)]
+        return [("l", *pts), ("l", *head)]
+    return arc(-70, 160, 1) + arc(110, 160, 1)
+
+
+ICONS["refresh"] = _refresh_icon()
+
+
+
+def unpack_touchpad_delta(d) -> tuple[int, int]:
+    """(dx, dy) in pixels from a <TouchpadScroll> %D (Tk 9, TIP 684): dx in the high 16
+    bits, dy in the low 16, both signed. The same arithmetic as tk::PreciseScrollDeltas."""
+    d = int(d or 0)
+    dx = d >> 16
+    low = d & 0xFFFF
+    dy = low if low < 0x8000 else low - 0x10000
+    return dx, dy
+
+
+def attach_wheel_scroll(widget, *, pixel_unit: int = 1, notch_px: int = 40) -> None:
+    """Scroll *widget* (a Canvas, or anything with yview/xview) with the mouse wheel and
+    with a trackpad swipe, on Tk 8.6 and Tk 9.
+
+    Tk 9 on macOS reports a trackpad swipe as <TouchpadScroll> with pixel deltas (TIP
+    684), never as <MouseWheel>; Tk binds that event for Text, Listbox and TCombobox
+    itself, a Canvas gets nothing. A wheel notch arrives as <MouseWheel> ±120 on Tk 9
+    (every platform) and on Windows, ±1 on Tk 8.6/macOS; Linux sends Button-4/5. Attach
+    this only to widgets WITHOUT a class binding (a Text scrolls itself, and would move
+    twice). *pixel_unit* is how many pixels one yview unit is (the canvas's
+    yscrollincrement); *notch_px* what one wheel notch moves."""
+    rem = {"x": 0.0, "y": 0.0}
+
+    def _span_ok(axis: str) -> bool:
+        try:
+            lo, hi = (widget.yview if axis == "y" else widget.xview)()
+            return (hi - lo) < 0.999
+        except Exception:
+            return False
+
+    def scroll_px(axis: str, px: float) -> bool:
+        """Move the view by *px* pixels (positive: the view goes down / right). True when
+        it moved. The remainder below one unit is carried to the next call, so a slow
+        swipe still adds up, and a tick never rounds away to nothing."""
+        if not px or not _span_ok(axis):
+            return False
+        rem[axis] += px / float(pixel_unit)
+        units = int(rem[axis])
+        if units == 0:
+            units = 1 if rem[axis] > 0 else -1
+        rem[axis] -= units
+        try:
+            (widget.yview_scroll if axis == "y" else widget.xview_scroll)(units, "units")
+            return True
+        except tk.TclError:
+            return False
+
+    def on_wheel(e, axis: str = "y"):
+        d = float(getattr(e, "delta", 0) or 0)
+        if not d:
+            return None
+        px = -d / 120.0 * notch_px if abs(d) >= 120 else -d * notch_px
+        return "break" if scroll_px(axis, px) else None
+
+    def on_touchpad(e):
+        dx, dy = unpack_touchpad_delta(getattr(e, "delta", 0))
+        moved = False
+        if dy:
+            moved = scroll_px("y", -dy) or moved      # Tk's Text binding: yview scroll -dy pixels
+        if dx:
+            moved = scroll_px("x", -dx) or moved
+        return "break" if moved else None
+
+    widget._scroll_px = scroll_px
+    widget._on_touchpad = on_touchpad
+    widget.bind("<MouseWheel>", on_wheel, add="+")
+    widget.bind("<Shift-MouseWheel>", lambda e: on_wheel(e, "x"), add="+")
+    widget.bind("<Button-4>", lambda e: "break" if scroll_px("y", -notch_px) else None, add="+")
+    widget.bind("<Button-5>", lambda e: "break" if scroll_px("y",  notch_px) else None, add="+")
+    try:
+        widget.bind("<TouchpadScroll>", on_touchpad, add="+")    # Tk 9; Tk 8.6 has no such event
+    except tk.TclError:
+        pass
+
+
 def _hand_cursor(w) -> str:
     for name in ("pointinghand", "hand2"):
         try:
@@ -379,8 +478,8 @@ class Kit:
     def text(self, parent, bg="surface", fg="log", font=None, **kw) -> tk.Text:
         for k, v in (("wrap", "none"), ("padx", 10), ("pady", 8)):
             kw.setdefault(k, v)
-        t = tk.Text(parent, bd=0, highlightthickness=0, relief="flat", font=font or self.fonts.mono, **kw)
-        return self.style(t, bg=bg, fg=fg, insertbackground=fg, selectbackground="select",
+        txt = tk.Text(parent, bd=0, highlightthickness=0, relief="flat", font=font or self.fonts.mono, **kw)
+        return self.style(txt, bg=bg, fg=fg, insertbackground=fg, selectbackground="select",
                           selectforeground="text")
 
     def set_mode(self, mode: str):
@@ -800,7 +899,7 @@ class QueueList(tk.Frame):
         self.rows: list[dict] = []
         self.sel: int | None = None
         self.hover: int | None = None
-        self.cv = tk.Canvas(self, highlightthickness=0, bd=0, bg=kit.c(bg), yscrollincrement=4,
+        self.cv = tk.Canvas(self, highlightthickness=0, bd=0, bg=kit.c(bg), yscrollincrement=1,
                             takefocus=1)
         self.sb = tk.Scrollbar(self, orient="vertical", command=self.cv.yview)
         self.cv.configure(yscrollcommand=self._on_yscroll)
@@ -821,7 +920,7 @@ class QueueList(tk.Frame):
         cv.bind("<Button-3>", self._context)
         cv.bind("<Motion>", self._motion)
         cv.bind("<Leave>", lambda e: self._set_hover(None))
-        cv.bind("<MouseWheel>", self._wheel)
+        attach_wheel_scroll(cv, pixel_unit=1, notch_px=40)   # wheel, Linux buttons, Tk 9 trackpad
         cv.bind("<Up>", lambda e: self._key(self.on_key_up))
         cv.bind("<Down>", lambda e: self._key(self.on_key_down))
         cv.bind("<BackSpace>", lambda e: self._key(self.on_delete))
@@ -923,9 +1022,9 @@ class QueueList(tk.Frame):
             return
         H = max(1, self.cv.winfo_height())
         if e.y < 12:
-            self.cv.yview_scroll(-1, "units")
+            self.cv.yview_scroll(-6, "units")      # units are pixels here
         elif e.y > H - 12:
-            self.cv.yview_scroll(1, "units")
+            self.cv.yview_scroll(6, "units")
         cy = self.cv.canvasy(e.y)
         drop = int(round((cy - 6) / self.ROW_H))
         drop = max(0, min(len(self.rows), drop))
@@ -969,12 +1068,6 @@ class QueueList(tk.Frame):
         if i != self.hover:
             self.hover = i
             self._draw()
-
-    def _wheel(self, e):
-        if self._sb_shown:
-            d = e.delta
-            # Tk 8.6 on macOS reports small deltas, Tk 9 multiples of 120 per notch.
-            self.cv.yview_scroll(int(-d / 12) if abs(d) >= 120 else int(-d), "units")
 
     def _key(self, fn):
         if fn:

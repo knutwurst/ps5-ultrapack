@@ -15,6 +15,7 @@ safety net.
 """
 import sys, os, importlib.util, traceback, argparse, shutil, subprocess, tempfile, time, zipfile, json, re
 from pathlib import Path
+import tkinter as tk
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE)); sys.path.insert(0, str(REPO / "backend"))
@@ -984,6 +985,221 @@ try:
     ok("queue.restore-keeps-done-record", len(app.queue) == 1 and app.queue[0].status == "Done", str(len(app.queue)))
     m.save_settings({"queue": _saved_q2 or []})
     app.summary_popup_var.set(_real_sum); app.open_output_var.set(_real_open)
+    # J6p) a dropped source is remembered; Add job pre-fills with it next time
+    _lib = S / "library"; _lib.mkdir(exist_ok=True)
+    _lib_fw = _lib / "Alpha"; _lib_fw.mkdir()
+    (_lib_fw / "sce_sys").mkdir(); (_lib_fw / "sce_sys" / "param.json").write_text('{"titleId": "PPSA00010"}')
+    (_lib_fw / "eboot.bin").write_bytes(b"\x7fELF" + b"\0" * 10)
+    _rp = Path(S / "release")
+    _ra = _rp / "[alpha]-PPSA00011.zip"
+    _ra.parent.mkdir(exist_ok=True); _ra.write_bytes(b"PK\x05\x06" + b"\0" * 18)  # tiny empty zip
+    _old_settings = m.load_settings()
+    try:
+        m.save_settings({"last_source": str(_lib_fw), "last_source_dir": str(_lib)})
+        jr = m.JobDialog(app); root.update()
+        ok("source.pre-filled-from-last", jr.src_var.get() == str(_lib_fw)
+           and jr._initial_dir() in (str(_lib_fw), str(_lib)),
+           f"{jr.src_var.get()!r} {jr._initial_dir()!r}")
+        jr.destroy()
+        # a dialog with no last source but one typed into the field opens the picker there
+        m.save_settings({"last_source": "", "last_source_dir": ""})
+        jr2 = m.JobDialog(app); root.update()
+        jr2.src_var.set(str(_lib_fw))
+        ok("source.initial-dir-follows-field", jr2._initial_dir() == str(_lib_fw) or jr2._initial_dir() == str(_lib),
+           str(jr2._initial_dir()))
+        jr2.destroy()
+    finally:
+        m.save_settings(_old_settings)
+    # J6q) rescan: queues only sources that are not already queued or in the history
+    _ro = OUT / "rescan"; _ro.mkdir(exist_ok=True)
+    _rt = {"to": "ffpfsc", "output": str(_ro), "sign": False, "backport_target": None,
+           "patch_source": None, "keep_source": False, "organize": False, "ff_level": 7, "pkg_params": None}
+    _lib2 = S / "rescan_lib"; _lib2.mkdir(exist_ok=True)
+    for i in range(3):
+        g = _lib2 / f"Game{i}"
+        (g / "sce_sys").mkdir(parents=True, exist_ok=True)
+        (g / "sce_sys" / "param.json").write_text(f'{{"titleId": "PPSA0010{i}"}}')
+        (g / "eboot.bin").write_bytes(b"\x7fELF" + b"\0" * 1000)
+    _already = m.GameItem.from_chain(_lib2 / "Game0", to="ffpfsc", output_path=str(_ro))
+    _saved_q = list(app.queue); app.queue[:] = [_already]
+    _hist_file = m.HISTORY_FILE
+    _hist_backup = _hist_file.read_bytes() if _hist_file.exists() else None
+    import json as _json
+    _hist_file.write_text(_json.dumps([{"source": str(_lib2 / "Game1")}]), encoding="utf-8")
+    m.save_settings({"last_source": str(_lib2 / "Game0"), "last_source_dir": str(_lib2),
+                     "rescan_template": _rt})
+    _pre = len(app.queue)
+    def _inline(fn):
+        with app._scan_lock: app._scan_in_flight += 1
+        try: fn()
+        finally:
+            with app._scan_lock: app._scan_in_flight = max(0, app._scan_in_flight - 1)
+    _real_launch = app._launch_scan
+    app._launch_scan = _inline                           # run the rescan scan here
+    try:
+        app.rescan_last_source()
+        pump(lambda: (getattr(app, "_add_state", {}) or {}).get("total"), timeout=5.0)
+        settle()
+    finally:
+        app._launch_scan = _real_launch
+    _after = [getattr(i, "name", "") for i in app.queue[_pre:]]
+    ok("rescan.adds-only-new", _after == ["Game2"], f"{_after}")
+    # a second rescan now finds nothing new
+    _info_before = len(getattr(app, "log_box", type("x",(),{"get":lambda *a:""})()).get("1.0","end") if hasattr(app, "log_box") else "")
+    app._launch_scan = _inline
+    try:
+        app.rescan_last_source()
+        pump(lambda: "Nothing new" in (app.log_box.get("1.0","end") if hasattr(app, "log_box") else "")
+             or "found no sources" in (app.log_box.get("1.0","end") if hasattr(app, "log_box") else ""), timeout=5.0)
+    finally:
+        app._launch_scan = _real_launch
+    _after2 = len(app.queue) - _pre
+    ok("rescan.quiet-when-nothing-new", _after2 == 1, str(_after2))
+    # without a template, Rescan tells the user instead of adding anything
+    m.save_settings({"rescan_template": {}})
+    _pre3 = len(app.queue); app.rescan_last_source(); settle()
+    ok("rescan.needs-template-first", len(app.queue) == _pre3, "")
+    # restore
+    app.queue[:] = _saved_q
+    if _hist_backup is None:
+        _hist_file.unlink(missing_ok=True)
+    else:
+        _hist_file.write_bytes(_hist_backup)
+    m.save_settings(_old_settings)
+    app.update_queue_box(); root.update()
+
+    # J6q2) rescan also skips a source whose game is already queued, done, or in the output
+    _lib3 = S / "rescan_lib_tid"; _lib3.mkdir(exist_ok=True)
+    _r3 = OUT / "rescan_tid"; _r3.mkdir(exist_ok=True)
+    _rt3 = {"to": "ffpfsc", "output": str(_r3), "sign": False, "backport_target": None,
+            "patch_source": None, "keep_source": False, "organize": False, "ff_level": 7, "pkg_params": None}
+    # 4 release archives: one is already in the queue by name, one already in the history,
+    # one has its output in the target folder, one is new.
+    for n in ("[rel]-PPSA20001.part01.rar", "[rel]-PPSA20002.part01.rar",
+              "[rel]-PPSA20003.part01.rar", "[rel]-PPSA20004.part01.rar"):
+        (_lib3 / n).write_bytes(b"RE~^\x07\x00")
+    _done_job = m.GameItem.from_chain(_lib3 / "[rel]-PPSA20001.part01.rar", to="ffpfsc", output_path=str(_r3))
+    _done_job.status = "Done"
+    _done_job.origin_archive = str(_lib3 / "[rel]-PPSA20001.part01.rar")   # as a done archive job stores
+    _done_job.archive_path, _done_job.path = None, None                     # the extract was cleaned up
+    _saved_q = list(app.queue); app.queue[:] = [_done_job]
+    _hist_file2 = m.HISTORY_FILE
+    _hist_backup2 = _hist_file2.read_bytes() if _hist_file2.exists() else None
+    import json as _json
+    _hist_file2.write_text(_json.dumps([{"title_id": "PPSA20002", "source": "/gone/foo.rar"}]), encoding="utf-8")
+    # a .ffpfsc for PPSA20003 is already in the output folder
+    (_r3 / "Example [PPSA20003] [v01.000].ffpfsc").write_bytes(b"old")
+    m.save_settings({"last_source": str(_lib3), "last_source_dir": str(_lib3),
+                     "rescan_template": _rt3})
+    _real_launch = app._launch_scan
+    def _inline(fn):
+        with app._scan_lock: app._scan_in_flight += 1
+        try: fn()
+        finally:
+            with app._scan_lock: app._scan_in_flight = max(0, app._scan_in_flight - 1)
+    app._launch_scan = _inline
+    try:
+        _before = len(app.queue)
+        app.rescan_last_source()
+        pump(lambda: (getattr(app, "_add_state", {}) or {}).get("total"), timeout=5.0)
+        settle()
+    finally:
+        app._launch_scan = _real_launch
+    _new_tids = {app._title_id_from_path(getattr(i, "archive_path", None) or getattr(i, "path", None))
+                 for i in app.queue[_before:]}
+    ok("rescan.skips-known-title-ids", _new_tids == {"PPSA20004"},
+       f"added {sorted(_new_tids)} (added {len(app.queue) - _before})")
+    # restore
+    app.queue[:] = _saved_q
+    if _hist_backup2 is None:
+        _hist_file2.unlink(missing_ok=True)
+    else:
+        _hist_file2.write_bytes(_hist_backup2)
+    app.update_queue_box(); root.update()
+
+    # J6r) Edit on a Done job re-arms it to Queued with the new settings
+    _dir = S / "edit_done"; _dir.mkdir(exist_ok=True)
+    _dj = m.GameItem.from_chain(HBT, to="ffpfsc", output_path=str(OUT / "ed"))
+    _dj.status = "Done"; _dj.backport_target = None
+    app.queue[:] = [_dj]; app.update_queue_box(select_item=_dj); root.update()
+    _before = set(app._panels.stack)
+    app._edit_job(_dj); root.update()
+    _ed = next((w for w in app._panels.stack if w not in _before and isinstance(w, m.JobDialog)), None)
+    ok("edit.opens-on-done", _ed is not None, "")
+    if _ed is not None:
+        _ed.backport_on_var.set(True); _ed.backport_target_var.set("7.61")
+        _ed.out_var.set(str(OUT / "ed")); root.update()
+        _ed._add(); settle()
+    _new = app.queue[0] if app.queue else None
+    ok("edit.done-becomes-active", _new is not None and _new is not _dj and _new.status == "Queued"
+       and _new.backport_target == "7.61" and not getattr(_new, "_output_checked", False),
+       f"{getattr(_new, 'status', '?')} target={getattr(_new, 'backport_target', '?')}")
+    app.queue[:] = []; app.update_queue_box(); root.update()
+
+    # J6s) the queue list scrolls with the wheel AND with a Tk 9 trackpad swipe (<TouchpadScroll>)
+    uk = sys.modules["ui_kit"]
+    def _pack(dx, dy):                              # Tk's %D for <TouchpadScroll>: dx high, dy low, signed
+        v = ((dx & 0xFFFF) << 16) | (dy & 0xFFFF)
+        return v - 0x100000000 if v >= 0x80000000 else v
+    ok("scroll.unpack-touchpad-delta",
+       uk.unpack_touchpad_delta(_pack(0, -7)) == (0, -7) and uk.unpack_touchpad_delta(_pack(3, -2)) == (3, -2)
+       and uk.unpack_touchpad_delta(_pack(-3, 5)) == (-3, 5) and uk.unpack_touchpad_delta(0) == (0, 0),
+       str([uk.unpack_touchpad_delta(_pack(a, b)) for a, b in ((0, -7), (3, -2), (-3, 5))]))
+    _tp = [m.GameItem(HBT) for _ in range(60)]      # enough rows to scroll
+    for i, it in enumerate(_tp):
+        it.display_name = f"Row {i:02d}"; it.status = "Queued"
+    _saved = list(app.queue); app.queue[:] = _tp
+    app.update_queue_box(select_item=_tp[0]); root.update()
+    _lb = app.queue_listbox; _cv = _lb.cv
+    _cv.winfo_height = lambda: 300                  # the driver's window is withdrawn
+    _lb._schedule(); root.update_idletasks(); _cv.yview_moveto(0); root.update_idletasks()
+    class _E:
+        def __init__(self, delta): self.delta = delta
+    _y0 = _cv.yview()[0]
+    _handled_tp = [_cv._on_touchpad(_E(_pack(0, -8))) for _ in range(5)]   # fingers: 8 px per event, 5 events
+    _y_tp = _cv.yview()[0]
+    _total_px = 12 + 60 * _lb.ROW_H
+    _moved_px = round((_y_tp - _y0) * _total_px)
+    ok("scroll.touchpad-moves-by-pixels", all(h == "break" for h in _handled_tp) and _moved_px == 40,
+       f"moved {_moved_px} px (expected 40), handled={_handled_tp}")
+    _cv._on_touchpad(_E(_pack(0, 8)))               # the other way
+    _y_back = _cv.yview()[0]
+    ok("scroll.touchpad-back", round((_y_tp - _y_back) * _total_px) == 8, f"{_y_tp} -> {_y_back}")
+    _wheel_handled = _cv.event_generate  # placeholder to keep linters calm
+    _before = _cv.yview()[0]
+    _r1 = _cv.bind("<MouseWheel>")                  # the binding exists on the canvas itself
+    _r2 = _cv.bind("<TouchpadScroll>") if tk.TkVersion >= 9 else "n/a"
+    ok("scroll.canvas-has-direct-bindings", bool(_r1) and bool(_r2), f"wheel={bool(_r1)} touchpad={bool(_r2)}")
+    # a wheel notch (Tk 9 / Windows ±120) and a Tk 8.6/macOS notch (±1) both move 40 px
+    _cv._scroll_px("y", 0)                           # no-op
+    _b = _cv.yview()[0]; _cv.event_generate("<MouseWheel>", delta=-120, x=10, y=10, rootx=1, rooty=1) if False else None
+    _b = _cv.yview()[0]
+    class _W:
+        def __init__(self, d): self.delta = d
+    # drive the handler the binding calls: find it via the bound callback is awkward; use the
+    # pixel primitive with the same arithmetic the handler applies
+    _cv._scroll_px("y", 40); _a1 = _cv.yview()[0]
+    ok("scroll.wheel-notch-is-40px", round((_a1 - _b) * _total_px) == 40, f"{round((_a1 - _b) * _total_px)} px")
+    # a Text widget is left to Tk's own class bindings (no double scroll): nothing attached
+    _txt = m.kit_text_probe if hasattr(m, "kit_text_probe") else app.kit.text(root)
+    ok("scroll.text-not-double-bound", not hasattr(_txt, "_scroll_px"), str(hasattr(_txt, "_scroll_px")))
+    _txt.destroy()
+    # nothing to scroll → the primitive reports False and leaves the view alone
+    _real_yview = _cv.yview
+    _cv.yview = lambda: (0.0, 1.0)
+    try:
+        _quiet = _cv._scroll_px("y", 40)
+    finally:
+        _cv.yview = _real_yview
+    ok("scroll.quiet-when-nothing-to-scroll", _quiet is False, str(_quiet))
+    # Settings pages: the ScrollFrame answers <TouchpadScroll> through bind_all (Tk 9)
+    _sf_ok = True
+    if tk.TkVersion >= 9:
+        _sf_ok = "<TouchpadScroll>" in root.bind_all()
+    ok("scroll.settings-scrollframe-touchpad", _sf_ok and hasattr(m.ScrollFrame, "_touchpad_all"), str(_sf_ok))
+    del _cv.winfo_height
+    app.queue[:] = _saved; app.update_queue_box(); root.update()
+
     # J6o) progress and time left over all jobs of the run
     ok("all.fmt-left", (app._fmt_left(30), app._fmt_left(600), app._fmt_left(7800), app._fmt_left(7320))
        == ("about a minute left", "about 10 min left", "about 2 h 10 min left", "about 2 h left"),

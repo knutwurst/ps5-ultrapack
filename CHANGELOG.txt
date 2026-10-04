@@ -6,6 +6,45 @@
   v2.0.3  (current)
 ────────────────────────────────────────────────────────────────────────
 
+THE LAST SOURCE IS PRE-SELECTED, AND RESCAN FINDS NEW DOWNLOADS
+
+  - Add job opens with the last source already in the field. When the
+    field is empty, the folder picker opens where the last source came
+    from. The output folder is remembered, and both pickers in Settings
+    now open at their current value.
+  - A new "Rescan" button in the queue header searches the folder of
+    the last Add job for new sources and queues a job for each one that
+    is not already here. "Already here" means: its path is in the queue
+    or the history, OR a release with the same title id ([PPSA12345])
+    is in the queue, is in the history, or already sits in the output
+    folder — so a game you downloaded again under the same name is not
+    queued twice. The settings of the last Add job (output, backport
+    target, format, compression, organize) are reused. Nothing new?
+    One line in the log says what was skipped.
+
+TWO-FINGER SCROLL ON MACOS
+
+  - The queue list and the Settings pages scroll with a two-finger
+    trackpad swipe. Tk 9, which the app ships with, reports a trackpad
+    swipe on macOS as its own event, TouchpadScroll, with pixel deltas,
+    and no longer as a mouse-wheel notch. Tk binds that event for text
+    boxes and lists on its own, which is why the log scrolled and the
+    queue did not; a canvas, which the queue is, gets nothing unless
+    the app binds it. The app now does, with Tk's own delta unpacking,
+    and the Settings pages (a CustomTkinter scroll frame, which binds
+    only the wheel) get the same binding.
+  - The queue list scrolls in pixels now, so a slow swipe moves it
+    smoothly instead of in four-pixel steps; a wheel notch still moves
+    40 px. Linux (Button-4/5) and a sideways swipe are handled too.
+
+EDIT ON A DONE JOB MAKES IT ACTIVE AGAIN
+
+  - A finished job can be edited; saving the changes queues it again
+    with the new settings. The output check runs anew, so a changed
+    backport target or output format is treated as a fresh run. Until
+    now Edit on a Done job was refused.
+
+
 THE QUEUE KEEPS ITS ORDER, AND YOU SET IT
 
   - Jobs stay where you added them. A job that finished, failed or was
