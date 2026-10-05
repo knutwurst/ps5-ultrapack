@@ -100,6 +100,13 @@ INTEGRATE A PATCH: BACKPORT FILES, AND THE ORIGINALS ARE KEPT
     patch's firmware is unknown, only a file with exactly the job's
     name counts as its output already being there, so a backport is
     never mistaken for the build that is there already.
+  - Fixed: with the temp folder on an exFAT drive, a patch from a .zip
+    or .rar was copied into the game as a whole folder, and the job
+    failed with "Multiple game folders/files found". macOS puts a
+    "._<folder>" file beside a folder unpacked there, and that file was
+    taken for the patch's content. Such files no longer count, and a
+    patch whose files sit beside other folders is refused with the
+    reason instead of being copied in.
 
 AN ARCHIVE IS READ AGAIN BEFORE ITS JOB RUNS
 

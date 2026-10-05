@@ -92,6 +92,35 @@ class OverlayTests(unittest.TestCase):
         _n, _bk, log = self.run_overlay(self.backport(version="01.200.000"))
         self.assertIn("backport made for version 01.200.000", log)
 
+    def test_wrapper_is_still_descended_beside_sidecar_files(self):
+        # On an exFAT temp drive macOS writes a `._<folder>` AppleDouble file beside the
+        # wrapper folder an archive unpacks to; Finder leaves .DS_Store; a release may put its
+        # notes beside the wrapper. None of these is content: the wrapper still has to be
+        # descended, or the whole wrapper folder lands inside the game as a second game.
+        patch = self.backport()
+        write(patch / "._Example_backport_files", b"\x00\x05\x16\x07" + b"\x00" * 4092)
+        write(patch / ".DS_Store", b"\x00" * 16)
+        write(patch / "README.txt", b"notes beside the wrapper")
+        write(patch / "__MACOSX" / "._eboot.bin", b"\x00" * 16)
+        self.assertEqual(cli._patch_descend_wrapper(patch), patch / "Example_backport_files")
+        self.assertTrue(cli.patch_brings_ampr(patch))
+        self.run_overlay(patch)
+        self.assertEqual((self.game / "eboot.bin").read_bytes(), b"backported eboot")
+        self.assertFalse((self.game / "Example_backport_files").exists())
+        self.assertFalse((self.game / "ampr_emu.index").exists())
+        self.assertFalse(any(p.name.startswith("._") or p.name == ".DS_Store" for p in self.game.rglob("*")))
+
+    def test_unresolved_wrapper_is_refused_instead_of_nested(self):
+        # Two real folders at the top, one of them the game-shaped patch: no wrapper to
+        # descend. The patch must not be copied into the game as a folder.
+        patch = self.backport()
+        write(patch / "Other content" / "thing.bin", b"?")
+        with self.assertRaises(RuntimeError) as cm:
+            self.run_overlay(patch)
+        self.assertIn("Example_backport_files", str(cm.exception))
+        self.assertEqual((self.game / "eboot.bin").read_bytes(), b"old eboot")
+        self.assertFalse((self.game / "Example_backport_files").exists())
+
     def test_patch_that_only_adds_leaves_no_backup(self):
         patch = self.tmp / "addon"
         write(patch / "extra" / "new.bin", b"new")

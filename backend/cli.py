@@ -1496,17 +1496,29 @@ _PATCH_TITLE_RE = re.compile(r'\b(PPSA\d{5}|CUSA\d{5})\b')
 _PATCH_JUNK = ("__MACOSX", ".AppleDouble", ".Spotlight-V100", ".Trashes", ".fseventsd")
 
 
+def _is_wrapper_noise(name: str) -> bool:
+    """A file beside a wrapper folder that is not content: an AppleDouble `._*` sidecar (an
+    exFAT temp drive gets one for every folder that carries an xattr, right after an archive
+    is unpacked there), Finder/Explorer leftovers, our Spotlight marker, or the notes a
+    release ships beside its files."""
+    return (name.startswith("._") or name in _JUNK_FILE_NAMES or name == ".metadata_never_index"
+            or bool(_PATCH_NOTES_RE.match(name)))
+
+
 def _patch_descend_wrapper(root: Path) -> Path:
-    """Descend folders that hold exactly one subdir and no files, so a patch or game
-    wrapped in an extra folder (e.g. <CUSA...>/eboot.bin) resolves to its real root."""
+    """Descend folders that hold exactly one subdir and no content of their own, so a patch
+    or game wrapped in an extra folder (e.g. <CUSA...>/eboot.bin) resolves to its real root.
+    OS and archiver leftovers beside the wrapper (see _is_wrapper_noise, __MACOSX) do not
+    count: with them counted, a patch unpacked on an exFAT drive was copied into the game
+    as a whole folder, which then held a second eboot.bin and sce_sys."""
     cur = root
     for _ in range(8):
         try:
             entries = list(cur.iterdir())
         except Exception:
             break
-        files = [p for p in entries if p.is_file()]
-        dirs = [p for p in entries if p.is_dir()]
+        files = [p for p in entries if p.is_file() and not _is_wrapper_noise(p.name)]
+        dirs = [p for p in entries if p.is_dir() and p.name not in _JUNK_DIR_NAMES and p.name not in _PATCH_JUNK]
         if not files and len(dirs) == 1:
             cur = dirs[0]
         else:
@@ -1619,6 +1631,14 @@ def overlay_patch(game_root: Path, patch_dir: Path, backup_dir: Path | None = No
     fresh one). With *backup_dir*, every file it replaces or removes is kept there first
     (under app0/), with a README naming the patch. Returns the number of files applied."""
     src_root = _patch_descend_wrapper(patch_dir)
+    if not (src_root / "sce_sys" / "param.json").is_file():
+        # A game-shaped folder below the root means the wrapper was not resolved; copying it
+        # as is would put a second game inside the game. Stop here instead.
+        nested = [p for p in sorted(src_root.iterdir()) if p.is_dir() and (p / "sce_sys" / "param.json").is_file()]
+        if nested:
+            raise RuntimeError(f"the patch's files sit in the folder '{nested[0].name}', beside other things the "
+                               f"app could not sort out ({', '.join(sorted(q.name for q in src_root.iterdir() if q != nested[0])[:5])}): "
+                               f"not applied. Unpack the patch so that its files are at the top, or report this.")
     check_patch_fits(game_root, src_root)
     game_param = _param_json_of(game_root)
     done = {"replaced": [], "removed": [], "added": []}
