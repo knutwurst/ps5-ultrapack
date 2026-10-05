@@ -55,6 +55,16 @@ class RefusalTests(Base):
         g = self.file("out/Game/Game.pkg")
         self.assertIn("inside the job's output", aj.refusal([g], output=out))
 
+    def test_source_next_to_its_output_stays(self):
+        # a library .ffpfsc and the .pkg built from it, in one folder: both stay
+        lib = self.file("lib/Game [PPSA00001]/Game.ffpfsc")
+        out = lib.parent / "Game.pkg"
+        out.write_bytes(b"P")
+        self.assertIn("next to its output", aj.refusal([lib], output=out))
+        # one level down (a download folder inside the output folder) is not next to it
+        dl = self.file("lib/Downloads/Other.ffpfsc")
+        self.assertIsNone(aj.refusal([dl], output=self.tmp / "lib" / "Other.pkg"))
+
     def test_same_file_as_output_stays(self):
         g = self.file("lib/Game.ffpfsc")
         self.assertIsNotNone(aj.refusal([g], output=g))

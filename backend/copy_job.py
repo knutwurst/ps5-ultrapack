@@ -5,10 +5,14 @@ Used when the source format equals the target format (``.ffpfsc`` → ``.ffpfsc`
 ``.ffpfs`` → ``.ffpfs``, ``.pkg`` → ``.pkg``): re-encoding is pure waste, so the
 file is transported as-is.
 
-Transport is chosen by comparing the filesystem device:
-  * Same drive (same ``st_dev``) → ``os.rename`` (atomic, instant, no data copy)
-  * Cross-drive → chunked copy with progress markers, then optionally delete
-    the source on success so the whole operation feels like a move.
+Three modes decide what happens to the source:
+  * ``keep``     — the source stays. Same drive: an APFS clone (instant, no extra
+                   space) or, where the filesystem cannot clone, a real copy.
+                   Across drives: a chunked copy.
+  * ``organize`` — same drive: ``os.rename`` (a library is sorted in place);
+                   across drives: a chunked copy, the source stays.
+  * ``move``     — same drive: ``os.rename``; across drives: a chunked copy, then
+                   the source is deleted once every byte is on the destination.
 
 Emits the same ``[PHASE]`` and ``[####] NN%`` markers ``CLIWorker`` already
 parses, so the queue's progress bar and stage indicators light up unchanged.
@@ -30,6 +34,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 CHUNK = 4 * 1024 * 1024  # 4 MiB — same order as extract_members' write chunk
+KEEP, ORGANIZE, MOVE = "keep", "organize", "move"
+MODES = (KEEP, ORGANIZE, MOVE)
 
 _ALLOWED_SUFFIXES = frozenset({".ffpfsc", ".ffpfs", ".pkg"})
 
@@ -89,6 +95,20 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def _clone(src: Path, dst: Path) -> bool:
+    """An APFS clone of *src* at *dst* (macOS clonefile): instant, shares the blocks,
+    takes no space until either copy changes. False where the filesystem cannot."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.clonefile.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
+        return libc.clonefile(os.fsencode(str(src)), os.fsencode(str(dst)), 0) == 0
+    except Exception:
+        return False
+
+
 def _resolves_same(src: Path, dst: Path) -> bool:
     """True when ``src`` and ``dst`` resolve to the same file — including the
     macOS case-insensitive equality that ``resolve()`` normalizes. A missing
@@ -101,7 +121,7 @@ def _resolves_same(src: Path, dst: Path) -> bool:
 
 def run_copy(src, dst_dir, *,
              dst_name: Optional[str] = None,
-             delete_source: bool = True,
+             mode: str = KEEP,
              on_line: Optional[Callable[[str], None]] = None) -> int:
     """
     Copy or move *src* into *dst_dir*.
@@ -111,12 +131,14 @@ def run_copy(src, dst_dir, *,
            suffix).
       dst_dir: destination directory (created if missing).
       dst_name: destination filename (defaults to ``src.name``).
-      delete_source: on a cross-drive copy, remove the source file after a
-                     successful write so the operation is effectively a move.
+      mode: ``keep`` (the default), ``organize`` or ``move``; see the module docstring.
       on_line: line sink (mirrors backend logging). ``None`` prints to stdout.
 
     Returns an exit code (see module docstring).
     """
+    if mode not in MODES:
+        _print(on_line, f"[ERROR] copy: unknown mode {mode!r} (keep, organize or move)")
+        return 1
     src = Path(src)
     dst_dir = Path(dst_dir)
     if not src.is_file():
@@ -159,7 +181,13 @@ def run_copy(src, dst_dir, *,
     _print(on_line, "[JOB] copy")
     _print(on_line, "[PHASE] Writing Final Image")
 
-    if same_drive:
+    if same_drive and mode == KEEP and _clone(src, dst):
+        _print(on_line, f"[INFO] copy: same-drive clone — {src.name} → {dst} (no extra space until one changes)")
+        _print(on_line, f"[####] 100% copy")
+        _print(on_line, f"[SUCCESS] Copied {src.name} → {dst}")
+        return 0
+
+    if same_drive and mode != KEEP:
         # Metadata-only rename — no data movement. Feels instantaneous even on
         # a 100 GB game because we never touch the payload bytes.
         _print(on_line, f"[INFO] copy: same-drive move — {src.name} → {dst}")
@@ -174,10 +202,19 @@ def run_copy(src, dst_dir, *,
         _print(on_line, f"[SUCCESS] Moved {src.name} → {dst}")
         return 0
 
-    # Cross-drive: chunked copy through a *.copy-tmp file so an interrupted
-    # write never leaves a truncated target visible under the final name.
+    # A real copy (across drives, or on a drive that cannot clone): chunked through a
+    # *.copy-tmp file so an interrupted write never leaves a truncated target visible
+    # under the final name. It needs the whole size free on the destination.
+    try:
+        free = shutil.disk_usage(dst_dir).free
+    except OSError:
+        free = None
+    if free is not None and free < total:
+        _print(on_line, f"[ERROR] copy: not enough space on the destination: {total / 1e9:.2f} GB needed, "
+                        f"{free / 1e9:.2f} GB free")
+        return 1
     tmp = dst.with_suffix(dst.suffix + ".copy-tmp")
-    _print(on_line, f"[INFO] copy: cross-drive copy — {src.name} → {dst}")
+    _print(on_line, f"[INFO] copy: {'cross-drive' if not same_drive else 'same-drive'} copy — {src.name} → {dst}")
     written = 0
     last_pct = -1
     t0 = time.monotonic()
@@ -228,6 +265,7 @@ def run_copy(src, dst_dir, *,
 
     _print(on_line, f"[####] 100% copy")
 
+    delete_source = mode == MOVE and not same_drive
     if delete_source:
         _print(on_line, "[PHASE] Cleaning Up")
         try:

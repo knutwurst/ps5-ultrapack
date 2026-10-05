@@ -294,7 +294,7 @@ class CopyJobIntegrityTests(unittest.TestCase):
         copy_job._fsync_file = recording_fsync
         Path.unlink = recording_unlink
         try:
-            rc = copy_job.run_copy(self.src, self.dst_dir, on_line=lambda _line: None)
+            rc = copy_job.run_copy(self.src, self.dst_dir, mode="move", on_line=lambda _line: None)
         finally:
             copy_job._fsync_file = real_fsync
             Path.unlink = real_unlink

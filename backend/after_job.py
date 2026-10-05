@@ -68,7 +68,8 @@ def refusal(sources: list, *, output=None, dest=None, protected: Iterable = (),
             others: Iterable = ()) -> Optional[str]:
     """Why *sources* must stay where they are, or None when the action may run.
 
-    *output* is the file or folder the job wrote, *dest* the folder a move goes to,
+    *output* is the file or folder the job wrote (a source in the same folder is a
+    library file and stays: a .ffpfsc next to the .pkg built from it), *dest* the folder a move goes to,
     *protected* the app's own folders (temp, profile), *others* the sources of jobs that
     have not run yet."""
     if not sources:
@@ -88,6 +89,8 @@ def refusal(sources: list, *, output=None, dest=None, protected: Iterable = (),
             return f"{r} holds the home folder"
         if out is not None and (_within(out, r) or _within(r, out)):
             return f"{r.name} holds the job's output" if _within(out, r) else f"{r.name} is inside the job's output"
+        if out is not None and not out.is_dir() and r.parent == out.parent:
+            return f"{r.name} sits in the folder the job wrote to, next to its output"
         if dst is not None and _within(dst, r):
             return f"the destination folder is inside {r.name}"
         for p in prot:

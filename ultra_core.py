@@ -2775,7 +2775,7 @@ class GameItem:
     patch_overwrite = False # patch: overwrite the source .ffpfsc in place vs a "[patched]" copy
     patch_inplace = False   # patch: overlay onto a throwaway temp extract (archive game source)
     unwrap = True           # convert/unpack: True = unwrap to a folder, False = stop at inner .ffpfs
-    copy_delete_source = True  # copy: delete the source after a successful cross-drive copy
+    copy_mode = None        # copy job: "keep" | "organize" | "move" (backend copy_job); None = keep
     backport_target = None  # None|"7.61"|"6.02"|"10.xx"|another firmware: lower SDK before the build
     backport_libs_root = None  # str: folder of user-supplied patched sprx dropped into fakelib/
     chain_to = None         # chain job: "folder" | "ffpfs" | "ffpfsc" | "pkg"
@@ -2972,8 +2972,7 @@ class GameItem:
     @classmethod
     def from_chain(cls, source: Path, *, to: str, output_path=None,
                    sign: bool = False, patch_source=None,
-                   backport_target=None, backport_libs_root=None,
-                   delete_source: bool = True) -> "GameItem":
+                   backport_target=None, backport_libs_root=None) -> "GameItem":
         """The one job the job dialog produces: source → [patch → backport → sign] → *to*.
         The source may be a game folder, a parent folder, an archive (extracted when its
         turn comes, like a pack), a disk image, a .ffpfs/.ffpfsc or a .pkg. The backend's
@@ -3006,7 +3005,6 @@ class GameItem:
         obj.patch_source       = Path(patch_source) if patch_source else None
         obj.backport_target    = backport_target if is_backport_target(backport_target) else None
         obj.backport_libs_root = str(backport_libs_root) if backport_libs_root else None
-        obj.copy_delete_source = bool(delete_source)
         obj.output_path        = Path(output_path) if output_path else None
         obj.output_compressed  = (obj.chain_to != "ffpfs")
         return obj

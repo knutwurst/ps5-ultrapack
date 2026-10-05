@@ -3141,12 +3141,12 @@ class JobDialog(EmbeddedDialog):
                     "<Title> [TID] [vX.Y.Z]/<Title> [TID] [vX.Y] [fwN.NN], with the firmware the "
                     "game needs read from its eboot.bin (a backport lowers it to the target). Long names are shortened to "
                     "ShadowMount's byte limit.",
-        "keep":   "Only for a same-format copy across drives: keep the original after copying. On "
-                  "the same drive the file is always moved (a rename).",
         "after":  "What happens to the source once this job is Done: the game folder, the archive with "
-                  "all its parts, or the container. Move to Trash can be put back from the Trash; Delete "
-                  "cannot. Nothing happens when the job fails, is skipped or stopped, or while another "
-                  "job in the queue still needs the same source. Settings › General sets the default.",
+                  "all its parts, or the container. Keep leaves it where it is, also when the output is a "
+                  "plain copy (on the same drive an APFS clone, instant and without extra space). Move to "
+                  "Trash can be put back from the Trash; Delete cannot. Nothing happens when the job fails, "
+                  "is skipped or stopped, or while another job in the queue still needs the same source. "
+                  "Settings › General sets the default.",
         "retail": "Keep on. Drops placeholder license files and issues a valid debug license, sets the "
                   "retail DRM type and the retail flag in every executable, rebuilds a corrupt PlayGo "
                   "set and repairs presentation images — the configuration verified on a console. Off "
@@ -3231,7 +3231,6 @@ class JobDialog(EmbeddedDialog):
         self.out_var = tk.StringVar(value=out0)
         _org = getattr(item, "auto_organize", None) if item else None
         self.organize_var = tk.BooleanVar(value=bool(app.auto_organize_var.get()) if _org is None else bool(_org))
-        self.keep_source_var = tk.BooleanVar(value=not bool(getattr(item, "copy_delete_source", True)) if item else False)
         _aj = _after_job_module()
         _af = getattr(item, "after_source", None) if item else app.after_source_var.get()
         self.after_var = tk.StringVar(value=_af if _af in _aj.ACTIONS else _aj.KEEP)
@@ -3269,7 +3268,7 @@ class JobDialog(EmbeddedDialog):
         self.src_var.trace_add("write", lambda *_: self._on_source_changed())
         for v in (self.sign_var, self.patch_on_var, self.patch_var, self.backport_on_var,
                   self.backport_target_var, self.to_var, self.out_var,
-                  self.organize_var, self.keep_source_var, self.after_var):
+                  self.organize_var, self.after_var):
             v.trace_add("write", lambda *_: self._refresh())
         self.bind("<Return>", lambda e: self._add())
         self.bind("<Escape>", lambda e: self.destroy())
@@ -3447,10 +3446,6 @@ class JobDialog(EmbeddedDialog):
                                             fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=WHITE, font=ctk.CTkFont(size=12))
         self._organize_cb.pack(side="left")
         self._bind_help(self._HELP["organize"], self._organize_cb)
-        self._keep_cb = ctk.CTkCheckBox(oline, text="Keep the source (cross-drive copy)", variable=self.keep_source_var,
-                                        checkbox_width=18, checkbox_height=18, fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                                        text_color=WHITE, font=ctk.CTkFont(size=12))
-        self._bind_help(self._HELP["keep"], self._keep_cb)
         self._oline = oline
         # After the job: what happens to the source once this job is Done (shown by _refresh)
         aj = _after_job_module()
@@ -4035,16 +4030,10 @@ class JobDialog(EmbeddedDialog):
                 w.configure(state="disabled" if in_place else "normal")
             except Exception:
                 pass
-        try:
-            same_fmt = (self._kind == to) and not chain_changes(self._stand_in(None if self._kind == "none" else Path(self.src_var.get().strip())))
-            (self._keep_cb.pack(side="left", padx=(16, 0)) if same_fmt else self._keep_cb.pack_forget())
-        except Exception:
-            same_fmt = False
-        # A copy moves or keeps its source itself (Keep the source), and a change in place
-        # writes into the source: neither offers an after-job action.
+        # A change in place writes into the source itself: no after-job action there.
         try:
             aj = _after_job_module()
-            if same_fmt or in_place or self._kind == "none":
+            if in_place or self._kind == "none":
                 self._after_box.pack_forget()
             else:
                 if not self._after_box.winfo_manager():
@@ -4218,7 +4207,6 @@ class JobDialog(EmbeddedDialog):
                       "regen_playgo": bool(self.regen_var.get()), "fake_sign": True,
                       "backport_target": target, "backport_libs": libs}
         organize = bool(self.organize_var.get())
-        keep = bool(self.keep_source_var.get())
         aj = _after_job_module()
         after = self.after_var.get() if self._after_box.winfo_manager() else aj.KEEP
         after_dir = self.after_dir_var.get().strip() if after == aj.MOVE else ""
@@ -4236,7 +4224,7 @@ class JobDialog(EmbeddedDialog):
                # the recipe Rescan reuses on new sources from the same folder:
                "rescan_template": {"to": to, "output": out, "sign": bool(self.sign_var.get()),
                                    "backport_target": target, "patch_source": patch or None,
-                                   "keep_source": keep, "organize": organize, "ff_level": ff_level,
+                                   "organize": organize, "ff_level": ff_level,
                                    "after_source": after, "after_move_to": after_dir or None,
                                    "pkg_params": pkg_params if to == "pkg" else None}}
         if target:
@@ -4268,7 +4256,7 @@ class JobDialog(EmbeddedDialog):
             # Tk-free: runs on the add thread for a new job (archive headers are read here)
             it = GameItem.from_chain(s, to=to, output_path=out or None, sign=sign,
                                      patch_source=patch or None, backport_target=target,
-                                     backport_libs_root=libs or None, delete_source=not keep)
+                                     backport_libs_root=libs or None)
             if to == "pkg":
                 app._apply_fpkg_params(it, pkg_params)
             it.compression_level = ff_level if to == "ffpfsc" else None
@@ -5747,7 +5735,8 @@ class App:
             return parts
         return {"fpkg-build": [src, ".pkg"], "unpack": [src, "Folder"], "fpkg-extract": [".pkg", "Folder"],
                 "patch": [src, "Integrate patch"], "fake-sign": [src, "Sign in place"],
-                "copy": [src, "Move" if getattr(item, "copy_delete_source", True) else "Copy"]}.get(op, [src])
+                "copy": [src, {"move": "Move", "organize": "Organize"}.get(getattr(item, "copy_mode", None), "Copy")]
+                }.get(op, [src])
 
     # ── History view ─────────────────────────────────────────────────────────
     def _build_history_view(self, parent):
@@ -6096,10 +6085,6 @@ class App:
         # whatever the source was called. Per job (snapshotted like the format); this is the
         # remembered default the Pack dialog pre-fills.
         self.auto_organize_var = self._persisted_bool(settings, "auto_organize", True)
-        # Same-format copy job: on a cross-drive copy delete the source afterwards so the
-        # operation feels like a move regardless of which drives are involved. Same-drive
-        # is always an atomic rename and this toggle does not apply to it. Persisted.
-        self.copy_delete_source_var = self._persisted_bool(settings, "copy_delete_source", True)
         # Keep external drives awake DURING A RUN only: a fast tiny flushed write so
         # bus-powered 2.5" USB HDDs (WD Elements) stay spun-up with heads LOADED across the
         # short gaps between games in a batch — so each game doesn't pay a fresh spinup. The
@@ -6191,7 +6176,6 @@ class App:
                                 parent=self.root)
             return
 
-        delete_src = bool(self.copy_delete_source_var.get())
         organize = True   # organizing without auto-organize would be a plain copy — that's not this feature
         # Persist the target as the app's output folder — matches what Pack does and gives
         # a nice default for a follow-up Add.
@@ -6202,7 +6186,7 @@ class App:
         for src in picked:
             try:
                 item = self._copy_item_for(src, output_path=str(out_root),
-                                           delete_source=delete_src,
+                                           mode="organize",
                                            auto_organize=organize, parent=self.root)
             except Exception as e:
                 self.log("ERROR", f"Organize: could not enqueue {src}: {e}")
@@ -8002,7 +7986,8 @@ class App:
         extra.patch_source = None
         extra.backport_target = getattr(tpl, "backport_target", None)
         extra.backport_libs_root = getattr(tpl, "backport_libs_root", None)
-        extra.copy_delete_source = bool(getattr(tpl, "copy_delete_source", True))
+        extra.after_source = getattr(tpl, "after_source", None)
+        extra.after_move_to = getattr(tpl, "after_move_to", None)
         extra.output_path = getattr(tpl, "output_path", None)
         extra.output_compressed = extra.chain_to != "ffpfs"
         extra.compression_level = getattr(tpl, "compression_level", None)
@@ -8135,13 +8120,13 @@ class App:
         base.output_path = Path(output_path) if output_path else None
         return base
 
-    def _copy_item_for(self, src, *, output_path=None, delete_source=True,
+    def _copy_item_for(self, src, *, output_path=None, mode="organize",
                        auto_organize=None, parent=None):
         """A fresh COPY job for a source whose format already matches the target format
-        (`.ffpfsc` / `.ffpfs` / `.pkg`). The backend routes same-drive through os.rename
-        (atomic) and cross-drive through a chunked copy that deletes the source on
-        success unless *delete_source* is False. Returns None (after an error dialog) for
-        anything else."""
+        (`.ffpfsc` / `.ffpfs` / `.pkg`). *mode* is copy_job's: "organize" (the Organize
+        default) renames on the same drive and copies across drives, keeping the source
+        there; "keep" always copies; "move" also deletes after a cross-drive copy.
+        Returns None (after an error dialog) for anything else."""
         src = Path(src)
         if not (src.is_file() and src.suffix.lower() in (".ffpfsc", ".ffpfs", ".pkg")):
             messagebox.showerror("Wrong type",
@@ -8155,7 +8140,7 @@ class App:
                                  parent=parent or self.root)
             return None
         base.operation = "copy"
-        base.copy_delete_source = bool(delete_source)
+        base.copy_mode = mode
         base.output_compressed = (src.suffix.lower() == ".ffpfsc")   # marks the snapshot as taken
         base.output_path = Path(output_path) if output_path else None
         if auto_organize is not None:
@@ -8572,6 +8557,7 @@ class App:
             except Exception:
                 target = None
             it._output_checked = target is not None
+            it._predicted_target = target
             hit = self._existing_output(target) if target is not None else None
             if hit is not None:
                 conflicts.append((it, hit))
@@ -8608,6 +8594,11 @@ class App:
         else:
             self._retire_failed(item, "Skipped", f"Its output is already there: {hit}")
             self.log("INFO", f"{name}: skipped, its output is already there: {hit}")
+            # one after another, so two moves never share a drive
+            pend = self.__dict__.setdefault("_after_skip_q", [])
+            pend.append((item, hit, getattr(item, "_predicted_target", None)))
+            if len(pend) == 1:
+                self._drain_after_skips()
 
     def _late_output_check(self, item) -> str:
         """Right before a job's backend starts (an archive has been unpacked by now): its
@@ -8667,14 +8658,21 @@ class App:
         """A running batch skips *item* after its archive was unpacked: it leaves this run
         (not counted as a failure), the scratch it wrote is reclaimed, the batch goes on."""
         self._cleanup_after_failure(item)
-        target = None
+        target = predicted = None
         try:
-            target = self._existing_output(self._predicted_output(item))
+            predicted = self._predicted_output(item)
+            target = self._existing_output(predicted)
         except Exception:
             pass
         note = f"Its output is already there: {target}" if target else (hit_note or "Its output is already there.")
         self._retire_failed(item, "Skipped", note)
         self.log("INFO", f"{getattr(item, 'display_name', None) or item.name}: skipped, {note[0].lower() + note[1:]}")
+        if target is not None:
+            self._after_skipped(item, target, predicted, then=self._skip_late_advance)
+        else:
+            self._skip_late_advance()
+
+    def _skip_late_advance(self) -> None:
         if self._batch_running:
             self._batch_total = max(0, self._batch_total - 1)
             self._update_batch_counter()
@@ -9036,7 +9034,8 @@ class App:
                 _m = (getattr(item, "fpkg_inner_mode", "none") or "none")
                 detail = f"→ .pkg  ({_m}/{_b})"
             elif opn == "copy":
-                _mode = "move (or copy+delete)" if getattr(item, "copy_delete_source", True) else "copy (keep src)"
+                _mode = {"move": "move", "organize": "move on the same drive, copy across drives"}.get(
+                    getattr(item, "copy_mode", None), "copy, the source stays")
                 detail = f"{format_size(getattr(item, 'size', 0) or 0)}  ·  {_mode}"
             else:
                 # Archives store the COMPRESSED set size in .size; show the EXTRACTED size
@@ -9481,6 +9480,9 @@ class App:
             head = (pycmd + [str(src), str(out)] if getattr(sys, "frozen", False)
                     else pycmd + ["-u", str(cli_py), str(src), str(out)])
             cmd = head + ["--to", to]
+            # Should the job end as a plain copy (same format, nothing to change), the source
+            # stays unless the job deletes it afterwards anyway: then a move is the fast way.
+            cmd += ["--copy-mode", "move" if getattr(item, "after_source", None) == "delete" else "keep"]
             _ps = getattr(item, "patch_source", None)
             if _ps:
                 cmd += ["--patch", str(_ps)]
@@ -9513,8 +9515,6 @@ class App:
                 out_root = str(_job_out) if _job_out else self.output_var.get().strip()
                 if out_root:
                     cmd += ["--spool-fallback-dir", out_root]
-                if not bool(getattr(item, "copy_delete_source", True)):
-                    cmd.append("--keep-source")
             if to == "pkg":
                 cmd += ["--fpkg-inner", str(getattr(item, "fpkg_inner_mode", "kraken") or "kraken"),
                         "--fpkg-kraken-backend", str(getattr(item, "fpkg_kraken_backend", "builtin") or "builtin")]
@@ -9580,8 +9580,7 @@ class App:
             cmd = head + ["--copy", str(src)]
             if copy_name:
                 cmd += ["--copy-name", copy_name]
-            if not bool(getattr(item, "copy_delete_source", True)):
-                cmd.append("--keep-source")
+            cmd += ["--copy-mode", getattr(item, "copy_mode", None) or "keep"]
             return cmd, backend, out, temp
 
         # ── fPKG EXTRACT job (built package -> /app0 folder) ─────────────────
@@ -10744,7 +10743,6 @@ class App:
         sign = bool(tpl.get("sign")) and to != "pkg"
         target = tpl.get("backport_target") or None
         patch = tpl.get("patch_source") or None
-        keep = bool(tpl.get("keep_source"))
         pkg_params = tpl.get("pkg_params") or {}
         ff_level = int(tpl.get("ff_level") or 7)
         organize = bool(tpl.get("organize"))
@@ -10754,7 +10752,7 @@ class App:
         def make(src):
             it = GameItem.from_chain(src, to=to, output_path=out or None, sign=sign,
                                      patch_source=patch, backport_target=target,
-                                     backport_libs_root=None, delete_source=not keep)
+                                     backport_libs_root=None)
             if to == "pkg" and pkg_params:
                 self._apply_fpkg_params(it, pkg_params)
             it.compression_level = ff_level if to == "ffpfsc" else None
@@ -11190,8 +11188,10 @@ class App:
         act = getattr(item, "after_source", None) or aj.KEEP
         if act not in aj.ACTIONS or act == aj.KEEP:
             return aj.KEEP, [], None, None
-        if getattr(item, "operation", "") in ("fake-sign", "copy") or getattr(worker, "_is_copy", False):
+        if getattr(item, "operation", "") in ("fake-sign", "copy"):
             return aj.KEEP, [], None, None          # these work on the source themselves
+        if getattr(worker, "_is_copy", False) and act == aj.DELETE:
+            return aj.KEEP, [], None, None          # the copy already moved it (--copy-mode move)
         dest = (getattr(item, "after_move_to", None) or None) if act == aj.MOVE else None
         if act == aj.MOVE and not dest:
             return act, [], None, "no destination folder is set"
@@ -11206,7 +11206,7 @@ class App:
             return act, [], dest, "its output was not found on disk"
         others = []
         for it in self.queue:
-            if it is item or getattr(it, "status", "") == "Done":
+            if it is item or getattr(it, "status", "") == "Done" or getattr(it, "_output_there", False):
                 continue
             others += self._after_sources(it)
             if getattr(it, "path", None):
@@ -11274,6 +11274,39 @@ class App:
         self._after_busy = True
         threading.Thread(target=work, daemon=True).start()
         self.root.after(200, poll)
+
+    def _drain_after_skips(self) -> None:
+        pend = self.__dict__.setdefault("_after_skip_q", [])
+        if not pend:
+            return
+        item, hit, target = pend[0]
+
+        def next_one():
+            if pend:
+                pend.pop(0)
+            self._drain_after_skips()
+        self._after_skipped(item, hit, target, then=next_one)
+
+    def _after_skipped(self, item, hit, target, then=None) -> None:
+        """*item* was skipped because its output is already there. When the file there is
+        exactly the one the job would write (same format, same name with its firmware tag),
+        the job is as good as Done for its source: the after-action runs. A near match (another
+        firmware tag, e.g. a different backport) keeps the source."""
+        then = then or (lambda: None)
+        item._output_there = True
+        try:
+            exact = target is not None and hit is not None and Path(hit) == Path(target) and Path(hit).stat().st_size > 0
+        except OSError:
+            exact = False
+        act = getattr(item, "after_source", None) or "keep"
+        if act == "keep":
+            then(); return
+        if not exact:
+            self.log("INFO", f"{getattr(item, 'display_name', None) or item.name}: the source stays, the file there "
+                             f"({Path(hit).name if hit else '?'}) is not exactly the one this job would write.")
+            then(); return
+        import types as _t
+        self._run_after_job(item, _t.SimpleNamespace(output_path=str(hit), _is_copy=False, validate_failed=False), then)
 
     def _notify_job(self, item, ok: bool, detail: str = "") -> None:
         if self.notify_var.get() != "job" or item is None:

@@ -15,14 +15,16 @@ WHAT HAPPENS WHEN A JOB IS DONE
     from the last Add job. Jobs from earlier versions keep their source.
   - The source is the game folder, the archive with every part of its
     set, or the container file, and a patch the job integrated. The app
-    acts only on a job that is Done and whose output is on the disk; a
-    .pkg whose checklist reported failures keeps its source. A failed,
-    skipped or stopped job never touches it, nor does a copy job, which
-    moves or keeps its source itself.
-  - It never touches a source that is or holds the job's output, a whole
-    drive, the home folder, the app's own temp and profile folders, or a
-    source another job in the queue still needs (the last of those jobs
-    takes care of it).
+    acts on a job that is Done and whose output is on the disk, and on a
+    job skipped because exactly its output is already there (same
+    format, same name with its firmware tag; a near match such as
+    another backport keeps the source). A .pkg whose checklist reported
+    failures keeps its source. A failed or stopped job never touches it.
+  - It never touches a source that is or holds the job's output, sits
+    in the same folder as the output (a .ffpfsc next to the .pkg built
+    from it: both stay), a whole drive, the home folder, the app's own
+    temp and profile folders, or a source another job in the queue
+    still needs (the last of those jobs takes care of it).
   - Move to Trash uses the Trash of the source's drive, so Put Back in
     Finder restores it. Move to folder renames on the same drive and
     copies, checks and then removes across drives; the queue waits for
@@ -36,6 +38,22 @@ WHAT HAPPENS WHEN A JOB IS DONE
     small window with Cancel; a new run closes it.
   - The finished-job checkboxes (show the result, remove from the queue,
     open the output folder, sounds) moved into the same section.
+
+A COPY KEEPS ITS SOURCE
+
+  - A job with nothing to change (a .pkg to a .pkg, a .ffpfsc to a
+    .ffpfsc) became a copy that removed the original after a copy to
+    another drive, and renamed it away on the same drive, unless "Keep
+    the source" was ticked; that box was off by default. The original
+    now stays unless the job's After the job choice says otherwise. On
+    the same drive the copy is an APFS clone (instant, no extra space);
+    where the drive cannot clone, a real copy that first checks the free
+    space. "Keep the source" is gone; After the job covers copies too,
+    and Delete there takes the fast way (a rename on the same drive).
+  - Organize renames on the same drive and copies across drives, the
+    original staying where it was.
+  - --copy-mode keep|organize|move replaces --keep-source on the command
+    line; keep is the default.
 
 ONE BADGE FOR EVERY JOB THAT WAITS
 

@@ -205,15 +205,20 @@ try:
     ok("dialog.noparam.unforced-on-good-source", not dlg4b._ident_forced and dlg4b._pkg_more_box.winfo_manager() == ""
        and dlg4b.cid_var.get() == CID, f"forced={dlg4b._ident_forced} cid={dlg4b.cid_var.get()!r}")
     dlg4b.destroy()
-    # 6b) a .ffpfsc to .ffpfsc with no change is a copy or move, the source removed by default
+    # 6b) a .ffpfsc to .ffpfsc with no change is a copy; the source stays unless the job says otherwise
     dlg5 = m.JobDialog(app, init_src=str(FF), init_to="ffpfsc"); root.update()
     ok("dialog.ffpfsc.copy-hint", "Copy or move" in dlg5.summary_var.get(), dlg5.summary_var.get())
-    ok("dialog.ffpfsc.copy-row-shown", dlg5._keep_cb.winfo_manager() != "", f"manager={dlg5._keep_cb.winfo_manager()!r}")
+    ok("dialog.ffpfsc.copy-has-after-row", dlg5._after_box.winfo_manager() != "" and not hasattr(dlg5, "_keep_cb"),
+       f"manager={dlg5._after_box.winfo_manager()!r}")
     dlg5.out_var.set(str(OUT)); n3 = len(app.queue); dlg5._add(); settle()
     ok("dialog.ffpfsc.enqueued-as-copy", len(app.queue) == n3 + 1 and app.queue[-1].chain_to == "ffpfsc"
        and m.chain_summary(app.queue[-1]).startswith("Copy or move"), m.chain_summary(app.queue[-1]) if app.queue else "")
-    ok("dialog.ffpfsc.copy.delete-source-default", getattr(app.queue[-1], "copy_delete_source", None) is True,
-       f"delete_source={getattr(app.queue[-1], 'copy_delete_source', None)}")
+    _c5 = app.build_command(app.queue[-1])[0]
+    _c5m = _c5[_c5.index("--copy-mode") + 1] if "--copy-mode" in _c5 else None
+    _q5 = app.queue[-1]; _q5.after_source = "delete"
+    _c5d = app.build_command(_q5)[0]
+    ok("dialog.ffpfsc.copy.keeps-source-by-default", _c5m == "keep"
+       and _c5d[_c5d.index("--copy-mode") + 1] == "move", f"{_c5m} {_c5d[-6:]}")
     app.queue.pop()   # keep the fixture queue clean for later tests
     # 7) ARCHIVE source with .pkg → an archive placeholder that keeps its job (target, identity) through extraction
     dlg6 = m.JobDialog(app, init_src=str(ZP), init_to="pkg"); root.update()
@@ -464,12 +469,12 @@ try:
     copy_src = copy_src_dir / "CopyMe [PPSA99099] [v01.000].ffpfsc"
     _sh.copy2(FF, copy_src)
     copy_out = S / "copy_out"; copy_out.mkdir(exist_ok=True)
-    ci = app._copy_item_for(copy_src, output_path=str(copy_out), delete_source=True, auto_organize=True)
-    ok("copy.item.built", ci is not None and ci.operation == "copy" and ci.copy_delete_source is True,
-       f"op={getattr(ci, 'operation', None)}")
+    ci = app._copy_item_for(copy_src, output_path=str(copy_out), auto_organize=True)
+    ok("copy.item.built", ci is not None and ci.operation == "copy" and ci.copy_mode == "organize",
+       f"op={getattr(ci, 'operation', None)} mode={getattr(ci, 'copy_mode', None)}")
     ccmd, ccwd, cout, ctmp = app.build_command(ci)
-    ok("copy.build_command", "--copy" in ccmd and str(copy_src) in ccmd and "--keep-source" not in ccmd,
-       " ".join(ccmd[-6:]))
+    ok("copy.build_command", "--copy" in ccmd and str(copy_src) in ccmd
+       and ccmd[ccmd.index("--copy-mode") + 1] == "organize", " ".join(ccmd[-6:]))
     ok("copy.organized-dir", cout.name.startswith("LibProsperoPKG [PPSA99099]"), str(cout.name))
     # single-pass + space gate must not route a copy through the mkpfs estimates
     ok("copy.single-pass", m._item_is_single_pass(ci) is True, "")
@@ -1039,7 +1044,10 @@ try:
        str(app._after_job_plan(_j1, _fake_worker(_outf))))
     app.queue[:] = [_j1]
     _wc = _fake_worker(_outf); _wc._is_copy = True
-    ok("after.copy-job-keeps", app._after_job_plan(_j1, _wc)[0] == "keep", "")
+    ok("after.copy-that-moved-keeps", app._after_job_plan(_j1, _wc)[0] == "keep", "")
+    _jt = m.GameItem.from_chain(_g1, to="ffpfsc"); _jt.after_source = "trash"
+    ok("after.copy-then-trash", app._after_job_plan(_jt, _wc)[0] == "trash"
+       and app._after_job_plan(_jt, _wc)[3] is None, str(app._after_job_plan(_jt, _wc)))
     _wv = _fake_worker(_outf); _wv.validate_failed = True
     ok("after.failed-checklist-stays", "checklist" in str(app._after_job_plan(_j1, _wv)[3]), "")
     ok("after.missing-output-stays", "not found" in str(app._after_job_plan(_j1, _fake_worker(_aout / "no.pkg"))[3]), "")
@@ -1047,6 +1055,22 @@ try:
     ok("after.older-jobs-keep", app._after_job_plan(_j0, _fake_worker(_outf))[0] == "keep", "")
     _jm = m.GameItem.from_chain(_g1, to="ffpfsc"); _jm.after_source = "move"
     ok("after.move-needs-a-folder", "no destination" in str(app._after_job_plan(_jm, _fake_worker(_outf))[3]), "")
+    # skipped because exactly its output is there: the source goes too; a near match keeps it
+    _gs = _src_game("GS"); _hit = _aout / "GS.ffpfsc"; _hit.write_bytes(b"P" * 64)
+    _js = m.GameItem.from_chain(_gs, to="ffpfsc", output_path=str(_aout)); _js.after_source = "delete"
+    _js._predicted_target = _hit
+    app.queue[:] = [_js]
+    app._apply_output_choice(_js, _hit, "skip")
+    pump(lambda: not _gs.exists() and not getattr(app, "_after_busy", False), timeout=10.0)
+    ok("after.skipped-exact-output-cleans-source", not _gs.exists() and _js.status == "Skipped", _js.status)
+    _gn = _src_game("GN"); _near = _aout / "GN [fw10.00].ffpfsc"; _near.write_bytes(b"P" * 64)
+    _jn = m.GameItem.from_chain(_gn, to="ffpfsc", output_path=str(_aout)); _jn.after_source = "delete"
+    _jn._predicted_target = _aout / "GN [fw7.61].ffpfsc"
+    app.queue[:] = [_jn]
+    app._apply_output_choice(_jn, _near, "skip")
+    pump(lambda: not app.__dict__.get("_after_skip_q"), timeout=5.0)
+    ok("after.skipped-near-match-keeps-source", _gn.is_dir() and _jn.status == "Skipped", _jn.status)
+    app.queue[:] = [_j1]
     _card = app._card_info_text(_j1)
     ok("after.card-row", _card.get("After", "").startswith("Delete the source"), _card.get("After", ""))
 

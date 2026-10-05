@@ -130,16 +130,21 @@ class ChainMode(unittest.TestCase):
         self.assertEqual(sdk_of(eboot), (SDK_761_PS5, SDK_761_PS4))
 
     def test_6_same_format_without_changes_is_a_copy(self):
-        """Same container format, nothing to change → the copy job. On the same drive
-        that is an atomic rename (the source moves), exactly like --copy; --keep-source
-        only matters for a cross-drive copy."""
+        """Same container format, nothing to change → the copy job. By default the source
+        stays (a clone on the same drive); --copy-mode move renames it into the output."""
         src = getattr(type(self), "ffpfsc", None) or self._pack_once()
         out = self.root / "o6"; out.mkdir()
-        rc, log = run(str(src), str(out), "--to", "ffpfsc", "--keep-source")
+        rc, log = run(str(src), str(out), "--to", "ffpfsc")
         self.assertEqual(rc, 0, log[-1000:])
         self.assertTrue((out / src.name).is_file(), log[-800:])
+        self.assertTrue(src.is_file(), "keep (the default): the source stays")
+        self.assertIn("[JOB] copy", log)
+        out2 = self.root / "o6m"; out2.mkdir()
+        rc, log = run(str(src), str(out2), "--to", "ffpfsc", "--copy-mode", "move")
+        self.assertEqual(rc, 0, log[-1000:])
+        self.assertTrue((out2 / src.name).is_file(), log[-800:])
         self.assertIn("move", log.lower())
-        self.assertFalse(src.is_file(), "same-drive: the source is renamed into the output")
+        self.assertFalse(src.is_file(), "move: the source is renamed into the output")
 
     def test_7_sdk_of_reads_the_firmware_through_the_image(self):
         """The firmware a game needs, read from eboot.bin inside a packed image (headers

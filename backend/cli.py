@@ -2099,16 +2099,16 @@ def main() -> None:
                              "Already-signed files are skipped (idempotent). No pack/unpack.")
     parser.add_argument("--copy", type=str, default=None, metavar="SRC",
                         help="COPY MODE: transport SRC (.ffpfsc/.ffpfs/.pkg) to OUTPUT (a "
-                             "folder) unchanged. Same-drive → os.rename (atomic, instant). "
-                             "Cross-drive → chunked copy, then delete SRC unless "
-                             "--keep-source is set. Used for same-format queue items and "
-                             "the Organize Folder… batch flow.")
+                             "folder) unchanged; --copy-mode says what happens to SRC. Used "
+                             "for same-format queue items and the Organize flow.")
     parser.add_argument("--copy-name", type=str, default=None, metavar="NAME",
                         help="Destination filename for --copy (defaults to SRC's basename). "
                              "Auto-organize passes the library name here.")
-    parser.add_argument("--keep-source", action="store_true",
-                        help="For --copy on a cross-drive move: keep the source instead "
-                             "of deleting it after a successful copy.")
+    parser.add_argument("--copy-mode", choices=("keep", "organize", "move"), default="keep",
+                        help="For --copy and a chain job that ends as a copy: keep (default) "
+                             "leaves SRC in place (an APFS clone on the same drive); organize "
+                             "renames on the same drive and copies across drives; move renames "
+                             "on the same drive and deletes SRC after a checked cross-drive copy.")
     parser.add_argument("--fpkg-extract", type=str, default=None, metavar="PKG",
                         help="fPKG MODE: extract the /app0 inner files from a finalized "
                              "PS5 fake package (.pkg) into OUTPUT (a folder). No mkpfs "
@@ -2414,7 +2414,7 @@ def main() -> None:
         dst_dir = Path(args.output).resolve()
         rc = _copy_job.run_copy(src, dst_dir,
                                 dst_name=args.copy_name or None,
-                                delete_source=not args.keep_source,
+                                mode=args.copy_mode,
                                 on_line=lambda l: print(l, flush=True))
         sys.exit(rc)
 
@@ -2450,7 +2450,7 @@ def main() -> None:
             import copy_job as _copy_job
             out.mkdir(parents=True, exist_ok=True)
             sys.exit(_copy_job.run_copy(src, out, dst_name=args.copy_name or None,
-                                        delete_source=not args.keep_source,
+                                        mode=args.copy_mode,
                                         on_line=lambda l: print(l, flush=True)))
 
         native = {"ffpfs": {"folder", "exfat", "ffpkg", "ffpfs", "zip", "rar"},
