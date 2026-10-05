@@ -152,7 +152,7 @@ A plain packer asks you to prepare a clean folder, then writes a single image to
 - **It tells your drives apart, the awkward ones too.** It detects SSD versus HDD per volume and never treats a big slow disk as scratch just because it has the most free space. A USB SSD that reports no flash flag (common behind a bridge) gets a short timed write, so it is recognized as the SSD it is. A free-space gate skips a job with real numbers instead of failing mid-build.
 - **It builds images the console reads.** Packing forces the 64 KiB PFS block size the PS5 expects. A smaller block passes a local build and verify, then the console misreads the filesystem and crashes on launch. Boot-tested on firmware 11.60: 64 KiB boots, a 4 KiB build of the same game crashes.
 - **You feed it the download, not a prepared folder.** It reads ZIP, RAR and 7z straight through, including multi-part RAR sets and archives with encrypted headers. macOS carries a self-contained native UnRAR module, so RAR needs nothing external.
-- **It keeps the image clean without losing your files.** Extras that ship next to a game, such as text files, checksum files or a bundle folder, never enter the image, and none of them is deleted: the app moves them next to the finished container. OS clutter (`.DS_Store`, `._*`, `__MACOSX`) is dropped.
+- **It keeps the image clean without losing your files.** Extras that ship next to a game, such as text files, checksum files or a bundle folder, never enter the image, and none of them is deleted: the app moves them next to the finished container. OS clutter (`.DS_Store`, `._*`, `__MACOSX`) is dropped everywhere: it is not unpacked, not copied, not packed and not moved along.
 - **It changes what you ask for, in one run.** Patch, backport and sign are steps of the same job, applied in a fixed order on a staging copy, and the result is validated before it counts as done.
 - **It opens a packed image and pulls one file out.** **Look inside** decompresses only the blocks it touches, so opening a 100 GB container does not wait for a full decompression, and one file costs a fraction of a full unpack.
 
@@ -174,7 +174,7 @@ It detects SSD versus HDD per drive, including USB SSDs that report no flash fla
 
 ## What it keeps out of the image, and what it keeps for you
 
-- OS metadata never enters the image: `.DS_Store`, AppleDouble `._*` sidecars, `__MACOSX`, `Thumbs.db`. The app deletes them before packing.
+- OS clutter never travels: `.DS_Store`, AppleDouble `._*` sidecars, `__MACOSX`, `Thumbs.db`, `desktop.ini`. Archives are unpacked without it, a folder is cleaned before an image or a package is built from it, an image or package unpacked to a folder comes out without it, and a finished job's move to another folder leaves it behind.
 - Extras that ship next to a game never enter the image either, but the app keeps them: a bundle folder and loose text, checksum and parity files move out of the source and land next to the finished container.
 
 ## Special titles

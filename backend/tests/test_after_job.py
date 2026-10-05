@@ -179,6 +179,35 @@ class ActionTests(Base):
         with self.assertRaises(OSError):
             aj.apply(aj.MOVE, [self.game()], dest=None)
 
+    def clutter(self, g):
+        (g / ".DS_Store").write_bytes(b"j" * 50)
+        (g / "data" / "._a.bin").write_bytes(b"j" * 50)
+        (g / "__MACOSX").mkdir()
+        (g / "__MACOSX" / "._x").write_bytes(b"j" * 50)
+
+    def test_move_to_another_drive_leaves_clutter_behind(self):
+        g = self.game()
+        self.clutter(g)
+        dest = self.tmp / "other_drive"
+        out = aj.apply(aj.MOVE, [g], dest=dest, same_device=lambda a, b: False)
+        moved = Path(out[0])
+        self.assertFalse(g.exists())
+        self.assertEqual(sorted(str(p.relative_to(moved)) for p in moved.rglob("*")),
+                         ["data", "data/a.bin", "eboot.bin"])
+
+    def test_move_on_the_same_drive_arrives_without_clutter(self):
+        g = self.game()
+        self.clutter(g)
+        out = aj.apply(aj.MOVE, [g], dest=self.tmp / "done")
+        moved = Path(out[0])
+        self.assertEqual(sorted(str(p.relative_to(moved)) for p in moved.rglob("*")),
+                         ["data", "data/a.bin", "eboot.bin"])
+
+    def test_size_counts_no_clutter(self):
+        g = self.game()
+        self.clutter(g)
+        self.assertEqual(aj.size_of([g]), 1000)
+
 
 class ReleaseFolderTests(Base):
     def find(self, folder):

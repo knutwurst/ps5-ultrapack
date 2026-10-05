@@ -1073,11 +1073,19 @@ internal static class Program
     /// visible line, never silently.</summary>
     static void MirrorSource(string src, string dst, bool hardLinks)
     {
+        // OS and archiver clutter (._*, .DS_Store, __MACOSX, …) is never staged, so it can
+        // never be packed; see FsJunk.
         foreach (var d in Directory.EnumerateDirectories(src, "*", SearchOption.AllDirectories))
-            Directory.CreateDirectory(Path.Combine(dst, Path.GetRelativePath(src, d)));
+        {
+            var relDir = Path.GetRelativePath(src, d);
+            if (FsJunk.PathHasJunk(relDir)) continue;
+            Directory.CreateDirectory(Path.Combine(dst, relDir));
+        }
         foreach (var f in Directory.EnumerateFiles(src, "*", SearchOption.AllDirectories))
         {
-            var target = Path.Combine(dst, Path.GetRelativePath(src, f));
+            var relFile = Path.GetRelativePath(src, f);
+            if (FsJunk.PathHasJunk(relFile)) continue;
+            var target = Path.Combine(dst, relFile);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             if (File.Exists(target) || IsSymlink(target)) File.Delete(target);
             if (hardLinks)
@@ -2116,6 +2124,7 @@ internal static class Program
         {
             var rel = "/" + Path.GetRelativePath(stage, f).Replace('\\', '/');
             var name = Path.GetFileName(rel);
+            if (FsJunk.PathHasJunk(rel)) continue;
             if (name.EndsWith(".gp4", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".gp5", StringComparison.OrdinalIgnoreCase)) continue;
             if (rel.StartsWith("/decrypted/", StringComparison.OrdinalIgnoreCase)) continue;
             if (rel.Equals("/sce_sys/ext_info.dat", StringComparison.OrdinalIgnoreCase)) continue;
@@ -2258,6 +2267,7 @@ internal static class Program
         {
             var name = Path.GetFileName(f);
             var ext = Path.GetExtension(f).ToLowerInvariant();
+            if (FsJunk.PathHasJunk(Path.GetRelativePath(root, f))) continue;
             if (name != "eboot.bin" && ext != ".elf" && ext != ".prx" && ext != ".sprx") continue;
             try
             {

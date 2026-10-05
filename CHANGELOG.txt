@@ -108,6 +108,27 @@ INTEGRATE A PATCH: BACKPORT FILES, AND THE ORIGINALS ARE KEPT
     patch whose files sit beside other folders is refused with the
     reason instead of being copied in.
 
+OS CLUTTER STAYS OUT, EVERYWHERE
+
+  - macOS and Windows leave files behind that are no part of a game:
+    ".DS_Store", "._<name>" AppleDouble files (an exFAT drive gets one for
+    every file that carries an attribute), "__MACOSX" folders from zips,
+    "Thumbs.db", "desktop.ini" and the like. The app already kept them out
+    of every image it packs; now they never travel at all. Every part of
+    the app works from one list of these names.
+  - Unpacking a .zip skips them; after a .rar or .7z is unpacked they are
+    removed before the game is looked at. A folder built into a .pkg is
+    cleaned first, and the package tool leaves them out when it stages
+    the files. A .ffpfsc or .pkg unpacked to a folder comes out without
+    them, and so does a folder copied to temp for a patch.
+  - When a job is done, Move to folder leaves them behind: a copy to
+    another drive skips them, and a move on the same drive drops them
+    from the moved folder. Move to Trash takes the folder as it is.
+  - Fixed: unpacking a container to a folder on an exFAT drive could
+    fail with "No such file or directory: ._<file>". macOS puts such a
+    file beside one the app has just written and takes it away again
+    moments later; the app no longer tries to move it into place.
+
 AN ARCHIVE IS READ AGAIN BEFORE ITS JOB RUNS
 
   - An archive job read its set once, when it was added. A set that was

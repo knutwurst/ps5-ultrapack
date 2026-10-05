@@ -1611,6 +1611,12 @@ class ArchiveExtractor:
             shutil.rmtree(dest, ignore_errors=True)
             raise
         ArchiveExtractor._check_cancel(cancel_event)
+        # Whatever clutter the extractor wrote goes now, before the game root is looked for:
+        # the RAR and 7z readers extract whole, and an exFAT temp drive adds AppleDouble
+        # sidecars of its own.
+        junk = strip_fs_junk(dest)
+        if junk and log_fn:
+            log_fn("INFO", f"Removed {junk} OS clutter file(s)/folder(s) from the extracted archive.")
         if not has_any_files(dest):
             raise RuntimeError(
                 f"Archive extraction produced no files: {archive.name}\n\n"
@@ -1991,7 +1997,9 @@ class ArchiveExtractor:
             return
         pwd_bytes = password.encode() if password else None
         with zipfile.ZipFile(archive, "r") as zf:
-            names = zf.namelist()
+            # Clutter inside the archive (__MACOSX/, ._*, .DS_Store, …) is not written at all.
+            names = [n for n in zf.namelist()
+                     if not any(is_fs_junk_name(part) for part in n.replace("\\", "/").split("/") if part)]
             total = len(names)
             for i, name in enumerate(names):
                 ArchiveExtractor._check_cancel(cancel_event)
@@ -2388,7 +2396,9 @@ class ArchiveExtractor:
         7-Zip prompts for one on an encrypted archive and blocks (with a closed stdin it
         dies with exit 255 'Break signaled'), whereas an empty -p fails cleanly with
         'Wrong password?' — and is a no-op on an unencrypted archive."""
-        cmd = [exe, "x", str(archive), f"-o{dest}", "-y", "-bsp1", f"-p{password}"]
+        cmd = [exe, "x", str(archive), f"-o{dest}", "-y", "-bsp1", f"-p{password}",
+               # OS and archiver clutter is not extracted at all (strip_fs_junk catches the rest).
+               "-xr!._*", "-xr!.DS_Store", "-xr!__MACOSX", "-xr!Thumbs.db", "-xr!desktop.ini"]
         ArchiveExtractor._run_extract_process(
             cmd, os.path.basename(exe), log_fn=log_fn,
             progress_fn=progress_fn, cancel_event=cancel_event)
@@ -2574,21 +2584,57 @@ EXTRA_JUNK_EXTS = {".nfo", ".sfv", ".txt", ".diz", ".url", ".md5", ".sha1",
 # OS/Finder/archiver metadata that must never enter the image OR be copied to the
 # destination. The mkpfs backend filters the same set inside the image
 # (pfs.is_fs_junk); this GUI copy path is a separate process, so it carries its own.
-FS_JUNK_NAMES = {".DS_Store", ".localized", ".VolumeIcon.icns", ".apdisk",
-                 "Thumbs.db", "ehthumbs.db", "desktop.ini",
+# Lower-case, compared case-insensitively. The same list lives in backend/cli.py,
+# backend/after_job.py, backend/mkpfs/utils.py and the fPKG tool (FsJunk.cs); a test keeps
+# them equal.
+FS_JUNK_NAMES = {".ds_store", ".localized", ".lsoverride", ".apdisk", ".volumeicon.icns", "icon\r",
+                 "thumbs.db", "ehthumbs.db", "desktop.ini",
                  # junk DIRECTORIES (so they're never carried as a DLC/extra sibling)
-                 "__MACOSX", ".Spotlight-V100", ".fseventsd", ".Trashes", ".TemporaryItems"}
+                 "__macosx", ".spotlight-v100", ".fseventsd", ".trashes", ".temporaryitems",
+                 ".documentrevisions-v100", ".appledouble", "$recycle.bin", "system volume information"}
 
 
 def is_fs_junk_name(name: str) -> bool:
     """True for macOS/Windows filesystem junk (by basename). '._*' = AppleDouble."""
-    return name in FS_JUNK_NAMES or name.startswith("._")
+    return name.startswith("._") or name.lower() in FS_JUNK_NAMES
+
+
+def strip_fs_junk(root) -> int:
+    """Delete every junk file and folder under *root* (see is_fs_junk_name). Used right
+    after an archive is unpacked, so clutter from inside the archive, or AppleDouble
+    sidecars an exFAT drive added, never reach a job. Returns how many entries went."""
+    root = Path(root)
+    removed = 0
+    if not root.is_dir():
+        return 0
+    for dirpath, dirnames, filenames in os.walk(root, topdown=False):
+        for name in filenames:
+            if is_fs_junk_name(name):
+                try:
+                    os.remove(os.path.join(dirpath, name))
+                    removed += 1
+                except OSError:
+                    pass
+        for name in list(dirnames):
+            if is_fs_junk_name(name):
+                p = os.path.join(dirpath, name)
+                try:
+                    if os.path.islink(p):
+                        os.remove(p)
+                    else:
+                        shutil.rmtree(p)
+                    removed += 1
+                except OSError:
+                    pass
+    return removed
 
 
 # Glob patterns for the dir-copy path (shutil.ignore_patterns) so a copied DLC/extra
 # folder never carries OS/archiver metadata to the destination.
-_COPYTREE_JUNK_GLOBS = ("__MACOSX", ".DS_Store", "._*", ".localized",
-                        ".Spotlight-V100", ".fseventsd", ".Trashes", "Thumbs.db", "desktop.ini")
+_COPYTREE_JUNK_GLOBS = ("._*", ".DS_Store", ".localized", ".LSOverride", ".apdisk", ".VolumeIcon.icns",
+                        "Icon\r", "Thumbs.db", "ehthumbs.db", "desktop.ini", "__MACOSX", ".Spotlight-V100",
+                        ".fseventsd", ".Trashes", ".TemporaryItems", ".DocumentRevisions-V100",
+                        ".AppleDouble", "$RECYCLE.BIN", "System Volume Information")
 
 
 def detect_game_bundle(folder: Path, candidate_passwords=None, log_fn=None, detect_patch=False):
@@ -3173,6 +3219,7 @@ __all__ = [
     "EXTRA_JUNK_EXTS",
     "FS_JUNK_NAMES",
     "is_fs_junk_name",
+    "strip_fs_junk",
     "_COPYTREE_JUNK_GLOBS",
     "detect_game_bundle",
     "scan_parent_for_bundles",

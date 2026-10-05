@@ -940,7 +940,12 @@ def _fully_unwrap(out_dir: Path, mkpfs_cmd_base, mkpfs_cwd) -> None:
                 except Exception:
                     pass
                 for child in list(sub.iterdir()):
-                    shutil.move(str(child), str(out_dir / child.name))
+                    if _is_junk_name(child.name):
+                        continue      # OS clutter; an exFAT sidecar may even vanish meanwhile
+                    try:
+                        shutil.move(str(child), str(out_dir / child.name))
+                    except FileNotFoundError:
+                        continue
             continue
         if len(exf) == 1 and not pfs:
             print(f"[INFO] Unwrapping nested exFAT {exf[0].name} -> folder...", flush=True)
@@ -1171,14 +1176,29 @@ def _phase(name: str) -> None:
 
 # macOS / Windows metadata sidecars that must never be packed into a PFS image.
 # All are OS-generated junk, never game data — safe to delete unconditionally.
+# Lower-case, compared case-insensitively (exFAT and Windows volumes keep no case). One
+# list for the whole app: mkpfs.utils.IGNORED_NAMES, ultra_core.FS_JUNK_NAMES,
+# after_job._JUNK_NAMES and the fPKG tool's FsJunk.cs name the same entries; a test keeps
+# them equal. Nothing on it is ever extracted, copied, moved along or packed.
 _JUNK_FILE_NAMES = frozenset({
-    ".DS_Store", ".localized", ".AppleDouble", ".LSOverride", ".apdisk",
-    ".VolumeIcon.icns", "Thumbs.db", "ehthumbs.db", "desktop.ini",
+    ".ds_store", ".localized", ".lsoverride", ".apdisk", ".volumeicon.icns", "icon\r",
+    "thumbs.db", "ehthumbs.db", "desktop.ini",
 })
 _JUNK_DIR_NAMES = frozenset({
-    "__MACOSX", ".Spotlight-V100", ".Trashes", ".fseventsd", ".TemporaryItems",
-    ".DocumentRevisions-V100", ".AppleDouble",
+    "__macosx", ".spotlight-v100", ".trashes", ".fseventsd", ".temporaryitems",
+    ".documentrevisions-v100", ".appledouble", "$recycle.bin", "system volume information",
 })
+_JUNK_NAMES = _JUNK_FILE_NAMES | _JUNK_DIR_NAMES
+# The same rule for shutil.ignore_patterns (fnmatch is case-sensitive here: the usual spellings).
+_JUNK_GLOBS = ("._*", ".DS_Store", ".localized", ".LSOverride", ".apdisk", ".VolumeIcon.icns", "Icon\r",
+               "Thumbs.db", "ehthumbs.db", "desktop.ini", "__MACOSX", ".Spotlight-V100", ".Trashes",
+               ".fseventsd", ".TemporaryItems", ".DocumentRevisions-V100", ".AppleDouble",
+               "$RECYCLE.BIN", "System Volume Information")
+
+
+def _is_junk_name(name: str) -> bool:
+    """OS or archiver clutter by base name: an AppleDouble sidecar (._*) or a known name."""
+    return name.startswith("._") or name.lower() in _JUNK_NAMES
 
 def _strip_junk_files(root: Path) -> int:
     """Recursively remove macOS/Windows metadata junk from *root* so it never
@@ -1193,15 +1213,22 @@ def _strip_junk_files(root: Path) -> int:
     # topdown=False so we can rmtree junk dirs after their contents are handled.
     for dirpath, dirnames, filenames in os.walk(root, topdown=False):
         for name in filenames:
-            if name.startswith("._") or name in _JUNK_FILE_NAMES:
+            if _is_junk_name(name):
                 try:
                     os.remove(os.path.join(dirpath, name))
                     removed += 1
                 except OSError:
                     pass
         for name in list(dirnames):
-            if name in _JUNK_DIR_NAMES:
-                shutil.rmtree(os.path.join(dirpath, name), ignore_errors=True)
+            if _is_junk_name(name):
+                p = os.path.join(dirpath, name)
+                if os.path.islink(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+                else:
+                    shutil.rmtree(p, ignore_errors=True)
                 removed += 1
     return removed
 
@@ -1309,8 +1336,7 @@ _EXTRA_FILE_EXTS = frozenset({".nfo", ".sfv", ".diz", ".par2"})
 
 def _is_os_junk_name(name: str) -> bool:
     """OS-generated metadata that _strip_junk_files DELETES (never preserved)."""
-    return (name in _JUNK_DIR_NAMES or name in _JUNK_FILE_NAMES
-            or name.startswith("._"))
+    return _is_junk_name(name)
 
 
 def _evacuate_non_game_extras(game_folder: Path, dest_dir: Path) -> int:
@@ -1493,16 +1519,12 @@ def _looks_incompressible(path: Path, *, samples: int = 24, chunk: int = 1 << 20
 
 
 _PATCH_TITLE_RE = re.compile(r'\b(PPSA\d{5}|CUSA\d{5})\b')
-_PATCH_JUNK = ("__MACOSX", ".AppleDouble", ".Spotlight-V100", ".Trashes", ".fseventsd")
-
-
 def _is_wrapper_noise(name: str) -> bool:
     """A file beside a wrapper folder that is not content: an AppleDouble `._*` sidecar (an
     exFAT temp drive gets one for every folder that carries an xattr, right after an archive
     is unpacked there), Finder/Explorer leftovers, our Spotlight marker, or the notes a
     release ships beside its files."""
-    return (name.startswith("._") or name in _JUNK_FILE_NAMES or name == ".metadata_never_index"
-            or bool(_PATCH_NOTES_RE.match(name)))
+    return _is_junk_name(name) or name == ".metadata_never_index" or bool(_PATCH_NOTES_RE.match(name))
 
 
 def _patch_descend_wrapper(root: Path) -> Path:
@@ -1518,7 +1540,7 @@ def _patch_descend_wrapper(root: Path) -> Path:
         except Exception:
             break
         files = [p for p in entries if p.is_file() and not _is_wrapper_noise(p.name)]
-        dirs = [p for p in entries if p.is_dir() and p.name not in _JUNK_DIR_NAMES and p.name not in _PATCH_JUNK]
+        dirs = [p for p in entries if p.is_dir() and not _is_junk_name(p.name)]
         if not files and len(dirs) == 1:
             cur = dirs[0]
         else:
@@ -1647,8 +1669,7 @@ def overlay_patch(game_root: Path, patch_dir: Path, backup_dir: Path | None = No
         if not src.is_file():
             continue
         rel = src.relative_to(src_root)
-        if (rel.name == ".DS_Store" or rel.name in ("Thumbs.db", "desktop.ini")
-                or rel.name.startswith("._") or any(part in _PATCH_JUNK for part in rel.parts)):
+        if any(_is_junk_name(part) for part in rel.parts):
             continue
         if len(rel.parts) == 1 and _PATCH_NOTES_RE.match(rel.name):
             print(f"[INFO] Left out {rel.name}: release notes, not part of the game.", flush=True)
@@ -2017,12 +2038,17 @@ def _extract_archive_into(archive: Path, dest: Path, password: str | None = None
     if suf == ".zip":
         with zipfile.ZipFile(archive) as zf:
             root = dest.resolve()
+            wanted = []
             for member in zf.infolist():
                 try:
                     (dest / member.filename).resolve().relative_to(root)
                 except ValueError:
                     raise RuntimeError(f"ZIP path traversal blocked: {member.filename}")
-            zf.extractall(dest, pwd=password.encode() if password else None)
+                # OS and archiver clutter (__MACOSX/, ._*, .DS_Store, …) is not written at all.
+                if any(_is_junk_name(part) for part in member.filename.replace("\\", "/").split("/") if part):
+                    continue
+                wanted.append(member)
+            zf.extractall(dest, members=wanted, pwd=password.encode() if password else None)
         return
     first = archive
     m = re.match(r"^(?P<b>.*\.part)(?P<n>\d+)(?P<e>\.rar)$", archive.name, re.I)
@@ -2037,6 +2063,8 @@ def _extract_archive_into(archive: Path, dest: Path, password: str | None = None
     from unrar import rarfile  # bundled extractall already guards traversal
     with rarfile.RarFile(first, pwd=password or None) as rf:
         rf.extractall(str(dest))
+    # The RAR reader extracts whole: clutter it wrote goes now, before anything reads the tree.
+    _strip_junk_files(dest)
 
 
 def _resolve_patch_dir(patch_arg: Path, td: Path, password: str | None = None) -> Path:
@@ -2159,6 +2187,7 @@ def _extracted_zip_source(path: Path, *, temp_root=None, password: str | None = 
     with tempfile.TemporaryDirectory(dir=temp_root) as tmpdir:
         try:
             with zipfile.ZipFile(path) as zf:
+                wanted = []
                 for member in zf.infolist():
                     dest = Path(tmpdir) / member.filename
                     try:
@@ -2166,7 +2195,11 @@ def _extracted_zip_source(path: Path, *, temp_root=None, password: str | None = 
                     except ValueError:
                         print(f"[ERROR] ZIP path traversal detected: {member.filename}")
                         sys.exit(1)
-                zf.extractall(tmpdir, pwd=password.encode() if password else None)
+                    # OS and archiver clutter (__MACOSX/, ._*, .DS_Store, …) is not written at all.
+                    if any(_is_junk_name(part) for part in member.filename.replace("\\", "/").split("/") if part):
+                        continue
+                    wanted.append(member)
+                zf.extractall(tmpdir, members=wanted, pwd=password.encode() if password else None)
         except (zipfile.BadZipFile, RuntimeError) as exc:
             print(f"[ERROR] ZIP extraction failed: {exc}")
             sys.exit(1)
@@ -2738,6 +2771,7 @@ def main() -> None:
             if rc != 0:
                 print(f"\n[ERROR] fPKG extract failed (rc={rc}).", flush=True); sys.exit(1)
             _bar(100, "extract inner PFS + CNT metadata")
+            _strip_junk_files(out_dir)   # clutter inside a foreign package stays out of the folder
             print(f"[OK] Extraction complete: {out_dir}", flush=True)
             print("\n[SUCCESS] fPKG extracted.", flush=True)
             return
@@ -2782,6 +2816,12 @@ def main() -> None:
                     build_src = staged
             elif src.is_dir():
                 build_src = src
+                # The same rule as the folder pack: the tool stages the folder as it is, so OS
+                # clutter goes before it is staged (and never into the package).
+                _n = _strip_junk_files(build_src)
+                if _n:
+                    print(f"[INFO] Removed {_n} macOS/Windows junk file(s)/folder(s) before building the package.",
+                          flush=True)
             else:
                 print(f"[ERROR] fPKG source must be a game folder or a .ffpfsc/.ffpfs/.exfat/.ffpkg image: {src}",
                       flush=True); sys.exit(1)
@@ -3047,7 +3087,7 @@ def main() -> None:
                 else:
                     print("[INFO] Copying the game folder to temp before patching (source untouched)...", flush=True)
                     game_copy = td / "_game"
-                    shutil.copytree(game_folder, game_copy)
+                    shutil.copytree(game_folder, game_copy, ignore=shutil.ignore_patterns(*_JUNK_GLOBS))
                     game_root = _patch_find_game_root(game_copy)
                     temp_game_dir = game_copy
             else:
@@ -3128,6 +3168,7 @@ def main() -> None:
             # yields a folder regardless of how the image was packed.
             if getattr(args, "unwrap", True):
                 _fully_unwrap(current_output_dir, mkpfs_cmd_base, mkpfs_cwd)
+            _strip_junk_files(current_output_dir)   # clutter inside a foreign image stays out of the folder
         print("\n[SUCCESS] All operations completed successfully!")
         return
 

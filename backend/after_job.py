@@ -51,8 +51,11 @@ def size_of(paths: Iterable[Path]) -> int:
             if p.is_file():
                 total += p.stat().st_size
             elif p.is_dir():
-                for dp, _dn, fns in os.walk(p):
+                for dp, dns, fns in os.walk(p):
+                    dns[:] = [d for d in dns if not _is_junk(d)]
                     for fn in fns:
+                        if _is_junk(fn):
+                            continue
                         fp = os.path.join(dp, fn)
                         try:
                             if not os.path.islink(fp):
@@ -107,7 +110,15 @@ def refusal(sources: list, *, output=None, dest=None, protected: Iterable = (),
 # Files a release ships next to the game that may go with it when Delete removes the game.
 SIDECAR_SUFFIXES = frozenset({".nfo", ".sfv", ".txt", ".md5", ".sha1", ".sha256", ".diz", ".url",
                               ".jpg", ".jpeg", ".png", ".gif", ".webp"})
-_JUNK_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini", "Icon\r"})
+# OS clutter, lower-case, compared case-insensitively; the same list as backend/cli.py,
+# ultra_core.py and mkpfs/utils.py (a test keeps them equal). Never copied or moved along
+# with a source, never counted, and not what keeps a folder from being empty.
+_JUNK_NAMES = frozenset({
+    ".ds_store", ".localized", ".lsoverride", ".apdisk", ".volumeicon.icns", "icon\r",
+    "thumbs.db", "ehthumbs.db", "desktop.ini",
+    "__macosx", ".spotlight-v100", ".trashes", ".fseventsd", ".temporaryitems",
+    ".documentrevisions-v100", ".appledouble", "$recycle.bin", "system volume information",
+})
 _HOME_DIRS = ("Downloads", "Desktop", "Documents", "Movies", "Music", "Pictures", "Library", "Public")
 
 
@@ -116,7 +127,32 @@ def _norm(text: str) -> str:
 
 
 def _is_junk(name: str) -> bool:
-    return name in _JUNK_NAMES or name.startswith("._")
+    return name.startswith("._") or name.lower() in _JUNK_NAMES
+
+
+def _strip_junk(root: Path) -> int:
+    """Delete the OS clutter under *root* (a folder the job moved). Returns how many went."""
+    removed = 0
+    for dp, dns, fns in os.walk(root, topdown=False):
+        for fn in fns:
+            if _is_junk(fn):
+                try:
+                    os.remove(os.path.join(dp, fn))
+                    removed += 1
+                except OSError:
+                    pass
+        for dn in dns:
+            if _is_junk(dn):
+                p = os.path.join(dp, dn)
+                try:
+                    if os.path.islink(p):
+                        os.remove(p)
+                    else:
+                        shutil.rmtree(p)
+                    removed += 1
+                except OSError:
+                    pass
+    return removed
 
 
 def _is_protected_dir(folder: Path, protected: Iterable = ()) -> bool:
@@ -255,6 +291,8 @@ def apply(action: str, sources: list, *, dest=None,
         for s, t in zip(sources, targets):
             if same(s, dest):
                 os.rename(s, t)
+                if t.is_dir() and not t.is_symlink():
+                    _strip_junk(t)                      # the folder arrives without OS clutter
                 tick(size_of([t]))
             else:
                 _copy_then_remove(s, t, tick)
@@ -334,6 +372,8 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
             dst.mkdir()
             for dp, dns, fns in os.walk(src):
                 rel = Path(dp).relative_to(src)
+                dns[:] = [d for d in dns if not _is_junk(d)]      # OS clutter is left behind
+                fns = [f for f in fns if not _is_junk(f)]
                 for d in dns:
                     sd, td = Path(dp) / d, dst / rel / d
                     if sd.is_symlink():

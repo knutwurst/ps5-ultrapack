@@ -25,13 +25,6 @@ internal static class AmprIndex
 {
     public const string FileName = "ampr_emu.index";
 
-    static readonly HashSet<string> IgnoredNames = new(StringComparer.Ordinal)
-    {
-        ".ds_store", ".spotlight-v100", ".trashes", ".fseventsd", ".temporaryitems",
-        ".documentrevisions-v100", ".apdisk", "__macosx", ".volumeicon.icns",
-        "thumbs.db", "ehthumbs.db", "desktop.ini", "$recycle.bin", "system volume information",
-    };
-
     /// <summary>sce_sys files a package build must not index: the builder never packs
     /// ext_info.dat, and it (re)creates the PlayGo set and the license at package time, so their
     /// final bytes are not known when the index is written. Leaving them out makes the index
@@ -44,8 +37,7 @@ internal static class AmprIndex
         "/app0/sce_sys/playgo-hash-table.dat", "/app0/sce_sys/playgo-manifest.xml",
     };
 
-    static bool IsIgnored(string name) =>
-        name.StartsWith("._", StringComparison.Ordinal) || IgnoredNames.Contains(name.ToLowerInvariant());
+    static bool IsIgnored(string name) => FsJunk.IsJunkName(name);
 
     static byte[] Key(string path)
     {

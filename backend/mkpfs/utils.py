@@ -23,6 +23,10 @@ IGNORED_NAMES: frozenset[str] = frozenset(
         ".apdisk",
         "__macosx",
         ".volumeicon.icns",
+        ".localized",
+        ".appledouble",
+        ".lsoverride",
+        "icon\r",
         # Windows
         "thumbs.db",
         "ehthumbs.db",
