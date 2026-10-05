@@ -2073,6 +2073,7 @@ class CLIWorker(threading.Thread):
         self._is_fpkg = self._is_fpkg_build or self._is_fpkg_extract or _chain_to == "pkg"
         self._weights, self._stage_order = self._pick_weights(cmd)
         self._is_copy = False
+        self.patch_backup = ""        # the originals a patch replaced, staged by the backend
         self.validate_failed = False   # the .pkg checklist reported failures: the source stays
         # Highest whole-job progress sent so far: the queue bar never moves backward.
         self._overall_sent = 0.0
@@ -2550,6 +2551,9 @@ class CLIWorker(threading.Thread):
         # at each step. Force the stage so the display advances even when the new
         # stage ranks "earlier" than the current one (the no-regress guard assumes
         # one forward pack sequence; a patch extracts first, then packs).
+        if line.startswith("[PATCH-BACKUP] "):
+            self.patch_backup = line[len("[PATCH-BACKUP] "):].strip()
+            return
         if line == "[JOB] copy":
             self._is_copy = True
             self._weights, self._stage_order = self.COPY_WEIGHTS, self._COPY_ORDER
@@ -4172,6 +4176,12 @@ class JobDialog(EmbeddedDialog):
         patch = self.patch_var.get().strip() if self.patch_on_var.get() else ""
         if self.patch_on_var.get() and not (patch and Path(patch).exists()):
             messagebox.showerror("Patch", "Choose the patch folder or archive to integrate.", parent=self); return
+        if patch and self._kind != "parent":
+            verdict, why = self.app._patch_fit(p, Path(patch))
+            if verdict == "refuse":
+                messagebox.showerror("Patch", why, parent=self); return
+            if verdict == "warn" and not messagebox.askyesno("Patch", why + "\n\nAdd the job anyway?", parent=self):
+                return
         target = self.backport_target_var.get() if self.backport_on_var.get() else None
         glibs = (self.app.backport_libs_var.get() or "").strip() if target else ""
         if glibs and not Path(glibs).is_dir():
@@ -8404,6 +8414,47 @@ class App:
             pass
         return ""
 
+    @staticmethod
+    def _param_bytes_of(path: Path, passwords) -> bytes | None:
+        """The game's param.json from a folder (the shallowest one) or a ZIP / RAR read alone."""
+        try:
+            if path.is_dir():
+                hits = sorted(path.rglob("sce_sys/param.json"), key=lambda q: len(q.parts))
+                return hits[0].read_bytes() if hits else None
+            if path.suffix.lower() in (".zip", ".rar") or re.match(r"^\.r\d{2,}$", path.suffix.lower()):
+                return ArchiveExtractor.read_game_param(path, passwords)
+        except Exception:
+            return None
+        return None
+
+    def _patch_fit(self, source: Path, patch: Path) -> tuple[str, str]:
+        """("refuse" | "warn" | "ok", why) for integrating *patch* into the game at *source*:
+        another title id is refused; a backport (a lower SDK than the game's) made for
+        another version is a warning. "ok" when either param.json cannot be read cheaply;
+        the backend checks again when the job runs."""
+        pw = [p.strip() for p in (load_settings().get("archive_passwords") or []) if str(p).strip()]
+        try:
+            g = json.loads(self._param_bytes_of(source, pw) or b"{}")
+            pt = json.loads(self._param_bytes_of(patch, pw) or b"{}")
+        except Exception:
+            return "ok", ""
+        gtid, ptid = str(g.get("titleId") or "").upper(), str(pt.get("titleId") or "").upper()
+        if gtid and ptid and gtid != ptid:
+            return "refuse", f"This patch is for {ptid}, but the game is {gtid}."
+
+        def num(v):
+            try:
+                t = str(v).strip()
+                return int(t, 16) if t.lower().startswith("0x") else int(t)
+            except Exception:
+                return None
+        gsdk, psdk = num(g.get("sdkVersion")), num(pt.get("sdkVersion"))
+        gver, pver = str(g.get("contentVersion") or ""), str(pt.get("contentVersion") or "")
+        if gsdk and psdk and psdk < gsdk and gver and pver and gver != pver:
+            return "warn", (f"This patch is a backport made for version {pver}, but the game is version {gver}. "
+                            f"A backport usually works only with the version it was made for.")
+        return "ok", ""
+
     def _patch_fw(self, patch: Path) -> str | None:
         """The firmware a patch's own eboot.bin needs. None when the patch carries no
         eboot.bin (the game keeps its own), '' when it has one this cannot read."""
@@ -8428,9 +8479,22 @@ class App:
                             return f.read(n)
                         words = bp.sdk_words_from_reader(read, info.file_size)
                     return bp.sdk_firmware(words[0]) if words else ""
+            if patch.suffix.lower() == ".rar" or re.match(r"^\.r\d{2,}$", patch.suffix.lower()):
+                cache = self.__dict__.setdefault("_patch_fw_cache", {})
+                key = (str(patch), patch.stat().st_mtime_ns)
+                if key not in cache:
+                    pw = [p.strip() for p in (load_settings().get("archive_passwords") or []) if str(p).strip()]
+                    names = ArchiveExtractor.list_members(patch, pw)
+                    if not any(n.rsplit("/", 1)[-1] == "eboot.bin" for n in names):
+                        cache[key] = None
+                    else:
+                        data = ArchiveExtractor.read_shallowest(patch, "eboot.bin", pw)
+                        words = bp.sdk_words_from_reader(lambda o, n, d=data: d[o:o + n], len(data)) if data else None
+                        cache[key] = bp.sdk_firmware(words[0]) if words else ""
+                return cache[key]
         except Exception:
             return ""
-        return ""                              # .rar / .7z: not read before the build
+        return ""                              # .7z: not read before the build
 
     def _job_fw(self, item, source_fw: str) -> str:
         """The firmware the job's OUTPUT needs: the source's, unless an integrated patch
@@ -8543,6 +8607,8 @@ class App:
             if not parent.is_dir():
                 return None
             known_fw = bool(self._FW_TAG.search(target.stem))
+            if not known_fw and getattr(item, "patch_source", None):
+                return None          # a patch may change the firmware (a backport): never guess
             want = self._FW_TAG.sub("", target.stem)
             ceiling = None if known_fw else self._backport_ceiling(item)
             for f in parent.iterdir():
@@ -11480,6 +11546,70 @@ class App:
         import types as _t
         self._run_after_job(item, _t.SimpleNamespace(output_path=str(hit), _is_copy=False, validate_failed=False), after)
 
+    def _publish_patch_backup(self, item, worker, then) -> None:
+        """A patched job is done: move the folder of original files the patch replaced (with
+        its README) from the temp drive to beside the output, then call *then*. Runs on a
+        worker thread; the queue waits for it like for the after-job action."""
+        staged = self._staged_patch_backup(worker)
+        out = (getattr(worker, "output_path", "") or "").strip('"') if worker is not None else ""
+        if staged is None or not out:
+            then(); return
+        out_p = Path(out)
+        dest_dir = out_p.parent                  # beside the file (or the output folder)
+        dest = dest_dir / staged.name
+        n = 2
+        while dest.exists():
+            dest = dest_dir / f"{staged.name} ({n})"
+            n += 1
+        results = queue.Queue()
+
+        def work():
+            try:
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(staged), str(dest))
+                if staged.parent.name.startswith("patch-backup-"):
+                    shutil.rmtree(staged.parent, ignore_errors=True)
+                results.put(("INFO", f"Kept the original files the patch replaced, with a README, in {dest}."))
+            except Exception as e:
+                results.put(("WARN", f"The original files the patch replaced could not be moved beside the "
+                                     f"output ({e}); they are still in {staged}."))
+            results.put(None)
+
+        def poll():
+            try:
+                while True:
+                    m = results.get_nowait()
+                    if m is None:
+                        then(); return
+                    self.log(*m)
+            except queue.Empty:
+                self.root.after(200, poll)
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(200, poll)
+
+    @staticmethod
+    def _staged_patch_backup(worker) -> Path | None:
+        """The folder the backend staged a patch's originals in, only when it is exactly
+        that: an absolute path to an existing folder inside a 'patch-backup-…' folder under
+        the app's _ffpfsc_temp scratch. Anything else (an empty line read as '.', a
+        stray path) is never moved or removed."""
+        raw = str(getattr(worker, "patch_backup", "") or "").strip() if worker is not None else ""
+        if not raw:
+            return None
+        p = Path(raw)
+        if (not p.is_absolute() or not p.parent.name.startswith("patch-backup-")
+                or "_ffpfsc_temp" not in p.parts or not p.is_dir()):
+            return None
+        return p
+
+    def _drop_patch_backup(self, worker) -> None:
+        """A failed or cancelled job: its staged originals are not needed."""
+        p = self._staged_patch_backup(worker)
+        if p is not None:
+            shutil.rmtree(p.parent, ignore_errors=True)
+        if worker is not None and getattr(worker, "patch_backup", ""):
+            worker.patch_backup = ""
+
     def _notify_job(self, item, ok: bool, detail: str = "") -> None:
         if self.notify_var.get() != "job" or item is None:
             return
@@ -12595,11 +12725,14 @@ class App:
                             if self.summary_popup_var.get() and not quitting:
                                 self.show_summary_popup()
 
-                # What the job says happens to its source (keep, Trash, move, delete), then on.
-                if completed_item is not None:
-                    self._run_after_job(completed_item, _done_worker, _advance)
-                else:
-                    _advance()
+                # The originals a patch replaced go beside the output, then what the job says
+                # happens to its source (keep, Trash, move, delete), then on.
+                def _after_backup():
+                    if completed_item is not None:
+                        self._run_after_job(completed_item, _done_worker, _advance)
+                    else:
+                        _advance()
+                self._publish_patch_backup(completed_item, _done_worker, _after_backup)
 
             elif self.cancel_requested or self.extract_cancel_event.is_set():
                 # A user cancel surfaces here as a failed result — treat it as a cancel,
@@ -12609,6 +12742,7 @@ class App:
                 self._batch_running = False
                 self.cancel_requested = False
                 self.extract_cancel_event.clear()
+                self._drop_patch_backup(self.worker)
                 if completed_item is not None:
                     keep = self._extract_is_complete(completed_item)
                     self._cleanup_after_failure(completed_item, keep_source=keep)
@@ -12635,6 +12769,7 @@ class App:
                 self.status_update("Failed", msg, "Failed", 0, 0, "—", "—", "—")
                 self.log("ERROR", msg)
                 self.play_complete_sound(False)
+                self._drop_patch_backup(self.worker)
                 self._notify_job(completed_item, False, msg)
                 if completed_item is not None:
                     # A finished extraction stays, as after a cancel: Edit and Retry run the

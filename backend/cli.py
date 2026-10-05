@@ -30,6 +30,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import time
 import zipfile
 import zlib
 from pathlib import Path
@@ -1538,11 +1539,89 @@ def _patch_dir_title_id(d: Path) -> str:
     return m.group(1).upper() if m else ""
 
 
-def overlay_patch(game_root: Path, patch_dir: Path) -> int:
+# Notes a release puts beside a patch's files (top level only): not part of the game.
+_PATCH_NOTES_RE = re.compile(r"^(readme.*|sha\d*sums?(\..*)?|.*\.(nfo|sfv|md5|sha1|sha256|diz|url))$", re.I)
+
+
+def _param_json_of(root: Path) -> dict:
+    try:
+        return json.loads((root / "sce_sys" / "param.json").read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return {}
+
+
+def _param_int(value) -> int | None:
+    try:
+        text = str(value).strip()
+        return int(text, 16) if text.lower().startswith("0x") else int(text)
+    except Exception:
+        return None
+
+
+def patch_brings_ampr(patch_dir: Path) -> bool:
+    """True when the patch ships its own AMPR emulator (fakelib/libSceAmpr.sprx). That
+    emulator builds its index itself; an index from the game's dump does not belong to it."""
+    return (_patch_descend_wrapper(patch_dir) / "fakelib" / "libSceAmpr.sprx").is_file()
+
+
+def check_patch_fits(game_root: Path, patch_root: Path) -> None:
+    """Refuse a patch for another game (title id). A backport (a patch whose SDK is lower
+    than the game's) only fits the version it was made for: warn when the versions differ."""
+    gp, pp = _param_json_of(game_root), _param_json_of(patch_root)
+    gtid = str(gp.get("titleId") or _patch_dir_title_id(game_root) or "").upper()
+    ptid = str(pp.get("titleId") or "").upper()
+    if gtid and ptid and gtid != ptid:
+        raise RuntimeError(f"the patch is for {ptid}, the game is {gtid}: not applied")
+    gsdk, psdk = _param_int(gp.get("sdkVersion")), _param_int(pp.get("sdkVersion"))
+    gver, pver = str(gp.get("contentVersion") or ""), str(pp.get("contentVersion") or "")
+    if gsdk and psdk and psdk < gsdk and gver and pver and gver != pver:
+        print(f"[WARN] This patch is a backport made for version {pver}; the game is {gver}. A backport "
+              f"usually works only with the version it was made for.", flush=True)
+
+
+def new_patch_backup(scratch_root: Path, patch_name: str) -> Path:
+    """A folder for the game's files a patch replaces or removes, named after the patch.
+    Staged on the temp drive; the app moves it beside the output once the job is done."""
+    stage = Path(tempfile.mkdtemp(prefix="patch-backup-", dir=str(scratch_root)))
+    stem = re.sub(r"\.(zip|rar|7z)$", "", Path(patch_name).name, flags=re.I)
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", f"Original files - {stem}").strip(" .") or "Original files"
+    return stage / name[:200]
+
+
+def _write_patch_backup_readme(backup_dir: Path, patch_name: str, game: dict, done: dict) -> None:
+    title = (game.get("localizedParameters") or {}).get((game.get("localizedParameters") or {}).get(
+        "defaultLanguage", "en-US"), {}).get("titleName", "") if isinstance(game.get("localizedParameters"), dict) else ""
+    lines = [
+        f"Original files of {title or 'the game'} [{game.get('titleId', '?')}] v{game.get('contentVersion', '?')},",
+        f"from before this patch was integrated: {patch_name}",
+        f"Built by PS5 UltraPack on {time.strftime('%Y-%m-%d %H:%M')}.",
+        "",
+        "The folder app0/ holds every file of the game that the patch replaced or removed, at its",
+        "path inside the game. To get the unpatched game back: unpack the built image or package to",
+        "a folder, copy everything in app0/ back over it, delete the files listed under \"Added by",
+        "the patch\", and pack it again.",
+        "",
+    ]
+    for key, head in (("replaced", "Replaced by the patch"), ("removed", "Removed for the patch"),
+                      ("added", "Added by the patch")):
+        items = done.get(key) or []
+        lines.append(f"{head} ({len(items)}):")
+        lines += [f"  {r}" for r in items] or ["  (none)"]
+        lines.append("")
+    (backup_dir / "README.txt").write_text("\n".join(lines), encoding="utf-8")
+
+
+def overlay_patch(game_root: Path, patch_dir: Path, backup_dir: Path | None = None, patch_name: str = "") -> int:
     """Copy every file from the patch onto the game at matching relative paths,
-    overwriting existing files and adding new ones. Skips OS/archiver junk. Returns
-    the number of files applied."""
+    overwriting existing files and adding new ones. Skips OS/archiver junk and the notes a
+    release puts beside the files. Refuses a patch for another game. When the patch brings
+    its own AMPR emulator, the game's old ampr_emu.index is removed (the emulator builds a
+    fresh one). With *backup_dir*, every file it replaces or removes is kept there first
+    (under app0/), with a README naming the patch. Returns the number of files applied."""
     src_root = _patch_descend_wrapper(patch_dir)
+    check_patch_fits(game_root, src_root)
+    game_param = _param_json_of(game_root)
+    done = {"replaced": [], "removed": [], "added": []}
     count = 0
     for src in sorted(src_root.rglob("*")):
         if not src.is_file():
@@ -1551,13 +1630,44 @@ def overlay_patch(game_root: Path, patch_dir: Path) -> int:
         if (rel.name == ".DS_Store" or rel.name in ("Thumbs.db", "desktop.ini")
                 or rel.name.startswith("._") or any(part in _PATCH_JUNK for part in rel.parts)):
             continue
+        if len(rel.parts) == 1 and _PATCH_NOTES_RE.match(rel.name):
+            print(f"[INFO] Left out {rel.name}: release notes, not part of the game.", flush=True)
+            continue
         dst = game_root / rel
         try:
+            if dst.is_file():
+                if backup_dir is not None:
+                    keep = backup_dir / "app0" / rel
+                    keep.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(dst, keep)
+                done["replaced"].append(rel.as_posix())
+            else:
+                done["added"].append(rel.as_posix())
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
             count += 1
         except Exception as e:
             print(f"[WARN] Could not apply patch file {rel}: {e}", flush=True)
+    if patch_brings_ampr(patch_dir):
+        for name in ("ampr_emu.index", "ampr_emu.index.tmp"):
+            stale = game_root / name
+            if stale.is_file():
+                if backup_dir is not None:
+                    (backup_dir / "app0").mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(stale), str(backup_dir / "app0" / name))
+                else:
+                    stale.unlink()
+                done["removed"].append(name)
+                print(f"[INFO] Removed the game's {name}: the patch brings its own AMPR emulator, "
+                      f"which builds a fresh index.", flush=True)
+    if backup_dir is not None and (done["replaced"] or done["removed"]):
+        _write_patch_backup_readme(backup_dir, patch_name or Path(patch_dir).name, game_param, done)
+        print(f"[INFO] Kept {len(done['replaced']) + len(done['removed'])} original file(s) the patch replaced "
+              f"or removed; they go beside the output when the job is done.", flush=True)
+        print(f"[PATCH-BACKUP] {backup_dir}", flush=True)
+    elif backup_dir is not None:
+        shutil.rmtree(backup_dir.parent if backup_dir.parent.name.startswith("patch-backup-") else backup_dir,
+                      ignore_errors=True)
     return count
 
 
@@ -1999,7 +2109,9 @@ def _chain_transforms(root: Path, args, scratch_root: Path) -> list[str]:
         td = Path(tempfile.mkdtemp(prefix="chain-patch-", dir=str(scratch_root)))
         try:
             patch_dir = _resolve_patch_dir(patch_arg, td, args.password)
-            applied = overlay_patch(root, patch_dir)
+            applied = overlay_patch(root, patch_dir, new_patch_backup(scratch_root, patch_arg.name), patch_arg.name)
+            if patch_brings_ampr(patch_dir):
+                args._no_ampr_index = True          # its emulator builds the index itself
         finally:
             shutil.rmtree(td, ignore_errors=True)
         if applied == 0:
@@ -2727,7 +2839,7 @@ def main() -> None:
                                  hdr_flag=args.fpkg_hdr_flag,
                                  regen_playgo=bool(args.fpkg_regen_playgo),
                                  fake_sign=not args.fpkg_no_fake_sign,
-                                 ampr_index=not args.fpkg_no_ampr_index,
+                                 ampr_index=not (args.fpkg_no_ampr_index or getattr(args, "_no_ampr_index", False)),
                                  on_line=_gui_line)
             finally:
                 shutil.rmtree(build_temp, ignore_errors=True)
@@ -2922,19 +3034,17 @@ def main() -> None:
                 print(f"[ERROR] Patch game must be a folder or a .ffpfsc: {game_folder}")
                 sys.exit(1)
 
-            applied = overlay_patch(game_root, patch_dir)
+            try:
+                _bk_root = Path(user_temp) / "_ffpfsc_temp"
+                _bk_root.mkdir(parents=True, exist_ok=True)
+                applied = overlay_patch(game_root, patch_dir, new_patch_backup(_bk_root, patch_arg.name), patch_arg.name)
+            except RuntimeError as e:
+                print(f"[ERROR] {e}", flush=True)
+                sys.exit(1)
             print(f"[OK] Applied {applied} patch file(s) onto the game.", flush=True)
             if applied == 0:
                 print("[ERROR] The patch contained no files to overlay — nothing to do.")
                 sys.exit(1)
-            try:
-                gtid = _patch_dir_title_id(game_root)
-                ptid = _patch_dir_title_id(_patch_descend_wrapper(patch_dir))
-                if gtid and ptid and gtid != ptid:
-                    print(f"[WARN] Patch title id {ptid} differs from the game {gtid} — packing anyway.", flush=True)
-            except Exception:
-                pass
-
             title_id = _patch_dir_title_id(game_root) or "patched"
             with tempfile.TemporaryDirectory(dir=user_temp) as td2:
                 temp_pfs = Path(td2) / f"{title_id}.ffpfs"

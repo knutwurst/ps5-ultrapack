@@ -1161,6 +1161,54 @@ try:
            and (_rd / "[site]-PPSA00016").is_dir(), f"extract={len(_ext_calls)} {_bj.status}")
     finally:
         m.ArchiveExtractor.probe_header_state = _real_probe2
+    # integrating a patch: it must fit the game; a patched job's output name never guesses the
+    # firmware; the originals it replaced go beside the output on success and are dropped otherwise
+    def _pj(d, tid, ver, sdk):
+        (d / "sce_sys").mkdir(parents=True, exist_ok=True)
+        (d / "sce_sys" / "param.json").write_text(json.dumps({"titleId": tid, "contentVersion": ver, "sdkVersion": sdk}))
+        return d
+    _pg = _pj(S / "pfit" / "game", "PPSA00021", "01.300.300", "0x0C000000")
+    _fit = [app._patch_fit(_pg, _pj(S / "pfit" / "p1" / "wrap", "PPSA00099", "01.300.300", "0x04030000"))[0],
+            app._patch_fit(_pg, _pj(S / "pfit" / "p2" / "wrap", "PPSA00021", "01.200.000", "0x04030000"))[0],
+            app._patch_fit(_pg, _pj(S / "pfit" / "p3" / "wrap", "PPSA00021", "01.300.300", "0x04030000"))[0],
+            app._patch_fit(_pg, _pj(S / "pfit" / "p4" / "wrap", "PPSA00021", "01.400.000", "0x0C000000"))[0]]
+    ok("patch.fit-refuse-warn-ok", _fit == ["refuse", "warn", "ok", "ok"], str(_fit))
+    _pt = _aout / "fwp" / "Example Quest [PPSA00021] [v01.300].ffpfsc"; _pt.parent.mkdir(parents=True, exist_ok=True)
+    (_pt.parent / "Example Quest [PPSA00021] [v01.300] [fw12.00].ffpfsc").write_bytes(b"x")
+    _pjob = m.GameItem.from_chain(HBT, to="ffpfsc"); _pjob.patch_source = str(S / "pfit" / "p3")
+    ok("patch.unknown-fw-needs-exact-name", app._existing_output(_pt, _pjob) is None
+       and app._existing_output(_pt, m.GameItem.from_chain(HBT, to="ffpfsc")) is not None, "")
+    _pw0 = m.CLIWorker(app, _pjob, ["py", "cli.py", str(HBT), str(OUT), "--to", "ffpfsc", "--patch", "x"],
+                       _pcwd, _pout, _ptmp)
+    _pw0._handle_line("[PATCH-BACKUP] /tmp/x/Original files - P")
+    ok("patch.worker-reads-backup-line", _pw0.patch_backup == "/tmp/x/Original files - P", _pw0.patch_backup)
+    _stg = S / "temp" / "_ffpfsc_temp" / "patch-backup-t1" / "Original files - Example_backport"
+    (_stg / "app0").mkdir(parents=True, exist_ok=True)
+    (_stg / "app0" / "eboot.bin").write_bytes(b"old"); (_stg / "README.txt").write_text("readme")
+    _pout_f = _aout / "pb" / "Example Quest [PPSA00021] [v01.300] [fw4.03].ffpfsc"
+    _pout_f.parent.mkdir(parents=True, exist_ok=True); _pout_f.write_bytes(b"x")
+    # never anything else: no backup line, an empty one ('.'), a relative path, a folder outside the scratch
+    _guard_dir = S / "not_scratch" / "patch-backup-x" / "Original files - Y"; _guard_dir.mkdir(parents=True)
+    _cwd_before = sorted(os.listdir("."))
+    _guard_calls = []
+    for _val in (None, "", ".", "relative/dir", str(_guard_dir)):
+        _gw = _fake_worker(_pout_f)
+        if _val is not None:
+            _gw.patch_backup = _val
+        app._publish_patch_backup(_pjob, _gw, lambda: _guard_calls.append(1))
+        app._drop_patch_backup(_gw)
+    ok("patch.backup-never-touches-anything-else", len(_guard_calls) == 5 and _guard_dir.is_dir()
+       and sorted(os.listdir(".")) == _cwd_before, f"{len(_guard_calls)} {_guard_dir.is_dir()}")
+    _pbw = _fake_worker(_pout_f); _pbw.patch_backup = str(_stg); _went2 = []
+    app._publish_patch_backup(_pjob, _pbw, lambda: _went2.append(1))
+    pump(lambda: bool(_went2), timeout=10.0)
+    _dest = _pout_f.parent / "Original files - Example_backport"
+    ok("patch.backup-beside-output", _went2 == [1] and (_dest / "app0" / "eboot.bin").is_file()
+       and (_dest / "README.txt").is_file() and not _stg.parent.exists(), str(sorted(x.name for x in _pout_f.parent.iterdir())))
+    _stg2 = S / "temp" / "_ffpfsc_temp" / "patch-backup-t2" / "Original files - X"; _stg2.mkdir(parents=True)
+    _dw = _fake_worker(_pout_f); _dw.patch_backup = str(_stg2)
+    app._drop_patch_backup(_dw)
+    ok("patch.backup-dropped-on-failure", not _stg2.parent.exists() and _dw.patch_backup == "", "")
     app.queue[:] = [_j1]
     _card = app._card_info_text(_j1)
     ok("after.card-row", _card.get("After", "").startswith("Delete the source"), _card.get("After", ""))

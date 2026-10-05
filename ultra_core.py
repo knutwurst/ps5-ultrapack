@@ -1700,6 +1700,12 @@ class ArchiveExtractor:
         beside it sits deeper). ZIP always; RAR and 7z only when they are not solid,
         because there one member costs decompressing everything before it. None when it
         cannot be read that cheaply, or the archive holds no param.json (a .pkg inside)."""
+        return ArchiveExtractor.read_shallowest(archive, "sce_sys/param.json", passwords)
+
+    @staticmethod
+    def read_shallowest(archive: Path, tail: str, passwords=None) -> bytes | None:
+        """The shallowest member of *archive* whose path ends in *tail* ("eboot.bin",
+        "sce_sys/param.json"), read alone; the same rules as read_game_param."""
         archive = Path(archive)
         if re.match(r"^\.r\d{2,}$", archive.suffix.lower()) or archive.suffix.lower() == ".rar":
             archive = ArchiveExtractor._first_volume(archive)
@@ -1708,7 +1714,8 @@ class ArchiveExtractor:
             return None
         pwds = [p.strip() for p in (passwords or []) if p and p.strip()]
         names = ArchiveExtractor.list_members(archive, pwds)
-        hits = sorted((n for n in names if n.lower().rstrip("/").endswith("sce_sys/param.json")),
+        want = tail.lower()
+        hits = sorted((n for n in names if n.lower().rstrip("/") == want or n.lower().rstrip("/").endswith("/" + want)),
                       key=lambda n: (n.count("/"), len(n)))
         if not hits:
             return None

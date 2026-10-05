@@ -65,6 +65,29 @@ WHAT HAPPENS WHEN A JOB IS DONE
   - The finished-job checkboxes (show the result, remove from the queue,
     open the output folder, sounds) moved into the same section.
 
+INTEGRATE A PATCH: BACKPORT FILES, AND THE ORIGINALS ARE KEPT
+
+  - Ready-made backport files (a .zip or .rar with a patched eboot.bin,
+    modules, fakelib/ and param.json in one folder) go in through
+    Integrate a patch. When the patch brings its own AMPR emulator
+    (fakelib/libSceAmpr.sprx), the game's old ampr_emu.index is taken
+    out, and a .pkg gets no new one: that emulator builds its index
+    itself. A README, checksums or .nfo beside the patch's files stay
+    out of the game.
+  - Every file the patch replaces or takes out is kept: a folder
+    "Original files - <patch name>" next to the built file holds them
+    at their path in the game, with a README that names the patch and
+    lists what was replaced, removed and added, so the unpatched game
+    can be put back together. The folder appears when the job is done;
+    a failed or stopped job leaves nothing.
+  - A patch for another game is refused, in Add job when both games
+    can be read, and when the job runs. A backport made for another
+    version of the game gets a warning.
+  - A .rar patch's eboot.bin is read for the firmware tag too. While a
+    patch's firmware is unknown, only a file with exactly the job's
+    name counts as its output already being there, so a backport is
+    never mistaken for the build that is there already.
+
 AN ARCHIVE IS READ AGAIN BEFORE ITS JOB RUNS
 
   - An archive job read its set once, when it was added. A set that was
