@@ -96,7 +96,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 # For archive sources, the GUI extraction occupies the first slice of a game's overall
 # progress; the worker's pack progress is compressed into the remaining tail so the
 # whole-game percentage stays monotonic across extraction → pack (see CLIWorker._set_stage
@@ -8791,7 +8791,7 @@ class App:
             st = str(getattr(item, "status", "") or "")
             state = ("running" if running else "done" if st == "Done" else "failed" if st == "Failed"
                      else "skipped" if st in ("Skipped", "Cancelled")
-                     else "waiting" if st in ("Pending Extract", "Extracting") else "queued")
+                     else "waiting" if st == "Extracting" else "queued")
             if shows_extracted_size(item):
                 size_txt = f"~{format_size(display_size(item))}"
             elif getattr(item, "size", 0):
@@ -8805,7 +8805,7 @@ class App:
             if tid and tid not in str(disp):
                 sub = f"{tid}   ·   {sub}"
             chip = (f"{int(self._cur_job_pct)}%" if running else
-                    {"Pending": "Queued", "Pending Extract": "Waiting"}.get(st, st or "Queued"))
+                    {"Pending": "Queued", "Pending Extract": "Queued"}.get(st, st or "Queued"))
             rows.append({"text": line, "title": str(disp), "subtitle": sub, "state": state, "chip": chip,
                          "progress": (max(0.0, min(1.0, self._cur_job_pct / 100.0)) if running else None)})
 

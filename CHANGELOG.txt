@@ -3,7 +3,19 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.1.0  (current)
+  v2.1.1  (current)
+────────────────────────────────────────────────────────────────────────
+
+ONE BADGE FOR EVERY JOB THAT WAITS
+
+  - A job whose source is an archive showed a yellow "Waiting" badge
+    while every other job waiting for its turn showed a grey "Queued".
+    Since the queue extracts an archive when its job comes up, both
+    wait the same way; both now show "Queued". Yellow is left to
+    "Extracting", when an archive is actually being unpacked.
+
+────────────────────────────────────────────────────────────────────────
+  v2.1.0
 ────────────────────────────────────────────────────────────────────────
 
 THE PACKAGE BUILDER MOVES TO LIBPROSPEROPKG BUILD d7090eb6
