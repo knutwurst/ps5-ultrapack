@@ -162,6 +162,7 @@ ICONS: dict[str, list[tuple]] = {
     "plus": [("l", 12, 5, 12, 19), ("l", 5, 12, 19, 12)],
     "play": [("pf", 8.5, 6.5, 18, 12, 8.5, 17.5)],
     "stop": [("rf", 6.5, 6.5, 17.5, 17.5, 2.5)],
+    "pause": [("rf", 7, 6, 10.5, 18, 1.5), ("rf", 13.5, 6, 17, 18, 1.5)],
     "sidebar-right": [("r", 3, 5, 21, 19, 2.5), ("l", 14.5, 5, 14.5, 19)],
     "x": [("l", 6.5, 6.5, 17.5, 17.5), ("l", 17.5, 6.5, 6.5, 17.5)],
     "check-circle": [("c", 12, 12, 9), ("l", 8, 12.5, 11, 15.3, 16.2, 9.3)],
@@ -549,8 +550,8 @@ class IconButton(tk.Canvas):
         self.bind("<ButtonPress-1>", lambda e: self._set(pressed=True))
         self.bind("<ButtonRelease-1>", self._release)
         on_resize(self, self._draw)
-        if tooltip:
-            Tooltip(self, kit, tooltip, side=tooltip_side or ("right" if variant == "nav" else "below"))
+        self.tooltip = (Tooltip(self, kit, tooltip, side=tooltip_side or ("right" if variant == "nav" else "below"))
+                        if tooltip else None)
         self._resize()
         self._draw()
 

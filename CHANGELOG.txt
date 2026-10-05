@@ -6,6 +6,20 @@
   v2.1.1  (current)
 ────────────────────────────────────────────────────────────────────────
 
+PAUSE AFTER THE RUNNING JOB
+
+  - While the queue runs, Pause sits next to Stop (also in the menu:
+    Pause After This Job). The running job finishes completely,
+    unpacking, building and what happens after it included, then the
+    queue stops before the next job. The jobs left stay queued; Start
+    runs them.
+  - Until the job is done the button reads Continue and the progress
+    line says "pauses after this job"; Continue takes the pause back.
+  - A pause is not the end of the queue: no sleep, no quit, no summary.
+    With notifications on, a banner says how many jobs are left. When
+    the paused job was the last one, the queue ends as usual.
+  - Stop still cancels the running job at once.
+
 WHAT HAPPENS WHEN A JOB IS DONE
 
   - Settings › General › When a job is done › Source: Keep, Move to

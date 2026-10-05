@@ -5331,14 +5331,17 @@ class App:
         self.start_btn = self._small(btns, "Start", "play", self.start, variant="primary",
                                      tooltip=f"Run the jobs from the top  {SHORTCUT['start']}")
         self.start_btn.grid(row=0, column=3)
-        # While the queue runs, Stop takes Start's place, so stopping works with the details closed.
+        # While the queue runs, Pause and Stop take Start's place, so both work with the details closed.
+        self.pause_btn = self._small(btns, "Pause", "pause", self.toggle_pause, tooltip=self._PAUSE_TIPS[False])
+        self.pause_btn.grid(row=0, column=3, padx=(0, 6))
+        self.pause_btn.grid_remove()
         self.stop_btn = self._small(btns, "Stop", "stop", self.cancel, variant="danger",
                                     tooltip=f"Cancel the running job and stop the queue  {SHORTCUT['stop']}")
-        self.stop_btn.grid(row=0, column=3)
+        self.stop_btn.grid(row=0, column=4)
         self.stop_btn.grid_remove()
         self._details_btn = self._small(btns, "", "sidebar-right", self.toggle_inspector,
                                         tooltip=f"Show or hide the details  {SHORTCUT['details']}")
-        self._details_btn.grid(row=0, column=4, padx=(8, 0))
+        self._details_btn.grid(row=0, column=5, padx=(8, 0))
         self._q_head, self._q_title = head, head.grid_slaves(row=0, column=0)[0]
         head.bind("<Configure>", self._fit_queue_header, add="+")
         self.queue_listbox = QueueList(
@@ -5432,7 +5435,7 @@ class App:
                 return
             full = self.queue_total_var.get()
             short = full.split("  ·  ")[0]         # "3 jobs" without the size, as a last step
-            run = self.stop_btn if self.stop_btn.winfo_ismapped() else self.start_btn
+            run = [self.pause_btn, self.stop_btn] if self.stop_btn.winfo_ismapped() else [self.start_btn]
             for sub, clear_t, rescan_t, add_t in (
                     (full, "Clear completed", "Rescan", "Add job"),
                     (full, "Clear completed", "", "Add job"),
@@ -5449,7 +5452,7 @@ class App:
                     self._add_btn.configure(text=add_t)
                 title_w = max(w.winfo_reqwidth() for w in self._q_title.winfo_children())
                 need = sum(b.winfo_reqwidth() for b in (self._clear_btn, self._rescan_btn,
-                                                       self._add_btn, run, self._details_btn)) + 20
+                                                       self._add_btn, *run, self._details_btn)) + 20 + 6 * (len(run) - 1)
                 if title_w + 16 + need <= width:
                     break
         except Exception:
@@ -5657,17 +5660,67 @@ class App:
             return
         self._run_ui_shown = running
         try:
+            self._pause_requested = False        # a pause belongs to the run it was asked in
+            self._show_pause_state()
             if running:
                 self._progress_box.grid()
                 self.start_btn.grid_remove()
+                self.pause_btn.configure(state="normal")
+                self.pause_btn.grid()
                 self.stop_btn.configure(state="normal")
                 self.stop_btn.grid()
             else:
                 self._progress_box.grid_remove()
+                self.pause_btn.grid_remove()
                 self.stop_btn.grid_remove()
                 self.start_btn.grid()
         except Exception:
             pass
+
+    # ── pause after the running job ───────────────────────────────────────────
+    _PAUSE_TIPS = {False: "Pause the queue once the running job is done; Start runs the rest",
+                   True: "Keep running the queue after this job"}
+
+    def toggle_pause(self):
+        """Pause after the running job, or take that back. The running job always finishes
+        (unpacking, building, what happens after it); the queue then stops before the next."""
+        if not self._batch_running:
+            return
+        self._pause_requested = not getattr(self, "_pause_requested", False)
+        self._show_pause_state()
+        self._update_batch_counter()
+        self.log("INFO", "The queue pauses once the running job is done." if self._pause_requested
+                 else "The queue keeps running after this job.")
+
+    def _show_pause_state(self):
+        p = bool(getattr(self, "_pause_requested", False))
+        btn = getattr(self, "pause_btn", None)
+        if btn is not None:
+            btn.configure(text="Continue" if p else "Pause", icon="play" if p else "pause")
+            if btn.tooltip is not None:
+                btn.tooltip.text = self._PAUSE_TIPS[p]
+        menu, idx = getattr(self, "_queue_menu", None), getattr(self, "_pause_menu_index", None)
+        if menu is not None and idx is not None:
+            try:
+                menu.entryconfigure(idx, label="Keep Running After This Job" if p else "Pause After This Job")
+            except Exception:
+                pass
+
+    def _pause_queue(self) -> None:
+        """The running job is done and a pause was asked for: the queue stops here. It is not
+        the queue's end, so no sleep, no quit and no summary; the jobs left stay queued."""
+        left = sum(1 for it in self.queue if getattr(it, "status", "") not in self._TERMINAL_STATUSES)
+        jobs = f"{left} job{'' if left == 1 else 's'}"
+        self._pause_requested = False
+        self._batch_running = False
+        self.start_btn.configure(state="normal")
+        self.cancel_btn.configure(state="disabled")
+        self._update_batch_counter()
+        self.update_queue_box()
+        self.status_update("Paused", f"{jobs} left. Start runs them.", "Ready", 0, 0, "00:00", "—", "—")
+        self.log("INFO", f"Queue paused after the running job: {jobs} left. Start runs them.")
+        if self.notify_var.get() in ("job", "queue"):
+            _after_job_module().notify("PS5 UltraPack", f"Queue paused: {jobs} left")
 
     def _sync_primary_action(self):
         """One primary button: Add job while the queue is empty, Start once it has jobs.
@@ -5951,6 +6004,8 @@ class App:
         fm.add_command(label="Organize…", command=guard(self.organize_folder_dialog))
         fm.add_separator()
         fm.add_command(label="Start Queue", accelerator=ACCEL["start"], command=guard(self.start))
+        fm.add_command(label="Pause After This Job", command=self.toggle_pause)
+        self._queue_menu, self._pause_menu_index = fm, fm.index("end")
         fm.add_command(label="Stop Queue", accelerator=ACCEL["stop"], command=self._stop_if_running)
         fm.add_command(label="Clear Completed Jobs", command=guard(lambda: self.clear_jobs("done")))
         fm.add_separator()
@@ -10638,6 +10693,8 @@ class App:
         if frac is not None:
             extra += f"  ·  {int(frac * 100)} % of all" + (f", {self._fmt_left(eta)}" if eta is not None else "")
         line = f"Job {current} of {self._batch_total}{extra}"
+        if getattr(self, "_pause_requested", False):
+            line += "  ·  pauses after this job"
         if self.batch_counter_var.get() != line:
             self.batch_counter_var.set(line)
 
@@ -11308,6 +11365,12 @@ class App:
                 return
             self.log("WARN", "Cleanup still running past the wait cap — continuing; the space gate decides.")
         self._cleanup_wait_ticks = 0
+        # Pause asked for: stop before the next job. The job in progress coming back here
+        # (after its archive was unpacked, an out-of-memory retry) is not the next job.
+        if (getattr(self, "_pause_requested", False) and self._next_pending() is not None
+                and self._next_pending() is not getattr(self, "_active_item", None)):
+            self._pause_queue()
+            return
         # The next job that has not run, in list order (finished jobs keep their places).
         # When none remain, the batch is complete — failed/skipped items stay in the queue.
         if self._next_pending() is None:

@@ -1267,6 +1267,38 @@ try:
     app._countdown = None
     app._queue_finished()
     ok("after.queue-end-nothing", getattr(app, "_countdown", None) is None, "")
+    # pause after the running job: the job in progress coming back goes on; a finished job
+    # pauses the queue before the next one, without the queue's end; the last job ends it
+    _pa1 = m.GameItem.from_chain(HBT, to="ffpfsc"); _pa1.status = "Done"
+    _pa2 = m.GameItem.from_chain(HBT, to="ffpfsc"); _pa2_st = _pa2.status
+    _due_seen, _qf_seen = [], []
+    _real_due, _real_qf, _notify0 = app._due_checks, app._queue_finished, app.notify_var.get()
+    app._due_checks = lambda it: (_due_seen.append(it), False)[1]
+    app._queue_finished = lambda: _qf_seen.append(1)
+    app.notify_var.set("off")
+    # earlier checks may still have a scratch reclaim running in its thread: the run would wait for it
+    _inflight0 = getattr(app, "_cleanup_inflight", 0)
+    app._cleanup_inflight = 0; app.cancel_requested = False; app.extract_cancel_event.clear()
+    try:
+        app.queue[:] = [_pa1, _pa2]; app._active_item = _pa1
+        app._batch_running = True; app._pause_requested = True
+        app._batch_auto_start()
+        ok("pause.stops-before-the-next-job", not _due_seen and not app._batch_running and not app._pause_requested
+           and _pa2.status == _pa2_st and not _qf_seen and app.start_btn._state == "normal",
+           f"due={len(_due_seen)} running={app._batch_running} qf={_qf_seen} {_pa2.status}")
+        app.queue[:] = [_pa2]; app._active_item = _pa2
+        app._batch_running = True; app._pause_requested = True
+        app._batch_auto_start()
+        ok("pause.job-in-progress-goes-on", _due_seen == [_pa2] and app._pause_requested, f"{len(_due_seen)}")
+        app.queue[:] = [_pa1]; app._active_item = _pa1; app._batch_total = 1
+        app._batch_running = True; app._pause_requested = True
+        app._batch_auto_start()
+        ok("pause.last-job-ends-the-queue", _qf_seen == [1] and not app._batch_running, str(_qf_seen))
+    finally:
+        app._due_checks, app._queue_finished = _real_due, _real_qf
+        app.notify_var.set(_notify0); app._cleanup_inflight = _inflight0
+        app._batch_running = False; app._pause_requested = False
+        app.queue[:] = []; app._active_item = None
     # clear all keeps the running job
     _r1 = m.GameItem.from_chain(HBT, to="ffpfsc"); _r2 = m.GameItem.from_chain(HBT, to="ffpfsc"); _r2.status = "Done"
     app.queue[:] = [_r1, _r2]; app._batch_running = True; app._active_item = _r1
@@ -2026,8 +2058,20 @@ try:
         ok("wire.header.stop-while-running", app.stop_btn.winfo_manager() == "grid" and app.start_btn.winfo_manager() == ""
            and app.stop_btn._command == app.cancel and app.stop_btn._state == "normal",
            f"stop={app.stop_btn.winfo_manager()!r} start={app.start_btn.winfo_manager()!r}")
+        ok("wire.header.pause-while-running", app.pause_btn.winfo_manager() == "grid"
+           and app.pause_btn._command == app.toggle_pause and app.pause_btn._text == "Pause", app.pause_btn._text)
+        app.pause_btn.invoke(); root.update()
+        ok("wire.header.pause-armed", app._pause_requested and app.pause_btn._text == "Continue"
+           and "pauses after this job" in app.batch_counter_var.get()
+           and app._queue_menu.entrycget(app._pause_menu_index, "label") == "Keep Running After This Job",
+           f"{app.pause_btn._text} | {app.batch_counter_var.get()}")
+        app.pause_btn.invoke(); root.update()
+        ok("wire.header.pause-taken-back", not app._pause_requested and app.pause_btn._text == "Pause"
+           and "pauses" not in app.batch_counter_var.get(), app.batch_counter_var.get())
+        app.pause_btn.invoke(); root.update()              # armed when the run ends: the next run starts clean
         app._batch_running = False; app._sync_run_ui(); root.update()
-        ok("wire.header.start-when-idle", app.start_btn.winfo_manager() == "grid" and app.stop_btn.winfo_manager() == "", "")
+        ok("wire.header.start-when-idle", app.start_btn.winfo_manager() == "grid" and app.stop_btn.winfo_manager() == ""
+           and app.pause_btn.winfo_manager() == "" and not app._pause_requested and app.pause_btn._text == "Pause", "")
 
         # the job card and its actions
         _select(1)
