@@ -39,6 +39,21 @@ WHAT HAPPENS WHEN A JOB IS DONE
   - The finished-job checkboxes (show the result, remove from the queue,
     open the output folder, sounds) moved into the same section.
 
+AN ARCHIVE IS READ AGAIN BEFORE ITS JOB RUNS
+
+  - An archive job read its set once, when it was added. A set that was
+    still downloading then kept the size of the parts that were there
+    (one part of nine, 10 GB instead of 88 GB, unpacked size unknown),
+    and the drive placement, the space check and the queue all worked
+    with that. Right before the job runs, the app now reads the set
+    again when it changed or its unpacked size is still unknown: the
+    parts, their size on disk, and the unpacked size from the headers
+    (with the saved passwords).
+  - A set that cannot be read then, for example because a part is
+    still missing, is not unpacked by half: the job fails with the
+    reason and the queue goes on. Retry runs it once the set is
+    complete.
+
 A COPY KEEPS ITS SOURCE
 
   - A job with nothing to change (a .pkg to a .pkg, a .ffpfsc to a

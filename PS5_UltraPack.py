@@ -10950,6 +10950,70 @@ class App:
             item.kept_extract = False
             self._cleanup_item_extract(item)
 
+    def _refresh_archive_set(self, item) -> bool:
+        """Right before an archive job runs: the parts of its set, their size on disk, and
+        the unpacked size from the headers, read again when the set changed since the job
+        was added or that size is still unknown. A set that cannot be read (a part missing,
+        damaged) fails the job with that reason instead of unpacking half of it. False when
+        the job was taken out of this run; the queue goes on with the next one."""
+        arc = getattr(item, "archive_path", None)
+        if not arc or getattr(item, "kept_extract", False):
+            return True
+        first = Path(arc)
+        name = getattr(item, "display_name", None) or item.name
+        parts = archive_set_parts(first)
+        on_disk = sum((p.stat().st_size for p in parts if p.exists()), 0)
+        old_size = int(getattr(item, "size", 0) or 0)
+        changed = bool(on_disk) and on_disk != old_size
+        if changed:
+            self.log("INFO", f"{name}: the archive set is now {len(parts)} part(s), {format_size(on_disk)} on disk "
+                             f"(it was {format_size(old_size)} when the job was added).")
+            item.size = on_disk
+        if not changed and int(getattr(item, "extracted_size", 0) or 0) > 0 and not getattr(item, "archive_problem", ""):
+            return True
+        self.status_update("Reading", f"Reading the headers of {first.name}…", "Scanning Files", 0, 0,
+                           "00:00", "—", "—", side=True)
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+        saved = [p.strip() for p in (load_settings().get("archive_passwords") or []) if str(p).strip()]
+        cands = ([item.password] if getattr(item, "password", None) else []) + saved
+        try:
+            state, hdr, problem = ArchiveExtractor.probe_header_state(first, cands)
+        except Exception as e:
+            state, hdr, problem = "unknown", 0, str(e)
+        if state == "open":
+            item.header_locked, item.archive_problem = False, ""
+            real = ArchiveExtractor.plausible_extracted_size(hdr, on_disk or old_size)
+            if real and real != int(getattr(item, "extracted_size", 0) or 0):
+                self.log("INFO", f"{name}: unpacks to {format_size(real)} (read from the archive's headers).")
+                item.extracted_size = real
+            self.update_queue_box()
+            return True
+        if state == "locked":
+            item.header_locked = True            # the extraction step asks for the password
+            return True
+        if state == "damaged":
+            item.archive_problem = problem
+            note = f"The archive cannot be read: {problem}"
+            self._ensure_batch_started()        # the jobs after this one still run
+            self._retire_failed(item, "Failed", note)
+            self.log("ERROR", f"{name}: not started. {note}. Once the set is complete, Retry runs it.")
+            self._batch_failed += 1
+            self._update_batch_counter()
+            self.update_queue_box()
+            if self._has_pending():
+                self.root.after(600, self._batch_auto_start)
+            else:
+                self._batch_running = False
+                self.start_btn.configure(state="normal")
+                self.cancel_btn.configure(state="disabled")
+                self.status_update("Ready", f"Not started: {note}", "Ready", 0, 0, "00:00", "—", "—")
+                self._queue_finished()
+            return False
+        return True                              # unknown: the extraction step reports what it finds
+
     def _rearm_from_archive(self, item) -> bool:
         """A job whose source was extracted from an archive, when that extracted copy is gone
         (a failed or cancelled run cleans it up): point it back at the archive, so the next
@@ -11467,6 +11531,11 @@ class App:
             self.cancel_btn.configure(state="disabled")
             return
         item = self._pick_next()
+
+        # An archive's set may have changed since the job was added (a download that was
+        # still running): read it again, so placement and the space gate use real numbers.
+        if not self._refresh_archive_set(item):
+            return
 
         # ── Pre-flight space gate FIRST — place the run on a drive sized for its real
         #    footprint and decide go/skip/cancel BEFORE any extraction or packing, so a

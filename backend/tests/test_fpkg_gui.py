@@ -1070,6 +1070,32 @@ try:
     app._apply_output_choice(_jn, _near, "skip")
     pump(lambda: not app.__dict__.get("_after_skip_q"), timeout=5.0)
     ok("after.skipped-near-match-keeps-source", _gn.is_dir() and _jn.status == "Skipped", _jn.status)
+    # an archive set read again right before its job runs: grown since it was added, unchanged, incomplete
+    _rs = S / "after_src" / "Grow"; _rs.mkdir(parents=True, exist_ok=True)
+    _rp = [_rs / f"Big.part{i}.rar" for i in (1, 2, 3)]
+    for _p in _rp:
+        _p.write_bytes(b"R" * 100)
+    _probe_calls = []
+    _real_probe = m.ArchiveExtractor.probe_header_state
+    _answer = ["open", 5000, ""]
+    m.ArchiveExtractor.probe_header_state = staticmethod(
+        lambda arc, pw=None: (_probe_calls.append(arc), tuple(_answer))[1])
+    try:
+        _ra = m.GameItem.from_archive(_rp[0]); _ra.size, _ra.extracted_size = 100, 0   # as added: one part
+        app.queue[:] = [_ra]; _probe_calls.clear()
+        _go = app._refresh_archive_set(_ra)
+        ok("refresh.grown-set-read-again", _go and _ra.size == 300 and _ra.extracted_size == 5000 and _probe_calls,
+           f"{_go} size={_ra.size} ex={_ra.extracted_size} probes={len(_probe_calls)}")
+        _probe_calls.clear()
+        ok("refresh.unchanged-set-not-probed", app._refresh_archive_set(_ra) and not _probe_calls, str(_probe_calls))
+        _answer[:] = ["damaged", 0, "1 part of the set is missing (Big.part4.rar)"]
+        _ra.size = 100                                          # looks changed again → probed → damaged
+        _go2 = app._refresh_archive_set(_ra)
+        pump(lambda: not app._batch_running, timeout=3.0)
+        ok("refresh.incomplete-set-fails-with-reason", _go2 is False and _ra.status == "Failed"
+           and "missing" in _ra.status_note, f"{_go2} {_ra.status} {_ra.status_note!r}")
+    finally:
+        m.ArchiveExtractor.probe_header_state = _real_probe
     app.queue[:] = [_j1]
     _card = app._card_info_text(_j1)
     ok("after.card-row", _card.get("After", "").startswith("Delete the source"), _card.get("After", ""))
