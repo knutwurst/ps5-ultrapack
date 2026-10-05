@@ -8515,19 +8515,46 @@ class App:
         except Exception:
             return None
 
-    def _existing_output(self, target: Path) -> Path | None:
-        """A file already at *target*, or beside it under the same name with another
-        firmware tag (before an archive is unpacked the tag is not known yet)."""
+    def _backport_ceiling(self, item) -> str | None:
+        """The firmware a backport job lowers to ("7.61", …), else None."""
+        bt = getattr(item, "backport_target", None) if item is not None else None
+        if not is_backport_target(bt):
+            return None
+        try:
+            bp = _backport_module()
+            return bp.sdk_firmware(bp.SDK_TARGETS["10.xx"][0]) if bt == "10.xx" else str(bt)
+        except Exception:
+            return None
+
+    def _existing_output(self, target: Path, item=None) -> Path | None:
+        """The file in the output folder that is this job's output already: same title,
+        version and format. When the job knows the firmware its output needs, the name says
+        so ([fwN.NN]) and only that file, or one from before firmware tags existed, counts.
+        When it does not know it yet (an archive before it is unpacked), the tag does not
+        count, except that a backport job wants a file at or below its target."""
         try:
             if target.exists():
                 return target
             parent = target.parent
             if not parent.is_dir():
                 return None
+            known_fw = bool(self._FW_TAG.search(target.stem))
             want = self._FW_TAG.sub("", target.stem)
+            ceiling = None if known_fw else self._backport_ceiling(item)
             for f in parent.iterdir():
-                if f.suffix.lower() == target.suffix.lower() and self._FW_TAG.sub("", f.stem) == want:
-                    return f
+                if f.suffix.lower() != target.suffix.lower() or self._FW_TAG.sub("", f.stem) != want:
+                    continue
+                tag = re.search(r"\[fw([\d.x]+)\]$", f.stem, re.I)
+                if known_fw and tag:
+                    continue                     # another firmware: another build
+                if ceiling and tag:
+                    try:
+                        bp = _backport_module()
+                        if bp._fw_key(tag.group(1)) > bp._fw_key(ceiling):
+                            continue             # the build before the backport
+                    except ValueError:
+                        pass
+                return f
         except OSError:
             return None
         return None
@@ -8541,10 +8568,10 @@ class App:
         return v if v in self.OUTPUT_EXISTS_CHOICES else "skip"
 
     def _check_existing_outputs(self) -> bool:
-        """Before a fresh start: which jobs would write a file that is already there? The
-        rule in Settings decides (skip by default); with Ask, one window lists them all,
-        before anything is unpacked. The answer also covers a job whose output only shows
-        after its archive is unpacked. False on Cancel."""
+        """Before a fresh start. Each job checks its own output when it is due (before its
+        archive is unpacked when the game is readable, else right after). With Ask, one
+        window here lists the outputs already known to be there, and its answer is the rule
+        for this run. False on Cancel."""
         self._output_policy = None if self._output_rule() == "ask" else self._output_rule()
         conflicts = []
         for it in self.queue:
@@ -8552,25 +8579,23 @@ class App:
                 continue
             it._replace_output = False
             it._keep_both = False
+            it._output_checked = False
+            if self._output_policy:
+                continue
             try:
                 target = self._predicted_output(it)
             except Exception:
                 target = None
-            it._output_checked = target is not None
-            it._predicted_target = target
-            hit = self._existing_output(target) if target is not None else None
+            hit = self._existing_output(target, it) if target is not None else None
             if hit is not None:
                 conflicts.append((it, hit))
         if not conflicts:
             return True
-        choice = self._output_policy or self._ask_existing_outputs(conflicts)
+        choice = self._ask_existing_outputs(conflicts)
         if choice == "cancel":
             self.log("INFO", "Start cancelled: outputs already there.")
             return False
         self._output_policy = choice
-        for it, hit in conflicts:
-            self._apply_output_choice(it, hit, choice)
-        self.update_queue_box()
         return True
 
     def _ask_existing_outputs(self, conflicts) -> str:
@@ -8591,14 +8616,7 @@ class App:
         elif choice == "keep":
             item._keep_both = True
             self.log("INFO", f"{name}: {hit.name} is already there; the new build gets a numbered name beside it.")
-        else:
-            self._retire_failed(item, "Skipped", f"Its output is already there: {hit}")
-            self.log("INFO", f"{name}: skipped, its output is already there: {hit}")
-            # one after another, so two moves never share a drive
-            pend = self.__dict__.setdefault("_after_skip_q", [])
-            pend.append((item, hit, getattr(item, "_predicted_target", None)))
-            if len(pend) == 1:
-                self._drain_after_skips()
+
 
     def _late_output_check(self, item) -> str:
         """Right before a job's backend starts (an archive has been unpacked by now): its
@@ -8607,12 +8625,14 @@ class App:
         if (getattr(item, "_output_checked", False) or getattr(item, "_replace_output", False)
                 or getattr(item, "_keep_both", False)):
             return "proceed"
-        item._output_checked = True
         try:
             target = self._predicted_output(item)
         except Exception:
             target = None
-        hit = self._existing_output(target) if target is not None else None
+        if target is None:
+            return "proceed"                     # known once the archive is unpacked: asked again then
+        item._output_checked = True
+        hit = self._existing_output(target, item)
         if hit is None:
             return "proceed"
         rule = self._output_rule()
@@ -8658,23 +8678,24 @@ class App:
         """A running batch skips *item* after its archive was unpacked: it leaves this run
         (not counted as a failure), the scratch it wrote is reclaimed, the batch goes on."""
         self._cleanup_after_failure(item)
-        target = predicted = None
+        hit = None
         try:
             predicted = self._predicted_output(item)
-            target = self._existing_output(predicted)
+            hit = self._existing_output(predicted, item) if predicted is not None else None
         except Exception:
             pass
-        note = f"Its output is already there: {target}" if target else (hit_note or "Its output is already there.")
-        self._retire_failed(item, "Skipped", note)
-        self.log("INFO", f"{getattr(item, 'display_name', None) or item.name}: skipped, {note[0].lower() + note[1:]}")
-        if target is not None:
-            self._after_skipped(item, target, predicted, then=self._skip_late_advance)
-        else:
+
+        def finish(done: bool):
+            if self._batch_running:
+                if done:
+                    self._batch_done += 1
+                else:
+                    self._batch_total = max(0, self._batch_total - 1)
             self._skip_late_advance()
+        self._settle_existing(item, hit, hit_note, then=finish)
 
     def _skip_late_advance(self) -> None:
         if self._batch_running:
-            self._batch_total = max(0, self._batch_total - 1)
             self._update_batch_counter()
             self.update_queue_box()
             if self._has_pending():
@@ -9169,7 +9190,7 @@ class App:
         status = {"Pending Extract": "Queued; the archive is extracted when its turn comes",
                   "Pending": "Queued"}.get(status, status)
         note = str(getattr(item, "status_note", "") or "").strip()
-        if note and status in ("Failed", "Skipped", "Cancelled"):
+        if note and status in ("Failed", "Skipped", "Cancelled", "Done"):
             status = f"{status}: {note}"
         if getattr(item, "kept_extract", False):
             status += "; the extracted copy is kept, so Start goes on from it (removing the job deletes it)"
@@ -10615,7 +10636,7 @@ class App:
         tid = str(getattr(item, "title_id", "") or getattr(item, "archive_title_id", "") or "").strip().upper()
         return tid if tid.startswith(("PPSA", "CUSA")) else ""
 
-    def _known_signatures(self) -> tuple[set[str], set[str]]:
+    def _known_signatures(self, include_history: bool = True) -> tuple[set[str], set[str]]:
         """What Rescan matches a new source against: (resolved source paths, title ids).
         Each entry comes from the queue (any status) or from the history, so a job that
         is already queued, is done, failed, was skipped or ran in an earlier session is
@@ -10643,7 +10664,7 @@ class App:
             if tid:
                 tids.add(tid)
         try:
-            for row in load_history() or []:
+            for row in (load_history() or []) if include_history else []:
                 for field in ("source", "origin_archive", "input", "output"):
                     k = self._source_key(row.get(field))
                     if k:
@@ -10709,8 +10730,12 @@ class App:
                                            "then Rescan reuses those for new sources in the same folder.")
             return
 
-        known_paths, known_tids = self._known_signatures()
-        out_root = (tpl.get("output") or "").strip() or None
+        cleanup = tpl.get("after_source") in ("trash", "move", "delete")
+        # With a clean-up chosen, a game already in the output folder or the history is
+        # queued anyway: when its turn comes its source is moved (or trashed, deleted) and
+        # the job is Done. Only what is in the queue already is left out.
+        known_paths, known_tids = self._known_signatures(include_history=not cleanup)
+        out_root = None if cleanup else ((tpl.get("output") or "").strip() or None)
         self.log("INFO", f"Rescan: looking for new sources in {folder}…")
         self.status_update("Scanning", f"Rescan: reading {folder}…", "Scanning Files",
                            0, 0, "00:00", "—", "—", side=True)
@@ -11287,10 +11312,12 @@ class App:
             act, srcs, dest, why = self._after_job_plan(item, worker)
         except Exception as e:
             act, srcs, dest, why = "error", [], None, str(e)
+        item._after_result = ("keep", "")
         if act == aj.KEEP:
             then(); return
         name = getattr(item, "display_name", None) or item.name
         if why:
+            item._after_result = ("refused", why)
             self.log("WARN", f"After the job: the source of {name} stays where it is: {why}.")
             then(); return
         size = aj.size_of(srcs)
@@ -11313,12 +11340,16 @@ class App:
                 if act == aj.TRASH:
                     msg = (f"Moved the source of {name} to the Trash ({format_size(size)}; it frees the space once "
                            f"the Trash is emptied): {names}.")
+                    item._after_result = ("done", "the source was moved to the Trash.")
                 elif act == aj.MOVE:
                     msg = f"Moved the source of {name} to {dest}: " + ", ".join(Path(w).name for w in where) + "."
+                    item._after_result = ("done", f"the source was moved to {dest}.")
                 else:
                     msg = f"Deleted the source of {name} ({format_size(size)} freed): {names}."
+                    item._after_result = ("done", "the source was deleted.")
                 results.put(("SUCCESS", msg))
             except Exception as e:
+                item._after_result = ("failed", str(e))
                 results.put(("WARN", f"After the job: {name}: {e}. Whatever was not handled stays where it is."))
             results.put(None)
 
@@ -11339,38 +11370,35 @@ class App:
         threading.Thread(target=work, daemon=True).start()
         self.root.after(200, poll)
 
-    def _drain_after_skips(self) -> None:
-        pend = self.__dict__.setdefault("_after_skip_q", [])
-        if not pend:
-            return
-        item, hit, target = pend[0]
-
-        def next_one():
-            if pend:
-                pend.pop(0)
-            self._drain_after_skips()
-        self._after_skipped(item, hit, target, then=next_one)
-
-    def _after_skipped(self, item, hit, target, then=None) -> None:
-        """*item* was skipped because its output is already there. When the file there is
-        exactly the one the job would write (same format, same name with its firmware tag),
-        the job is as good as Done for its source: the after-action runs. A near match (another
-        firmware tag, e.g. a different backport) keeps the source."""
-        then = then or (lambda: None)
+    def _settle_existing(self, item, hit, hit_note: str = "", then=None) -> None:
+        """*item*'s output is already there (*hit*). With Move/Trash/Delete chosen, the source
+        gets that now and the job is Done, as if it had run; with Keep, or when the action
+        cannot run, it is Skipped. then(done) moves the queue on."""
+        then = then or (lambda done: None)
+        name = getattr(item, "display_name", None) or item.name
         item._output_there = True
-        try:
-            exact = target is not None and hit is not None and Path(hit) == Path(target) and Path(hit).stat().st_size > 0
-        except OSError:
-            exact = False
+        note = f"Its output is already there: {hit}" if hit else (hit_note or "Its output is already there.")
+        self._retire_failed(item, "Skipped", note)
         act = getattr(item, "after_source", None) or "keep"
-        if act == "keep":
-            then(); return
-        if not exact:
-            self.log("INFO", f"{getattr(item, 'display_name', None) or item.name}: the source stays, the file there "
-                             f"({Path(hit).name if hit else '?'}) is not exactly the one this job would write.")
-            then(); return
+        if hit is None or act == "keep":
+            self.log("INFO", f"{name}: skipped, {note[0].lower() + note[1:]}")
+            then(False); return
+
+        def after():
+            res = getattr(item, "_after_result", None) or ("failed", "")
+            if res[0] == "done":
+                self._retire_failed(item, "Done", f"Its output was already there ({Path(hit).name}); {res[1]}")
+                self.log("SUCCESS", f"{name}: its output was already there; {res[1]} Marked Done.")
+                if self.auto_remove_done_var.get() and item in self.queue:
+                    self.queue.remove(item)
+                self.update_queue_box()
+                then(True)
+            else:
+                self._retire_failed(item, "Skipped", f"{note}; the source stays: {res[1]}")
+                self.update_queue_box()
+                then(False)
         import types as _t
-        self._run_after_job(item, _t.SimpleNamespace(output_path=str(hit), _is_copy=False, validate_failed=False), then)
+        self._run_after_job(item, _t.SimpleNamespace(output_path=str(hit), _is_copy=False, validate_failed=False), after)
 
     def _notify_job(self, item, ok: bool, detail: str = "") -> None:
         if self.notify_var.get() != "job" or item is None:
@@ -11535,6 +11563,20 @@ class App:
         # An archive's set may have changed since the job was added (a download that was
         # still running): read it again, so placement and the space gate use real numbers.
         if not self._refresh_archive_set(item):
+            return
+        # Its output already there? Checked now, before an archive is unpacked, when the
+        # game can be read; otherwise once it is unpacked (below).
+        _due = self._late_output_check(item)
+        if _due == "cancel":
+            self._batch_running = False
+            self.start_btn.configure(state="normal")
+            self.cancel_btn.configure(state="disabled")
+            self._update_batch_counter()
+            self.status_update("Ready", "Start cancelled.", "Ready", 0, 0, "00:00", "—", "—")
+            return
+        if _due == "skip":
+            self._ensure_batch_started()        # the jobs after this one still run
+            self._skip_late(item)
             return
 
         # ── Pre-flight space gate FIRST — place the run on a drive sized for its real

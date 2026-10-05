@@ -15,11 +15,24 @@ WHAT HAPPENS WHEN A JOB IS DONE
     from the last Add job. Jobs from earlier versions keep their source.
   - The source is the game folder, the archive with every part of its
     set, or the container file, and a patch the job integrated. The app
-    acts on a job that is Done and whose output is on the disk, and on a
-    job skipped because exactly its output is already there (same
-    format, same name with its firmware tag; a near match such as
-    another backport keeps the source). A .pkg whose checklist reported
-    failures keeps its source. A failed or stopped job never touches it.
+    acts on a job that is Done and whose output is on the disk. A .pkg
+    whose checklist reported failures keeps its source. A failed or
+    stopped job never touches it.
+  - A job checks its output when it is due, not every job at the start:
+    before its archive is unpacked when the game can be read from it,
+    otherwise right after. When the output is already there and the job
+    moves, trashes or deletes its source, it does that and the job is
+    Done ("Its output was already there; the source was moved to …").
+    A job that keeps its source is Skipped, as before; so is one whose
+    source another queued job still needs. With Ask, the one question
+    still comes at the start. Rescan with a clean-up chosen also queues
+    games already in the output folder, so their sources get cleaned up.
+  - "Already there" means same title, version and format. When the job
+    knows the firmware its output needs, a file with another firmware
+    tag is another build and does not count (one from before firmware
+    tags does). For an archive the firmware is known only after
+    unpacking, so the tag does not count then, except that a backport
+    job wants a file at or below its target.
   - It never touches a source that is or holds the job's output, sits
     in the same folder as the output (a .ffpfsc next to the .pkg built
     from it: both stay), a whole drive, the home folder, the app's own

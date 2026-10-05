@@ -1055,21 +1055,27 @@ try:
     ok("after.older-jobs-keep", app._after_job_plan(_j0, _fake_worker(_outf))[0] == "keep", "")
     _jm = m.GameItem.from_chain(_g1, to="ffpfsc"); _jm.after_source = "move"
     ok("after.move-needs-a-folder", "no destination" in str(app._after_job_plan(_jm, _fake_worker(_outf))[3]), "")
-    # skipped because exactly its output is there: the source goes too; a near match keeps it
-    _gs = _src_game("GS"); _hit = _aout / "GS.ffpfsc"; _hit.write_bytes(b"P" * 64)
-    _js = m.GameItem.from_chain(_gs, to="ffpfsc", output_path=str(_aout)); _js.after_source = "delete"
-    _js._predicted_target = _hit
-    app.queue[:] = [_js]
-    app._apply_output_choice(_js, _hit, "skip")
-    pump(lambda: not _gs.exists() and not getattr(app, "_after_busy", False), timeout=10.0)
-    ok("after.skipped-exact-output-cleans-source", not _gs.exists() and _js.status == "Skipped", _js.status)
-    _gn = _src_game("GN"); _near = _aout / "GN [fw10.00].ffpfsc"; _near.write_bytes(b"P" * 64)
-    _jn = m.GameItem.from_chain(_gn, to="ffpfsc", output_path=str(_aout)); _jn.after_source = "delete"
-    _jn._predicted_target = _aout / "GN [fw7.61].ffpfsc"
-    app.queue[:] = [_jn]
-    app._apply_output_choice(_jn, _near, "skip")
-    pump(lambda: not app.__dict__.get("_after_skip_q"), timeout=5.0)
-    ok("after.skipped-near-match-keeps-source", _gn.is_dir() and _jn.status == "Skipped", _jn.status)
+    # output already there when the job is due: Move/Trash/Delete → the action and Done; Keep → Skipped
+    _gs = _src_game("GS"); _hit = _aout / "GS.ffpfsc"; _hit.write_bytes(b"P" * 64); _dn = S / "after_done2"
+    _js = m.GameItem.from_chain(_gs, to="ffpfsc", output_path=str(_aout))
+    _js.after_source, _js.after_move_to = "move", str(_dn)
+    app.queue[:] = [_js]; _res = []
+    app._settle_existing(_js, _hit, then=_res.append)
+    pump(lambda: bool(_res), timeout=10.0)
+    ok("after.existing-output-moves-source-and-is-done", _res == [True] and _js.status == "Done"
+       and (_dn / "GS").is_dir() and "already there" in _js.status_note, f"{_res} {_js.status} {_js.status_note!r}")
+    _gk = _src_game("GK"); _jk = m.GameItem.from_chain(_gk, to="ffpfsc", output_path=str(_aout)); _jk.after_source = "keep"
+    app.queue[:] = [_jk]; _res2 = []
+    app._settle_existing(_jk, _hit, then=_res2.append)
+    ok("after.existing-output-with-keep-is-skipped", _res2 == [False] and _jk.status == "Skipped" and _gk.is_dir(),
+       f"{_res2} {_jk.status}")
+    _gj = _src_game("GJ"); _jj = m.GameItem.from_chain(_gj, to="ffpfsc", output_path=str(_aout)); _jj.after_source = "delete"
+    _jj2 = m.GameItem.from_chain(_gj, to="pkg")            # still needs the same source
+    app.queue[:] = [_jj, _jj2]; _res3 = []
+    app._settle_existing(_jj, _hit, then=_res3.append)
+    pump(lambda: bool(_res3), timeout=5.0)
+    ok("after.existing-output-refused-stays-skipped", _res3 == [False] and _jj.status == "Skipped" and _gj.is_dir()
+       and "another job" in _jj.status_note, f"{_res3} {_jj.status} {_jj.status_note!r}")
     # an archive set read again right before its job runs: grown since it was added, unchanged, incomplete
     _rs = S / "after_src" / "Grow"; _rs.mkdir(parents=True, exist_ok=True)
     _rp = [_rs / f"Big.part{i}.rar" for i in (1, 2, 3)]
@@ -1476,9 +1482,26 @@ try:
     ok("exists.predicted-like-build", _pred is not None and _pred.suffix == ".ffpfsc"
        and _pred.parent.parent == _xo, str(_pred))
     _pred.parent.mkdir(parents=True, exist_ok=True)
-    _other_fw = _pred.with_name(app._FW_TAG.sub("", _pred.stem) + " [fw9.99]" + _pred.suffix)
+    _bare = app._FW_TAG.sub("", _pred.stem)
+    _known = bool(app._FW_TAG.search(_pred.stem))
+    _other_fw = _pred.with_name(_bare + " [fw9.99]" + _pred.suffix)
     _other_fw.write_bytes(b"old")
-    ok("exists.found-despite-fw-tag", app._existing_output(_pred) == _other_fw, str(app._existing_output(_pred)))
+    ok("exists.other-firmware-is-another-build", (app._existing_output(_pred) is None) if _known
+       else (app._existing_output(_pred) == _other_fw), f"known={_known} {app._existing_output(_pred)}")
+    _untagged = _pred.with_name(_bare + _pred.suffix); _untagged.write_bytes(b"old")
+    ok("exists.untagged-older-build-counts", app._existing_output(_pred) in ((_untagged,) if _known else (_untagged, _other_fw)),
+       str(app._existing_output(_pred)))
+    _other_fw.unlink(); _untagged.unlink()
+    # unknown firmware (an archive before unpacking): any tag counts, a backport wants one at or below its target
+    _ut = _xo / "fwrule" / "Example Quest [PPSA00001] [v01.000].ffpfsc"; _ut.parent.mkdir(parents=True, exist_ok=True)
+    _f10 = _ut.with_name("Example Quest [PPSA00001] [v01.000] [fw10.00].ffpfsc"); _f10.write_bytes(b"x")
+    _plain = m.GameItem.from_chain(HBT, to="ffpfsc")
+    _bpj = m.GameItem.from_chain(HBT, to="ffpfsc", backport_target="7.61")
+    _hit_plain, _hit_bp = app._existing_output(_ut, _plain), app._existing_output(_ut, _bpj)
+    _f761 = _ut.with_name("Example Quest [PPSA00001] [v01.000] [fw7.61].ffpfsc"); _f761.write_bytes(b"x")
+    ok("exists.unknown-fw-rules", _hit_plain == _f10 and _hit_bp is None and app._existing_output(_ut, _bpj) == _f761,
+       f"{_hit_plain} {_hit_bp} {app._existing_output(_ut, _bpj)}")
+    _pred.write_bytes(b"old")                    # exactly this job's output, for the checks below
     _real_askx = app._ask_existing_outputs
     _asked_x = []
     def _ans(choice):
@@ -1491,33 +1514,37 @@ try:
         app._ask_existing_outputs = _ans("cancel")
         _c = app._check_existing_outputs()
         app._ask_existing_outputs = _ans("overwrite")
-        _o = app._check_existing_outputs()
-        _o_flag = getattr(_xj, "_replace_output", False)
+        _o = app._check_existing_outputs(); _o_pol = app._output_policy
+        _o_turn = app._late_output_check(_xj); _o_flag = getattr(_xj, "_replace_output", False)
         app._ask_existing_outputs = _ans("skip")
-        _xj.status = "Queued"
-        _s = app._check_existing_outputs()
+        _s = app._check_existing_outputs(); _s_state = _xj.status
+        _s_turn = app._late_output_check(_xj)
     finally:
         app._ask_existing_outputs = _real_askx
         app.output_exists_var.set(_rule0)
     ok("exists.cancel-stops-start", _c is False, str(_c))
-    ok("exists.overwrite-marks-job", _o is True and _o_flag and _xj.status in ("Queued", "Skipped"), str(_o_flag))
-    ok("exists.skip-retires-job", _s is True and _xj.status == "Skipped" and "already there" in _xj.status_note
-       and len(_asked_x) == 3, f"{_xj.status} {_xj.status_note} {len(_asked_x)}")
+    ok("exists.ask-once-then-each-job-at-its-turn", _o is True and _o_pol == "overwrite" and _o_turn == "proceed"
+       and _o_flag, f"{_o_pol} {_o_turn} {_o_flag}")
+    ok("exists.skip-decided-at-the-turn", _s is True and _s_state == "Queued" and _s_turn == "skip"
+       and len(_asked_x) == 3, f"{_s_state} {_s_turn} {len(_asked_x)}")
     # the rule in Settings answers without a window: Skip by default, Keep both, Overwrite
     _asked_x.clear(); app._ask_existing_outputs = _ans("cancel")
     try:
-        _xj.status = "Queued"; app.output_exists_var.set("skip")
-        _rs = app._check_existing_outputs(); _rs_state = _xj.status
-        _xj.status = "Queued"; app.output_exists_var.set("keep")
-        _rk = app._check_existing_outputs(); _rk_flag = getattr(_xj, "_keep_both", False)
-        _xj.status = "Queued"; app.output_exists_var.set("overwrite")
-        _ro = app._check_existing_outputs(); _ro_flag = getattr(_xj, "_replace_output", False)
+        _turns = {}
+        for _rule in ("skip", "keep", "overwrite"):
+            _xj.status = "Queued"; _xj._keep_both = _xj._replace_output = False
+            app.output_exists_var.set(_rule)
+            _ok_start = app._check_existing_outputs()
+            _turns[_rule] = (_ok_start, app._late_output_check(_xj), getattr(_xj, "_keep_both", False),
+                             getattr(_xj, "_replace_output", False))
     finally:
         app._ask_existing_outputs = _real_askx
         app.output_exists_var.set(_rule0)
-    ok("exists.rule-skip-is-default-without-window", _rule0 == "skip" and _rs and _rs_state == "Skipped"
-       and not _asked_x, f"{_rule0} {_rs_state} {_asked_x}")
-    ok("exists.rule-keep-and-overwrite", _rk and _rk_flag and _ro and _ro_flag, f"{_rk_flag} {_ro_flag}")
+        app._output_policy = None
+    ok("exists.rule-skip-is-default-without-window", _rule0 == "skip" and _turns["skip"][:2] == (True, "skip")
+       and not _asked_x, f"{_rule0} {_turns} {_asked_x}")
+    ok("exists.rule-keep-and-overwrite", _turns["keep"][1] == "proceed" and _turns["keep"][2]
+       and _turns["overwrite"][1] == "proceed" and _turns["overwrite"][3], str(_turns))
     _kb = _pred.parent / "Example Quest [PPSA00001] [v01.000] [fw10.00].ffpfsc"; _kb.write_bytes(b"old")
     _kbi = m.GameItem.from_chain(HBT, to="ffpfsc"); _kbi._keep_both = True
     _kn = app._keep_both_name(_kbi, _kb)
@@ -1530,6 +1557,14 @@ try:
     _lj._output_checked = False
     app._output_policy = "skip"
     ok("exists.late-check-follows-choice", app._late_output_check(_lj) == "skip", "")
+    _uj = m.GameItem.from_chain(HBT, to="ffpfsc", output_path=str(_xo)); _uj._output_checked = False
+    _real_pred = app._predicted_output
+    app._predicted_output = lambda it: None       # an archive whose game is not readable yet
+    try:
+        _u1 = app._late_output_check(_uj); _u_checked = getattr(_uj, "_output_checked", False)
+    finally:
+        app._predicted_output = _real_pred
+    ok("exists.unknown-output-checked-again-after-unpack", _u1 == "proceed" and not _u_checked, f"{_u1} {_u_checked}")
     app._output_policy = None
     # a .pkg the user chose to overwrite replaces the old one instead of a "(2)" copy
     _pk_dir = _xo / "pkgtest"; _pk_dir.mkdir()
