@@ -230,31 +230,39 @@ PKG_UNPACK_PEAK_FACTOR = 2.2
 IMAGE_PEAK_FACTOR = 1.2
 
 
+def archive_set_parts(archive: Path) -> list:
+    """Every file of *archive*'s multi-part volume set (the archive itself when it is a
+    single file). Anchored to the archive's own volume naming, so "Game Update.part1.rar"
+    or "Game.nfo" next to "Game.part1.rar" are not part of the set."""
+    archive = Path(archive)
+    base = re.sub(
+        r'(\.part\d+\.rar|\.r\d{2,}|\.7z\.\d+|\.zip\.\d+|\.z\d+|\.\d{3}|\.rar|\.zip|\.7z)$',
+        '', archive.name, flags=re.I)
+    vol_re = re.compile(re.escape(base)
+                        + r"\.(part\d+\.rar|r\d{2,}|7z\.\d{3}|zip\.\d{3}|z\d{2}|\d{3}|rar|zip|7z)$",
+                        re.I)
+    try:
+        parts = [p for p in archive.parent.iterdir() if p.is_file() and vol_re.match(p.name)]
+    except OSError:
+        parts = []
+    return parts or ([archive] if archive.exists() else [])
+
+
 def archive_set_ondisk_size(archive: Path) -> int:
     """Sum the on-disk bytes of an archive's whole multi-part volume set. A fallback
     extracted-size proxy when headers can't be read — still COMPRESSED, so a rough floor."""
-    try:
-        base = re.sub(
-            r'(\.part\d+\.rar|\.r\d{2,}|\.7z\.\d+|\.zip\.\d+|\.z\d+|\.\d{3}|\.rar|\.zip|\.7z)$',
-            '', archive.name, flags=re.I)
-        total = 0
-        # Anchor the match to the archive's own volume naming, so "Game Update.part1.rar"
-        # or "Game.nfo" next to "Game.part1.rar" are not counted into this set.
-        vol_re = re.compile(re.escape(base)
-                            + r"\.(part\d+\.rar|r\d{2,}|7z\.\d{3}|zip\.\d{3}|z\d{2}|\d{3}|rar|zip|7z)$",
-                            re.I)
-        for p in archive.parent.iterdir():
-            if p.is_file() and vol_re.match(p.name):
-                try:
-                    total += p.stat().st_size
-                except OSError:
-                    pass
-        return total or (archive.stat().st_size if archive.exists() else 0)
-    except Exception:
+    total = 0
+    for p in archive_set_parts(archive):
         try:
-            return archive.stat().st_size
-        except Exception:
-            return 0
+            total += p.stat().st_size
+        except OSError:
+            pass
+    if total:
+        return total
+    try:
+        return archive.stat().st_size
+    except Exception:
+        return 0
 
 
 def _item_is_single_pass(item) -> bool:
@@ -2783,6 +2791,8 @@ class GameItem:
     kept_extract = False    # cancelled after its archive was extracted: that copy stays until the job is removed
     compression_level = None  # .ffpfsc job: zlib level 1-9 chosen in the job editor; None → the default
     status_note = ""        # why the job failed or was skipped (shown in the details pane)
+    after_source = None     # once Done: "keep" | "trash" | "move" | "delete"; None (older queues) = keep
+    after_move_to = None    # str: the folder "move" sends the source to
 
     def __init__(self, path: Path):
         self.path       = path
@@ -3072,6 +3082,7 @@ __all__ = [
     "PKG_UNPACK_PEAK_FACTOR",
     "IMAGE_PEAK_FACTOR",
     "archive_set_ondisk_size",
+    "archive_set_parts",
     "_item_is_single_pass",
     "_build_size_of",
     "shows_extracted_size",

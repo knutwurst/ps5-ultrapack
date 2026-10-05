@@ -30,9 +30,9 @@
 - **All changes in one pass.** Integrating an update, backporting and fake-signing run inside the same job as the build, in that order. You do not chain a packer, a patcher, a signer and a package builder by hand.
 - **Look inside without unpacking.** Browse a `.ffpfs`, `.ffpfsc` or `.pkg` and extract single files or folders. Only the blocks you ask for get decoded, byte-identical to the original.
 - **A library that names itself.** Auto-organize files every result as `Title [TITLEID] [version] [fwN.NN]`, read from the game's own metadata and executable, and kept inside ShadowMountPlus's name limit. **Organize** does the same for a folder of containers you already have.
-- **Made for real drives.** The router spreads each build across your SSD and hard disks, checks the free space before it starts, and only ever deletes its own working files.
+- **Made for real drives.** The router spreads each build across your SSD and hard disks, checks the free space before it starts, and deletes only its own working files. Your sources stay where they are unless you choose otherwise: once a job is Done it can move its source to the Trash, to a folder, or delete it, and it leaves alone any source another job still needs.
 - **Checked end to end.** The end-to-end test builds every conversion path from a real game and compares every file byte for byte, and a deterministic `.pkg` build of the same folder gives the same bytes, build after build.
-- **A queue you can leave running.** Each job keeps its own source, changes and output. A failed job stays marked while the rest carry on, **Stop** ends the batch, and any job can be edited where it sits.
+- **A queue you can leave running.** Each job keeps its own source, changes and output, and its own choice of what happens to the source once it is Done. When the last job is through, the Mac can go to sleep or the app can quit, after a 30-second countdown you can cancel. A failed job stays marked while the rest carry on, **Stop** ends the batch, and any job can be edited where it sits.
 
 Built by Knutwurst on a backend that grew out of Bizkut's `ps5-ffpfs-cli`, with PSBrew MkPFS and drakmor's LibProsperoPkg. Builds and releases are macOS on Apple Silicon.
 

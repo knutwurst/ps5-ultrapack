@@ -129,6 +129,15 @@ def _backport_module():
     return backport
 
 
+def _after_job_module():
+    """backend/after_job.py: what happens to a job's source once it is done (Tk-free)."""
+    _bd = str(backend_base_dir())
+    if _bd not in sys.path:
+        sys.path.insert(0, _bd)
+    import after_job
+    return after_job
+
+
 def _drive_name(path: Path) -> str:
     """The drive a path lives on, by its volume name: 'SAMSUNG', or 'the system drive'."""
     parts = Path(path).parts
@@ -1321,20 +1330,72 @@ class SettingsView:
         ctk.CTkButton(_ct, text="Clean temp now", width=120, fg_color=BTN, text_color=WHITE, hover_color=BTN_HOVER,
                       border_width=1, border_color=BTN_BORDER, command=self.app.clear_temp_files).pack(side="right")
 
+        aj = _after_job_module()
+        def seg_row(parent, label, var, keys, labels, command=None, pady=(4, 4)):
+            row = ctk.CTkFrame(parent, fg_color=PANEL)
+            row.pack(fill="x", padx=14, pady=pady)
+            ctk.CTkLabel(row, text=label, text_color=WHITE, width=70, anchor="w").pack(side="left", padx=(0, 12))
+            seg = ctk.CTkSegmentedButton(row, values=[labels[k] for k in keys],
+                                         command=command or (lambda v: var.set(
+                                             next(k for k in keys if labels[k] == v))))
+            seg.set(labels.get(var.get(), labels[keys[0]]))
+            seg.pack(side="left")
+            return seg
+
+        # WHEN A JOB IS DONE
+        self._section_label(scroll, "When a job is done")
+        jd = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
+        jd.pack(fill="x", pady=(4, 12))
+        self._after_seg = seg_row(jd, "Source", self.app.after_source_var, aj.ACTIONS, aj.LABELS,
+                                  command=self._on_after_source, pady=(10, 2))
+        self._after_extra = ctk.CTkFrame(jd, fg_color=PANEL)
+        self._after_extra.pack(fill="x", padx=14)
+        self._after_dir_row = ctk.CTkFrame(self._after_extra, fg_color=PANEL)
+        ctk.CTkLabel(self._after_dir_row, text="Folder", text_color=MUTED, width=70, anchor="w").pack(
+            side="left", padx=(0, 12))
+        ctk.CTkEntry(self._after_dir_row, textvariable=self.app.after_move_dir_var, fg_color=CARD,
+                     border_color=BORDER2, text_color=WHITE).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(self._after_dir_row, text="Folder…", width=80, fg_color=BTN, text_color=WHITE,
+                      hover_color=BTN_HOVER, border_width=1, border_color=BTN_BORDER,
+                      command=lambda: self._browse_folder(self.app.after_move_dir_var, "after_move_dir",
+                                                          "Choose the folder finished sources move to")).pack(side="left")
+        self._after_note = ctk.CTkLabel(self._after_extra, text="Deleted for good; it does not go to the Trash.",
+                                        text_color=RED, font=ctk.CTkFont(size=12), anchor="w")
+        ctk.CTkLabel(jd, text="The game folder, the archive with all its parts, or the container, once the "
+                              "job is Done. New jobs start with this; each job keeps its own choice "
+                              "(Add job › Output).",
+                     text_color=MUTED, font=ctk.CTkFont(size=12), wraplength=600, justify="left").pack(
+            anchor="w", padx=14 + 82, pady=(2, 6))
+        self._refresh_after_rows()
+        seg_row(jd, "Notify", self.app.notify_var, aj.NOTIFY, aj.NOTIFY_LABELS, pady=(4, 6))
+        for text, var in [
+            ("Show the result", self.app.summary_popup_var),
+            ("Remove the job from the queue (failed jobs stay)", self.app.auto_remove_done_var),
+            ("Open the output folder", self.app.open_output_var),
+            ("Play a sound when it is done", self.app.sound_complete_var),
+            ("Play a sound when it fails", self.app.sound_error_var),
+        ]:
+            ctk.CTkCheckBox(jd, text=text, variable=var, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                            text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=5)
+        ctk.CTkFrame(jd, fg_color=PANEL, height=6).pack()
+
+        # WHEN THE QUEUE IS DONE
+        self._section_label(scroll, "When the queue is done")
+        qd = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
+        qd.pack(fill="x", pady=(4, 12))
+        seg_row(qd, "Then", self.app.after_queue_var, aj.QUEUE_ACTIONS, aj.QUEUE_LABELS, pady=(10, 2))
+        ctk.CTkLabel(qd, text="Only after the last job of a run, not after Stop. Sleep and Quit wait 30 seconds "
+                              "in a small window you can cancel.",
+                     text_color=MUTED, font=ctk.CTkFont(size=12), wraplength=600, justify="left").pack(
+            anchor="w", padx=14 + 82, pady=(2, 10))
+
         # USER INTERFACE
         self._section_label(scroll, "Interface")
         ui = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         ui.pack(fill="x", pady=(4, 12))
-        for text, var in [
-            ("Show the result when a job is done", self.app.summary_popup_var),
-            ("Remove a job from the queue when it is done (failed jobs stay)", self.app.auto_remove_done_var),
-            ("Play sound on completion",     self.app.sound_complete_var),
-            ("Play sound on errors",         self.app.sound_error_var),
-            ("Open output folder when done", self.app.open_output_var),
-            ("Auto-integrate patch from release folder", self.app.auto_integrate_patch_var),
-        ]:
-            ctk.CTkCheckBox(ui, text=text, variable=var, fg_color=ACCENT,
-                             hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=6)
+        ctk.CTkCheckBox(ui, text="Auto-integrate patch from release folder", variable=self.app.auto_integrate_patch_var,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18,
+                        checkbox_height=18).pack(anchor="w", padx=14, pady=(10, 6))
         oe_row = ctk.CTkFrame(ui, fg_color=PANEL)
         oe_row.pack(fill="x", padx=14, pady=(4, 4))
         ctk.CTkLabel(oe_row, text="When the output is already there", text_color=WHITE).pack(side="left", padx=(0, 12))
@@ -1788,6 +1849,34 @@ class SettingsView:
                       border_width=1, border_color=BTN_BORDER, width=160,
                       command=lambda: open_path(APP_DIR)).pack(anchor="w", pady=(0, 12))
 
+    def _refresh_after_rows(self):
+        aj = _after_job_module()
+        v = self.app.after_source_var.get()
+        for w in (self._after_dir_row, self._after_note):
+            w.pack_forget()
+        if v == aj.MOVE:
+            self._after_dir_row.pack(fill="x", pady=(4, 2))
+        elif v == aj.DELETE:
+            self._after_note.pack(anchor="w", padx=82, pady=(4, 0))
+
+    def _on_after_source(self, label):
+        aj = _after_job_module()
+        key = next(k for k in aj.ACTIONS if aj.LABELS[k] == label)
+        prev = self.app.after_source_var.get()
+        if key == aj.DELETE and prev != aj.DELETE:
+            if not messagebox.askyesno(
+                    "Delete sources?",
+                    "From now on, a new job deletes its source for good once it is Done: the game folder, "
+                    "the archive with all its parts, or the container. It does not go to the Trash.\n\n"
+                    "Jobs already in the queue keep their own choice. Use Delete for new jobs?"):
+                self._after_seg.set(aj.LABELS.get(prev, aj.LABELS[aj.KEEP]))
+                return
+        self.app.after_source_var.set(key)
+        if key == aj.MOVE and not self.app.after_move_dir_var.get().strip():
+            self._browse_folder(self.app.after_move_dir_var, "after_move_dir",
+                                "Choose the folder finished sources move to")
+        self._refresh_after_rows()
+
     def _section_label(self, parent, text):
         ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=13, weight="bold"),
                      text_color=WHITE).pack(anchor="w", padx=4, pady=(10, 4))
@@ -1984,6 +2073,7 @@ class CLIWorker(threading.Thread):
         self._is_fpkg = self._is_fpkg_build or self._is_fpkg_extract or _chain_to == "pkg"
         self._weights, self._stage_order = self._pick_weights(cmd)
         self._is_copy = False
+        self.validate_failed = False   # the .pkg checklist reported failures: the source stays
         # Highest whole-job progress sent so far: the queue bar never moves backward.
         self._overall_sent = 0.0
         # Snapshot the copy-extras toggle on the MAIN thread (CLIWorker is constructed
@@ -2580,6 +2670,8 @@ class CLIWorker(threading.Thread):
             self.output_path = line.split("Compression complete:", 1)[-1].strip()
         if "fPKG complete:" in line:
             self.output_path = line.split("fPKG complete:", 1)[-1].strip()
+        if "Validation reported failures" in line:
+            self.validate_failed = True
         if "Extraction complete:" in line:
             # Only an UNPACK job ends at extraction. In PATCH MODE the backend
             # extracts then repacks, so latching "Extracting"=100 here would freeze
@@ -3051,6 +3143,10 @@ class JobDialog(EmbeddedDialog):
                     "ShadowMount's byte limit.",
         "keep":   "Only for a same-format copy across drives: keep the original after copying. On "
                   "the same drive the file is always moved (a rename).",
+        "after":  "What happens to the source once this job is Done: the game folder, the archive with "
+                  "all its parts, or the container. Move to Trash can be put back from the Trash; Delete "
+                  "cannot. Nothing happens when the job fails, is skipped or stopped, or while another "
+                  "job in the queue still needs the same source. Settings › General sets the default.",
         "retail": "Keep on. Drops placeholder license files and issues a valid debug license, sets the "
                   "retail DRM type and the retail flag in every executable, rebuilds a corrupt PlayGo "
                   "set and repairs presentation images — the configuration verified on a console. Off "
@@ -3136,6 +3232,11 @@ class JobDialog(EmbeddedDialog):
         _org = getattr(item, "auto_organize", None) if item else None
         self.organize_var = tk.BooleanVar(value=bool(app.auto_organize_var.get()) if _org is None else bool(_org))
         self.keep_source_var = tk.BooleanVar(value=not bool(getattr(item, "copy_delete_source", True)) if item else False)
+        _aj = _after_job_module()
+        _af = getattr(item, "after_source", None) if item else app.after_source_var.get()
+        self.after_var = tk.StringVar(value=_af if _af in _aj.ACTIONS else _aj.KEEP)
+        _ad = (getattr(item, "after_move_to", None) if item else None) or app.after_move_dir_var.get()
+        self.after_dir_var = tk.StringVar(value=str(_ad or "").strip())
         fp = app._fpkg_params_of(item) if item else dict(app.fpkg_defaults)
         self.retail_var = tk.BooleanVar(value=bool(fp.get("retail_normalize", True)))
         self.hdr_var = tk.StringVar(value=_hdr_mode(fp.get("hdr_flag", "auto")))
@@ -3168,7 +3269,7 @@ class JobDialog(EmbeddedDialog):
         self.src_var.trace_add("write", lambda *_: self._on_source_changed())
         for v in (self.sign_var, self.patch_on_var, self.patch_var, self.backport_on_var,
                   self.backport_target_var, self.to_var, self.out_var,
-                  self.organize_var, self.keep_source_var):
+                  self.organize_var, self.keep_source_var, self.after_var):
             v.trace_add("write", lambda *_: self._refresh())
         self.bind("<Return>", lambda e: self._add())
         self.bind("<Escape>", lambda e: self.destroy())
@@ -3350,6 +3451,29 @@ class JobDialog(EmbeddedDialog):
                                         checkbox_width=18, checkbox_height=18, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                         text_color=WHITE, font=ctk.CTkFont(size=12))
         self._bind_help(self._HELP["keep"], self._keep_cb)
+        self._oline = oline
+        # After the job: what happens to the source once this job is Done (shown by _refresh)
+        aj = _after_job_module()
+        self._after_box = ab = ctk.CTkFrame(orow, fg_color=PANEL)
+        ar = ctk.CTkFrame(ab, fg_color=PANEL); ar.pack(fill="x")
+        ctk.CTkLabel(ar, text="After the job:", text_color=MUTED, width=100, anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        self._after_seg = ctk.CTkSegmentedButton(
+            ar, values=[aj.LABELS[k] for k in aj.ACTIONS], selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
+            height=24, command=lambda v: self.after_var.set(next(k for k in aj.ACTIONS if aj.LABELS[k] == v)))
+        self._after_seg.set(aj.LABELS[self.after_var.get()])
+        self._after_seg.pack(side="left")
+        self._bind_help(self._HELP["after"], ar)
+        self._after_dir_row = ctk.CTkFrame(ab, fg_color=PANEL)
+        ctk.CTkLabel(self._after_dir_row, text="Move to:", text_color=MUTED, width=100, anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        ctk.CTkEntry(self._after_dir_row, textvariable=self.after_dir_var, fg_color=CARD2,
+                     text_color=WHITE).pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(self._after_dir_row, text="Folder…", width=76, fg_color=BTN, hover_color=BTN_HOVER,
+                      text_color=WHITE, border_width=1, border_color=BTN_BORDER,
+                      command=self._pick_after_dir).pack(side="left", padx=(6, 0))
+        self._after_note = ctk.CTkLabel(ab, text="Deleted for good once the job is Done; it does not go to the Trash.",
+                                        text_color=RED, font=ctk.CTkFont(size=12), anchor="w")
         # .pkg options — two rows, shown only when .pkg is the output
         self._pkg_opts = ctk.CTkFrame(orow, fg_color=PANEL)
         ctk.CTkFrame(self._pkg_opts, width=2, height=1, fg_color=ACCENT_HOVER).pack(side="left", fill="y", padx=(10, 12), pady=2)
@@ -3915,6 +4039,24 @@ class JobDialog(EmbeddedDialog):
             same_fmt = (self._kind == to) and not chain_changes(self._stand_in(None if self._kind == "none" else Path(self.src_var.get().strip())))
             (self._keep_cb.pack(side="left", padx=(16, 0)) if same_fmt else self._keep_cb.pack_forget())
         except Exception:
+            same_fmt = False
+        # A copy moves or keeps its source itself (Keep the source), and a change in place
+        # writes into the source: neither offers an after-job action.
+        try:
+            aj = _after_job_module()
+            if same_fmt or in_place or self._kind == "none":
+                self._after_box.pack_forget()
+            else:
+                if not self._after_box.winfo_manager():
+                    self._after_box.pack(fill="x", padx=10, pady=(0, 6), after=self._oline)
+                act = self.after_var.get()
+                self._after_seg.set(aj.LABELS.get(act, aj.LABELS[aj.KEEP]))
+                self._after_dir_row.pack_forget(); self._after_note.pack_forget()
+                if act == aj.MOVE:
+                    self._after_dir_row.pack(fill="x", pady=(4, 0))
+                elif act == aj.DELETE:
+                    self._after_note.pack(anchor="w", padx=(100, 0), pady=(4, 0))
+        except Exception:
             pass
         # summary
         raw = (self.src_var.get() or "").strip()
@@ -3967,6 +4109,13 @@ class JobDialog(EmbeddedDialog):
         return (next((s for s in self._games if s.is_dir()), None)          # a folder reads fastest
                 or next((s for s in self._games
                          if s.is_file() and s.suffix.lower() in self._CHECK_CONTAINERS), None))
+
+    def _pick_after_dir(self):
+        cur = self.after_dir_var.get().strip()
+        kw = {"initialdir": cur} if cur and Path(cur).is_dir() else {}
+        p = filedialog.askdirectory(parent=self, title="Choose the folder the source moves to", **kw)
+        if p:
+            self.after_dir_var.set(p)
 
     def _check_compat(self):
         folder = self._check_folder()
@@ -4070,6 +4219,12 @@ class JobDialog(EmbeddedDialog):
                       "backport_target": target, "backport_libs": libs}
         organize = bool(self.organize_var.get())
         keep = bool(self.keep_source_var.get())
+        aj = _after_job_module()
+        after = self.after_var.get() if self._after_box.winfo_manager() else aj.KEEP
+        after_dir = self.after_dir_var.get().strip() if after == aj.MOVE else ""
+        if after == aj.MOVE and not after_dir:
+            messagebox.showerror("After the job", "Choose the folder the source moves to once the job is Done.",
+                                 parent=self); return
 
         # Remember the choices for this kind of source, and the backport folder globally.
         self._defaults[self._kind] = {"to": to, "sign": bool(self.sign_var.get()),
@@ -4082,6 +4237,7 @@ class JobDialog(EmbeddedDialog):
                "rescan_template": {"to": to, "output": out, "sign": bool(self.sign_var.get()),
                                    "backport_target": target, "patch_source": patch or None,
                                    "keep_source": keep, "organize": organize, "ff_level": ff_level,
+                                   "after_source": after, "after_move_to": after_dir or None,
                                    "pkg_params": pkg_params if to == "pkg" else None}}
         if target:
             upd["backport_target_default"] = target
@@ -4117,6 +4273,7 @@ class JobDialog(EmbeddedDialog):
                 app._apply_fpkg_params(it, pkg_params)
             it.compression_level = ff_level if to == "ffpfsc" else None
             it.auto_organize = organize
+            it.after_source, it.after_move_to = after, after_dir or None
             return it
 
         if self.edit_item is None:
@@ -4290,6 +4447,72 @@ class OutputExistsDialog(MessageWindow):
     def _done(self, choice: str):
         self.choice = choice
         self.destroy()
+
+
+class CountdownWindow(MessageWindow):
+    """After the last job of a run: the computer sleeps or the app quits once SECONDS have
+    passed. Cancel stops it; the other button does it now."""
+
+    SECONDS = 30
+
+    def __init__(self, parent, action, on_go, on_cancel=None):
+        super().__init__(parent)
+        self._action, self._on_go, self._on_cancel = action, on_go, on_cancel
+        self._left, self._job = self.SECONDS, None
+        head = "Queue finished"
+        self.title(head)
+        self.configure(fg_color=BLACK); self.resizable(False, False)
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        ctk.CTkLabel(self, text=head, font=ctk.CTkFont(size=17, weight="bold"), text_color=WHITE
+                     ).pack(anchor="w", padx=20, pady=(16, 2))
+        self._msg = tk.StringVar()
+        ctk.CTkLabel(self, textvariable=self._msg, text_color=MUTED, wraplength=380, justify="left",
+                     width=380, anchor="w").pack(anchor="w", padx=20, pady=(0, 6))
+        btns = ctk.CTkFrame(self, fg_color=BLACK); btns.pack(fill="x", padx=20, pady=16)
+        now = "Sleep now" if action == "sleep" else "Quit now"
+        ctk.CTkButton(btns, text=now, fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=ON_ACCENT,
+                      width=104, command=self._go).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(btns, text="Cancel", fg_color=BTN, text_color=WHITE, hover_color=BTN_HOVER, width=96,
+                      border_width=1, border_color=BTN_BORDER, command=self._cancel).pack(side="right")
+        self._tick()
+
+    def _text(self) -> str:
+        who = "The Mac" if IS_MAC else "The computer"
+        return (f"{who} goes to sleep in {self._left} s." if self._action == "sleep"
+                else f"PS5 UltraPack quits in {self._left} s.")
+
+    def _tick(self):
+        self._job = None
+        if self._left <= 0:
+            self._go(); return
+        self._msg.set(self._text())
+        self._left -= 1
+        self._job = self.after(1000, self._tick)
+
+    def _stop(self):
+        if self._job is not None:
+            try:
+                self.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+
+    def _go(self):
+        self._stop()
+        go = self._on_go
+        self.destroy()
+        go()
+
+    def _cancel(self):
+        self._stop()
+        cb = self._on_cancel
+        self.destroy()
+        if cb:
+            cb()
+
+    def destroy(self):
+        self._stop()
+        super().destroy()
 
 
 class PfsBrowserDialog(EmbeddedDialog):
@@ -5834,6 +6057,20 @@ class App:
         # A finished job stays in the queue, marked Done, until it is cleared; with this on
         # it leaves the queue as soon as it succeeds. Failed jobs always stay.
         self.auto_remove_done_var = self._persisted_bool(settings, "auto_remove_done", False)
+        # What happens once a job is done (the default Add job starts from) and once the
+        # queue is done. Strings persisted like output_exists.
+        _aj = _after_job_module()
+        def _choice(key, allowed, default):
+            v = settings.get(key, default)
+            var = tk.StringVar(value=v if v in allowed else default)
+            var.trace_add("write", lambda *_: save_settings({key: var.get()}))
+            return var
+        self.after_source_var = _choice("after_source", _aj.ACTIONS, _aj.KEEP)
+        self.after_move_dir_var = tk.StringVar(value=str(settings.get("after_move_dir", "") or ""))
+        self.after_move_dir_var.trace_add("write", lambda *_: save_settings(
+            {"after_move_dir": self.after_move_dir_var.get().strip()}))
+        self.notify_var = _choice("notify", _aj.NOTIFY, "off")
+        self.after_queue_var = _choice("after_queue", _aj.QUEUE_ACTIONS, "nothing")
         # What a job does when its output is already in the output folder.
         _oe = settings.get("output_exists", "skip")
         self.output_exists_var = tk.StringVar(value=_oe if _oe in self.OUTPUT_EXISTS_CHOICES else "skip")
@@ -8900,7 +9137,7 @@ class App:
         except Exception:
             pass
 
-    _CARD_INFO_KEYS = ("Status", "Source", "Changes", "Compression", "Drives", "Space")
+    _CARD_INFO_KEYS = ("Status", "Source", "Changes", "Compression", "Drives", "Space", "After")
 
     def _sync_retry_btn(self, item) -> None:
         try:
@@ -8989,6 +9226,11 @@ class App:
         space = (self.temp_space_var.get() or "").strip()
         if space and not space.endswith("—"):
             info["Space"] = space.replace("  |  ", " · ")
+        aj = _after_job_module()
+        act = getattr(item, "after_source", None) or aj.KEEP
+        if act in aj.ACTIONS and act != aj.KEEP and getattr(item, "operation", "") not in ("fake-sign", "copy"):
+            text = aj.DONE_TEXT[act].format(dest=getattr(item, "after_move_to", None) or "a folder")
+            info["After"] = text[0].upper() + text[1:] + ", once the job is Done"
         return info
 
     def _probe_pkg_content(self, item) -> int:
@@ -10506,6 +10748,8 @@ class App:
         pkg_params = tpl.get("pkg_params") or {}
         ff_level = int(tpl.get("ff_level") or 7)
         organize = bool(tpl.get("organize"))
+        after = tpl.get("after_source") if tpl.get("after_source") in _after_job_module().ACTIONS else "keep"
+        after_dir = tpl.get("after_move_to") or None
 
         def make(src):
             it = GameItem.from_chain(src, to=to, output_path=out or None, sign=sign,
@@ -10515,6 +10759,7 @@ class App:
                 self._apply_fpkg_params(it, pkg_params)
             it.compression_level = ff_level if to == "ffpfsc" else None
             it.auto_organize = organize
+            it.after_source, it.after_move_to = after, after_dir
             return it
         return make
 
@@ -10897,6 +11142,178 @@ class App:
         self.worker = CLIWorker(self, item, cmd, cwd, out_dir, temp_dir)
         self.worker.start()
 
+    # ── After a job is done, after the queue is done ──────────────────────────
+    _ARCHIVE_NAME_RE = re.compile(r"\.(part\d+\.rar|rar|zip|7z|r\d{2,}|z\d{2}|7z\.\d{3}|zip\.\d{3}|\d{3})$", re.I)
+
+    def _after_sources(self, item) -> list:
+        """What a job's after-action works on: its archive with every part, or its container
+        file or game folder, plus a patch it integrated. Never the app's extracted copy."""
+        out = []
+        arch = getattr(item, "archive_path", None) or getattr(item, "origin_archive", None)
+        if arch:
+            out += archive_set_parts(Path(arch))
+        elif getattr(item, "path", None) and not getattr(item, "_from_archive", False):
+            out.append(Path(item.path))
+        patch = getattr(item, "patch_source", None)
+        if patch:
+            pp = Path(patch)
+            out += archive_set_parts(pp) if (pp.is_file() and self._ARCHIVE_NAME_RE.search(pp.name)) else [pp]
+        uniq, seen = [], set()
+        for p in out:
+            key = os.path.realpath(str(p))
+            if key not in seen:
+                seen.add(key)
+                uniq.append(p)
+        return uniq
+
+    def _app_folders(self) -> list:
+        """Folders that are the app's own: its profile, and the scratch it makes under the
+        temp folder, the temp pool and the output folder. A source never overlaps them."""
+        roots = []
+        try:
+            roots += [self.temp_var.get().strip(), self.output_var.get().strip()]
+            roots += [str(d) for d in self._temp_pool_dirs()] + [str(x) for x in (getattr(self, "temp_pool", None) or [])]
+        except Exception:
+            pass
+        out = [str(ultra_core.APP_DIR)]
+        for r in roots:
+            if r:
+                out += [str(Path(r) / sub) for sub in ("_extracted", "_ffpfsc_temp", "_ffpfsc_extract")]
+        t = (self.temp_var.get() or "").strip()
+        if t and not os.path.ismount(t):
+            out.append(t)
+        return out
+
+    def _after_job_plan(self, item, worker):
+        """(action, sources, destination, reason to leave them) for *item*, which is Done."""
+        aj = _after_job_module()
+        act = getattr(item, "after_source", None) or aj.KEEP
+        if act not in aj.ACTIONS or act == aj.KEEP:
+            return aj.KEEP, [], None, None
+        if getattr(item, "operation", "") in ("fake-sign", "copy") or getattr(worker, "_is_copy", False):
+            return aj.KEEP, [], None, None          # these work on the source themselves
+        dest = (getattr(item, "after_move_to", None) or None) if act == aj.MOVE else None
+        if act == aj.MOVE and not dest:
+            return act, [], None, "no destination folder is set"
+        if getattr(worker, "validate_failed", False):
+            return act, [], dest, "the package's checklist reported failures"
+        out = (getattr(worker, "output_path", "") or "").strip('"')
+        try:
+            ok = bool(out) and (Path(out).is_dir() or Path(out).stat().st_size > 0)
+        except OSError:
+            ok = False
+        if not ok:
+            return act, [], dest, "its output was not found on disk"
+        others = []
+        for it in self.queue:
+            if it is item or getattr(it, "status", "") == "Done":
+                continue
+            others += self._after_sources(it)
+            if getattr(it, "path", None):
+                others.append(Path(it.path))
+        srcs = self._after_sources(item)
+        return act, srcs, dest, aj.refusal(srcs, output=out, dest=dest, protected=self._app_folders(), others=others)
+
+    def _run_after_job(self, item, worker, then) -> None:
+        """Keep, trash, move or delete *item*'s source as the job says, then call *then*
+        (which moves the queue on). A move across drives runs on a worker thread; the
+        queue waits for it, so the copy and the next job do not share the drive."""
+        aj = _after_job_module()
+        try:
+            act, srcs, dest, why = self._after_job_plan(item, worker)
+        except Exception as e:
+            act, srcs, dest, why = "error", [], None, str(e)
+        if act == aj.KEEP:
+            then(); return
+        name = getattr(item, "display_name", None) or item.name
+        if why:
+            self.log("WARN", f"After the job: the source of {name} stays where it is: {why}.")
+            then(); return
+        size = aj.size_of(srcs)
+        names = ", ".join(p.name for p in srcs)
+        doing = {aj.TRASH: "moving the source to the Trash", aj.MOVE: f"moving the source to {dest}",
+                 aj.DELETE: "deleting the source"}[act]
+        self.log("INFO", f"After the job: {doing}: {names} ({format_size(size)}).")
+        results = queue.Queue()
+        last = [-10]
+
+        def progress(done, total):
+            pct = int(done * 100 / total) if total else 100
+            if pct >= last[0] + 10:
+                last[0] = pct - pct % 10
+                results.put(("PROGRESS", f"Moving the source: {last[0]}%"))
+
+        def work():
+            try:
+                where = aj.apply(act, srcs, dest=dest, on_progress=progress)
+                if act == aj.TRASH:
+                    msg = (f"Moved the source of {name} to the Trash ({format_size(size)}; it frees the space once "
+                           f"the Trash is emptied): {names}.")
+                elif act == aj.MOVE:
+                    msg = f"Moved the source of {name} to {dest}: " + ", ".join(Path(w).name for w in where) + "."
+                else:
+                    msg = f"Deleted the source of {name} ({format_size(size)} freed): {names}."
+                results.put(("SUCCESS", msg))
+            except Exception as e:
+                results.put(("WARN", f"After the job: {name}: {e}. Whatever was not handled stays where it is."))
+            results.put(None)
+
+        def poll():
+            try:
+                while True:
+                    m = results.get_nowait()
+                    if m is None:
+                        self._after_busy = False
+                        self.update_queue_box()
+                        then()
+                        return
+                    self.log(*m)
+            except queue.Empty:
+                self.root.after(200, poll)
+
+        self._after_busy = True
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(200, poll)
+
+    def _notify_job(self, item, ok: bool, detail: str = "") -> None:
+        if self.notify_var.get() != "job" or item is None:
+            return
+        name = getattr(item, "display_name", None) or item.name
+        _after_job_module().notify(name, "Done" if ok else f"Failed: {detail}"[:180])
+
+    def _queue_finished(self) -> None:
+        """The run ended on its own, not by Stop: the queue banner, then Sleep or Quit."""
+        aj = _after_job_module()
+        total, done, fail = self._batch_total, self._batch_done, self._batch_failed
+        if self.notify_var.get() == "queue" or (self.notify_var.get() == "job" and total > 1):
+            aj.notify("PS5 UltraPack", f"Queue finished: {done} of {total} done" + (f", {fail} failed" if fail else ""))
+        act = self.after_queue_var.get()
+        if act not in ("sleep", "quit"):
+            return
+        old = getattr(self, "_countdown", None)
+        if old is not None:
+            try:
+                old.destroy()
+            except Exception:
+                pass
+        self.log("INFO", f"Queue finished: {'sleep' if act == 'sleep' else 'quit'} in {CountdownWindow.SECONDS} s "
+                         f"(Settings › General › When the queue is done).")
+        self._countdown = CountdownWindow(self.root, act, on_go=lambda: self._after_queue_go(act),
+                                          on_cancel=lambda: self.log("INFO", "Cancelled: the app stays open."
+                                                                     if act == "quit" else "Cancelled: no sleep."))
+
+    def _after_queue_go(self, act: str) -> None:
+        self._countdown = None
+        if act == "quit":
+            self._on_close()
+            return
+        def work():
+            try:
+                _after_job_module().sleep_now()
+            except Exception as e:
+                self.log("ERROR", f"The computer did not go to sleep: {e}")
+        threading.Thread(target=work, daemon=True).start()
+
     def _show_batch_complete(self):
         total = self._batch_total
         done  = self._batch_done
@@ -10914,7 +11331,8 @@ class App:
             self.log("SUCCESS", f"Batch complete — all {total} item(s) processed successfully.")
         else:
             self.log("WARN", f"Batch complete — {done}/{total} succeeded, {fail} failed.")
-        messagebox.showinfo("Batch Complete", msg)
+        if self.after_queue_var.get() not in ("sleep", "quit"):   # a modal box would hold them up
+            messagebox.showinfo("Batch Complete", msg)
 
     def _ensure_batch_started(self):
         """Establish batch state for a FRESH queue run (idempotent via the _batch_running
@@ -10925,6 +11343,13 @@ class App:
         successful archive extraction (the _extract_q 'ok' branch calls start() again) is a
         no-op thanks to the guard, preserving running progress."""
         if not self._batch_running:
+            cd = getattr(self, "_countdown", None)
+            if cd is not None:               # a new run: no sleep or quit after the last one
+                self._countdown = None
+                try:
+                    cd.destroy()
+                except Exception:
+                    pass
             # Only the jobs that will run count: done and kept failed jobs are listed too.
             todo = [it for it in self.queue if getattr(it, "status", "") not in self._TERMINAL_STATUSES]
             self._batch_total   = len(todo)
@@ -11871,9 +12296,10 @@ class App:
                     self.start_btn.configure(state="normal")
                     self.cancel_btn.configure(state="disabled")
                     self._update_batch_counter()
+                    self._queue_finished()
                     if self._batch_total > 1:
                         self._show_batch_complete()
-                    else:
+                    elif self.after_queue_var.get() not in ("sleep", "quit"):
                         messagebox.showerror("Extraction Failed", str(payload))
         except queue.Empty:
             pass
@@ -11925,34 +12351,45 @@ class App:
                     self._auto_clear_temp()
                 # Always reclaim THIS item's extracted source — covers the spread-mode
                 # extract on the OUTPUT drive, which _auto_clear_temp (temp only) misses.
+                _done_worker = self.worker
                 if completed_item is not None:
                     self._cleanup_item_extract(completed_item)
                     self._cleanup_inner_image(completed_item)   # drop the pass-1 inner cache
                     self._ampr_cleanup(completed_item)   # restore a direct source folder
+                    self._notify_job(completed_item, True)
                     if self.auto_remove_done_var.get():
                         if completed_item in self.queue:
                             self.queue.remove(completed_item)
                     else:
                         self._retire_failed(completed_item, "Done")   # stays in its place, marked Done
 
-                # Feature 4: batch auto-advance (the next PENDING item; kept failed/skipped
-                # items don't count as work left to do).
-                if self._batch_running and self._has_pending():
-                    self.update_queue_box()
-                    self.root.after(600, self._batch_auto_start)
-                else:
-                    self._batch_running = False
-                    self.start_btn.configure(state="normal")
-                    self.cancel_btn.configure(state="disabled")
-                    self.update_queue_box()
-                    self._update_batch_counter()
-                    if self._batch_total > 1:
-                        self._show_batch_complete()
+                def _advance():
+                    # Feature 4: batch auto-advance (the next PENDING item; kept failed/skipped
+                    # items don't count as work left to do).
+                    if self._batch_running and self._has_pending():
+                        self.update_queue_box()
+                        self.root.after(600, self._batch_auto_start)
                     else:
-                        if self.open_output_var.get():
-                            self.open_output_folder()
-                        if self.summary_popup_var.get():
-                            self.show_summary_popup()
+                        self._batch_running = False
+                        self.start_btn.configure(state="normal")
+                        self.cancel_btn.configure(state="disabled")
+                        self.update_queue_box()
+                        self._update_batch_counter()
+                        quitting = self.after_queue_var.get() in ("sleep", "quit")
+                        self._queue_finished()
+                        if self._batch_total > 1:
+                            self._show_batch_complete()
+                        else:
+                            if self.open_output_var.get():
+                                self.open_output_folder()
+                            if self.summary_popup_var.get() and not quitting:
+                                self.show_summary_popup()
+
+                # What the job says happens to its source (keep, Trash, move, delete), then on.
+                if completed_item is not None:
+                    self._run_after_job(completed_item, _done_worker, _advance)
+                else:
+                    _advance()
 
             elif self.cancel_requested or self.extract_cancel_event.is_set():
                 # A user cancel surfaces here as a failed result — treat it as a cancel,
@@ -11988,6 +12425,7 @@ class App:
                 self.status_update("Failed", msg, "Failed", 0, 0, "—", "—", "—")
                 self.log("ERROR", msg)
                 self.play_complete_sound(False)
+                self._notify_job(completed_item, False, msg)
                 if completed_item is not None:
                     # A finished extraction stays, as after a cancel: Edit and Retry run the
                     # job from it again instead of unpacking the archive a second time. A
@@ -12013,6 +12451,7 @@ class App:
                     self.start_btn.configure(state="normal")
                     self.cancel_btn.configure(state="disabled")
                     self._update_batch_counter()
+                    self._queue_finished()
                     if self._batch_total > 1:
                         # Aggregate (done/failed) is reported here; no modal per failure.
                         self._show_batch_complete()

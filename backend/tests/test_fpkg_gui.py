@@ -136,6 +136,19 @@ try:
     ok("dialog.add.remembered", app.fpkg_defaults["inner"] == "kraken" and app.fpkg_defaults["level"] == -4, str(app.fpkg_defaults))
     cmdq, *_ = app.build_command(q)
     ok("build_command.fast-preset", "--compression-level" in cmdq and cmdq[cmdq.index("--compression-level")+1] == "-4", " ".join(cmdq[-8:]))
+    # 3b) After the job: the row is there for a build, its choice lands on the job and in the Rescan recipe
+    dla = m.JobDialog(app, init_src=str(HBT), init_to="ffpfsc"); root.update()
+    _ab_shown = bool(dla._after_box.winfo_manager())
+    dla.out_var.set(str(OUT)); dla.after_var.set("move"); dla.after_dir_var.set(str(S / "after_done")); root.update()
+    _ab_dir = bool(dla._after_dir_row.winfo_manager())
+    dla._add(); settle()
+    qa = app.queue[-1] if app.queue else None
+    _tpl = m.load_settings().get("rescan_template", {}) or {}
+    ok("dialog.after.stored", _ab_shown and _ab_dir and qa is not None and qa.after_source == "move"
+       and qa.after_move_to == str(S / "after_done") and _tpl.get("after_source") == "move",
+       f"shown={_ab_shown} dir={_ab_dir} {getattr(qa, 'after_source', None)} {_tpl.get('after_source')}")
+    if qa is not None and qa is not q:
+        app.queue.remove(qa)
     # 4) .pkg with an IMAGE source → identity stays empty (read at build time)
     dlg2 = m.JobDialog(app, init_src=str(FF), init_to="pkg"); root.update()
     ok("dialog.image.identity-empty", dlg2.cid_var.get() == "" and dlg2.tid_var.get() == "", f"{dlg2.cid_var.get()!r}")
@@ -991,6 +1004,103 @@ try:
     pump(lambda: _dk not in app.queue, timeout=10.0)
     ok("queue.auto-remove-setting", _dk not in app.queue, str([i.status for i in app.queue]))
     app.auto_remove_done_var.set(False)
+    # J9) after the job: the source is kept, trashed, moved or deleted once the job is Done
+    import types as _types
+    _aj = m._after_job_module()
+    ok("after.defaults", app.after_source_var.get() == "keep" and app.notify_var.get() == "off"
+       and app.after_queue_var.get() == "nothing",
+       f"{app.after_source_var.get()} {app.notify_var.get()} {app.after_queue_var.get()}")
+    def _src_game(name):
+        d = S / "after_src" / name; (d / "sce_sys").mkdir(parents=True, exist_ok=True)
+        (d / "eboot.bin").write_bytes(b"E" * 64); return d
+    def _fake_worker(out):
+        return _types.SimpleNamespace(output_path=str(out), final_size=1, start_time=time.time(),
+                                      _is_copy=False, validate_failed=False, is_alive=lambda: False)
+    _aout = S / "after_out"; _aout.mkdir(exist_ok=True)
+    _outf = _aout / "Game.ffpfsc"; _outf.write_bytes(b"P" * 64)
+    _arc = S / "after_src" / "Set"; _arc.mkdir(parents=True, exist_ok=True)
+    _parts = [_arc / f"Game.part{i}.rar" for i in (1, 2)]
+    for _p in _parts:
+        _p.write_bytes(b"R")
+    (_arc / "Other.part1.rar").write_bytes(b"R")
+    _ja = _types.SimpleNamespace(archive_path=_parts[0], path=None, patch_source=None, name="Set")
+    ok("after.sources-archive-set", sorted(app._after_sources(_ja)) == sorted(_parts), str(app._after_sources(_ja)))
+    _jx = _types.SimpleNamespace(archive_path=None, origin_archive=None, path=S / "tmp_extract", _from_archive=True,
+                                 patch_source=None, name="X")
+    ok("after.sources-never-the-extracted-copy", app._after_sources(_jx) == [], str(app._after_sources(_jx)))
+    _g1 = _src_game("G1")
+    _j1 = m.GameItem.from_chain(_g1, to="ffpfsc"); _j1.after_source = "delete"; _j1.status = "Done"
+    app.queue[:] = [_j1]
+    _pl = app._after_job_plan(_j1, _fake_worker(_outf))
+    ok("after.plan-delete", _pl[0] == "delete" and _pl[1] == [_g1] and _pl[3] is None, str(_pl))
+    _j2 = m.GameItem.from_chain(_g1, to="pkg")                 # still waits for the same folder
+    app.queue[:] = [_j1, _j2]
+    ok("after.shared-source-stays", "another job" in str(app._after_job_plan(_j1, _fake_worker(_outf))[3]),
+       str(app._after_job_plan(_j1, _fake_worker(_outf))))
+    app.queue[:] = [_j1]
+    _wc = _fake_worker(_outf); _wc._is_copy = True
+    ok("after.copy-job-keeps", app._after_job_plan(_j1, _wc)[0] == "keep", "")
+    _wv = _fake_worker(_outf); _wv.validate_failed = True
+    ok("after.failed-checklist-stays", "checklist" in str(app._after_job_plan(_j1, _wv)[3]), "")
+    ok("after.missing-output-stays", "not found" in str(app._after_job_plan(_j1, _fake_worker(_aout / "no.pkg"))[3]), "")
+    _j0 = m.GameItem.from_chain(_g1, to="ffpfsc")              # after_source None: a queue from 2.1.0
+    ok("after.older-jobs-keep", app._after_job_plan(_j0, _fake_worker(_outf))[0] == "keep", "")
+    _jm = m.GameItem.from_chain(_g1, to="ffpfsc"); _jm.after_source = "move"
+    ok("after.move-needs-a-folder", "no destination" in str(app._after_job_plan(_jm, _fake_worker(_outf))[3]), "")
+    _card = app._card_info_text(_j1)
+    ok("after.card-row", _card.get("After", "").startswith("Delete the source"), _card.get("After", ""))
+
+    def _run_done(item, worker, done_when, ok_flag=True):
+        item.status = "Running"
+        app.queue[:] = [item]; app._active_item = item; app.worker = worker
+        app.finish(ok_flag, "ok" if ok_flag else "boom", "cmd")
+        pump(lambda: done_when() and not getattr(app, "_after_busy", False), timeout=10.0)
+    _g3 = _src_game("G3")
+    _j3 = m.GameItem.from_chain(_g3, to="ffpfsc", output_path=str(_aout)); _j3.after_source = "delete"
+    _run_done(_j3, _fake_worker(_outf), lambda: not _g3.exists())
+    ok("after.done-job-deletes-source", not _g3.exists() and _outf.exists() and _j3.status == "Done", _j3.status)
+    _g4 = _src_game("G4"); _dest = S / "after_done"
+    _j4 = m.GameItem.from_chain(_g4, to="ffpfsc", output_path=str(_aout))
+    _j4.after_source, _j4.after_move_to = "move", str(_dest)
+    _run_done(_j4, _fake_worker(_outf), lambda: (_dest / "G4").exists())
+    ok("after.done-job-moves-source", (_dest / "G4" / "eboot.bin").is_file() and not _g4.exists(), "")
+    _g5 = _src_game("G5"); _seen = []
+    _real_trash = _aj.move_to_trash
+    _aj.move_to_trash = lambda p: (_seen.append(Path(p)), "Trash")[1]
+    try:
+        _j5 = m.GameItem.from_chain(_g5, to="ffpfsc", output_path=str(_aout)); _j5.after_source = "trash"
+        _run_done(_j5, _fake_worker(_outf), lambda: bool(_seen))
+    finally:
+        _aj.move_to_trash = _real_trash
+    ok("after.done-job-trashes-source", _seen == [_g5], str(_seen))
+    _g6 = _src_game("G6")
+    _j6 = m.GameItem.from_chain(_g6, to="ffpfsc", output_path=str(_aout)); _j6.after_source = "delete"
+    _run_done(_j6, _fake_worker(_outf), lambda: _j6.status == "Failed", ok_flag=False)
+    ok("after.failed-job-keeps-source", _g6.is_dir() and _j6.status == "Failed", _j6.status)
+    app.queue[:] = []; app._active_item = None; app.worker = None
+    # the countdown after the queue: goes on its own, or is cancelled
+    _went, _canc = [], []
+    _cd = m.CountdownWindow(root, "sleep", on_go=lambda: _went.append("go"))
+    ok("after.countdown-text", "sleep in 30 s" in _cd._msg.get(), _cd._msg.get())
+    _cd._left = 0; _cd._tick()
+    _cd2 = m.CountdownWindow(root, "quit", on_go=lambda: _went.append("quit"), on_cancel=lambda: _canc.append(1))
+    _cd2._cancel()
+    ok("after.countdown-go-and-cancel", _went == ["go"] and _canc == [1], f"{_went} {_canc}")
+    _real_go = app._after_queue_go
+    app._after_queue_go = lambda act: _went.append(act)
+    app.after_queue_var.set("quit")
+    try:
+        app._queue_finished()
+        _cdq = getattr(app, "_countdown", None)
+        ok("after.queue-end-opens-countdown", isinstance(_cdq, m.CountdownWindow), str(_cdq))
+        _cdq._go()
+        ok("after.queue-end-quits", _went[-1] == "quit", str(_went))
+    finally:
+        app._after_queue_go = _real_go
+        app.after_queue_var.set("nothing")
+    app._countdown = None
+    app._queue_finished()
+    ok("after.queue-end-nothing", getattr(app, "_countdown", None) is None, "")
     # clear all keeps the running job
     _r1 = m.GameItem.from_chain(HBT, to="ffpfsc"); _r2 = m.GameItem.from_chain(HBT, to="ffpfsc"); _r2.status = "Done"
     app.queue[:] = [_r1, _r2]; app._batch_running = True; app._active_item = _r1
@@ -1605,6 +1715,21 @@ try:
             except Exception as e:
                 bad.append(f"{key}: {e!r}")
         ok("wire.settings.every-page", not bad, str(bad))
+        # Settings › General › When a job is done: Delete asks first, Move shows its folder
+        sv._nav["general"].invoke(); root.update()
+        _real_ask2 = m.messagebox.askyesno
+        m.messagebox.askyesno = lambda *a, **k: False
+        try:
+            sv._on_after_source("Delete"); root.update()
+            _kept = app.after_source_var.get()
+        finally:
+            m.messagebox.askyesno = _real_ask2
+        app.after_move_dir_var.set(str(S / "after_done"))
+        sv._on_after_source("Move to folder"); root.update()
+        _dir_shown = bool(sv._after_dir_row.winfo_manager())
+        sv._on_after_source("Keep"); root.update()
+        ok("wire.settings.after-source", _kept == "keep" and _dir_shown and app.after_source_var.get() == "keep"
+           and not sv._after_dir_row.winfo_manager(), f"{_kept} {_dir_shown}")
         app._nav["queue"].invoke(); root.update()
 
         # tools

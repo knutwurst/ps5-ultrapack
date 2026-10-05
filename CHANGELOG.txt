@@ -6,6 +6,37 @@
   v2.1.1  (current)
 ────────────────────────────────────────────────────────────────────────
 
+WHAT HAPPENS WHEN A JOB IS DONE
+
+  - Settings › General › When a job is done › Source: Keep, Move to
+    Trash, Move to folder (with a folder you choose), or Delete. Add job
+    has the same choice under Output ("After the job"), filled in from
+    Settings; each job keeps its own choice, and Rescan reuses the one
+    from the last Add job. Jobs from earlier versions keep their source.
+  - The source is the game folder, the archive with every part of its
+    set, or the container file, and a patch the job integrated. The app
+    acts only on a job that is Done and whose output is on the disk; a
+    .pkg whose checklist reported failures keeps its source. A failed,
+    skipped or stopped job never touches it, nor does a copy job, which
+    moves or keeps its source itself.
+  - It never touches a source that is or holds the job's output, a whole
+    drive, the home folder, the app's own temp and profile folders, or a
+    source another job in the queue still needs (the last of those jobs
+    takes care of it).
+  - Move to Trash uses the Trash of the source's drive, so Put Back in
+    Finder restores it. Move to folder renames on the same drive and
+    copies, checks and then removes across drives; the queue waits for
+    the move, so the copy does not share the drive with the next job. A
+    name already taken in the folder gets a number, the same one for
+    every part of an archive set. Choosing Delete in Settings asks once.
+  - Notify: Off, Each job, or Queue end, as a banner in Notification
+    Center.
+  - When the queue is done: Nothing, Sleep, or Quit, only after the last
+    job of a run, not after Stop. Sleep and Quit wait 30 seconds in a
+    small window with Cancel; a new run closes it.
+  - The finished-job checkboxes (show the result, remove from the queue,
+    open the output folder, sounds) moved into the same section.
+
 ONE BADGE FOR EVERY JOB THAT WAITS
 
   - A job whose source is an archive showed a yellow "Waiting" badge
