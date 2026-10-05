@@ -5799,8 +5799,7 @@ class App:
 
     def _job_recipe_parts(self, item) -> list[str]:
         op = getattr(item, "operation", "pack")
-        kind = chain_source_kind(item)
-        src = {"folder": "Folder", "archive": "Archive"}.get(kind, f".{kind}" if kind and kind != "file" else "File")
+        src = source_label(item)
         if op == "chain":
             ch = []
             for c in chain_changes(item):
@@ -9249,7 +9248,7 @@ class App:
             sub = "  →  ".join(self._job_recipe(item))
             if size_txt:
                 sub += f"   ·   {size_txt}"
-            tid = getattr(item, "title_id", "") or ""
+            tid = shown_title_id(item)
             if tid and tid not in str(disp):
                 sub = f"{tid}   ·   {sub}"
             chip = (f"{int(self._cur_job_pct)}%" if running else

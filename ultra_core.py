@@ -378,6 +378,42 @@ def chain_source_kind(item) -> str:
             ".ffpfsc": "ffpfsc", ".pkg": "pkg"}.get(suf, suf.lstrip(".") or "file")
 
 
+_CONTAINER_LABELS = {".exfat": ".exfat", ".ffpkg": ".ffpkg", ".ffpfs": ".ffpfs", ".ffpfsc": ".ffpfsc", ".pkg": ".pkg"}
+_TITLE_ID_PLACEHOLDERS = {"Unknown", "📦", "💾", "📤", ""}
+
+
+def source_label(item) -> str:
+    """What the job's source was, for the queue row: 'Archive', 'Folder' or a container's
+    suffix. Decided from what the job knows about itself, not from whether the source is
+    still on the disk: after Move to folder or Delete, or once an extraction is gone, a
+    folder name such as 'Example 1.000 ppsa00001' must not read as a '.000 ppsa00001' file."""
+    if (getattr(item, "archive_path", None) or getattr(item, "origin_archive", None)
+            or getattr(item, "source_kind", "") == "archive"):
+        return "Archive"
+    raw = str(getattr(item, "path", "") or "").strip()
+    if not raw:                          # Path("") would be ".", the working folder
+        return "Folder"
+    p = Path(raw)
+    if p.is_dir():
+        return "Folder"
+    label = _CONTAINER_LABELS.get(p.suffix.lower())
+    if label:
+        return label
+    if p.is_file() and p.suffix and " " not in p.suffix and len(p.suffix) <= 8:
+        return p.suffix.lower()          # some other container the backend may still read
+    return "Folder"
+
+
+def shown_title_id(item) -> str:
+    """The title id a row may show: the one read from the archive when the job has it, else
+    the item's own, never a placeholder glyph."""
+    for tid in (getattr(item, "archive_title_id", ""), getattr(item, "title_id", "")):
+        tid = str(tid or "").strip()
+        if tid and tid not in _TITLE_ID_PLACEHOLDERS:
+            return tid
+    return ""
+
+
 _BACKPORT_TARGET = re.compile(r"^(?:\d{1,2}\.\d{2}|10\.xx)$")
 
 
@@ -3220,6 +3256,8 @@ __all__ = [
     "FS_JUNK_NAMES",
     "is_fs_junk_name",
     "strip_fs_junk",
+    "source_label",
+    "shown_title_id",
     "_COPYTREE_JUNK_GLOBS",
     "detect_game_bundle",
     "scan_parent_for_bundles",

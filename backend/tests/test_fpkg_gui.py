@@ -592,6 +592,9 @@ try:
     je.destroy()
     ok("job.compression.details-chip", app._job_recipe(jl, detail=True)[-1] == ".ffpfsc, level 3"
        and app._job_recipe(jl)[-1] == ".ffpfsc", str(app._job_recipe(jl, detail=True)))
+    _p0 = jl.path; jl.path = Path(str(OUT)) / "gone" / "Example Title 1.000 ppsa00001"   # moved away after the job
+    ok("job.recipe.gone-folder-stays-folder", app._job_recipe(jl)[0] == "Folder", str(app._job_recipe(jl)))
+    jl.path = _p0
     app.queue.remove(jl); app.compression_level_var.set(_lvl0)
     # J6c) the help line keeps one height whatever option the pointer is over
     jh = m.JobDialog(app, init_src=str(HBT)); root.update()

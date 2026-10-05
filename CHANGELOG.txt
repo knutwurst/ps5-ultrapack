@@ -160,6 +160,19 @@ A COPY KEEPS ITS SOURCE
   - --copy-mode keep|organize|move replaces --keep-source on the command
     line; keep is the default.
 
+THE LINE UNDER A JOB READS THE SAME FOR EVERY JOB
+
+  - The line under a job's name says what the job started from:
+    Archive, Folder or the container's type (.ffpfsc, .pkg, …), then
+    the changes and the output. It no longer depends on whether the
+    source is still on the disk: a folder moved away after the job read
+    as ".000 …" (the end of its name taken for a file type), an
+    extraction removed after the job read as "File", and a job that was
+    unpacked from an archive switched from Archive to Folder.
+  - A job whose game is not read yet shows no package symbol in place
+    of the title id; the id appears once the archive has been read and
+    the name does not carry it already.
+
 ONE BADGE FOR EVERY JOB THAT WAITS
 
   - A job whose source is an archive showed a yellow "Waiting" badge
