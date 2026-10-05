@@ -1,20 +1,21 @@
 # LibProsperoPkg.dll patches
 
-`ffpfsc-pkg-tool` links against drakmor's LibProsperoPkg 1.2.0
-(GPL-3.0-or-later). Both the pristine upstream assembly
+`ffpfsc-pkg-tool` links against drakmor's LibProsperoPkg 1.2.0, build
+`d7090eb6` (GPL-3.0-or-later). Both the pristine upstream assembly
 (`lib/LibProsperoPkg.dll.orig`) and the patched one the tool links against
 (`lib/LibProsperoPkg.dll`) are tracked in git, with SHA-256 sums in
 `lib/SHA256SUMS`; `lib/README.md` records the provenance and the
-modification notice. Two upstream behaviours keep a retail-shape package
-from launching on a jailbroken PS5. Both are fixed by rewriting IL in the
-assembly before the tool is compiled.
+modification notice. Two upstream behaviours keep a backported title from
+launching on a jailbroken PS5, and one crashes the tool while reading a
+package on macOS. All three are fixed by rewriting IL in the assembly
+before the tool is compiled.
 
 ## Applying
 
 `CecilPatch/` is a small .NET console project using Mono.Cecil. It patches
-the DLL in place, writes a `.orig` backup next to it, finds both sites by
+the DLL in place, writes a `.orig` backup next to it, finds each site by
 instruction pattern (not by file offset), and is idempotent — running it on
-an already patched DLL reports "already patched" and changes nothing.
+an already patched DLL reports "already" for each site and changes nothing.
 
 ```bash
 cd backend/native/src/ffpfsc-pkg-tool/patches/CecilPatch
@@ -25,37 +26,15 @@ Then `dotnet publish` the tool as usual. If upstream changes and a pattern
 is not found, the patcher exits 3 and names the patch — do not ship a tool
 built from an unpatched DLL.
 
-## Patch 1 — `drm_type = 16` for Application volumes
+## Lineage check — `drm_type = 16` is upstream now
 
-`ProsperoPkgBuilder.BuildContainer` stamps the CNT header's `drm_type` with
-
-```csharp
-drm_type = (VolumeType != Application || applicationDrmType == "upgradable") ? 16u : 0u
-```
-
-so a normal `"standard"`-DRM game gets `drm_type = 0` (free). Sony's
-publisher writes 16 for retail games (checked against two untouched retail
-packages); the console's retail-DRM path expects 16. With 0 and real
-license records the homescreen shows a padlock and the launch fails with
-CE-100022-5.
-
-The IL is
-
-```
-brtrue.s  L16        ; VolumeType != Application
-ldloc.1              ; applicationDrmType == "upgradable"
-brfalse.s L0
-L16: ldc.i4.s 16
-     br.s STORE
-L0:  ldc.i4.0
-STORE: stfld drm_type
-```
-
-The patcher retargets the `brfalse.s` to `L16`, so the "standard" path also
-loads 16. The branch still consumes its operand, so the stack stays balanced
-and the method verifies. `ldc.i4.0` becomes dead code. `applicationDrmType`
-in param.json is untouched — flipping it to `"upgradable"` instead would
-make the console look for an upgrade chain the package does not have.
+Builds before `d7090eb6` stamped the CNT header's `drm_type` with 0 for a
+`"standard"`-DRM Application volume (Sony's publisher writes 16; with 0 and
+real license records the homescreen shows a padlock and the launch fails
+with CE-100022-5). That needed a branch retarget, "patch 1" of the
+`4f71489e` era. Upstream now writes `isFree ? 0 : 16`. The patcher no
+longer changes this site; it refuses an assembly that still carries the old
+pattern, so an old build is never shipped without its fix.
 
 ## Patch 2 — keep `fakelib/libSceAmpr.sprx` and `libScePlayGo.sprx`
 
@@ -71,12 +50,42 @@ directory intact is the right shape.
 
 The patcher replaces the function body with a single `ret`.
 
+## Patch 3 — keep `/ampr_emu.index`
+
+Since `d7090eb6`, `BuildInnerTree` drops three files from the image root:
+
+```csharp
+new string[3] { "ampr_emu.index", "entitlements.txt", "entitlement_key.dat" }
+```
+
+The AMPR emulator kept by patch 2 reads `/app0/ampr_emu.index` at runtime,
+and the tool rebuilds that index over the packed files before the build
+(`--no-ampr-index` keeps the source's copy). The patcher blanks the first
+string of the array: no file has an empty name, so that `RemoveAll` never
+matches, while `entitlements.txt` and `entitlement_key.dat` stay excluded.
+
+## Patch 4 — single-threaded package reading
+
+`ProsperoPackageArchive.ResolveParallelism(requested)` returns
+`min(ProcessorCount, 8)` when nothing is requested, and that is what
+`ExtractInnerFiles` and the `Verify*` paths use: one inner-PFS session per
+worker on a `Parallel.ForEach`. On macOS arm64 those sessions crash the
+process (an `AccessViolationException` on a thread-pool worker, FailFast,
+SIGABRT, "ffpfsc-pkg-tool quit unexpectedly") — reproduced on every full
+`extract-inner` of a five-file package. It is the same family as the
+encoder crash that keeps the builder at parallelism 1 (CHANGELOG 1.0.90).
+The patcher makes the function return 1, so reading stays single-threaded
+as it was in the previous build.
+
 ## What is deliberately not patched
 
-- The PlayGo prepared-set handling (upstream preserves any 3/3 set without
-  looking inside). That is handled in `Program.cs` before the build: the
-  files are validated against their on-wire format and a corrupt set is
-  dropped from the staged mirror so upstream regenerates it.
+- The PlayGo prepared-set handling. Upstream never copies a source set into
+  the package any more: it keeps the set's file assignments, chunk labels,
+  languages and scenario presentation and rebuilds the image ranges for the
+  image it just made (up to 255 chunks and 5 scenarios). `Program.cs` still
+  validates a source set against its on-wire format and the packed tree
+  before the build and drops a corrupt or stale set from the staged mirror,
+  so upstream generates one instead of throwing.
 - Keystone generation. Upstream keeps a present `sce_sys/keystone` and only
   generates one when missing — which is correct: the keystone is the
   save-data key, and a regenerated one makes every existing save unreadable.

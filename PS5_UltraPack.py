@@ -96,7 +96,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.0.3"
+APP_VERSION = "2.1.0"
 # For archive sources, the GUI extraction occupies the first slice of a game's overall
 # progress; the worker's pack progress is compressed into the remaining tail so the
 # whole-game percentage stays monotonic across extraction → pack (see CLIWorker._set_stage
@@ -3035,9 +3035,12 @@ class JobDialog(EmbeddedDialog):
                   "retail DRM type and the retail flag in every executable, rebuilds a corrupt PlayGo "
                   "set and repairs presentation images — the configuration verified on a console. Off "
                   "only for a byte-exact re-pack or an A/B test.",
-        "playgo": "Discards the source's PlayGo files even when they look valid and lets the builder "
-                  "write a fresh one-chunk set. A corrupt or mismatching set is rebuilt anyway, so this "
-                  "is only for a title that installs but will not start (CE-100022-5).",
+        "playgo": "Off (recommended): the game's own PlayGo layout is kept — which file sits in which "
+                  "chunk, the chunk names and languages, the scenario names — and only the image "
+                  "ranges are recomputed for the new package. On: the source's PlayGo files are "
+                  "discarded and the builder writes a fresh one-chunk set. Same build time either "
+                  "way. A corrupt or mismatching set is rebuilt regardless, so switch this on only "
+                  "for a title that installs but will not start (CE-100022-5).",
         "hdr":    "auto keeps what the game's param.json declares — the publisher's intent; a console on "
                   "'HDR when supported' follows this flag. on forces it, off clears it.",
         "identity": "The package identity comes from the game's sce_sys/param.json when it is built. Fill these in "

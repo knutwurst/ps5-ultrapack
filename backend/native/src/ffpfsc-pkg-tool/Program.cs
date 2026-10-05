@@ -10,6 +10,7 @@ using LibProsperoPkg;
 using LibProsperoPkg.Content;
 using LibProsperoPkg.PFS;
 using LibProsperoPkg.PKG;
+using LibProsperoPkg.PlayGo;
 
 namespace PkgTool;
 
@@ -19,7 +20,7 @@ namespace PkgTool;
 
 internal static class Program
 {
-    const string ToolVersion = "1.1.18";
+    const string ToolVersion = "2.1.0";
 
     static int Main(string[] args)
     {
@@ -80,7 +81,11 @@ internal static class Program
         Console.WriteLine("      --deterministic              byte-reproducible build");
         Console.WriteLine("      --temp <dir>                 intermediate files go here (default: $TMPDIR)");
         Console.WriteLine("      --level <n>                  compression level: Kraken -4..9, zlib 0..9 (default 7)");
-        Console.WriteLine("      --playgo-chunks <1..64>      PlayGo chunk count (auto-detected from source sce_sys/playgo-chunk.dat)");
+        Console.WriteLine("      --playgo-chunks <1..255>     chunk count when the builder generates the PlayGo set (default 1). A source");
+        Console.WriteLine("                                   sce_sys/playgo-chunk.dat overrides it: its chunk and scenario counts, file");
+        Console.WriteLine("                                   assignments, labels and languages are kept, the image ranges are rebuilt.");
+        Console.WriteLine("      --layout-pass on|off         LibProsperoPkg's inner-image layout pass (outer block coalescing + relocation");
+        Console.WriteLine("                                   alignment adjustment; default on). off = the layout of the 1.1.x builds");
         Console.WriteLine("      --parallelism <n> / -j <n>   accepted for compatibility; LibProsperoPkg 1.2.0's encoder is not");
         Console.WriteLine("                                   thread-safe, so every build runs single-threaded (a warning says so)");
         Console.WriteLine("      --fake-sign / --no-fake-sign fake-sign raw ELFs in source before packing (default ON; idempotent)");
@@ -94,7 +99,7 @@ internal static class Program
         Console.WriteLine("                                   it. A console on \"HDR when supported\" switches output modes on this bit.");
         Console.WriteLine("      --retail-normalize / --no-retail-normalize");
         Console.WriteLine("                                   auto-upgrade a \"standard\" retail source (default ON):");
-        Console.WriteLine("                                     staged param.json standard -> upgradable (drm_type=16),");
+        Console.WriteLine("                                     param.json applicationDrmType stays as it is (the library stamps drm_type=16),");
         Console.WriteLine("                                     replace placeholder license.dat/info with a valid debug license,");
         Console.WriteLine("                                     add CNT entries 0x0400/0x0401 via IProsperoLicenseProvider");
         Console.WriteLine("");
@@ -130,7 +135,8 @@ internal static class Program
         var asm = typeof(ProsperoPkgReader).Assembly;
         var name = asm.GetName();
         Console.WriteLine("ffpfsc-pkg-tool " + ToolVersion);
-        Console.WriteLine($"LibProsperoPkg: {name.Name} v{name.Version}");
+        var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        Console.WriteLine($"LibProsperoPkg: {name.Name} v{name.Version}" + (info != null ? $" ({info})" : ""));
         Console.WriteLine($".NET: {Environment.Version}");
         Console.WriteLine($"Host: {Environment.OSVersion.Platform} {Environment.OSVersion.Version} ({System.Runtime.InteropServices.RuntimeInformation.OSArchitecture})");
         Console.WriteLine($"SHA3-256 (System): {System.Security.Cryptography.SHA3_256.IsSupported}");
@@ -231,6 +237,7 @@ internal static class Program
             return CmdExtractMembers(pkg, outDir, passcode, membersFile, json);
         }
         Directory.CreateDirectory(outDir);
+        outDir = RealPath(outDir);
         Console.Error.WriteLine($"[info] extract-{(inner ? "inner" : "outer")}  {pkg} -> {outDir}");
         var files = inner
             ? ProsperoPackageArchive.ExtractInnerFiles(pkg, outDir, passcode, decompressFiles: decompress)
@@ -314,6 +321,7 @@ internal static class Program
         try
         {
             Directory.CreateDirectory(tmpDir);
+            tmpDir = RealPath(tmpDir);
             ProsperoPackageArchive.ExtractCntEntries(pkg, tmpDir, passcode, includeEncrypted: true);
             foreach (var src in Directory.EnumerateFiles(tmpDir, "*", SearchOption.AllDirectories))
             {
@@ -482,7 +490,7 @@ internal static class Program
         }
 
         var errors = new List<string>();
-        var tmpCnt = Path.Combine(Path.GetTempPath(), "fpkg-list-cnt-" + Guid.NewGuid().ToString("N"));
+        var tmpCnt = Path.Combine(RealPath(Path.GetTempPath()), "fpkg-list-cnt-" + Guid.NewGuid().ToString("N"));
         try
         {
             using var img = new InnerImage(pkg, passcode);
@@ -526,7 +534,7 @@ internal static class Program
         Directory.CreateDirectory(outDir);
         Console.Error.WriteLine($"[info] extract-inner (members)  {pkg} -> {outDir}  ({wanted.Count} member(s))");
         var errors = new List<string>();
-        var tmpCnt = Path.Combine(Path.GetFullPath(outDir), ".cnt-tmp-" + Guid.NewGuid().ToString("N"));
+        var tmpCnt = Path.Combine(RealPath(outDir), ".cnt-tmp-" + Guid.NewGuid().ToString("N"));
         try
         {
             // 4 MiB cache blocks: metadata walks need few of them and file data streams through
@@ -696,7 +704,7 @@ internal static class Program
         catch (Exception ex) { Fail("cnt.wrap", "check threw: " + ex.Message); }
 
         // Required CNT entries
-        var tmpCnt = Path.Combine(Path.GetTempPath(), "fpkg-validate-" + Guid.NewGuid().ToString("N"));
+        var tmpCnt = Path.Combine(RealPath(Path.GetTempPath()), "fpkg-validate-" + Guid.NewGuid().ToString("N"));
         System.Collections.Generic.List<string> cntFiles = new();
         try
         {
@@ -731,6 +739,35 @@ internal static class Program
                 };
                 if (ok) Ok("cnt." + n, $"{b.Length:N0} bytes, on-wire format OK");
                 else    Fail("cnt." + n, $"{b.Length:N0} bytes but NOT the {n} format" + (LooksLikeJsonText(b) ? " (it is JSON text)" : LooksLikePlayGoHashTable(b) ? " (it is a hash table)" : "") + " — launch will fail (CE-100022-5)");
+            }
+            {
+                var scenP = Path.Combine(tmpCnt, "playgo-scenario.json");
+                if (File.Exists(scenP))
+                {
+                    var sb = File.ReadAllBytes(scenP);
+                    if (LooksLikePlayGoScenarioJson(sb)) Ok("cnt.playgo-scenario.json", $"{sb.Length:N0} bytes, valid scenario metadata");
+                    else Warn("cnt.playgo-scenario.json", $"{sb.Length:N0} bytes but does not validate as scenario metadata");
+                }
+            }
+            // Whole-set check with the library's own validator: chunk/scenario tables in range,
+            // FICM ids inside the chunk table, scenario.json consistent with chunk.dat, and the
+            // extents contiguous and covering exactly the package image before the embedded CNT.
+            // A set copied from another package fails here (its ranges describe that image).
+            {
+                string Pg(string n) => Path.Combine(tmpCnt, n);
+                if (File.Exists(Pg("playgo-chunk.dat")) && File.Exists(Pg("playgo-hash-table.dat")) && File.Exists(Pg("playgo-ficm.dat")))
+                {
+                    try
+                    {
+                        var scen = File.Exists(Pg("playgo-scenario.json")) ? File.ReadAllBytes(Pg("playgo-scenario.json")) : Array.Empty<byte>();
+                        ulong? mount = fih != null && (long)fih.EmbeddedCntOffset > 0 ? (ulong)fih.EmbeddedCntOffset : null;
+                        var info = ProsperoPlayGo.ValidateLayout(File.ReadAllBytes(Pg("playgo-chunk.dat")), File.ReadAllBytes(Pg("playgo-ficm.dat")),
+                                                                 File.ReadAllBytes(Pg("playgo-hash-table.dat")), scen, h.ContentId, mount);
+                        Ok("cnt.playgo-layout", $"{info.ChunkCount} chunk(s), {info.ScenarioCount} scenario(s), {info.ExtentCount} extent(s) covering 0x{info.CoveredBytes:X}"
+                            + (mount != null ? " = the image before the CNT" : "") + $", {info.FileCount:N0} file(s)");
+                    }
+                    catch (Exception ex) { Fail("cnt.playgo-layout", ex.Message + " — the set does not describe this image (launch fails with CE-100022-5)"); }
+                }
             }
             // param.json coherence with header
             var pj = Path.Combine(tmpCnt, "param.json");
@@ -772,7 +809,7 @@ internal static class Program
         finally { try { Directory.Delete(tmpCnt, recursive: true); } catch { } }
 
         // Try extracting inner /app0 to check the PFS decodes
-        var tmpInner = Path.Combine(Path.GetTempPath(), "fpkg-validate-inner-" + Guid.NewGuid().ToString("N"));
+        var tmpInner = Path.Combine(RealPath(Path.GetTempPath()), "fpkg-validate-inner-" + Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(tmpInner);
@@ -1235,6 +1272,16 @@ internal static class Program
             // 1-chunk layout matches every known-working reference package. Auto-
             // detected from the source's own sce_sys/playgo-chunk.dat later.
             PlayGoChunkCount = 1,
+            // A source prepared set is never copied into the package: the library keeps its
+            // file assignments, chunk labels, languages and scenario presentation and
+            // rebuilds the image ranges for the image it just made.
+            PreserveSourcePlayGoLayout = true,
+            // Inner-image layout pass (the library's default, "matches the Publishing Tools
+            // layout pass"). It rewrites the image only when that saves >= 1 MiB and
+            // 0.1 %; on the console-verified retail sample (2026-10-05) it found 512 KiB
+            // and left the layout alone. --layout-pass off keeps the 1.1.x layout.
+            EnableOuterBlockCoalescing = true,
+            EnableRelocationAlignmentAdjustment = true,
         };
         for (int i = 3; i < args.Length; i++)
         {
@@ -1307,14 +1354,13 @@ internal static class Program
                 }
                 case "--playgo-chunks":
                 {
-                    // LibProsperoPkg defaults to 64 and spreads files over as many chunks as
-                    // there are files; Sony's publisher packs every launch-time file into
-                    // chunk 0 (default here). Auto-detected from source's playgo-chunk.dat
-                    // when present; this override wins over the auto-detect. The library
-                    // itself rejects anything outside 1..64.
+                    // The count the builder uses when it generates the set (no usable source
+                    // set). LibProsperoPkg defaults to 100 language chunks; Sony's publisher
+                    // packs every launch-time file into chunk 0 (default here). A source
+                    // playgo-chunk.dat overrides both. The library rejects anything outside 1..255.
                     var v = Need(args, ref i, a);
-                    if (!int.TryParse(v, out int chunks) || chunks < 1 || chunks > 64)
-                        throw new ArgumentException("--playgo-chunks needs an integer 1..64 (LibProsperoPkg's range)");
+                    if (!int.TryParse(v, out int chunks) || chunks < 1 || chunks > 255)
+                        throw new ArgumentException("--playgo-chunks needs an integer 1..255 (LibProsperoPkg's range)");
                     opts.PlayGoChunkCount = chunks;
                     playGoChunksExplicit = true;
                     break;
@@ -1335,16 +1381,23 @@ internal static class Program
                 case "--no-retail-normalize":
                     // Retail-normalize replaces placeholder license.dat/info from the source
                     // with a valid debug license issued by LibProsperoPkg (fixes "bad RIF
-                    // magic" skip) and flips staged applicationDrmType "standard" to
-                    // "upgradable" so LibProsperoPkg writes drm_type=16 into the CNT header
-                    // instead of its Application/standard-hardcoded 0 (see 1.1.12 changelog).
-                    // Turn OFF for byte-exact re-packs or when packing something already
-                    // finalized by Sony's tools.
+                    // magic" skip) and stamps the retail SELF pattern; applicationDrmType
+                    // stays as the source declares it (the library writes drm_type=16 for
+                    // every non-free Application). Turn OFF for byte-exact re-packs or when
+                    // packing something already finalized by Sony's tools.
                     retailNormalize = false;
                     break;
                 case "--retail-normalize":
                     retailNormalize = true;
                     break;
+                case "--layout-pass":
+                {
+                    var v = Need(args, ref i, a).ToLowerInvariant();
+                    bool on = v switch { "on" => true, "off" => false, _ => throw new ArgumentException("--layout-pass needs on or off") };
+                    opts.EnableOuterBlockCoalescing = on;
+                    opts.EnableRelocationAlignmentAdjustment = on;
+                    break;
+                }
                 case "--regen-playgo":
                     // Discard the source's sce_sys/playgo-*.dat even when they validate, so
                     // LibProsperoPkg generates a set that matches the inner tree it builds.
@@ -1392,6 +1445,7 @@ internal static class Program
 
         // -- PlayGoChunkCount auto-detect (unless the user pinned it explicitly) --
         bool playgoOutOfRange = false;   // the source's set declares a count the library rejects
+        int detectedPlayGoChunks = 0;    // chunk count the source declares (for messages)
         if (!playGoChunksExplicit)
         {
             try
@@ -1408,21 +1462,15 @@ internal static class Program
                         bytes[0] == (byte)'p' && bytes[1] == (byte)'l' && bytes[2] == (byte)'g' && bytes[3] == (byte)'x')
                     {
                         int detected = bytes[0x0A] | (bytes[0x0B] << 8);
-                        if (detected > 64)
+                        detectedPlayGoChunks = detected;
+                        if (detected == 0 || detected > 255)
                         {
-                            // LibProsperoPkg throws "PlayGo chunk count must be in the range 1..64"
-                            // for such a set; discard it and regenerate with the default count.
-                            Console.Error.WriteLine($"  [playgo] source declares {detected} chunks (> 64): regenerating the prepared set");
-                            playgoOutOfRange = true;
-                        }
-                        else if (detected == 0)
-                        {
-                            Console.Error.WriteLine("  [playgo] source declares 0 chunks (invalid): regenerating the prepared set");
+                            Console.Error.WriteLine($"  [playgo] source declares {detected} chunks (out of range 1..255): regenerating the prepared set");
                             playgoOutOfRange = true;
                         }
                         else if (detected != opts.PlayGoChunkCount)
                         {
-                            Console.Error.WriteLine($"  [playgo] source declares {detected} chunk(s); using that (was default {opts.PlayGoChunkCount})");
+                            Console.Error.WriteLine($"  [playgo] source declares {detected} chunk(s); using that as the generation count too (was default {opts.PlayGoChunkCount})");
                             opts.PlayGoChunkCount = detected;
                         }
                     }
@@ -1489,10 +1537,12 @@ internal static class Program
             // emits (ProsperoPlayGo.BuildChunkDat/BuildHashTable/BuildFicm); if any present
             // file fails, drop the whole set from the staged mirror so the builder
             // regenerates a consistent one from the actual inner tree.
-            var playgoNames = new[] { "playgo-chunk.dat", "playgo-hash-table.dat", "playgo-ficm.dat" };
+            var playgoCoreNames = new[] { "playgo-chunk.dat", "playgo-hash-table.dat", "playgo-ficm.dat" };
+            var playgoAllNames = new[] { "playgo-chunk.dat", "playgo-hash-table.dat", "playgo-ficm.dat", "playgo-scenario.json" };
             var playgoPresent = Directory.Exists(srcSceSys)
-                ? playgoNames.Where(n => File.Exists(Path.Combine(srcSceSys, n))).ToArray()
+                ? playgoAllNames.Where(n => File.Exists(Path.Combine(srcSceSys, n))).ToArray()
                 : Array.Empty<string>();
+            bool hasScenarioJson = playgoPresent.Contains("playgo-scenario.json");
             var playgoBad = new List<string>();
             foreach (var n in playgoPresent)
             {
@@ -1502,11 +1552,13 @@ internal static class Program
                 {
                     "playgo-chunk.dat"      => LooksLikePlayGoChunkDat(b),
                     "playgo-hash-table.dat" => LooksLikePlayGoHashTable(b),
-                    _                       => LooksLikePlayGoFicm(b),
+                    "playgo-ficm.dat"       => LooksLikePlayGoFicm(b),
+                    "playgo-scenario.json"  => LooksLikePlayGoScenarioJson(b),
+                    _                       => false,
                 };
-                if (!ok) playgoBad.Add(n + (LooksLikeJsonText(b) ? " (is JSON text)" : LooksLikePlayGoHashTable(b) ? " (is a hash table)" : " (bad format)"));
+                if (!ok) playgoBad.Add(n + (n == "playgo-scenario.json" ? " (not valid scenario JSON)" : LooksLikeJsonText(b) ? " (is JSON text)" : LooksLikePlayGoHashTable(b) ? " (is a hash table)" : " (bad format)"));
             }
-            bool discardPlayGo = playgoPresent.Length > 0 && (regenPlayGo || playgoBad.Count > 0 || playgoOutOfRange);
+            bool discardPlayGo = playgoPresent.Intersect(playgoCoreNames).Any() && (regenPlayGo || playgoBad.Count > 0 || playgoOutOfRange);
             if (discardPlayGo)
                 Console.Error.WriteLine(playgoBad.Count > 0
                     ? $"  [playgo] prepared set is CORRUPT — {string.Join(", ", playgoBad)}; discarding all {playgoPresent.Length} file(s) so LibProsperoPkg regenerates a consistent {opts.PlayGoChunkCount}-chunk set"
@@ -1783,19 +1835,26 @@ internal static class Program
                 //     hash table lists the path hash of every file in the inner image and
                 //     playgo-ficm.dat one 2-byte chunk id per file: compare both with the tree
                 //     the builder will pack and let it regenerate the set on any mismatch.
+                //     scenario.json is dropped alongside the core set when it cannot be preserved.
                 {
                     var sg = Path.Combine(autoStage, "sce_sys");
                     var pg = new[] { "playgo-chunk.dat", "playgo-hash-table.dat", "playgo-ficm.dat" }
                         .Select(n => Path.Combine(sg, n)).ToArray();
+                    var scenarioPath = Path.Combine(sg, "playgo-scenario.json");
                     if (pg.All(File.Exists))
                     {
                         var paths = InnerImagePaths(autoStage);
-                        var why = PlayGoMismatch(paths, File.ReadAllBytes(pg[1]), File.ReadAllBytes(pg[2]));
+                        var why = PlayGoMismatch(paths, File.ReadAllBytes(pg[0]), File.ReadAllBytes(pg[1]), File.ReadAllBytes(pg[2]));
                         if (why == null)
-                            Console.Error.WriteLine($"  [playgo] prepared set matches the packed files ({paths.Count:N0}); kept");
+                        {
+                            int keptChunks = detectedPlayGoChunks > 0 ? detectedPlayGoChunks : opts.PlayGoChunkCount;
+                            Console.Error.WriteLine($"  [playgo] prepared set matches the packed files ({paths.Count:N0} file(s), {keptChunks} chunk(s)); kept — the library keeps its file assignments, labels and languages and rebuilds the image ranges"
+                                + (File.Exists(scenarioPath) ? " (with scenario.json)" : ""));
+                        }
                         else
                         {
                             foreach (var f in pg) File.Delete(f);   // staged links only; the source is untouched
+                            if (File.Exists(scenarioPath)) File.Delete(scenarioPath);
                             Console.Error.WriteLine($"  [playgo] prepared set does not match the packed files ({why}); discarded so LibProsperoPkg regenerates a consistent {opts.PlayGoChunkCount}-chunk set");
                         }
                     }
@@ -2073,19 +2132,33 @@ internal static class Program
 
     /// <summary>Why a prepared PlayGo hash table + ficm do not describe <paramref name="paths"/>
     /// (null = they do).</summary>
-    static string? PlayGoMismatch(IReadOnlyList<string> paths, byte[] hashTable, byte[] ficm)
+    // Mirrors what ProsperoPlayGo.ReadSourceLayout requires, so a set that would make the
+    // library throw is discarded here and regenerated instead.
+    static string? PlayGoMismatch(IReadOnlyList<string> paths, byte[] chunkDat, byte[] hashTable, byte[] ficm)
     {
-        if (!LooksLikePlayGoHashTable(hashTable) || !LooksLikePlayGoFicm(ficm)) return "bad format";
+        if (!LooksLikePlayGoChunkDat(chunkDat) || !LooksLikePlayGoHashTable(hashTable) || !LooksLikePlayGoFicm(ficm)) return "bad format";
         uint count = U32(hashTable, 36);
         if (56L + count * 8L != hashTable.Length) return "hash-table count does not match its size";
         var have = new HashSet<ulong>();
-        for (int i = 0; i < count; i++) have.Add(System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(hashTable.AsSpan(56 + i * 8, 8)));
+        ulong prev = 0;
+        for (int i = 0; i < count; i++)
+        {
+            ulong hsh = System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(hashTable.AsSpan(56 + i * 8, 8));
+            if (i > 0 && hsh <= prev) return "hash table is not sorted strictly ascending";
+            have.Add(hsh); prev = hsh;
+        }
         var want = new HashSet<ulong>(paths.Select(ProsperoPs5FlatPathTable.HashPath));
         int notListed = want.Count(x => !have.Contains(x)), notPacked = have.Count(x => !want.Contains(x));
         if (notListed > 0 || notPacked > 0)
             return $"{notListed} packed file(s) missing from its hash table, {notPacked} listed file(s) not packed";
         uint ficmSlots = U32(ficm, 12);
         if (ficmSlots != 2u * (uint)paths.Count) return $"ficm covers {ficmSlots / 2} file(s), the image has {paths.Count}";
+        int chunkCount = chunkDat[0x0A] | (chunkDat[0x0B] << 8);
+        for (int i = 0; i + 1 < ficmSlots; i += 2)
+        {
+            int id = ficm[16 + i] | (ficm[16 + i + 1] << 8);
+            if (id >= chunkCount) return $"ficm assigns a file to chunk {id} but the set declares {chunkCount} chunk(s)";
+        }
         return null;
     }
 
@@ -2126,6 +2199,47 @@ internal static class Program
     /// 16 + payload equals the length.</summary>
     static bool LooksLikePlayGoFicm(byte[] b)
         => b.Length >= 16 && U32(b, 0) == 1u && U32(b, 8) == 16u && 16u + U32(b, 12) == (uint)b.Length;
+
+    // LibProsperoPkg refuses an extraction target with a symlink anywhere in its path
+    // (macOS: /var -> /private/var, /tmp -> /private/tmp). Hand it the resolved path;
+    // components that do not exist yet are appended unresolved.
+    static string RealPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        if (OperatingSystem.IsWindows()) return full;
+        var missing = new Stack<string>();
+        var probe = full;
+        while (!Directory.Exists(probe))
+        {
+            var parent = Path.GetDirectoryName(probe);
+            if (string.IsNullOrEmpty(parent) || parent == probe) return full;
+            missing.Push(Path.GetFileName(probe));
+            probe = parent;
+        }
+        var ptr = realpath(probe, IntPtr.Zero);
+        if (ptr == IntPtr.Zero) return full;
+        try { probe = Marshal.PtrToStringUTF8(ptr) ?? probe; } finally { free(ptr); }
+        while (missing.Count > 0) probe = Path.Combine(probe, missing.Pop());
+        return probe;
+    }
+    [DllImport("libc")] static extern IntPtr realpath(string path, IntPtr resolved);
+    [DllImport("libc")] static extern void free(IntPtr p);
+
+    static bool LooksLikePlayGoScenarioJson(byte[] b)
+    {
+        try
+        {
+            using var d = JsonDocument.Parse(b);
+            var r = d.RootElement;
+            if (r.ValueKind != JsonValueKind.Object) return false;
+            if (!r.TryGetProperty("scenarioCount", out var sc) || sc.ValueKind != JsonValueKind.Number) return false;
+            if (!r.TryGetProperty("scenarioDefaultId", out _)) return false;
+            if (!r.TryGetProperty("scenarioDefaultLanguage", out _)) return false;
+            int count = sc.GetInt32();
+            return count >= 1 && count <= 5;
+        }
+        catch { return false; }
+    }
 
     static bool LooksLikeJsonText(byte[] b)
     {

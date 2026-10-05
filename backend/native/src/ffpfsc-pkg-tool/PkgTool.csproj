@@ -16,17 +16,23 @@
          executable. Bundling it made the .NET host unpack it into ~/.net/ffpfsc-pkg-tool/
          <bundle hash>/ on first run — a new ~27 MB folder for every build, never removed. -->
     <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
-    <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- No ReadyToRun precompilation: with it, a Kraken inner-image build of LibProsperoPkg
+         d7090eb6 corrupts memory on macOS arm64 about one run in eight (AccessViolationException
+         on a Parallel.For replica right after "Metadata tables prepared", FailFast, SIGABRT).
+         Measured 2026-10-05 on the homebrew fixture: 0 of 24 runs failed with ReadyToRun code
+         disabled at run time, 3 of 24 with it; excluding only LibProsperoPkg.dll from
+         precompilation did not help (4 of 24). JIT-compiled the tool is stable. -->
+    <PublishReadyToRun>false</PublishReadyToRun>
     <InvariantGlobalization>true</InvariantGlobalization>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
-    <!-- LibProsperoPkg 1.2.0 (GPL-3.0-or-later) is the one dependency that is not
-         on NuGet. lib/ holds the pristine upstream assembly (LibProsperoPkg.dll.orig)
+    <!-- LibProsperoPkg 1.2.0 build d7090eb6 (GPL-3.0-or-later) is the one dependency that
+         is not on NuGet. lib/ holds the pristine upstream assembly (LibProsperoPkg.dll.orig)
          and the patched one the tool links against; see lib/README.md and
-         patches/README.md for the two IL patches and how to re-apply them. -->
+         patches/README.md for the three IL patches and how to re-apply them. -->
     <Reference Include="LibProsperoPkg"><HintPath>lib\LibProsperoPkg.dll</HintPath></Reference>
     <!-- The remaining dependencies are the exact NuGet versions LibProsperoPkg 1.2.0
          was compiled against (assembly versions 2.3.0 / 8.4.0 / 14.15.0). -->

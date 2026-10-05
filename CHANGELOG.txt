@@ -3,8 +3,48 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.0.3  (current)
+  v2.1.0  (current)
 ────────────────────────────────────────────────────────────────────────
+
+THE PACKAGE BUILDER MOVES TO LIBPROSPEROPKG BUILD d7090eb6
+
+  - The bundled ffpfsc-pkg-tool, now versioned with the app (2.1.0),
+    links the LibProsperoPkg assembly from the fpkg-gui 0.6.11 release
+    (1.2.0, build d7090eb6). A source PlayGo set is no longer copied
+    into the package: the library keeps its file assignments, chunk
+    labels, languages and scenario presentation (up to 255 chunks, 5
+    scenarios) and rebuilds the image ranges for the image it just
+    made, in the same pass. The validate checklist gained
+    "cnt.playgo-layout": the ranges must cover exactly the image before
+    the embedded CNT. A stale or damaged source set (unsorted hashes,
+    chunk ids past the count, swapped files) is discarded and
+    regenerated instead of shipped.
+  - The library's inner-image layout pass (outer block coalescing and
+    relocation alignment adjustment, "matches the Publishing Tools
+    layout pass") is on by default; --layout-pass off gives the layout
+    of the 1.1.x builds. The pass only rewrites the image when that
+    saves at least 1 MiB and 0.1 %. Three packages built from the retail
+    sample with the layout pass off, on, and with a regenerated PlayGo
+    set all install and run on the console (2026-10-05, FW 11.60); on
+    that sample the pass found 512 KiB to save and left the layout
+    alone, so a package it did rewrite has not been on a console yet.
+  - drm_type 16 for retail volumes is upstream now. The IL patcher
+    checks for it instead of applying it and refuses an older assembly.
+    Three patches remain: fakelib/libSceAmpr.sprx and libScePlayGo.sprx
+    stay in the package (2), /ampr_emu.index stays in the image at both
+    places the new build drops it (3, new), and package reading is
+    single-threaded (4, new) because the parallel inner-PFS sessions
+    crashed the tool on macOS.
+  - No ReadyToRun precompilation: with it, a Kraken build corrupted
+    memory about one run in eight on Apple Silicon, none in 48 runs
+    without. list-inner got a little faster; the tool binary is 38 MB.
+  - Temporary folders reach the library by their real path. The new
+    build refuses a path through a symlink, which every /var path on
+    macOS is.
+  - The end-to-end test accepts what the new build changes on purpose:
+    fake-signed SELF headers get the standard magic, playgo-scenario.json
+    is written, and package -> folder -> package is a fixed point from
+    the second round-trip on when the source set had to be regenerated.
 
 THE LAST SOURCE IS PRE-SELECTED, AND RESCAN FINDS NEW DOWNLOADS
 
