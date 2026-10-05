@@ -180,6 +180,65 @@ class ActionTests(Base):
             aj.apply(aj.MOVE, [self.game()], dest=None)
 
 
+class ReleaseFolderTests(Base):
+    def find(self, folder):
+        return ultra_core.find_job_sources(Path(folder))
+
+    def test_folder_named_after_the_set_goes_whole(self):
+        rel = self.tmp / "dl" / "[site]-PPSA00001"
+        parts = [self.file(f"dl/[site]-PPSA00001/[site]-PPSA00001.part{i}.rar") for i in (1, 2)]
+        self.file("dl/[site]-PPSA00001/readme.nfo")
+        self.assertEqual(aj.release_folder(parts, list_sources=self.find, title_id="PPSA00001"), rel)
+
+    def test_folder_named_after_the_title_goes_whole(self):
+        pkg = self.file("dl/Example Quest/UP0001-PPSA00001_00-EXAMPLE0000000000-A0100-V0100.pkg")
+        self.file("dl/Example Quest/cover.jpg")
+        self.assertEqual(aj.release_folder([pkg], list_sources=self.find, title="EXAMPLE QUEST"), pkg.parent)
+
+    def test_two_games_in_one_folder_stay_apart(self):
+        a = [self.file(f"dl/Mixed PPSA00001/A-PPSA00001.part{i}.rar") for i in (1, 2)]
+        self.file("dl/Mixed PPSA00001/B-PPSA00002.part1.rar")
+        self.assertIsNone(aj.release_folder(a, list_sources=self.find, title_id="PPSA00001"))
+
+    def test_unrelated_name_or_protected_folder_is_not_taken(self):
+        a = [self.file("dl/Stuff/A-PPSA00001.part1.rar")]
+        self.assertIsNone(aj.release_folder(a, list_sources=self.find, title_id="PPSA00009"))
+        b = [self.file("root/B-PPSA00002/B-PPSA00002.rar")]
+        self.assertIsNone(aj.release_folder(b, list_sources=self.find, title_id="PPSA00002",
+                                            protected=[self.tmp / "root" / "B-PPSA00002"]))
+
+    def test_picked_folder_may_be_the_release_folder_but_not_one_above(self):
+        parts = [self.file("root/G-PPSA00003/G-PPSA00003.rar")]
+        rel = self.tmp / "root" / "G-PPSA00003"
+        self.assertEqual(aj.release_folder(parts, list_sources=self.find, title_id="PPSA00003",
+                                           protected=[rel], may_be=rel), rel)
+        self.assertIsNone(aj.release_folder(parts, list_sources=self.find, title_id="PPSA00003",
+                                            protected=[rel, self.tmp / "root"], may_be=self.tmp / "root"))
+
+    def test_prune_removes_empty_folders_up_to_a_protected_one(self):
+        deep = self.tmp / "root" / "batch" / "game"
+        deep.mkdir(parents=True)
+        (deep / ".DS_Store").write_bytes(b"x")
+        removed = aj.prune_empty_dirs([deep], protected=[self.tmp / "root"])
+        self.assertEqual(removed, [deep, deep.parent])
+        self.assertTrue((self.tmp / "root").is_dir())
+
+    def test_prune_keeps_a_folder_with_content(self):
+        d = self.tmp / "root" / "keep"
+        self.file("root/keep/notes.docx")
+        self.assertEqual(aj.prune_empty_dirs([d], protected=[self.tmp / "root"]), [])
+
+    def test_sweep_sidecars_only_when_nothing_else_is_left(self):
+        rel = self.tmp / "dl" / "PPSA00001"
+        self.file("dl/PPSA00001/readme.nfo"); self.file("dl/PPSA00001/check.sfv")
+        self.assertTrue(aj.sweep_sidecars(rel))
+        self.assertFalse(rel.exists())
+        rel2 = self.tmp / "dl" / "PPSA00002"
+        self.file("dl/PPSA00002/readme.nfo"); self.file("dl/PPSA00002/mine.docx")
+        self.assertFalse(aj.sweep_sidecars(rel2))
+        self.assertTrue((rel2 / "mine.docx").is_file())
+
+
 @unittest.skipUnless(sys.platform == "darwin" and os.environ.get("PS5_TEST_REAL_TRASH") == "1",
                      "puts a scratch file into the real Trash; set PS5_TEST_REAL_TRASH=1 to run")
 class RealTrashTest(Base):

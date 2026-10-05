@@ -102,6 +102,122 @@ def refusal(sources: list, *, output=None, dest=None, protected: Iterable = (),
     return None
 
 
+# ── the release folder and what is left behind ──────────────────────────────
+
+# Files a release ships next to the game that may go with it when Delete removes the game.
+SIDECAR_SUFFIXES = frozenset({".nfo", ".sfv", ".txt", ".md5", ".sha1", ".sha256", ".diz", ".url",
+                              ".jpg", ".jpeg", ".png", ".gif", ".webp"})
+_JUNK_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini", "Icon\r"})
+_HOME_DIRS = ("Downloads", "Desktop", "Documents", "Movies", "Music", "Pictures", "Library", "Public")
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^0-9a-z]", "", str(text).casefold())
+
+
+def _is_junk(name: str) -> bool:
+    return name in _JUNK_NAMES or name.startswith("._")
+
+
+def _is_protected_dir(folder: Path, protected: Iterable = ()) -> bool:
+    """A folder the app never moves or removes as a whole: a drive, the home folder or a
+    folder above it, the standard folders in it, and every *protected* folder (the folder a
+    job was added from, the output and destination folders, the app's own) or one above."""
+    r = _real(folder)
+    if os.path.ismount(str(r)) or r == Path(r.anchor):
+        return True
+    home = _real(Path.home())
+    if _within(home, r) or r in {home / d for d in _HOME_DIRS}:
+        return True
+    return any(_within(_real(q), r) for q in protected if q)
+
+
+def release_folder(sources: list, *, list_sources: Callable[[Path], list], title_id: str = "",
+                   title: str = "", protected: Iterable = (), may_be=None) -> Optional[Path]:
+    """The folder that belongs to this game, so Move and Trash take it whole: the one
+    folder all *sources* sit in, named after the game (its title id, the archive set's name
+    or its title), holding no source of another game. Whatever else is in it goes along.
+    *may_be* is a protected folder that may still be the release folder itself (the folder
+    a single archive was picked from), though never one above it.
+    None when there is no such folder; then only the game's own files are acted on."""
+    if not sources:
+        return None
+    if len({_real(s).parent for s in sources}) != 1:
+        return None
+    folder = Path(sources[0]).parent             # as given; compared through real paths
+    if may_be is not None and _real(may_be) == _real(folder):
+        protected = [q for q in protected if q and _real(q) != _real(folder)]
+    if _is_protected_dir(folder, protected):
+        return None
+    name = _norm(folder.name)
+    keys = {_norm(title_id)} if title_id else set()
+    if len(_norm(title)) >= 4:
+        keys.add(_norm(title))
+    for src in sources:
+        src = Path(src)
+        base = src.name if src.is_dir() else (_VOLUME_RE.sub("", src.name) if _VOLUME_RE.search(src.name)
+                                             else src.stem)
+        if len(_norm(base)) >= 4:
+            keys.add(_norm(base))
+    if not name or not any(k and k in name for k in keys):
+        return None
+    ours = {str(_real(s)) for s in sources}
+    try:
+        found = list_sources(folder)
+    except Exception:
+        return None
+    if any(str(_real(f)) not in ours for f in found):
+        return None                              # another game lives here too
+    return folder
+
+
+def prune_empty_dirs(start_dirs: Iterable, protected: Iterable = ()) -> list:
+    """Remove each folder in *start_dirs* that is empty now (system clutter such as
+    .DS_Store does not count), then its parent while that is empty too. Never a protected
+    folder (see _is_protected_dir). Returns what was removed."""
+    removed = []
+    for d in sorted({str(x) for x in start_dirs if x}, key=len, reverse=True):
+        cur = Path(d)
+        while cur.is_dir() and not _is_protected_dir(cur, protected):
+            try:
+                entries = list(cur.iterdir())
+            except OSError:
+                break
+            if any(e.is_dir() or not _is_junk(e.name) for e in entries):
+                break
+            try:
+                for e in entries:
+                    e.unlink()
+                cur.rmdir()
+            except OSError:
+                break
+            removed.append(cur)
+            cur = cur.parent
+    return removed
+
+
+def sweep_sidecars(folder: Path, protected: Iterable = ()) -> bool:
+    """After Delete removed a game from its release folder: when what is left there is
+    only files a release ships beside the game (notes, checksums, pictures), delete them
+    and the folder. Anything else, or a subfolder, keeps the folder. True when it went."""
+    folder = Path(folder)
+    if not folder.is_dir() or _is_protected_dir(folder, protected):
+        return False
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return False
+    if any(e.is_dir() or not (_is_junk(e.name) or e.suffix.lower() in SIDECAR_SUFFIXES) for e in entries):
+        return False
+    try:
+        for e in entries:
+            e.unlink()
+        folder.rmdir()
+    except OSError:
+        return False
+    return True
+
+
 # ── the four actions ──────────────────────────────────────────────────────────
 
 def apply(action: str, sources: list, *, dest=None,

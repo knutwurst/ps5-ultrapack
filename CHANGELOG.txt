@@ -38,6 +38,19 @@ WHAT HAPPENS WHEN A JOB IS DONE
     from it: both stay), a whole drive, the home folder, the app's own
     temp and profile folders, or a source another job in the queue
     still needs (the last of those jobs takes care of it).
+  - The game's folder goes whole. When the source sits in a folder named
+    after the game (its title id, the archive set's name or its title)
+    that holds no other game, Move and Trash take that folder with
+    everything in it, notes and pictures included. Two games in one
+    folder are handled apart: each job takes its own files, and the last
+    one takes the folder once only its game is left in it. Delete removes
+    the game's files, and the folder only when nothing but notes,
+    checksums or pictures is left in it.
+  - No empty folders are left behind: a folder emptied by the action is
+    removed, and its parent too while that is empty. Never removed or
+    moved whole: the folder a job was added from (Add job, Rescan), a
+    drive, the home folder and its standard folders, the output and the
+    destination folder.
   - Move to Trash uses the Trash of the source's drive, so Put Back in
     Finder restores it. Move to folder renames on the same drive and
     copies, checks and then removes across drives; the queue waits for

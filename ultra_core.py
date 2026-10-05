@@ -2793,6 +2793,7 @@ class GameItem:
     status_note = ""        # why the job failed or was skipped (shown in the details pane)
     after_source = None     # once Done: "keep" | "trash" | "move" | "delete"; None (older queues) = keep
     after_move_to = None    # str: the folder "move" sends the source to
+    source_root = None      # str: the folder the job was added from; never moved or removed whole
 
     def __init__(self, path: Path):
         self.path       = path

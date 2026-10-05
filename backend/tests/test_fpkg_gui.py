@@ -1102,6 +1102,46 @@ try:
            and "missing" in _ra.status_note, f"{_go2} {_ra.status} {_ra.status_note!r}")
     finally:
         m.ArchiveExtractor.probe_header_state = _real_probe
+    # the release folder: moved whole with what else is in it; two games in one folder apart; nothing empty left
+    _rr = S / "rel_root"; _rd = S / "rel_done"; _rhit = _aout / "Rel.ffpfsc"; _rhit.write_bytes(b"P" * 64)
+    def _set(folder, base, n=2):
+        d = _rr / folder; d.mkdir(parents=True, exist_ok=True)
+        ps = [d / (f"{base}.part{i}.rar" if n > 1 else f"{base}.rar") for i in range(1, n + 1)]
+        for _p in ps:
+            _p.write_bytes(b"R" * 50)
+        return ps
+    def _arc_job(first, act, dest=None):
+        it = m.GameItem.from_archive(first); it.after_source, it.after_move_to = act, (str(dest) if dest else None)
+        it.source_root = str(_rr); return it
+    def _settle(it):
+        app.queue[:] = [it]; _r = []
+        app._settle_existing(it, _rhit, then=_r.append)
+        pump(lambda: bool(_r), timeout=10.0)
+        return _r
+    _real_probe2 = m.ArchiveExtractor.probe_header_state
+    m.ArchiveExtractor.probe_header_state = staticmethod(lambda arc, pw=None: ("open", 100, ""))
+    try:
+        _p1 = _set("[site]-PPSA00011", "[site]-PPSA00011"); (_rr / "[site]-PPSA00011" / "readme.nfo").write_bytes(b"n")
+        _r1 = _settle(_arc_job(_p1[0], "move", _rd))
+        ok("release.folder-moved-whole", _r1 == [True] and (_rd / "[site]-PPSA00011" / "readme.nfo").is_file()
+           and not (_rr / "[site]-PPSA00011").exists() and _rr.is_dir(), f"{_r1} {sorted(x.name for x in _rd.iterdir())}")
+        _pa = _set("Mixed", "A-PPSA00012"); _pb = _set("Mixed", "B-PPSA00013")
+        _ra = _settle(_arc_job(_pa[0], "move", _rd))
+        _after_a = sorted(x.name for x in (_rr / "Mixed").iterdir())
+        _rb = _settle(_arc_job(_pb[0], "move", _rd))
+        ok("release.two-games-apart-and-no-empty-folder", _ra == [True] and _rb == [True]
+           and _after_a == ["B-PPSA00013.part1.rar", "B-PPSA00013.part2.rar"]
+           and not (_rr / "Mixed").exists() and (_rd / "A-PPSA00012.part1.rar").is_file() and _rr.is_dir(),
+           f"{_after_a} mixed={(_rr / 'Mixed').exists()}")
+        _pd = _set("[site]-PPSA00014", "[site]-PPSA00014"); (_rr / "[site]-PPSA00014" / "info.nfo").write_bytes(b"n")
+        _rdl = _settle(_arc_job(_pd[0], "delete"))
+        _pk = _set("[site]-PPSA00015", "[site]-PPSA00015"); (_rr / "[site]-PPSA00015" / "mine.docx").write_bytes(b"d")
+        _rkl = _settle(_arc_job(_pk[0], "delete"))
+        ok("release.delete-takes-folder-only-with-sidecars", _rdl == [True] and not (_rr / "[site]-PPSA00014").exists()
+           and _rkl == [True] and sorted(x.name for x in (_rr / "[site]-PPSA00015").iterdir()) == ["mine.docx"],
+           f"{_rdl} {_rkl}")
+    finally:
+        m.ArchiveExtractor.probe_header_state = _real_probe2
     app.queue[:] = [_j1]
     _card = app._card_info_text(_j1)
     ok("after.card-row", _card.get("After", "").startswith("Delete the source"), _card.get("After", ""))

@@ -4249,6 +4249,8 @@ class JobDialog(EmbeddedDialog):
 
         sources = (self._parent_todo() if self._kind == "parent"
                    else self._games if self._kind == "folder" else [p])
+        # the folder picked here stays when sources are moved or cleaned up after their jobs
+        root = str(p if (p.is_dir() and not ultra_core.is_game_folder(p)) else p.parent)
         sign = bool(self.sign_var.get()) and to != "pkg"     # a .pkg is always signed by its builder
         app = self.app
 
@@ -4262,6 +4264,7 @@ class JobDialog(EmbeddedDialog):
             it.compression_level = ff_level if to == "ffpfsc" else None
             it.auto_organize = organize
             it.after_source, it.after_move_to = after, after_dir or None
+            it.source_root = root
             return it
 
         if self.edit_item is None:
@@ -7988,6 +7991,7 @@ class App:
         extra.backport_libs_root = getattr(tpl, "backport_libs_root", None)
         extra.after_source = getattr(tpl, "after_source", None)
         extra.after_move_to = getattr(tpl, "after_move_to", None)
+        extra.source_root = getattr(tpl, "source_root", None)
         extra.output_path = getattr(tpl, "output_path", None)
         extra.output_compressed = extra.chain_to != "ffpfs"
         extra.compression_level = getattr(tpl, "compression_level", None)
@@ -10773,6 +10777,7 @@ class App:
         organize = bool(tpl.get("organize"))
         after = tpl.get("after_source") if tpl.get("after_source") in _after_job_module().ACTIONS else "keep"
         after_dir = tpl.get("after_move_to") or None
+        root = str(tpl.get("_rescan_root") or "") or None
 
         def make(src):
             it = GameItem.from_chain(src, to=to, output_path=out or None, sign=sign,
@@ -10783,6 +10788,7 @@ class App:
             it.compression_level = ff_level if to == "ffpfsc" else None
             it.auto_organize = organize
             it.after_source, it.after_move_to = after, after_dir
+            it.source_root = root
             return it
         return make
 
@@ -11232,26 +11238,49 @@ class App:
     # ── After a job is done, after the queue is done ──────────────────────────
     _ARCHIVE_NAME_RE = re.compile(r"\.(part\d+\.rar|rar|zip|7z|r\d{2,}|z\d{2}|7z\.\d{3}|zip\.\d{3}|\d{3})$", re.I)
 
-    def _after_sources(self, item) -> list:
-        """What a job's after-action works on: its archive with every part, or its container
-        file or game folder, plus a patch it integrated. Never the app's extracted copy."""
-        out = []
-        arch = getattr(item, "archive_path", None) or getattr(item, "origin_archive", None)
-        if arch:
-            out += archive_set_parts(Path(arch))
-        elif getattr(item, "path", None) and not getattr(item, "_from_archive", False):
-            out.append(Path(item.path))
-        patch = getattr(item, "patch_source", None)
-        if patch:
-            pp = Path(patch)
-            out += archive_set_parts(pp) if (pp.is_file() and self._ARCHIVE_NAME_RE.search(pp.name)) else [pp]
+    @staticmethod
+    def _uniq_paths(paths) -> list:
         uniq, seen = [], set()
-        for p in out:
+        for p in paths:
             key = os.path.realpath(str(p))
             if key not in seen:
                 seen.add(key)
                 uniq.append(p)
         return uniq
+
+    def _after_game_sources(self, item) -> list:
+        """The game a job started from: its archive with every part, or its container file
+        or game folder. Never the app's extracted copy."""
+        arch = getattr(item, "archive_path", None) or getattr(item, "origin_archive", None)
+        if arch:
+            return self._uniq_paths(archive_set_parts(Path(arch)))
+        if getattr(item, "path", None) and not getattr(item, "_from_archive", False):
+            return [Path(item.path)]
+        return []
+
+    def _after_patch_sources(self, item) -> list:
+        patch = getattr(item, "patch_source", None)
+        if not patch:
+            return []
+        pp = Path(patch)
+        return self._uniq_paths(archive_set_parts(pp) if (pp.is_file() and self._ARCHIVE_NAME_RE.search(pp.name))
+                                else [pp])
+
+    def _after_sources(self, item) -> list:
+        """What a job's after-action works on: the game it started from plus a patch it integrated."""
+        return self._uniq_paths(self._after_game_sources(item) + self._after_patch_sources(item))
+
+    def _after_protected(self, item, dest=None) -> list:
+        """Folders an after-action never moves or removes as a whole: where the job was added
+        from, the output and destination folders, and the app's own."""
+        out = [str(ultra_core.APP_DIR), getattr(item, "source_root", None), dest]
+        try:
+            out += [self.temp_var.get().strip(), self.output_var.get().strip(),
+                    str(self._job_output_dir(item) or ""), (load_settings().get("last_source_dir") or "").strip()]
+        except Exception:
+            pass
+        out += self._app_folders()
+        return [x for x in out if x]
 
     def _app_folders(self) -> list:
         """Folders that are the app's own: its profile, and the scratch it makes under the
@@ -11300,8 +11329,21 @@ class App:
             others += self._after_sources(it)
             if getattr(it, "path", None):
                 others.append(Path(it.path))
-        srcs = self._after_sources(item)
-        return act, srcs, dest, aj.refusal(srcs, output=out, dest=dest, protected=self._app_folders(), others=others)
+        game, patch = self._after_game_sources(item), self._after_patch_sources(item)
+        keep_dirs = self._after_protected(item, dest)
+        rel = None
+        if game:
+            title = re.sub(r"\s*\[[^\]]*\]", "", str(getattr(item, "archive_title", "") or
+                                                    getattr(item, "display_name", "") or "")).strip()
+            rel = aj.release_folder(game, list_sources=find_job_sources, title_id=self._item_title_id(item) or "",
+                                    title=title, protected=keep_dirs, may_be=getattr(item, "source_root", None))
+        whole = rel is not None and act in (aj.TRASH, aj.MOVE)
+        targets = ([rel] if whole else game) + [p for p in patch
+                                                if not (whole and str(os.path.realpath(p)).startswith(
+                                                    str(os.path.realpath(rel)) + os.sep))]
+        item._after_info = {"release": rel, "whole": whole, "keep_dirs": keep_dirs}
+        return act, targets, dest, aj.refusal(targets, output=out, dest=dest, protected=self._app_folders(),
+                                              others=others)
 
     def _run_after_job(self, item, worker, then) -> None:
         """Keep, trash, move or delete *item*'s source as the job says, then call *then*
@@ -11322,7 +11364,9 @@ class App:
             then(); return
         size = aj.size_of(srcs)
         names = ", ".join(p.name for p in srcs)
-        doing = {aj.TRASH: "moving the source to the Trash", aj.MOVE: f"moving the source to {dest}",
+        info = getattr(item, "_after_info", None) or {}
+        what = "the source folder" if info.get("whole") else "the source"
+        doing = {aj.TRASH: f"moving {what} to the Trash", aj.MOVE: f"moving {what} to {dest}",
                  aj.DELETE: "deleting the source"}[act]
         self.log("INFO", f"After the job: {doing}: {names} ({format_size(size)}).")
         results = queue.Queue()
@@ -11338,16 +11382,28 @@ class App:
             try:
                 where = aj.apply(act, srcs, dest=dest, on_progress=progress)
                 if act == aj.TRASH:
-                    msg = (f"Moved the source of {name} to the Trash ({format_size(size)}; it frees the space once "
+                    msg = (f"Moved {what} of {name} to the Trash ({format_size(size)}; it frees the space once "
                            f"the Trash is emptied): {names}.")
-                    item._after_result = ("done", "the source was moved to the Trash.")
+                    item._after_result = ("done", f"{what} was moved to the Trash.")
                 elif act == aj.MOVE:
-                    msg = f"Moved the source of {name} to {dest}: " + ", ".join(Path(w).name for w in where) + "."
-                    item._after_result = ("done", f"the source was moved to {dest}.")
+                    msg = f"Moved {what} of {name} to {dest}: " + ", ".join(Path(w).name for w in where) + "."
+                    item._after_result = ("done", f"{what} was moved to {dest}.")
                 else:
                     msg = f"Deleted the source of {name} ({format_size(size)} freed): {names}."
                     item._after_result = ("done", "the source was deleted.")
                 results.put(("SUCCESS", msg))
+                # Nothing empty left behind: a Delete takes the release folder too when only
+                # notes, checksums or pictures are left in it; emptied folders above go.
+                keep_dirs = info.get("keep_dirs") or []
+                left = {Path(t).parent for t in srcs}
+                rel = info.get("release")
+                if act == aj.DELETE and rel is not None and aj.sweep_sidecars(rel, keep_dirs):
+                    results.put(("INFO", f"Removed the release folder {rel.name}: only notes, checksums "
+                                         f"or pictures were left in it."))
+                    left.add(Path(rel).parent)
+                gone = aj.prune_empty_dirs(left, keep_dirs)
+                if gone:
+                    results.put(("INFO", "Removed empty folder(s): " + ", ".join(str(g) for g in gone) + "."))
             except Exception as e:
                 item._after_result = ("failed", str(e))
                 results.put(("WARN", f"After the job: {name}: {e}. Whatever was not handled stays where it is."))
@@ -12052,7 +12108,7 @@ class App:
                         self.status_update("Ready", msg, "Ready", 0, 0, "00:00", "—", "—", side=True)
                     else:
                         self.log("OK", f"Rescan: {len(sources)} new source(s) in {folder}{tail}.")
-                        self._add_jobs_async(list(sources), self._rescan_make(tpl))
+                        self._add_jobs_async(list(sources), self._rescan_make(dict(tpl, _rescan_root=folder)))
                     continue
                 if status == "rescan-error":
                     self.log("ERROR", f"Rescan failed: {payload}")
