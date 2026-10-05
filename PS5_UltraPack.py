@@ -10981,6 +10981,27 @@ class App:
             item.kept_extract = False
             self._cleanup_item_extract(item)
 
+    def _due_checks(self, item) -> bool:
+        """Right before a job runs, on both start paths (start() for the first job of a run,
+        _batch_auto_start() for the rest): read its archive set again, then settle an output
+        that is already there, before an archive is unpacked when the game can be read
+        (otherwise once it is unpacked). False when the job does not run now."""
+        if not self._refresh_archive_set(item):
+            return False
+        due = self._late_output_check(item)
+        if due == "cancel":
+            self._batch_running = False
+            self.start_btn.configure(state="normal")
+            self.cancel_btn.configure(state="disabled")
+            self._update_batch_counter()
+            self.status_update("Ready", "Start cancelled.", "Ready", 0, 0, "00:00", "—", "—")
+            return False
+        if due == "skip":
+            self._ensure_batch_started()        # the jobs after this one still run
+            self._skip_late(item)
+            return False
+        return True
+
     def _refresh_archive_set(self, item) -> bool:
         """Right before an archive job runs: the parts of its set, their size on disk, and
         the unpacked size from the headers, read again when the set changed since the job
@@ -11128,11 +11149,14 @@ class App:
             self.cancel_btn.configure(state="disabled")
             self._update_batch_counter()
             self.update_queue_box()
+            self._queue_finished()
             if self._batch_total > 1:
                 self._show_batch_complete()
             return
         item = self._pick_next()
         self.update_game_details(item)   # refreshes art + space stats for next game
+        if not self._due_checks(item):
+            return
         if self._release_failed_copies(item):
             self.root.after(500, self._batch_auto_start)   # waits for the reclaim, then gates again
             return
@@ -11618,21 +11642,7 @@ class App:
 
         # An archive's set may have changed since the job was added (a download that was
         # still running): read it again, so placement and the space gate use real numbers.
-        if not self._refresh_archive_set(item):
-            return
-        # Its output already there? Checked now, before an archive is unpacked, when the
-        # game can be read; otherwise once it is unpacked (below).
-        _due = self._late_output_check(item)
-        if _due == "cancel":
-            self._batch_running = False
-            self.start_btn.configure(state="normal")
-            self.cancel_btn.configure(state="disabled")
-            self._update_batch_counter()
-            self.status_update("Ready", "Start cancelled.", "Ready", 0, 0, "00:00", "—", "—")
-            return
-        if _due == "skip":
-            self._ensure_batch_started()        # the jobs after this one still run
-            self._skip_late(item)
+        if not self._due_checks(item):
             return
 
         # ── Pre-flight space gate FIRST — place the run on a drive sized for its real

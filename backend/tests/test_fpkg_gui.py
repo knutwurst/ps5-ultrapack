@@ -1140,6 +1140,25 @@ try:
         ok("release.delete-takes-folder-only-with-sidecars", _rdl == [True] and not (_rr / "[site]-PPSA00014").exists()
            and _rkl == [True] and sorted(x.name for x in (_rr / "[site]-PPSA00015").iterdir()) == ["mine.docx"],
            f"{_rdl} {_rkl}")
+        # the second job of a run starts through _batch_auto_start: an output already there is
+        # settled there too, before anything is unpacked
+        _bq = _set("[site]-PPSA00016", "[site]-PPSA00016")
+        _bj = _arc_job(_bq[0], "move", _rd)
+        _first = m.GameItem.from_chain(HBT, to="ffpfsc"); _first.status = "Done"
+        app.queue[:] = [_first, _bj]; app._active_item = _first; app._output_policy = None
+        _ext_calls = []
+        _real_ext, _real_pred3 = app._extract_queued_item, app._predicted_output
+        app._extract_queued_item = lambda it: _ext_calls.append(it)
+        app._predicted_output = lambda it: _rhit if it is _bj else _real_pred3(it)
+        try:
+            app._batch_running = True
+            app._batch_auto_start()
+            pump(lambda: _bj.status == "Done" and not app._batch_running, timeout=10.0)
+        finally:
+            app._extract_queued_item, app._predicted_output = _real_ext, _real_pred3
+            app._batch_running = False
+        ok("release.batch-path-settles-before-unpacking", not _ext_calls and _bj.status == "Done"
+           and (_rd / "[site]-PPSA00016").is_dir(), f"extract={len(_ext_calls)} {_bj.status}")
     finally:
         m.ArchiveExtractor.probe_header_state = _real_probe2
     app.queue[:] = [_j1]
