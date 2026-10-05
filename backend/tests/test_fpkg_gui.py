@@ -1273,6 +1273,49 @@ try:
     finally:
         m.messagebox.askyesno = _real_ask
     ok("queue.clear-all-keeps-running", app.queue == [_r1], str(len(app.queue)))
+    # several jobs selected: Command/Ctrl-click, Shift-click, select all, Escape; kept across a refresh
+    # and a reorder (by job, not by row); Remove takes them all but the running one; a summary card
+    import types as _ty
+    _ql = app.queue_listbox
+    _ms = [m.GameItem.from_chain(HBT, to="ffpfsc") for _ in range(5)]
+    for _k, _it in enumerate(_ms):
+        _it.display_name = f"Multi {_k}"
+    app._batch_running = False; app._active_item = None
+    app.queue[:] = list(_ms); app.update_queue_box(select_item=_ms[0]); root.update()
+    def _ev(i):     # window y of row i, whatever the list is scrolled to
+        return _ty.SimpleNamespace(y=6 + i * _ql.ROW_H + _ql.ROW_H // 2 - _ql.cv.canvasy(0), x=40, x_root=0, y_root=0)
+    _ql._click(_ev(1)); _ql._release(_ev(1))
+    _ql._toggle_click(_ev(3))
+    _t1 = _ql.marked_rows()
+    _ql._range_click(_ev(4))
+    _t2 = _ql.marked_rows()
+    _ql._select_all(); _t3 = _ql.marked_rows()
+    _ql._keep_focus_only(); _t4 = _ql.marked_rows()
+    ok("multi.toggle-range-all-escape", _t1 == [1, 3] and _t2 == [3, 4] and _t3 == [0, 1, 2, 3, 4] and _t4 == [4],
+       f"{_t1} {_t2} {_t3} {_t4}")
+    _ql._click(_ev(1)); _ql._release(_ev(1)); _ql._toggle_click(_ev(3))
+    app.update_queue_box(); root.update()
+    _kept = [app.queue[i] for i in _ql.marked_rows()]
+    _new_top = m.GameItem.from_chain(HBT, to="ffpfsc")
+    app.queue.insert(0, _new_top); app.update_queue_box(); root.update()   # rows shift, the marks follow their jobs
+    _moved = [app.queue[i] for i in _ql.marked_rows()]
+    ok("multi.kept-across-refresh-and-shift", [id(x) for x in _kept] == [id(_ms[1]), id(_ms[3])]
+       and [id(x) for x in _moved] == [id(_ms[1]), id(_ms[3])] and _ql.marked_rows() == [2, 4],
+       f"{_ql.marked_rows()}")
+    root.update()
+    _card_multi_shown = bool(app._card_multi.winfo_manager())
+    ok("multi.summary-card", _card_multi_shown and app._multi_title_var.get() == "2 jobs selected",
+       f"{_card_multi_shown} {app._multi_title_var.get()!r}")
+    # Remove: the running job among the marked ones stays
+    app._batch_running = True; app._active_item = _ms[1]; _ms[1].status = "Running"
+    app.queue_remove_selected(); root.update()
+    ok("multi.remove-all-but-running", _ms[3] not in app.queue and _ms[1] in app.queue and len(app.queue) == 5,
+       f"{len(app.queue)} {[getattr(x, 'display_name', '') for x in app.queue]}")
+    app._batch_running = False; app._active_item = None; _ms[1].status = "Queued"
+    app.update_queue_box(select_item=app.queue[0]); root.update()
+    ok("multi.single-again-after-plain-click", _ql.marked_rows() == [0] and not app._card_multi.winfo_manager(),
+       f"{_ql.marked_rows()}")
+    app.queue[:] = [_r1]; app.update_queue_box(); root.update()
     app._batch_running = False
     app.queue[:] = [_r2]; app._sync_primary_action()
     ok("queue.start-off-when-all-done", str(app.start_btn._state) == "disabled", app.start_btn._state)

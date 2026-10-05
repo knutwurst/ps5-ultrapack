@@ -876,9 +876,13 @@ class QueueList(tk.Frame):
     """The job list, drawn on one canvas.
 
     Rows are dicts: title, subtitle, state (running|queued|done|failed|skipped|waiting),
-    chip, progress (0..1 or None) and text (the one-line summary returned by get()).
+    chip, progress (0..1 or None), text (the one-line summary returned by get()) and an
+    optional key (stable per job, so a selection follows its jobs across a refresh).
     The methods curselection/selection_set/selection_clear/see/nearest/size/get mirror
-    tk.Listbox, so the app code that drove the old listbox keeps working.
+    tk.Listbox, so the app code that drove the old listbox keeps working; curselection
+    is the one row in focus. Several rows can be marked besides it: Command-click (Ctrl
+    on Windows and Linux) adds or drops one, Shift-click marks a range, Command-A all,
+    Escape keeps only the one in focus; marked_rows() returns them.
     """
 
     ROW_H = 50
@@ -897,7 +901,9 @@ class QueueList(tk.Frame):
         self.on_key_up, self.on_key_down, self.on_delete = on_key_up, on_key_down, on_delete
         self.empty_title, self.empty_body = empty_title, empty_body
         self.rows: list[dict] = []
-        self.sel: int | None = None
+        self.sel: int | None = None          # the row in focus (the details pane shows it)
+        self.marked: set[int] = set()        # every selected row, the one in focus included
+        self._anchor: int | None = None      # where a Shift-click range starts
         self.hover: int | None = None
         self.cv = tk.Canvas(self, highlightthickness=0, bd=0, bg=kit.c(bg), yscrollincrement=1,
                             takefocus=1)
@@ -911,13 +917,20 @@ class QueueList(tk.Frame):
         kit.register(self)
         cv = self.cv
         on_resize(cv, self._schedule, settle_ms=70)
+        aqua = self.tk.call("tk", "windowingsystem") == "aqua"
+        mod = "Command" if aqua else "Control"
         cv.bind("<Button-1>", self._click)
         cv.bind("<B1-Motion>", self._drag)
         cv.bind("<ButtonRelease-1>", self._release)
         cv.bind("<Double-Button-1>", self._double)
+        cv.bind(f"<{mod}-Button-1>", self._toggle_click)
+        cv.bind("<Shift-Button-1>", self._range_click)
         cv.bind("<Button-2>", self._context)          # right click on macOS
-        cv.bind("<Control-Button-1>", self._context)
+        if aqua:
+            cv.bind("<Control-Button-1>", self._context)   # Ctrl-click is a right click there
         cv.bind("<Button-3>", self._context)
+        cv.bind(f"<{mod}-a>", lambda e: self._select_all())
+        cv.bind("<Escape>", lambda e: self._keep_focus_only())
         cv.bind("<Motion>", self._motion)
         cv.bind("<Leave>", lambda e: self._set_hover(None))
         attach_wheel_scroll(cv, pixel_unit=1, notch_px=40)   # wheel, Linux buttons, Tk 9 trackpad
@@ -936,11 +949,27 @@ class QueueList(tk.Frame):
         except (TypeError, ValueError):
             return
         self.sel = i if 0 <= i < len(self.rows) else None
+        self.marked = {self.sel} if self.sel is not None else set()
+        self._anchor = self.sel
         self._schedule()
 
     def selection_clear(self, first=0, last=None):
         self.sel = None
+        self.marked = set()
         self._schedule()
+
+    def marked_rows(self) -> list:
+        """Every selected row, top to bottom (the one in focus alone when nothing else is)."""
+        rows = {i for i in self.marked if 0 <= i < len(self.rows)}
+        if self.sel is not None and 0 <= self.sel < len(self.rows):
+            rows.add(self.sel)
+        return sorted(rows)
+
+    def focus_key(self):
+        """The key of the row in focus, or None."""
+        if self.sel is not None and 0 <= self.sel < len(self.rows):
+            return self.rows[self.sel].get("key")
+        return None
 
     def size(self):
         return len(self.rows)
@@ -976,9 +1005,18 @@ class QueueList(tk.Frame):
             self.cv.yview_moveto(max(0.0, (bot + 6 - H) / total))
 
     # — data —
-    def set_rows(self, rows, selected=None):
+    def set_rows(self, rows, selected=None, keep_marked=False):
+        """New rows. *selected* is the row in focus; with *keep_marked* the other marked rows
+        stay marked when their key is still in the list, otherwise only *selected* is."""
+        keys = {self.rows[i].get("key") for i in self.marked if 0 <= i < len(self.rows)} if keep_marked else set()
+        keys.discard(None)
         self.rows = list(rows)
         self.sel = selected if (selected is not None and 0 <= selected < len(self.rows)) else None
+        self.marked = {j for j, r in enumerate(self.rows) if r.get("key") in keys}
+        if self.sel is not None:
+            self.marked.add(self.sel)
+        if self._anchor is None or not (0 <= self._anchor < len(self.rows)) or not keep_marked:
+            self._anchor = self.sel
         self._schedule()
 
     def update_row(self, i, **fields):
@@ -1007,11 +1045,67 @@ class QueueList(tk.Frame):
         i = self._index_at(e.y)
         self._press = (i, e.y) if i is not None else None
         self._drop = None
-        if i is not None and i != self.sel:
-            self.sel = i
+        if i is not None and (i != self.sel or self.marked != {i}):
+            self.sel, self.marked, self._anchor = i, {i}, i
             self._draw()
         if i is not None and self.on_select:
             self.on_select(i)
+
+    def _toggle_click(self, e):
+        """Command-click (Ctrl on Windows and Linux): add the row to the selection or drop it."""
+        self.cv.focus_set()
+        i = self._index_at(e.y)
+        self._press, self._drop = None, None
+        if i is None:
+            return "break"
+        marked = set(self.marked_rows())
+        if i in marked and len(marked) > 1:
+            marked.discard(i)
+            if self.sel == i:
+                self.sel = min(marked, key=lambda j: abs(j - i))
+        else:
+            marked.add(i)
+            self.sel = i
+        self.marked, self._anchor = marked, i
+        self._draw()
+        if self.on_select:
+            self.on_select(self.sel)
+        return "break"
+
+    def _range_click(self, e):
+        """Shift-click: every row from the last plain or Command-click to this one."""
+        self.cv.focus_set()
+        i = self._index_at(e.y)
+        self._press, self._drop = None, None
+        if i is None:
+            return "break"
+        a = self._anchor if self._anchor is not None and 0 <= self._anchor < len(self.rows) else (
+            self.sel if self.sel is not None else i)
+        self.marked = set(range(min(a, i), max(a, i) + 1))
+        self.sel = i
+        self._draw()
+        if self.on_select:
+            self.on_select(i)
+        return "break"
+
+    def _select_all(self):
+        if not self.rows:
+            return "break"
+        if self.sel is None:
+            self.sel = 0
+        self.marked = set(range(len(self.rows)))
+        self._draw()
+        if self.on_select:
+            self.on_select(self.sel)
+        return "break"
+
+    def _keep_focus_only(self):
+        if self.sel is not None and self.marked != {self.sel}:
+            self.marked = {self.sel}
+            self._draw()
+            if self.on_select:
+                self.on_select(self.sel)
+        return "break"
 
     def _drag(self, e):
         """Drag a row to another place: a line shows where it lands. Near the top or the
@@ -1053,8 +1147,10 @@ class QueueList(tk.Frame):
         i = self._index_at(e.y)
         if i is None:
             return
-        if i != self.sel:
-            self.sel = i
+        if i in self.marked_rows() and len(self.marked_rows()) > 1:
+            pass                                 # the menu acts on every selected row
+        elif i != self.sel or self.marked != {i}:
+            self.sel, self.marked, self._anchor = i, {i}, i
             self._draw()
             if self.on_select:
                 self.on_select(i)
@@ -1105,10 +1201,11 @@ class QueueList(tk.Frame):
                            width=min(W - 60, 360), justify="center", anchor="n")
             return
         f_t, f_s, f_c = k.fonts.body, k.fonts.small, k.fonts.caption
+        chosen = set(self.marked_rows())
         for i, r in enumerate(self.rows):
             y0 = 6 + i * self.ROW_H
             x0, x1 = 8, W - 8
-            if i == self.sel:
+            if i in chosen:
                 round_rect(cv, x0, y0 + 2, x1, y0 + self.ROW_H - 2, 8, fill=k.c("select"), outline="")
             elif i == self.hover:
                 round_rect(cv, x0, y0 + 2, x1, y0 + self.ROW_H - 2, 8, fill=k.c("hover"), outline="")
@@ -1142,7 +1239,7 @@ class QueueList(tk.Frame):
                 if p > 0:
                     round_rect(cv, bx0, by, bx0 + max(3, (bx1 - bx0) * p), by + 3, 1.5,
                                fill=k.c("accent_fill"), outline="")
-            if i != self.sel and i + 1 != self.sel and i < len(self.rows) - 1:
+            if i not in chosen and i + 1 not in chosen and i < len(self.rows) - 1:
                 cv.create_line(tx, y0 + self.ROW_H, x1 - 8, y0 + self.ROW_H, fill=k.c("border"))
         if self._drop is not None and self._press is not None:
             # where the dragged row lands: an accent line between two rows

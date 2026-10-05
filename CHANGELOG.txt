@@ -65,6 +65,19 @@ WHAT HAPPENS WHEN A JOB IS DONE
   - The finished-job checkboxes (show the result, remove from the queue,
     open the output folder, sounds) moved into the same section.
 
+SEVERAL JOBS AT ONCE
+
+  - Command-click (Ctrl-click on Windows) adds a job to the selection or
+    drops it, Shift-click selects a range, Command-A selects every job,
+    Escape keeps only the one in focus. Remove, the Delete key and the
+    right-click menu ("Remove 3 jobs") act on all of them; the running
+    job stays. Removing several jobs that keep extracted copies asks
+    first, like Clear does.
+  - The details pane shows "3 jobs selected" with their size, how many
+    are queued, done or failed, and Remove.
+  - The selection follows its jobs while the queue changes underneath,
+    for example when a job is added or one finishes.
+
 INTEGRATE A PATCH: BACKPORT FILES, AND THE ORIGINALS ARE KEPT
 
   - Ready-made backport files (a .zip or .rar with a patched eboot.bin,

@@ -5391,6 +5391,21 @@ class App:
 
     def _queue_context_menu(self, event, idx):
         m = tk.Menu(self.root, tearoff=0)
+        marked = self._marked_items()
+        if len(marked) > 1:
+            running = self._running_item()
+            n = len([it for it in marked if it is not running])
+            m.add_command(label=f"Remove {n} job{'s' if n != 1 else ''}", command=self.queue_remove_selected,
+                          state="normal" if n else "disabled")
+            m.add_command(label="Select only this job", command=lambda i=idx: (
+                self.queue_listbox.selection_set(i), self._on_queue_clicked()))
+            m.add_separator()
+            self._add_clear_items(m)
+            try:
+                m.tk_popup(event.x_root, event.y_root)
+            finally:
+                m.grab_release()
+            return
         m.add_command(label="Edit job…", command=lambda: self._on_queue_double_click(None))
         m.add_separator()
         _it = self.queue[idx] if 0 <= idx < len(self.queue) else None
@@ -5594,7 +5609,9 @@ class App:
                 ("Command", "code", self._toggle_command, "Show the backend command for this job"),
                 ("Edit", "edit", lambda: self._on_queue_double_click(None), "Change this job (or double-click it)"),
                 ("Retry", "retry", self._retry_selected, "Run this job again"),
-                ("Remove", "trash", self.queue_remove_selected, None))):
+                ("Remove", "trash", self.queue_remove_selected,
+                 f"Take the selected jobs out of the queue ({'⌘' if IS_MAC else 'Ctrl'}-click or Shift-click "
+                 f"selects several)"))):
             b = self._small(acts, text, icon, cmd, tooltip=tip, bg=B)
             b.grid(row=0, column=col, padx=(0, 2))
             if text == "Retry":
@@ -5606,6 +5623,27 @@ class App:
         self.cancel_btn.grid(row=0, column=6, sticky="e")
         self.cancel_btn.autohide = True
         self.cancel_btn.configure(state="disabled")
+
+        multi = self._card_multi = kit.frame(card, bg=B)
+        multi.grid_columnconfigure(0, weight=1)
+        self._multi_title_var, self._multi_meta_var, self._multi_hint_var = (
+            tk.StringVar(value=""), tk.StringVar(value=""), tk.StringVar(value=""))
+        mh = kit.frame(multi, bg=B)
+        mh.grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 0))
+        mh.grid_columnconfigure(0, weight=1)
+        kit.label(mh, bg=B, font=kit.fonts.title, textvariable=self._multi_title_var).grid(row=0, column=0, sticky="ew")
+        self._small(mh, "", "x", lambda: self._set_inspector(False), bg=B,
+                    tooltip=f"Hide the details  {SHORTCUT['details']}").grid(row=0, column=1, sticky="ne", padx=(8, 0))
+        mm = kit.label(multi, bg=B, fg="muted", font=kit.fonts.small, textvariable=self._multi_meta_var)
+        mm.grid(row=1, column=0, sticky="ew", padx=20, pady=(4, 0))
+        mt = kit.label(multi, bg=B, fg="faint", font=kit.fonts.small, textvariable=self._multi_hint_var)
+        mt.grid(row=2, column=0, sticky="ew", padx=20, pady=(12, 0))
+        self._bind_dynamic_wrap(multi, [mm, mt], padding=48, min_width=160)
+        ma = kit.frame(multi, bg=B)
+        ma.grid(row=3, column=0, sticky="w", padx=20, pady=(14, 0))
+        self._small(ma, "Remove", "trash", self.queue_remove_selected, bg=B,
+                    tooltip="Take the selected jobs out of the queue").grid(row=0, column=0)
+        multi.grid_remove()
 
         self._cmd_frame = RoundBox(body, kit, bg=B, height=90, pad=10)
         self.command_label = kit.label(self._cmd_frame.inner, bg="surface2", fg="muted", font=kit.fonts.mono_small, text="")
@@ -5649,6 +5687,16 @@ class App:
             pass
 
     def _card_show(self, visible: bool):
+        marked = self._marked_items() if visible else []
+        multi = getattr(self, "_card_multi", None)
+        if visible and len(marked) > 1 and multi is not None:
+            self._card_body.grid_remove()
+            self._card_empty.grid_remove()
+            self._fill_card_multi(marked)
+            multi.grid(row=0, column=1, sticky="nsew")
+            return
+        if multi is not None:
+            multi.grid_remove()
         if visible:
             self._card_empty.grid_remove()
             self._card_body.grid()
@@ -5656,6 +5704,26 @@ class App:
             self._card_body.grid_remove()
             self._card_empty.configure(text="Select a job to see its details." if self.queue else "")
             self._card_empty.grid(row=0, column=1, sticky="nsew")
+
+    def _fill_card_multi(self, items) -> None:
+        """The details pane for several selected jobs: how many, their size, their states."""
+        n = len(items)
+        size = sum(int(display_size(it) or 0) for it in items)
+        states = {}
+        for it in items:
+            st = str(getattr(it, "status", "") or "Queued")
+            st = {"Pending Extract": "Queued", "Pending": "Queued"}.get(st, st)
+            if it is self._running_item():
+                st = "Running"
+            states[st] = states.get(st, 0) + 1
+        self._multi_title_var.set(f"{n} jobs selected")
+        parts = [format_size(size)] + [f"{c} {s.lower()}" for s, c in sorted(states.items(), key=lambda kv: -kv[1])]
+        self._multi_meta_var.set("  ·  ".join(parts))
+        running_in = any(it is self._running_item() for it in items)
+        self._multi_hint_var.set(
+            ("Remove takes them out of the queue; the running job stays. " if running_in
+             else "Remove takes them out of the queue. ")
+            + f"{'⌘' if IS_MAC else 'Ctrl'}-click adds or drops a job, Shift-click a range, Escape keeps one.")
 
     # ── Details pane ─────────────────────────────────────────────────────────
     def _on_queue_clicked(self):
@@ -8866,22 +8934,48 @@ class App:
             self.move_job(self.queue.index(item), first)
             self.log("INFO", f"{getattr(item, 'display_name', None) or item.name} runs next.")
 
+    def _marked_items(self) -> list:
+        """The selected jobs, top to bottom (the one in focus alone when nothing else is)."""
+        try:
+            rows = self.queue_listbox.marked_rows()
+        except Exception:
+            return []
+        return [self.queue[i] for i in rows if 0 <= i < len(self.queue)]
+
     def queue_remove_selected(self):
-        idx = self._queue_sel_idx()
-        if idx is None or not self.queue or idx >= len(self.queue):
+        """Remove every selected job. The running job stays (cancel it first); removing a job
+        deletes the copy it kept from its archive, so several of those are asked about."""
+        rows = [i for i in self.queue_listbox.marked_rows() if 0 <= i < len(self.queue)]
+        if not rows or not self.queue:
             return  # nothing selectable (e.g. the "Queue is empty" placeholder row)
-        # Don't allow removing the currently running game
-        if self.queue[idx] is self._running_item():
-            messagebox.showwarning("In Progress",
-                                   "This job is running.\n"
-                                   "Cancel it first to remove it.")
-            return
-        # Decide which item to show after removal (next item, or previous if at end)
-        if len(self.queue) > 1:
-            next_item = self.queue[idx + 1] if idx + 1 < len(self.queue) else self.queue[idx - 1]
-        else:
-            next_item = None
-        self._drop_kept_extract(self.queue.pop(idx))
+        items = [self.queue[i] for i in rows]
+        running = self._running_item()
+        if running is not None and running in items:
+            if len(items) == 1:
+                messagebox.showwarning("In Progress",
+                                       "This job is running.\n"
+                                       "Cancel it first to remove it.")
+                return
+            items = [it for it in items if it is not running]
+            self.log("INFO", "The running job stays in the queue; cancel it first to remove it.")
+        kept = [it for it in items if getattr(it, "kept_extract", False)]
+        if len(items) > 1 and kept:
+            n = len(kept)
+            if not messagebox.askyesno(
+                    "Remove jobs", f"{n} of these job{'s' if n != 1 else ''} keep{'' if n != 1 else 's'} what "
+                                   f"{'they' if n != 1 else 'it'} extracted from {'their' if n != 1 else 'its'} "
+                                   f"archive{'s' if n != 1 else ''}, for a retry. Removing deletes "
+                                   f"{'those copies' if n != 1 else 'that copy'}. Remove anyway?"):
+                return
+        # What to show afterwards: the first job below the removed ones, else the one above.
+        after = [it for it in self.queue[rows[-1] + 1:] if it not in items]
+        before = [it for it in self.queue[:rows[0]] if it not in items]
+        next_item = after[0] if after else (before[-1] if before else None)
+        for it in items:
+            self._drop_kept_extract(it)
+            self.queue.remove(it)
+        if len(items) > 1:
+            self.log("INFO", f"Removed {len(items)} jobs from the queue.")
         self.update_queue_box(select_item=next_item)
 
     def remove_first(self):
@@ -9063,7 +9157,13 @@ class App:
             if _op in ("pack", "fpkg-build", "chain") and getattr(_it, "auto_organize", None) is None:
                 _it.auto_organize = bool(self.auto_organize_var.get())
         self._save_queue()   # persist the (just-mutated) queue across restarts
-        # Decide which item to keep selected
+        # Decide which item to keep selected. A plain refresh keeps the job in focus (found by
+        # its key, so a reorder or a removal above it does not move the focus to another job)
+        # and every other marked job; an explicit select_item replaces the selection.
+        keep_marked = select_item is None
+        if select_item is None:
+            _fk = self.queue_listbox.focus_key()
+            select_item = next((it for it in self.queue if id(it) == _fk), None) if _fk is not None else None
         if select_item is None:
             prev_idx  = self._queue_sel_idx()
             select_item = (self.queue[prev_idx]
@@ -9154,7 +9254,7 @@ class App:
                 sub = f"{tid}   ·   {sub}"
             chip = (f"{int(self._cur_job_pct)}%" if running else
                     {"Pending": "Queued", "Pending Extract": "Queued"}.get(st, st or "Queued"))
-            rows.append({"text": line, "title": str(disp), "subtitle": sub, "state": state, "chip": chip,
+            rows.append({"key": id(item), "text": line, "title": str(disp), "subtitle": sub, "state": state, "chip": chip,
                          "progress": (max(0.0, min(1.0, self._cur_job_pct / 100.0)) if running else None)})
 
         n = len(self.queue)
@@ -9169,7 +9269,7 @@ class App:
             sel = self.queue.index(select_item) if select_item in self.queue else 0
         except (ValueError, TypeError):
             sel = 0
-        self.queue_listbox.set_rows(rows, selected=sel)
+        self.queue_listbox.set_rows(rows, selected=sel, keep_marked=keep_marked)
         self.queue_listbox.see(sel)
 
         # Only refresh the details panel when the selected item actually changed.
@@ -9178,6 +9278,8 @@ class App:
         sel_item = self.queue[sel]
         if sel_item is not self._details_item:
             self.update_game_details(sel_item)
+        elif len(self.queue_listbox.marked_rows()) > 1:
+            self._card_show(True)                # the summary of several selected jobs, refreshed
 
     def update_game_details(self, item):
         self._details_item = item   # record before any call that might raise
