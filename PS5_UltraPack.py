@@ -1887,6 +1887,14 @@ class CLIWorker(threading.Thread):
         "Cleaning Up":         (98, 100),
         "Complete":            (100, 100),
     }
+    # A plain copy or move (the copy job, also what a chain job with nothing to change
+    # becomes): the write is the whole job. Switched to on the backend's "[JOB] copy" line.
+    COPY_WEIGHTS = {
+        "Writing Final Image": (0,   97),
+        "Cleaning Up":         (97, 100),
+        "Complete":            (100, 100),
+    }
+    _COPY_ORDER = ["Writing Final Image", "Cleaning Up", "Complete"]
     # Stage order for the jobs that unpack first (patch, chain, fPKG). The plain pack
     # order below ranks "Extracting" late because an unpack job does nothing else.
     _EXTRACT_FIRST_ORDER = [
@@ -1975,6 +1983,7 @@ class CLIWorker(threading.Thread):
         _chain_to = self._cmd_value(cmd or [], "--to")
         self._is_fpkg = self._is_fpkg_build or self._is_fpkg_extract or _chain_to == "pkg"
         self._weights, self._stage_order = self._pick_weights(cmd)
+        self._is_copy = False
         # Highest whole-job progress sent so far: the queue bar never moves backward.
         self._overall_sent = 0.0
         # Snapshot the copy-extras toggle on the MAIN thread (CLIWorker is constructed
@@ -2099,7 +2108,10 @@ class CLIWorker(threading.Thread):
                             # Keep the status panel alive (elapsed ticking) during silent
                             # phases, but DON'T spam the log — a 30 s "Still working" line
                             # helps no one and buries the useful output.
-                            self.app.status_update("Still Working", "Backend is active. Do not close the app.",
+                            # The detail the stage last showed, so the card text does not
+                            # flip between two messages (and the layout with it).
+                            self.app.status_update("Still Working",
+                                                    getattr(self, "_detail", "") or "Backend is active. Do not close the app.",
                                                     self.phase, self.stage_progress.get(self.phase, 0),
                                                     self._job_overall(), elapsed, self.speed, "—",
                                                     job=self.item)
@@ -2374,19 +2386,21 @@ class CLIWorker(threading.Thread):
         # When a later stage begins, snap earlier stages to 100% so the
         # breadcrumbs never show a stale partial % (e.g. "Temp PFS 5%").
         # This handles backends that stop emitting progress before 100%.
+        # Only stages this job has: a copy never builds a temp PFS or compresses.
+        def snap(*earlier):
+            for s in earlier:
+                if s in self._weights:
+                    self.stage_progress[s] = 100
         if stage == "Compressing":
-            self.stage_progress["Creating Temp PFS"] = 100
-            self.stage_progress["Reading Game"]       = 100
+            snap("Creating Temp PFS", "Reading Game")
         elif stage == "Writing Final Image":
-            self.stage_progress["Creating Temp PFS"] = 100
-            self.stage_progress["Compressing"]        = 100
+            snap("Creating Temp PFS", "Compressing")
         elif stage == "Verifying Output":
-            self.stage_progress["Writing Final Image"] = 100
-            self.stage_progress["Compressing"]         = 100
+            snap("Writing Final Image", "Compressing")
         elif stage == "Extracting":
-            self.stage_progress["Scanning Files"] = 100
+            snap("Scanning Files")
             if getattr(self, "_stage_order", self._STAGE_ORDER) is self._STAGE_ORDER:
-                self.stage_progress["Reading Game"] = 100   # extract-first jobs read after
+                snap("Reading Game")   # extract-first jobs read after
         elif stage in ("Cleaning Up", "Complete"):
             for s in ("Scanning Files", "Reading Game", "Creating Temp PFS",
                       "Compressing", "Extracting", "Writing Final Image"):
@@ -2397,6 +2411,7 @@ class CLIWorker(threading.Thread):
         overall = self._job_overall()
 
         detail = label or f"{stage} is active."
+        self._detail = None   # set below, once the stage's text is final
         if stage == "Creating Temp PFS" and not label:
             # the backend meters this step in bytes; the fixed text is only a fallback
             detail = ("Building temporary PFS image. "
@@ -2404,17 +2419,17 @@ class CLIWorker(threading.Thread):
                       "Do NOT close the app.")
         elif stage == "Cleaning Up":
             detail = "Cleaning up temporary files. Please wait before closing the app."
-        elif stage == "Writing Final Image":
-            # Backend writes the final .ffpfsc silently (no progress bars) — the display
-            # may show 0% for a while then snap to 100% when the write finishes.
-            detail = ("Writing the final .ffpfsc output file. "
-                      "This stage may show 0% — the backend is writing silently. "
-                      "Do NOT close the app.")
+        elif stage == "Writing Final Image" and self._is_copy:
+            detail = ("Moving the file to the output folder." if label == "move"
+                      else "Copying the file to the output folder.")
+        elif stage == "Writing Final Image" and not label:
+            detail = "Writing the output file. Do not close the app."
         elif stage == "Compressing" and not label:
             detail = "Compressing game data."
         elif stage == "Extracting" and not label:
             detail = "Extracting PFS image contents."
 
+        self._detail = detail
         now = time.time()
         bucket = (int(self.stage_progress[stage]) // 5) * 5
         should_update_ui = (force
@@ -2445,6 +2460,10 @@ class CLIWorker(threading.Thread):
         # at each step. Force the stage so the display advances even when the new
         # stage ranks "earlier" than the current one (the no-regress guard assumes
         # one forward pack sequence; a patch extracts first, then packs).
+        if line == "[JOB] copy":
+            self._is_copy = True
+            self._weights, self._stage_order = self.COPY_WEIGHTS, self._COPY_ORDER
+            return
         if line.startswith("[PHASE] "):
             stage = line[8:].strip()
             if stage in self._weights:
@@ -2577,10 +2596,11 @@ class CLIWorker(threading.Thread):
         if prog:
             pct = max(0, min(100, int(prog.group("pct"))))
             label = prog.group("label").strip()
-            # fPKG jobs: the backend drives the stage with explicit [PHASE] markers and
-            # its bar labels are free text — lock the bar to the current phase instead of
-            # guessing from keywords (a label like "extract inner PFS" is not mkpfs's extract).
-            stage = (self.phase if (self._is_fpkg and self.phase in self._weights)
+            # fPKG and copy jobs: the backend drives the stage with explicit [PHASE] markers
+            # and its bar labels are free text — lock the bar to the current phase instead of
+            # guessing from keywords (a label like "extract inner PFS" is not mkpfs's extract,
+            # and "copy" matches no keyword at all).
+            stage = (self.phase if ((self._is_fpkg or self._is_copy) and self.phase in self._weights)
                      else self._stage_from_label(label, line))
             # Two bars for one step (MkPFS counts whole files, the backend's meter counts
             # bytes): a line that lags behind the leading one within a few seconds is the
@@ -5299,7 +5319,8 @@ class App:
         self.stage_bar = ProgressBar(prog, kit, height=4, bg=B)
         self.stage_bar.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(7, 0))
         dt = kit.label(prog, bg=B, fg="muted", font=kit.fonts.small, textvariable=self.stage_detail_var)
-        dt.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        dt.grid(row=4, column=0, columnspan=2, sticky="new", pady=(6, 0))
+        prog.grid_rowconfigure(4, minsize=2 * kit.fonts.small.metrics("linespace") + 6)
         self._bind_dynamic_wrap(prog, [dt], padding=8, min_width=200)
         tiles = kit.frame(prog, bg=B)
         tiles.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))

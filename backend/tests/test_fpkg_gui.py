@@ -720,6 +720,33 @@ try:
     ok("progress.no-backward-phase", _stays == "Reading Game" and _temp_ok, f"{_stays} {_cw.phase}")
     ok("progress.heartbeat-equals-lines", _last_sent is not None and abs(_hb - _last_sent) < 0.01
        and all(k.get("job") is _cji for _a, k in _sent), f"{_hb} {_last_sent}")
+    # J6g3) a job the backend turns into a plain copy (.pkg → .pkg, nothing to change, or
+    # --copy): the bar follows the copy, and stages the copy never runs are not ticked
+    _cpj = m.GameItem.from_chain(_cpk, to="pkg")
+    for _tag, _ccm in (("chain", ["py", "cli.py", str(_cpk), str(OUT), "--to", "pkg"]),
+                       ("copy", ["py", "cli.py", "--copy", str(_cpk), str(OUT)])):
+        _kw = m.CLIWorker(app, _cpj, _ccm, _pcwd, _pout, _ptmp); _kw.start_time = time.time()
+        app.status_update = lambda *a, **k: None
+        try:
+            _kw._handle_line("[JOB] copy")
+            _kw._handle_line("[PHASE] Writing Final Image")
+            _kw._handle_line("[####] 6% copy @ 120.00 MB/s ETA 40s")
+            _kpct = _kw._overall()
+        finally:
+            app.status_update = _real_su
+        _ghost = [s for s in ("Creating Temp PFS", "Compressing") if _kw.stage_progress.get(s, 0)]
+        ok(f"progress.copy-follows-the-copy.{_tag}", 4 <= _kpct <= 8 and not _ghost, f"{_kpct} ticked={_ghost}")
+        ok(f"progress.copy-card-text.{_tag}", _kw.speed == "120.00 MB/s"
+           and str(getattr(_kw, "_detail", "")).startswith("Copying"), f"{_kw.speed} {getattr(_kw, '_detail', '')}")
+    # the Write stage no longer claims it "may show 0%" while its bar moves
+    _ww = m.CLIWorker(app, _pj, _pc, _pcwd, _pout, _ptmp); _ww.start_time = time.time()
+    app.status_update = lambda *a, **k: None
+    try:
+        _ww._set_stage("Writing Final Image", 10)
+    finally:
+        app.status_update = _real_su
+    ok("progress.write-text-is-honest", "0%" not in str(_ww._detail) and "silently" not in str(_ww._detail),
+       str(_ww._detail))
     # MkPFS's per-file "0% write" lines must not override the byte meter's bar
     _mw = m.CLIWorker(app, _pj, _pc, _pcwd, _pout, _ptmp); _mw.start_time = time.time()
     _msent = []

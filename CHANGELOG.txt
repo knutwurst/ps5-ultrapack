@@ -14,6 +14,19 @@ ONE BADGE FOR EVERY JOB THAT WAITS
     wait the same way; both now show "Queued". Yellow is left to
     "Extracting", when an archive is actually being unpacked.
 
+A COPY SHOWS ITS OWN PROGRESS
+
+  - A job that only copies its source (a .pkg to a .pkg with nothing to
+    change, or a copy job) showed 84 % while the copy had just begun,
+    with Temp PFS and Compress ticked off although a copy does neither.
+    The copy now tells the app what it is: its bar runs from 0 to 100 %
+    with the copy, only the steps it takes are shown, and Speed and Left
+    show its rate and time left.
+  - The text under the step bar no longer flips between two messages
+    every 30 seconds, which moved the whole card each time, and it no
+    longer says the write "may show 0 %" while its bar moves. The line
+    keeps room for two lines, so a shorter text does not move the card.
+
 ────────────────────────────────────────────────────────────────────────
   v2.1.0
 ────────────────────────────────────────────────────────────────────────

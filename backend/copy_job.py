@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -153,6 +154,9 @@ def run_copy(src, dst_dir, *,
     same_drive = _same_device(src, dst_dir)
     total = src.stat().st_size
 
+    # Tells the GUI this job is a plain copy, whatever command started it (a --copy job,
+    # or a chain job with nothing to change), so its bar follows the copy alone.
+    _print(on_line, "[JOB] copy")
     _print(on_line, "[PHASE] Writing Final Image")
 
     if same_drive:
@@ -176,6 +180,7 @@ def run_copy(src, dst_dir, *,
     _print(on_line, f"[INFO] copy: cross-drive copy — {src.name} → {dst}")
     written = 0
     last_pct = -1
+    t0 = time.monotonic()
     try:
         with open(src, "rb", buffering=0) as fin, open(tmp, "wb", buffering=0) as fout:
             while True:
@@ -194,7 +199,11 @@ def run_copy(src, dst_dir, *,
                 if total > 0:
                     pct = min(99, int(written * 100 / total))
                     if pct != last_pct:
-                        _print(on_line, f"[####] {pct}% copy")
+                        secs = time.monotonic() - t0
+                        rate = written / secs if secs > 0.5 else 0
+                        tail = (f" @ {rate / 1e6:.2f} MB/s ETA {int((total - written) / rate)}s"
+                                if rate > 0 else "")
+                        _print(on_line, f"[####] {pct}% copy{tail}")
                         last_pct = pct
             # Everything must be on the destination before the source may go: flush,
             # sync, then compare the byte count AND the on-disk size with the source
