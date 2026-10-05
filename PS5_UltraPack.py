@@ -115,7 +115,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import ultra_core  # noqa: E402
 from ultra_core import *  # noqa: E402,F401,F403
-from ui_kit import (Kit, IconButton, IconView, ArtView, ProgressBar, QueueList, unpack_touchpad_delta,  # noqa: E402
+from ui_kit import (Kit, IconButton, IconView, ArtView, ProgressBar, QueueList, TransportControl, unpack_touchpad_delta,  # noqa: E402
                     Chips, StepStrip, LogText, Tile, RoundBox, ctk_pair, apply_ctk_theme, PALETTE)
 
 
@@ -5328,20 +5328,17 @@ class App:
         self._add_btn = self._small(btns, "Add job", "plus", self.open_job_dialog, variant="secondary",
                                     tooltip=f"Pick a source, what to change in it and what comes out  {SHORTCUT['add']}")
         self._add_btn.grid(row=0, column=2, padx=(0, 6))
-        self.start_btn = self._small(btns, "Start", "play", self.start, variant="primary",
-                                     tooltip=f"Run the jobs from the top  {SHORTCUT['start']}")
-        self.start_btn.grid(row=0, column=3)
-        # While the queue runs, Pause and Stop take Start's place, so both work with the details closed.
-        self.pause_btn = self._small(btns, "Pause", "pause", self.toggle_pause, tooltip=self._PAUSE_TIPS[False])
-        self.pause_btn.grid(row=0, column=3, padx=(0, 6))
-        self.pause_btn.grid_remove()
-        self.stop_btn = self._small(btns, "Stop", "stop", self.cancel, variant="danger",
-                                    tooltip=f"Cancel the running job and stop the queue  {SHORTCUT['stop']}")
-        self.stop_btn.grid(row=0, column=4)
-        self.stop_btn.grid_remove()
+        # Start, Pause and Stop share one place of fixed size: Start while idle, Pause and Stop
+        # side by side while the queue runs. Nothing beside it moves when a run starts.
+        self.transport = TransportControl(
+            btns, kit, on_start=self.start, on_pause=self.toggle_pause, on_stop=self.cancel,
+            start_tip=f"Run the jobs from the top  {SHORTCUT['start']}", pause_tip=self._PAUSE_TIPS[False],
+            stop_tip=f"Cancel the running job and stop the queue  {SHORTCUT['stop']}")
+        self.transport.grid(row=0, column=3)
+        self.start_btn, self.pause_btn, self.stop_btn = self.transport.start, self.transport.pause, self.transport.stop
         self._details_btn = self._small(btns, "", "sidebar-right", self.toggle_inspector,
                                         tooltip=f"Show or hide the details  {SHORTCUT['details']}")
-        self._details_btn.grid(row=0, column=5, padx=(8, 0))
+        self._details_btn.grid(row=0, column=4, padx=(8, 0))
         self._q_head, self._q_title = head, head.grid_slaves(row=0, column=0)[0]
         head.bind("<Configure>", self._fit_queue_header, add="+")
         self.queue_listbox = QueueList(
@@ -5435,7 +5432,7 @@ class App:
                 return
             full = self.queue_total_var.get()
             short = full.split("  ·  ")[0]         # "3 jobs" without the size, as a last step
-            run = [self.pause_btn, self.stop_btn] if self.stop_btn.winfo_ismapped() else [self.start_btn]
+            run = [self.transport]                 # one fixed size, running or not
             for sub, clear_t, rescan_t, add_t in (
                     (full, "Clear completed", "Rescan", "Add job"),
                     (full, "Clear completed", "", "Add job"),
@@ -5452,7 +5449,7 @@ class App:
                     self._add_btn.configure(text=add_t)
                 title_w = max(w.winfo_reqwidth() for w in self._q_title.winfo_children())
                 need = sum(b.winfo_reqwidth() for b in (self._clear_btn, self._rescan_btn,
-                                                       self._add_btn, *run, self._details_btn)) + 20 + 6 * (len(run) - 1)
+                                                       self._add_btn, *run, self._details_btn)) + 20
                 if title_w + 16 + need <= width:
                     break
         except Exception:
@@ -5664,16 +5661,11 @@ class App:
             self._show_pause_state()
             if running:
                 self._progress_box.grid()
-                self.start_btn.grid_remove()
                 self.pause_btn.configure(state="normal")
-                self.pause_btn.grid()
                 self.stop_btn.configure(state="normal")
-                self.stop_btn.grid()
             else:
                 self._progress_box.grid_remove()
-                self.pause_btn.grid_remove()
-                self.stop_btn.grid_remove()
-                self.start_btn.grid()
+            self.transport.set_running(running)
         except Exception:
             pass
 
@@ -5694,11 +5686,13 @@ class App:
 
     def _show_pause_state(self):
         p = bool(getattr(self, "_pause_requested", False))
-        btn = getattr(self, "pause_btn", None)
-        if btn is not None:
-            btn.configure(text="Continue" if p else "Pause", icon="play" if p else "pause")
-            if btn.tooltip is not None:
-                btn.tooltip.text = self._PAUSE_TIPS[p]
+        tr = getattr(self, "transport", None)
+        if tr is not None:
+            tr.set_armed(p)                      # the Pause half stays lit orange while armed
+            self.pause_btn.tooltip.text = self._PAUSE_TIPS[p]
+        lbl = getattr(self, "_batch_counter_lbl", None)
+        if lbl is not None:
+            self.kit.restyle(lbl, fg="pause" if p else "faint")
         menu, idx = getattr(self, "_queue_menu", None), getattr(self, "_pause_menu_index", None)
         if menu is not None and idx is not None:
             try:
@@ -5927,7 +5921,8 @@ class App:
         self._status_dot = IconView(inner, kit, "dot", size=11, color="success", bg="sidebar")
         self._status_dot.pack(side="left", padx=(0, 6))
         kit.label(inner, bg="sidebar", fg="muted", font=f, textvariable=self._footer_plain_var).pack(side="left")
-        kit.label(inner, bg="sidebar", fg="faint", font=f, textvariable=self.batch_counter_var).pack(side="left", padx=(12, 0))
+        self._batch_counter_lbl = kit.label(inner, bg="sidebar", fg="faint", font=f, textvariable=self.batch_counter_var)
+        self._batch_counter_lbl.pack(side="left", padx=(12, 0))
         # The queue's overall progress is not shown (the job row carries the job's own
         # percentage); the bar object stays because the poll loop feeds it.
         self._overall_box = kit.frame(inner, bg="sidebar")

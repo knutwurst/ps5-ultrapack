@@ -12,12 +12,16 @@ registered widget in place.
 from __future__ import annotations
 
 import math
+import subprocess
+import sys
+import time
 import tkinter as tk
 import tkinter.font as tkfont
+from types import SimpleNamespace
 
 # ── Palette ──────────────────────────────────────────────────────────────────────────
 # A PlayStation-like blue carries the one primary action and the selection. Green means
-# success only, amber a warning, red an error.
+# success only, amber a warning, red an error, orange a pause (the queue holds, nothing is lost).
 PALETTE = {
     "dark": {
         "bg": "#0b0d12", "sidebar": "#0f1218", "surface": "#12161e", "surface2": "#1a1f2a",
@@ -28,7 +32,9 @@ PALETTE = {
         "select": "#162644", "hover": "#171c26", "track": "#262d3a",
         "success": "#3fb950", "success_bg": "#10301b",
         "warning": "#d29922", "warning_bg": "#382a0c",
-        "danger": "#f85149", "danger_bg": "#3a1417",
+        "danger": "#f85149", "danger_bg": "#3a1417", "danger_bg_hover": "#4a1a1d",
+        "pause": "#f0883e", "pause_bg": "#3a2412", "pause_bg_hover": "#4a2e17",
+        "pause_fill_hover": "#f59a57", "on_pause": "#1f1206",
         "log": "#a9b3c2", "log_debug": "#5c6576",
         "control": "#20262f", "control_hover": "#2a3140", "danger_hover": "#5a1f22",
         "btn": "#262d3a", "btn_hover": "#313949", "btn_border": "#262d3a",
@@ -42,7 +48,9 @@ PALETTE = {
         "select": "#dcebff", "hover": "#eef1f6", "track": "#e2e7ee",
         "success": "#1a7f37", "success_bg": "#dcf3e3",
         "warning": "#9a6700", "warning_bg": "#fbefd0",
-        "danger": "#cf222e", "danger_bg": "#fde4e4",
+        "danger": "#cf222e", "danger_bg": "#fde4e4", "danger_bg_hover": "#fbd3d3",
+        "pause": "#bc4c00", "pause_bg": "#fff1e5", "pause_bg_hover": "#ffe2cc",
+        "pause_fill_hover": "#a64200", "on_pause": "#ffffff",
         "log": "#3b4454", "log_debug": "#9aa1ad",
         "control": "#ffffff", "control_hover": "#eef1f6", "danger_hover": "#b91c1c",
         "btn": "#ffffff", "btn_hover": "#f1f4f8", "btn_border": "#c9d0db",
@@ -162,7 +170,7 @@ ICONS: dict[str, list[tuple]] = {
     "plus": [("l", 12, 5, 12, 19), ("l", 5, 12, 19, 12)],
     "play": [("pf", 8.5, 6.5, 18, 12, 8.5, 17.5)],
     "stop": [("rf", 6.5, 6.5, 17.5, 17.5, 2.5)],
-    "pause": [("rf", 7, 6, 10.5, 18, 1.5), ("rf", 13.5, 6, 17, 18, 1.5)],
+    "pause": [("rf", 6.5, 5.5, 10.5, 18.5, 1.5), ("rf", 13.5, 5.5, 17.5, 18.5, 1.5)],
     "sidebar-right": [("r", 3, 5, 21, 19, 2.5), ("l", 14.5, 5, 14.5, 19)],
     "x": [("l", 6.5, 6.5, 17.5, 17.5), ("l", 17.5, 6.5, 6.5, 17.5)],
     "check-circle": [("c", 12, 12, 9), ("l", 8, 12.5, 11, 15.3, 16.2, 9.3)],
@@ -463,6 +471,32 @@ class Kit:
         self._custom.append(widget)
         return widget
 
+    def restyle(self, widget, **opts):
+        """Change palette tokens of a widget registered with style(), e.g. a label whose
+        text colour follows a state; the next mode switch keeps the new tokens."""
+        for i, (w, old) in enumerate(self._styled):
+            if w is widget:
+                self._styled[i] = (w, {**old, **opts})
+                break
+        else:
+            self._styled.append((widget, opts))
+        widget.configure(**{k: self.pal[v] for k, v in opts.items()})
+
+    _reduce_motion = None
+
+    def reduce_motion(self) -> bool:
+        """macOS Reduce motion (System Settings > Accessibility > Display): no animations then."""
+        if Kit._reduce_motion is None:
+            Kit._reduce_motion = False
+            if sys.platform == "darwin":
+                try:
+                    out = subprocess.run(["defaults", "read", "com.apple.universalaccess", "reduceMotion"],
+                                         capture_output=True, text=True, timeout=2)
+                    Kit._reduce_motion = out.stdout.strip() == "1"
+                except Exception:
+                    pass
+        return Kit._reduce_motion
+
     def frame(self, parent, bg="surface", **kw) -> tk.Frame:
         return self.style(tk.Frame(parent, bd=0, highlightthickness=0, **kw), bg=bg)
 
@@ -692,6 +726,229 @@ class IconButton(tk.Canvas):
             round_rect(self, bx2 - bw, H / 2 - 9, bx2, H / 2 + 9, 9,
                        fill=self.kit.c("accent_bg"), outline="")
             self.create_text(bx2 - bw / 2, H / 2, text=bt, fill=self.kit.c("accent_text"), font=bf)
+
+
+def blend(a: str, b: str, t: float) -> str:
+    """The colour t of the way from hex *a* to hex *b* (Tk canvases have no alpha)."""
+    t = max(0.0, min(1.0, t))
+    ca = [int(a.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    cb = [int(b.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(ca, cb))
+
+
+class _Segment:
+    """One part of a TransportControl, with the button API the app talks to: configure() /
+    cget() / invoke(), state, command, variant, text and a tooltip text."""
+
+    def __init__(self, owner, text, icon, command, variant, tooltip):
+        self._owner, self._text, self._icon, self._command = owner, text, icon, command
+        self.variant, self._state = variant, "normal"
+        self.tooltip = SimpleNamespace(text=tooltip or "")
+
+    def configure(self, cnf=None, **kw):
+        kw.update(cnf or {})
+        if "state" in kw:
+            self._state = "disabled" if str(kw["state"]) == "disabled" else "normal"
+        for k in ("text", "icon", "command"):
+            if k in kw:
+                setattr(self, "_" + k, kw[k])
+        if "variant" in kw:
+            self.variant = kw["variant"]
+        if "text" in kw or "icon" in kw:
+            self._owner._resize()
+        self._owner._draw()
+
+    config = configure
+
+    def cget(self, key):
+        return {"state": self._state, "text": self._text}.get(key)
+
+    def invoke(self):
+        if self._state == "normal" and self._command:
+            self._command()
+
+
+class TransportControl(tk.Canvas):
+    """Start, Pause and Stop in one place of fixed size. Idle it is one Start button; while
+    the queue runs it splits into Pause (orange) and Stop (red). The shape never changes
+    size, so nothing beside it moves, and the switch crossfades in DURATION ms (none with
+    Reduce motion). Pause is a latch: armed, its half is filled orange until released.
+    The three parts are .start, .pause and .stop (see _Segment)."""
+
+    DURATION = 180
+    GAP = 2
+
+    def __init__(self, parent, kit: Kit, *, on_start=None, on_pause=None, on_stop=None,
+                 start_tip="", pause_tip="", stop_tip="", bg="surface", height=26, font=None,
+                 padx=9, icon_size=13):
+        super().__init__(parent, height=height, highlightthickness=0, bd=0, bg=kit.c(bg))
+        self.kit, self._bg_token, self._font = kit, bg, font or kit.fonts.small
+        self._padx, self._icon_size = padx, icon_size
+        self.start = _Segment(self, "Start", "play", on_start, "primary", start_tip)
+        self.pause = _Segment(self, "Pause", "pause", on_pause, "pause", pause_tip)
+        self.stop = _Segment(self, "Stop", "stop", on_stop, "danger", stop_tip)
+        self._parts = {"start": self.start, "pause": self.pause, "stop": self.stop}
+        self.running, self.armed = False, False
+        self._mix, self._arm = 0.0, 0.0          # 0 idle .. 1 running; 0 .. 1 armed
+        self._anim, self._ticking = {}, False
+        self._hover = self._pressed = None
+        self._hand = _hand_cursor(self)
+        super().configure(cursor=self._hand)
+        kit.register(self)
+        self._tip = Tooltip(self, kit, "")
+        self.bind("<Motion>", self._on_motion, add="+")
+        self.bind("<Leave>", self._on_leave, add="+")
+        self.bind("<ButtonPress-1>", lambda e: self._press(self._part_at(e.x)))
+        self.bind("<ButtonRelease-1>", self._release)
+        on_resize(self, self._draw)
+        self._resize()
+        self._draw()
+
+    # — state —
+    def set_running(self, on: bool):
+        on = bool(on)
+        if on == self.running:
+            return
+        self.running = on
+        if not on:
+            self.armed = False
+            self._arm = 0.0
+            self._anim.pop("_arm", None)
+        self._hover = None
+        self._animate("_mix", 1.0 if on else 0.0)
+
+    def set_armed(self, on: bool):
+        on = bool(on) and self.running
+        if on == self.armed:
+            return
+        self.armed = on
+        self._animate("_arm", 1.0 if on else 0.0)
+
+    def _animate(self, name, to):
+        if self.kit.reduce_motion() or not self.winfo_ismapped():
+            setattr(self, name, to)
+            self._anim.pop(name, None)
+            self._draw()
+            return
+        self._anim[name] = (getattr(self, name), to, time.monotonic())
+        if not self._ticking:
+            self._ticking = True
+            self.after(0, self._tick)
+
+    def _tick(self):
+        now, done = time.monotonic(), []
+        for name, (a, b, t0) in self._anim.items():
+            p = min(1.0, (now - t0) * 1000.0 / self.DURATION)
+            setattr(self, name, a + (b - a) * (1 - (1 - p) ** 3))      # ease-out
+            if p >= 1.0:
+                done.append(name)
+        for name in done:
+            del self._anim[name]
+        self._draw()
+        if self._anim:
+            self.after(15, self._tick)
+        else:
+            self._ticking = False
+
+    # — geometry —
+    def _content_w(self, part):
+        w = 2 * self._padx + (self._icon_size if part._icon else 0)
+        if part._text:
+            w += (6 if part._icon else 0) + self._font.measure(part._text)
+        return w
+
+    def _resize(self):
+        half = max(self._content_w(self.pause), self._content_w(self.stop))
+        super().configure(width=max(self._content_w(self.start), 2 * half + self.GAP))
+
+    def _width(self):
+        return self.winfo_width() if self.winfo_width() > 1 else int(self.winfo_fpixels(self.cget("width")))
+
+    def _part_at(self, x):
+        if self._mix < 0.5:
+            return "start"
+        return "pause" if x < self._width() / 2 else "stop"
+
+    # — pointer —
+    def _on_motion(self, e):
+        name = self._part_at(e.x)
+        part = self._parts[name]
+        if name != self._hover:
+            self._hover = name
+            super().configure(cursor=self._hand if part._state == "normal" else "arrow")
+            self._draw()
+            if self._tip._tip:
+                self._tip.text = part.tooltip.text
+                self._tip._hide()
+                self._tip._schedule()
+        self._tip.text = part.tooltip.text
+
+    def _on_leave(self, _e=None):
+        self._hover = self._pressed = None
+        self._draw()
+
+    def _press(self, name):
+        self._pressed = name
+        self._draw()
+
+    def _release(self, e):
+        name, self._pressed = self._pressed, None
+        self._draw()
+        H = int(self.winfo_fpixels(self.cget("height")))
+        if name and name == self._part_at(e.x) and 0 <= e.x <= self._width() and 0 <= e.y <= H:
+            self._parts[name].invoke()
+
+    def apply_palette(self):
+        super().configure(bg=self.kit.c(self._bg_token))
+        self._draw()
+
+    # — drawing —
+    def _draw(self):
+        self.delete("all")
+        c, W = self.kit.c, self._width()
+        H = int(self.winfo_fpixels(self.cget("height")))
+        m, a = self._mix, self._arm
+        lit = lambda n: (self._hover == n or self._pressed == n) and self._parts[n]._state == "normal"
+        st = self.start
+        if st._state == "disabled":
+            s_fill, s_fg = (c("track") if st.variant == "primary" else c("btn")), c("faint")
+        elif st.variant == "primary":
+            s_fill, s_fg = c("accent_hover") if lit("start") else c("accent_fill"), c("on_accent")
+        else:
+            s_fill, s_fg = c("btn_hover") if lit("start") else c("btn"), c("text")
+        p_fill = blend(c("pause_bg_hover") if lit("pause") else c("pause_bg"),
+                       c("pause_fill_hover") if lit("pause") else c("pause"), a)
+        p_fg = c("faint") if self.pause._state == "disabled" else blend(c("pause"), c("on_pause"), a)
+        k_fill = c("danger_bg_hover") if lit("stop") else c("danger_bg")
+        k_fg = c("danger") if self.stop._state == "normal" else c("faint")
+        lf, rf = blend(s_fill, p_fill, m), blend(s_fill, k_fill, m)
+        g, mid, r = self.GAP * m / 2, W / 2, 7
+        border = c("btn_border") if st.variant != "primary" and c("btn_border") != c("btn") else ""
+        if m <= 0.0 and border:          # a quiet Start keeps the hairline of the other buttons
+            round_rect(self, 0, 0, W, H, r, fill=lf, outline=border)
+        else:
+            round_rect(self, 0, 0, mid - g, H, r, fill=lf)
+            self.create_rectangle(mid - g - r, 0, mid - g, H, fill=lf, outline="")
+            round_rect(self, mid + g, 0, W, H, r, fill=rf)
+            self.create_rectangle(mid + g, 0, mid + g + r, H, fill=rf, outline="")
+        if m < 0.5:          # Start fades out over the first half of the switch ...
+            self._label(0, W, st, blend(s_fg, blend(lf, rf, 0.5), m * 2), lf)
+        else:                # ... Pause and Stop fade in over the second
+            t = m * 2 - 1
+            self._label(0, mid - g, self.pause, blend(lf, p_fg, t), lf)
+            self._label(mid + g, W, self.stop, blend(rf, k_fg, t), rf)
+
+    def _label(self, x0, x1, part, color, fill):
+        H = int(self.winfo_fpixels(self.cget("height")))
+        iw = self._icon_size if part._icon else 0
+        tw = self._font.measure(part._text) if part._text else 0
+        gap = 6 if (iw and tw) else 0
+        x = x0 + (x1 - x0 - (iw + gap + tw)) / 2
+        if iw:
+            draw_icon(self, part._icon, x, (H - iw) / 2, iw, color, bg=fill)
+            x += iw + gap
+        if tw:
+            self.create_text(x, H / 2, text=part._text, anchor="w", fill=color, font=self._font)
 
 
 class ProgressBar(tk.Canvas):

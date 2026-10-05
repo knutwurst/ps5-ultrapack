@@ -2053,25 +2053,32 @@ try:
         ok("wire.details.menu-label", app._view_menu.entrycget(app._details_menu_index, "label") == "Hide Details",
            app._view_menu.entrycget(app._details_menu_index, "label"))
 
-        # Start becomes Stop while the queue runs
+        # one transport control: Start while idle, Pause and Stop while the queue runs, same size
+        _w_idle = app.transport.winfo_reqwidth()
         app._batch_running = True; app._sync_run_ui(); root.update()
-        ok("wire.header.stop-while-running", app.stop_btn.winfo_manager() == "grid" and app.start_btn.winfo_manager() == ""
-           and app.stop_btn._command == app.cancel and app.stop_btn._state == "normal",
-           f"stop={app.stop_btn.winfo_manager()!r} start={app.start_btn.winfo_manager()!r}")
-        ok("wire.header.pause-while-running", app.pause_btn.winfo_manager() == "grid"
-           and app.pause_btn._command == app.toggle_pause and app.pause_btn._text == "Pause", app.pause_btn._text)
+        ok("wire.header.stop-while-running", app.transport.running and app.stop_btn._command == app.cancel
+           and app.stop_btn._state == "normal" and app.transport._mix == 1.0, f"running={app.transport.running}")
+        ok("wire.header.same-size-running", app.transport.winfo_reqwidth() == _w_idle,
+           f"{_w_idle} -> {app.transport.winfo_reqwidth()}")
+        _tw = app.transport.winfo_reqwidth()
+        ok("wire.header.halves", app.transport._part_at(2) == "pause" and app.transport._part_at(_tw - 2) == "stop", "")
+        ok("wire.header.pause-while-running", app.pause_btn._command == app.toggle_pause and app.pause_btn._text == "Pause"
+           and not app.transport.armed, app.pause_btn._text)
         app.pause_btn.invoke(); root.update()
-        ok("wire.header.pause-armed", app._pause_requested and app.pause_btn._text == "Continue"
-           and "pauses after this job" in app.batch_counter_var.get()
+        ok("wire.header.pause-armed", app._pause_requested and app.transport.armed and app.transport._arm == 1.0
+           and app.pause_btn._text == "Pause" and "pauses after this job" in app.batch_counter_var.get()
+           and app._batch_counter_lbl.cget("fg") == app.kit.c("pause")
+           and app.pause_btn.tooltip.text == app._PAUSE_TIPS[True]
            and app._queue_menu.entrycget(app._pause_menu_index, "label") == "Keep Running After This Job",
-           f"{app.pause_btn._text} | {app.batch_counter_var.get()}")
+           f"armed={app.transport.armed} | {app.batch_counter_var.get()}")
         app.pause_btn.invoke(); root.update()
-        ok("wire.header.pause-taken-back", not app._pause_requested and app.pause_btn._text == "Pause"
-           and "pauses" not in app.batch_counter_var.get(), app.batch_counter_var.get())
+        ok("wire.header.pause-taken-back", not app._pause_requested and not app.transport.armed
+           and "pauses" not in app.batch_counter_var.get() and app._batch_counter_lbl.cget("fg") == app.kit.c("faint"),
+           app.batch_counter_var.get())
         app.pause_btn.invoke(); root.update()              # armed when the run ends: the next run starts clean
         app._batch_running = False; app._sync_run_ui(); root.update()
-        ok("wire.header.start-when-idle", app.start_btn.winfo_manager() == "grid" and app.stop_btn.winfo_manager() == ""
-           and app.pause_btn.winfo_manager() == "" and not app._pause_requested and app.pause_btn._text == "Pause", "")
+        ok("wire.header.start-when-idle", not app.transport.running and app.transport._mix == 0.0
+           and app.transport._part_at(_tw - 2) == "start" and not app._pause_requested and not app.transport.armed, "")
 
         # the job card and its actions
         _select(1)

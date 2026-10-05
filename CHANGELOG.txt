@@ -8,13 +8,17 @@
 
 PAUSE AFTER THE RUNNING JOB
 
-  - While the queue runs, Pause sits next to Stop (also in the menu:
-    Pause After This Job). The running job finishes completely,
-    unpacking, building and what happens after it included, then the
-    queue stops before the next job. The jobs left stay queued; Start
-    runs them.
-  - Until the job is done the button reads Continue and the progress
-    line says "pauses after this job"; Continue takes the pause back.
+  - Start, Pause and Stop share one place in the queue header. Idle it
+    is Start; when the queue runs it turns into Pause (orange) and Stop
+    (red) side by side, with a short crossfade, and nothing beside it
+    moves. With Reduce motion on in macOS it switches without the fade.
+  - Pause (also in the menu: Pause After This Job) lets the running job
+    finish completely, unpacking, building and what happens after it
+    included, then the queue stops before the next job. The jobs left
+    stay queued; Start runs them.
+  - Until the job is done, Pause stays lit in orange and the progress
+    line at the foot turns orange ("pauses after this job"); a second
+    click takes the pause back.
   - A pause is not the end of the queue: no sleep, no quit, no summary.
     With notifications on, a banner says how many jobs are left. When
     the paused job was the last one, the queue ends as usual.
