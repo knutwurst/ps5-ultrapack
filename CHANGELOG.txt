@@ -3,7 +3,35 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.2.0  (current)
+  v2.2.1  (current)
+────────────────────────────────────────────────────────────────────────
+
+PS4 PACKAGES
+
+  - A PS4 package (.pkg) in an archive, in a folder or on its own is
+    recognised and copied into your library the way it is laid out:
+    '<Title> [CUSA12345] [v01.07]' with the game, 'UPDATE [v01.07]' and
+    '<Title> DLC <name>' inside; from four DLCs on they go into
+    'DLC Pack'. A DLC carries the version of the game it came with.
+  - When the output already holds the title's folder, the packages go
+    into it, and a single DLC takes that folder's version and its
+    'DLC Pack'. Folders are never renamed.
+  - Your Settings rule for outputs that are already there applies to
+    every package of a set: skip, keep both or overwrite. Ask behaves
+    like skip inside a running job.
+  - Look inside lists a PS4 package and extracts single files or
+    folders; Unpack writes its files to a folder. Both need a fake
+    package; any other package is recognised and sorted, but its
+    content cannot be read.
+  - PS5 packages and images work exactly as before.
+
+ALSO
+
+  - Organize logs its summary again; the last line of the walk raised
+    an error after the jobs were queued.
+
+────────────────────────────────────────────────────────────────────────
+  v2.2.0
 ────────────────────────────────────────────────────────────────────────
 
 A .PKG IS BUILT ON ALL CORES

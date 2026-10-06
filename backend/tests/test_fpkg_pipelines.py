@@ -24,6 +24,7 @@ CNT merge, mkpfs pack, mkpfs unpack, fpkg-build, fpkg-validate) went wrong.
 from __future__ import annotations
 
 import argparse
+import zipfile
 import binascii
 import hashlib
 import json
@@ -1065,6 +1066,41 @@ def test_publishing_rules(r: Runner):
             "build refused with a clear message", f"rc={rc} pkg={pkg}: " + log[-300:])
 
 
+def test_ps4_archive_to_library(r: Runner):
+    """A zip of PS4 packages (game, update, five DLCs) ends as the library tree, and a
+    lone DLC joins the title folder that is already there."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from ps4_fixture import make_pkg
+    src = r.work / "ps4_src"; out = r.work / "ps4_out"; zp = r.work / "ps4_set.zip"; ext = r.work / "ps4_ext"
+    for d in (src, out, ext):
+        shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True)
+    cid = "UP0000-CUSA00001_00-SAMPLEGAME000000"
+    make_pkg(src / "g.pkg", content_id=cid, content_type=0x1A, sfo={"TITLE": "Sample Game", "CATEGORY": "gd", "APP_VER": "01.00"})
+    make_pkg(src / "u.pkg", content_id=cid, content_type=0x1A, sfo={"TITLE": "Sample Game", "CATEGORY": "gp", "APP_VER": "01.07"})
+    for i in range(5):
+        make_pkg(src / f"d{i}.pkg", content_id=cid, content_type=0x1B,
+                 sfo={"TITLE": f"Sample Game - Item {i}", "CATEGORY": "ac", "VERSION": "01.00"})
+    with zipfile.ZipFile(zp, "w") as z:
+        for f in sorted(src.iterdir()):
+            z.write(f, f"Sample.Set/{f.name}")
+    zipfile.ZipFile(zp).extractall(ext)
+    rc, log = r.run_cli(["placeholder", str(out), "--ps4-sort", str(ext), "--copy-mode", "keep"])
+    top = out / "Sample Game [CUSA00001] [v01.07]"
+    r.check("ps4.sort.rc", rc == 0, "sorted", log[-400:])
+    r.check("ps4.sort.tree", (top / "Sample Game [CUSA00001] [v01.00].pkg").is_file()
+            and (top / "Sample Game [CUSA00001] UPDATE [v01.07].pkg").is_file()
+            and sorted(x.name for x in (top / "DLC Pack").iterdir())
+                == [f"Sample Game DLC Item {i} [CUSA00001] [v01.07].pkg" for i in range(5)],
+            "game, update and five DLCs in DLC Pack, named by the set's version",
+            str(sorted(x.relative_to(out).as_posix() for x in out.rglob("*.pkg"))))
+    lone = r.work / "ps4_lone"; shutil.rmtree(lone, ignore_errors=True); lone.mkdir()
+    make_pkg(lone / "late.pkg", content_id=cid, content_type=0x1B, sfo={"TITLE": "Sample Game - Late", "CATEGORY": "ac", "VERSION": "01.00"})
+    rc, log = r.run_cli(["placeholder", str(out), "--ps4-sort", str(lone)])
+    r.check("ps4.sort.joins-library", rc == 0 and (top / "DLC Pack" / "Sample Game DLC Late [CUSA00001] [v01.07].pkg").is_file()
+            and len([d for d in out.iterdir() if d.is_dir()]) == 1,
+            "a later DLC joins the title folder and its DLC Pack", log[-300:])
+
+
 def main():
     ap = argparse.ArgumentParser(description="fPKG pipeline end-to-end tests")
     ap.add_argument("--work", type=Path, default=Path(tempfile.gettempdir()) / "ffpfsc-fpkg-tests",
@@ -1099,6 +1135,7 @@ def main():
         ("chain-4: .ffpfsc → fPKG one-click", test_chain4_image_to_fpkg_oneclick),
         ("gui progress translation",        test_gui_progress_translation),
         ("determinism: byte-identical",     test_deterministic_build),
+        ("ps4: archive to library",         test_ps4_archive_to_library),
         ("stage in place = copy mode",      test_stage_in_place_matches_copy),
         ("list-inner + selective extract",  test_list_and_selective_extract),
         ("ampr index rebuilt in staging",   test_ampr_index_rebuilt),
