@@ -124,9 +124,17 @@ def extract(pkg: Path, out_dir: Path,
     outer=True dumps the outer-PFS entries (uroot, pfs_image.dat itself, naps).
     """
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+    if not outer and is_ps4(pkg):
+        return _run([str(tool_path()), "ps4-extract", str(pkg), str(out_dir)], on_line=on_line, on_start=on_start)
     cmd = "extract-outer" if outer else "extract-inner"
     argv = [str(tool_path()), cmd, str(pkg), str(out_dir), "--passcode", passcode]
     return _run(argv, on_line=on_line, on_start=on_start)
+
+
+def is_ps4(pkg: Path) -> bool:
+    """A PS4 package (CUSA title id): read with the tool's ps4-* commands, never as a PS5 fPKG."""
+    import ps4pkg
+    return ps4pkg.is_ps4_package(pkg)
 
 
 def list_inner(pkg: Path, *, passcode: str = "0" * 32) -> dict:
@@ -139,7 +147,8 @@ def list_inner(pkg: Path, *, passcode: str = "0" * 32) -> dict:
     "file_count", "dir_count", "errors"} — the same shape the PFS browser uses for
     .ffpfs/.ffpfsc listings. Raises RuntimeError with the tool's last message on failure.
     """
-    argv = [str(tool_path()), "list-inner", str(pkg), "--passcode", passcode]
+    argv = ([str(tool_path()), "ps4-list", str(pkg)] if is_ps4(pkg)
+            else [str(tool_path()), "list-inner", str(pkg), "--passcode", passcode])
     r = subprocess.run(argv, capture_output=True, text=True, timeout=600)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout or "").strip().splitlines()
@@ -155,6 +164,9 @@ def extract_members(pkg: Path, out_dir: Path, members_file: Path,
     Progress lines '[####] NN% extract (path)' stream through *on_line*.
     """
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+    if is_ps4(pkg):
+        return _run([str(tool_path()), "ps4-extract", str(pkg), str(out_dir), "--members", str(members_file)],
+                    on_line=on_line)
     argv = [str(tool_path()), "extract-inner", str(pkg), str(out_dir),
             "--members", str(members_file), "--passcode", passcode]
     return _run(argv, on_line=on_line)

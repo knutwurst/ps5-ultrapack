@@ -57,3 +57,32 @@ class Identity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(REAL, "no real PS4 packages in unzipped/ps4/")
+class RealThroughBackend(unittest.TestCase):
+    """Look inside and Unpack through cli.py, as the GUI calls them, on the real samples."""
+    def run_cli(self, *args):
+        import subprocess
+        p = subprocess.run([sys.executable, str(HERE.parent / "cli.py"), *map(str, args)], capture_output=True, text=True)
+        return p.returncode, p.stdout + p.stderr
+
+    def test_list_extract_unpack(self):
+        import json
+        work = Path(tempfile.mkdtemp())
+        for pkg in REAL:
+            rc, out = self.run_cli("--list-image", pkg)
+            doc = json.loads(next(l for l in out.splitlines() if l.startswith("PFSBROWSE_JSON:")).split(":", 1)[1])
+            paths = {e["path"] for e in doc["entries"]}
+            self.assertIn("sce_sys/param.sfo", paths, pkg.name)
+            members = work / "m.txt"; members.write_text("sce_sys/param.sfo\n")
+            dest = work / ("m_" + pkg.stem)
+            rc, out = self.run_cli("--extract-from", pkg, "--dest", dest, "--members-file", members)
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(ps4pkg.parse_sfo((dest / "sce_sys" / "param.sfo").read_bytes())["TITLE_ID"],
+                             ps4pkg.read_identity(pkg).title_id)
+            full = work / ("full_" + pkg.stem)
+            rc, out = self.run_cli("placeholder", full, "--fpkg-extract", pkg)
+            self.assertEqual(rc, 0, out)
+            files = {p.relative_to(full).as_posix() for p in full.rglob("*") if p.is_file()}
+            self.assertEqual(files, {e["path"] for e in doc["entries"] if e["type"] == "file"})

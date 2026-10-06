@@ -2926,7 +2926,10 @@ def main() -> None:
             _phase("Extracting")
             _fpkg_progress._bar(0, "extract inner PFS + CNT metadata")
             out_dir.mkdir(parents=True, exist_ok=True)
-            _total = _pkg_extract_plan(src, _pkg_content_size(src))
+            # a PS4 package writes its files directly (no temp images on the way); a PS5 one
+            # decodes two temp images first, see _pkg_extract_plan
+            _total = (_pkg_content_size(src) if _fpkg.is_ps4(src)
+                      else _pkg_extract_plan(src, _pkg_content_size(src)))
             _tool = {}
             rc = _run_with_folder_progress(
                 lambda: _fpkg.extract(src, out_dir, passcode=args.fpkg_passcode,
