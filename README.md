@@ -11,10 +11,6 @@
 </p>
 
 <p align="center">
-  <img src="images/main-window.jpg" alt="PS5 UltraPack: the queue with three jobs and the details of the running one" width="900">
-</p>
-
-<p align="center">
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS (Apple Silicon)">
   <img src="https://img.shields.io/badge/PS5%20fPKG-native-22c55e?style=for-the-badge" alt="PS5 fPKG native">
   <img src="https://img.shields.io/badge/FW%2011.60-verified-22c55e?style=for-the-badge" alt="FW 11.60 verified">
@@ -34,6 +30,11 @@
 - **Checked end to end.** The end-to-end test builds every conversion path from a real game and compares every file byte for byte, and a deterministic `.pkg` build of the same folder gives the same bytes, build after build.
 
 ## Screenshots
+
+<p align="center">
+  <img src="images/main-window.jpg" alt="PS5 UltraPack: the queue with three jobs and the details of the running one" width="900">
+</p>
+<p align="center"><sub><b>Main window</b> &nbsp;·&nbsp; the queue with three jobs and the details of the running one</sub></p>
 
 <table>
   <tr>
