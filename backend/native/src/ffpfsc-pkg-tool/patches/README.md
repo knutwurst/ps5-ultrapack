@@ -6,8 +6,7 @@
 (`lib/LibProsperoPkg.dll`) are tracked in git, with SHA-256 sums in
 `lib/SHA256SUMS`; `lib/README.md` records the provenance and the
 modification notice. Two upstream behaviours keep a backported title from
-launching on a jailbroken PS5, and one crashes the tool while reading a
-package on macOS. All three are fixed by rewriting IL in the assembly
+launching on a jailbroken PS5; both are fixed by rewriting IL in the assembly
 before the tool is compiled.
 
 ## Applying
@@ -64,18 +63,17 @@ and the tool rebuilds that index over the packed files before the build
 string of the array: no file has an empty name, so that `RemoveAll` never
 matches, while `entitlements.txt` and `entitlement_key.dat` stay excluded.
 
-## Patch 4 — single-threaded package reading
+## Former patch 4 — single-threaded package reading (removed 2026-10-06)
 
-`ProsperoPackageArchive.ResolveParallelism(requested)` returns
-`min(ProcessorCount, 8)` when nothing is requested, and that is what
-`ExtractInnerFiles` and the `Verify*` paths use: one inner-PFS session per
-worker on a `Parallel.ForEach`. On macOS arm64 those sessions crash the
-process (an `AccessViolationException` on a thread-pool worker, FailFast,
-SIGABRT, "ffpfsc-pkg-tool quit unexpectedly") — reproduced on every full
-`extract-inner` of a five-file package. It is the same family as the
-encoder crash that keeps the builder at parallelism 1 (CHANGELOG 1.0.90).
-The patcher makes the function return 1, so reading stays single-threaded
-as it was in the previous build.
+From 2026-10-05 to 2026-10-06 the patcher also made
+`ProsperoPackageArchive.ResolveParallelism` return 1, because the parallel
+inner-PFS sessions of `ExtractInnerFiles` crashed the process on macOS arm64
+(`AccessViolationException` on a thread-pool worker). The crash was the
+compressed single-file bundle the tool was published as, not the library:
+every multithreaded pass died that way, the Kraken encoder included. With
+`EnableCompressionInSingleFile` off (`../PkgTool.csproj`), 36 parallel
+extractions of two test packages matched the single-threaded tree byte for
+byte, so the library's own worker count is back.
 
 ## What is deliberately not patched
 

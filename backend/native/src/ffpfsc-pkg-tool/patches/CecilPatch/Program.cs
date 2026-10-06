@@ -94,27 +94,10 @@ using (var asm = AssemblyDefinition.ReadAssembly(dll, new ReaderParameters { Rea
     }
     applied++;
 
-    // ---- Patch 4: single-threaded package reading -----------------------------------------
-    // ProsperoPackageArchive.ResolveParallelism(requested) returns min(ProcessorCount, 8) for
-    // requested <= 0, which is what ExtractInnerFiles and the Verify* paths use. The per-thread
-    // inner-PFS sessions crash the process on macOS arm64 (AccessViolationException on a
-    // thread-pool worker, FailFast, SIGABRT) — the same family as the encoder crash that keeps
-    // the builder at parallelism 1. Make the function return 1 unconditionally.
-    var archive = asm.MainModule.GetType("LibProsperoPkg.PKG.ProsperoPackageArchive")
-                  ?? throw new InvalidOperationException("LibProsperoPkg.PKG.ProsperoPackageArchive not found — wrong assembly?");
-    var rp = archive.Methods.FirstOrDefault(m => m.Name == "ResolveParallelism" && m.HasBody);
-    if (rp == null) { Console.Error.WriteLine("[4] FAILED: ProsperoPackageArchive.ResolveParallelism not found (upstream changed?)"); return 3; }
-    if (rp.Body.Instructions.Count == 2 && rp.Body.Instructions[0].OpCode == OpCodes.Ldc_I4_1 && rp.Body.Instructions[1].OpCode == OpCodes.Ret)
-        Console.WriteLine("[4] ResolveParallelism already returns 1");
-    else
-    {
-        var ilp = rp.Body.GetILProcessor();
-        rp.Body.Instructions.Clear(); rp.Body.ExceptionHandlers.Clear(); rp.Body.Variables.Clear();
-        ilp.Append(ilp.Create(OpCodes.Ldc_I4_1));
-        ilp.Append(ilp.Create(OpCodes.Ret));
-        Console.WriteLine("[4] ResolveParallelism -> 1 (package reading stays single-threaded)");
-    }
-    applied++;
+    // (A fourth patch, ResolveParallelism -> 1, kept package reading single-threaded from
+    // 2026-10-05 to 2026-10-06. The crash it worked around was the compressed single-file
+    // bundle, not the library: with the compression off, 36 parallel extractions matched the
+    // single-threaded tree byte for byte. See PkgTool.csproj.)
 
     asm.Write();
 }

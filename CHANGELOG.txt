@@ -16,6 +16,8 @@ A .PKG IS BUILT ON ALL CORES
     because it crashed with more. The cause was found and fixed: not the
     compressor, but the way the tool itself was packaged. The tool is
     now 82 MB instead of 38.
+  - Reading a .pkg uses every core as well: unpacking one and Look inside
+    no longer wait on a single thread.
 
 BUILDING A .PKG: NO SECOND COPY OF THE GAME, NO HARD LINKS
 

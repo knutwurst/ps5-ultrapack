@@ -32,7 +32,8 @@
          build with the compression off: 0 crashes in 26 runs, 4/8/12 Kraken workers, every
          package byte-identical to the single-worker one (measured 2026-10-06). The binary
          grows from 38 MB to 82 MB. The ReadyToRun finding below was measured WITH the
-         compression on and may be this same bug; it has not been retested. -->
+         compression on; retested without it on 2026-10-06, ReadyToRun ran clean too (see below)
+         and is still off: it saved 80 ms per tool start and nothing else. -->
     <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
