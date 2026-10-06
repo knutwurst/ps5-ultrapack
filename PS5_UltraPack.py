@@ -1455,12 +1455,12 @@ class SettingsView:
         ctk.CTkLabel(_st, text=".pkg Kraken level for new jobs:", text_color=WHITE,
                       font=ctk.CTkFont(size=12)).grid(row=1, column=0, sticky="w", pady=4)
         _pkg_level = tk.IntVar(value=self.app._pkg_level_default())
-        ctk.CTkSlider(_st, from_=-4, to=9, number_of_steps=13, variable=_pkg_level, width=180, height=16,
-                      fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
-                      button_hover_color=ACCENT_HOVER).grid(row=1, column=1, sticky="w", padx=8, pady=4)
-        _pkg_lbl = ctk.CTkLabel(_st, text=str(_pkg_level.get()), text_color=WHITE, width=28, anchor="w",
-                                font=ctk.CTkFont(size=12))
-        _pkg_lbl.grid(row=1, column=2, sticky="w")
+        ctk.CTkSlider(_st, from_=-4, to=9, number_of_steps=13, variable=_pkg_level,
+                       fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
+                       button_hover_color=ACCENT_HOVER).grid(row=1, column=1, sticky="ew", padx=8, pady=4)
+        _pkg_lbl = ctk.CTkLabel(_st, text=str(_pkg_level.get()),
+                                text_color=ACCENT, font=ctk.CTkFont(size=12, weight="bold"), width=24)
+        _pkg_lbl.grid(row=1, column=2)
 
         def _pkg_cb(*_):
             try:
