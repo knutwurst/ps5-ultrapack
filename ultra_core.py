@@ -1506,6 +1506,16 @@ _PS4_TID_TAG = re.compile(r"\[(CUSA\d{5})\]", re.I)
 _PS4_VER_TAG = re.compile(r"\[v(\d+(?:\.\d+)*)\]", re.I)
 
 
+def ps4_folder_with_version(folder: str, version: str) -> str:
+    """*folder* with its '[vXX.YY]' tag set to *version* (added after the id tag when absent)."""
+    if _PS4_VER_TAG.search(folder):
+        return _PS4_VER_TAG.sub(f"[v{version}]", folder, count=1)
+    m = _PS4_TID_TAG.search(folder)
+    if m:
+        return folder[:m.end()] + f" [v{version}]" + folder[m.end():]
+    return f"{folder} [v{version}]"
+
+
 def scan_ps4_library(root) -> dict:
     """{CUSA id: Ps4Library} for the title folders directly under *root*. A folder counts
     when its name carries a '[CUSA12345]' tag; OS clutter is skipped; the first folder per
@@ -1551,9 +1561,10 @@ def ps4_layout(items, known: dict | None = None):
     game or update it arrives with; alone, its own version, or none when it has none.
     *items* is [(source path, identity)] with identity.kind/.title/.title_id/.version/.app_ver;
     *known* ({CUSA id: Ps4Library}, see scan_ps4_library) names the title folders already in
-    the library: a set joins its folder (never renamed), takes the title spelling before the
-    id tag, and a DLC without a game or update in the set takes the folder's version and its
-    'DLC Pack' when there is one. Returns [(source, folder, subdir, filename)]."""
+    the library: a set joins its folder and takes the title spelling before the id tag; the
+    folder's version tag is raised when the set brings a newer game or update (the caller
+    renames the folder), never lowered and never raised by a DLC; a DLC takes the folder's
+    version and its 'DLC Pack' when there is one. Returns [(source, folder, subdir, filename)]."""
     known = known or {}
     groups: dict[str, list] = {}
     for src, ident in items:
@@ -1574,10 +1585,11 @@ def ps4_layout(items, known: dict | None = None):
         pkg_title = title                                # as the packages spell it (for the DLC cut)
         lib = known.get(tid)
         if lib:
-            folder = lib.folder
             title = lib.folder.split(f"[{tid}]", 1)[0].strip() or title
-            if not set_ver:
-                set_ver = lib.version
+            top = max((v for v in (lib.version, set_ver) if v), key=_ver_key, default="")
+            raise_tag = bool(set_ver) and _ver_key(set_ver) > _ver_key(lib.version or "0")
+            folder = ps4_folder_with_version(lib.folder, top) if raise_tag else lib.folder
+            set_ver = top
             if lib.has_dlc_pack:
                 dlc_sub = PS4_DLC_PACK
         else:

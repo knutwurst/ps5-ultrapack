@@ -27,7 +27,7 @@
 - **Installable `.pkg` on macOS.** No Wine, no Sony DLL. Homebrew and a retail title built here install and launch on a retail PS5 on firmware 11.60.
 - **Backport to an older firmware.** The app lowers the SDK version of the game's executables and checks the game's imports against the target firmware's libraries before it builds. When the target lacks functions, it copies your patched system libraries into the game's `fakelib/` folder, prepared from BestPig's BackPork patches in one click. Targets: 7.61, 6.02, an SDK-only 10.xx, and any firmware whose libraries you keep in a folder.
 - **Look inside without unpacking.** Browse a `.ffpfs`, `.ffpfsc` or `.pkg` and extract single files or folders. Only the blocks you ask for get decoded, byte-identical to the original.
-- **PS4 packages into your library.** A PS4 `.pkg`, a folder or an archive of them lands as `<Title> [CUSA12345] [v01.07]` with the game, `UPDATE [v01.07]` and `<Title> DLC <name>` inside, many DLCs in `DLC Pack`. A title folder that is already there is joined. Look inside and Unpack read PS4 fake packages too.
+- **PS4 packages into your library.** A PS4 `.pkg`, a folder or an archive of them lands as `<Title> [CUSA12345] [v01.07]` with the game, `UPDATE [v01.07]` and `<Title> DLC <name>` inside, many DLCs in `DLC Pack`. A title folder that is already there is joined, and a newer update raises its version tag. Look inside and Unpack read PS4 fake packages too.
 - **Checked end to end.** The end-to-end test builds every conversion path from a real game and compares every file byte for byte, and a deterministic `.pkg` build of the same folder gives the same bytes, build after build.
 
 ## Screenshots

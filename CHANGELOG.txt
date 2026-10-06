@@ -15,7 +15,9 @@ PS4 PACKAGES
     'DLC Pack'. A DLC carries the version of the game it came with.
   - When the output already holds the title's folder, the packages go
     into it, and a single DLC takes that folder's version and its
-    'DLC Pack'. Folders are never renamed.
+    'DLC Pack'. A newer game or update raises the folder's version
+    ('[v01.00]' becomes '[v01.04]'), so the folder always shows the
+    newest version it holds; a DLC never changes it.
   - Your Settings rule for outputs that are already there applies to
     every package of a set: skip, keep both or overwrite. Ask behaves
     like skip inside a running job.

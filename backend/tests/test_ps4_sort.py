@@ -74,6 +74,34 @@ class Sort(unittest.TestCase):
         self.assertTrue((lib / "DLC Pack" / "Sample Game DLC Skin [CUSA00001] [v01.62].pkg").is_file())
         self.assertEqual(len([d for d in self.out.iterdir() if d.is_dir()]), 1)
 
+    def test_newer_update_renames_the_title_folder(self):
+        lib = self.out / "Sample Game [CUSA00001] [v01.00]"
+        lib.mkdir(parents=True)
+        (lib / "Sample Game [CUSA00001] [v01.00].pkg").write_bytes(b"game already there")
+        upd = Path(tempfile.mkdtemp())
+        pkg(upd, "u.pkg", "update", "01.04")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = ps4_sort.sort_packages(upd, self.out)
+        new = self.out / "Sample Game [CUSA00001] [v01.04]"
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertFalse(lib.exists())
+        self.assertEqual((new / "Sample Game [CUSA00001] [v01.00].pkg").read_bytes(), b"game already there")
+        self.assertTrue((new / "Sample Game [CUSA00001] UPDATE [v01.04].pkg").is_file())
+        self.assertIn("renamed", buf.getvalue())
+
+    def test_rename_target_taken_keeps_the_old_name(self):
+        old = self.out / "Sample Game [CUSA00001] [v01.00]"; old.mkdir(parents=True)
+        (self.out / "Sample Game [CUSA00001] [v01.04]" / "x").mkdir(parents=True)   # a second, unrelated folder
+        upd = Path(tempfile.mkdtemp())
+        pkg(upd, "u.pkg", "update", "01.04")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = ps4_sort.sort_packages(upd, self.out)
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertTrue(old.is_dir())
+        self.assertIn("[WARN]", buf.getvalue())
+
     def test_non_ps4_package_is_reported(self):
         (self.src / "other.pkg").write_bytes(b"\x7fFIH" + b"\0" * 5000)
         rc, log = self.run_sort()

@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # ultra_core next to the app
 import copy_job
 import ps4pkg
-from ultra_core import is_fs_junk_name, ps4_layout, scan_ps4_library
+from ultra_core import _PS4_TID_TAG, is_fs_junk_name, ps4_layout, scan_ps4_library
 
 _BAR = re.compile(r"^\[#+\]\s*(\d+)%")
 
@@ -61,7 +61,28 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
         return 1
     _say(on_line, f"[PS4] {len(items)} package(s)")
     kinds = {p: i.kind for p, i in items}
-    placements = ps4_layout(items, known=scan_ps4_library(out_dir))
+    known = scan_ps4_library(out_dir)
+    placements = ps4_layout(items, known=known)
+    # A title folder already in the library whose version tag the set raises is renamed
+    # (same drive, nothing copied); when that name is taken the set goes into the old folder.
+    moved: dict[str, str] = {}
+    for folder in dict.fromkeys(f for _, f, _, _ in placements):
+        m = _PS4_TID_TAG.search(folder)
+        lib = known.get(m.group(1).upper()) if m else None
+        if not lib or lib.folder == folder:
+            continue
+        old, new = out_dir / lib.folder, out_dir / folder
+        if new.exists():
+            _say(on_line, f"[WARN] {folder} already exists; the packages go into {lib.folder}, its name stays")
+            moved[folder] = lib.folder
+            continue
+        try:
+            os.rename(old, new)
+            _say(on_line, f"[PS4] renamed {lib.folder} -> {folder} (the newest version of the set)")
+        except OSError as e:
+            _say(on_line, f"[WARN] could not rename {lib.folder} ({e}); the packages go into it as it is")
+            moved[folder] = lib.folder
+    placements = [(src, moved.get(f, f), sub, name) for src, f, sub, name in placements]
     total = sum(max(1, p.stat().st_size) for p, *_ in placements)
     done = 0
     last_pct = [-1]

@@ -59,14 +59,23 @@ class Layout(unittest.TestCase):
         got = uc.ps4_layout([(Path("d.pkg"), ident("dlc", "01.00", title="Sample Game - Skin"))], known=known)
         self.assertEqual(got, [(Path("d.pkg"), "Sample Game [CUSA00001] [v01.62]", "DLC Pack",
                                 "Sample Game DLC Skin [CUSA00001] [v01.62].pkg")])
-        # an update newer than the folder keeps the folder name (folders are never renamed)
+        # an update newer than the folder: the folder is to carry the higher version
         known = {"CUSA00001": uc.Ps4Library("Sample Game [CUSA00001] [v01.05]", "01.05", has_dlc_pack=False)}
         got = uc.ps4_layout([(Path("u.pkg"), ident("update", "01.07"))], known=known)
-        self.assertEqual(got[0][1:], ("Sample Game [CUSA00001] [v01.05]", "", "Sample Game [CUSA00001] UPDATE [v01.07].pkg"))
+        self.assertEqual(got[0][1:], ("Sample Game [CUSA00001] [v01.07]", "", "Sample Game [CUSA00001] UPDATE [v01.07].pkg"))
+        # an older update does not lower it, and a DLC never raises it
+        got = uc.ps4_layout([(Path("u.pkg"), ident("update", "01.02")), (Path("d.pkg"), ident("dlc", "02.00"))], known=known)
+        self.assertEqual({f for _, f, _, _ in got}, {"Sample Game [CUSA00001] [v01.05]"})
         # the library's own title spelling wins for the file names too
         known = {"CUSA00001": uc.Ps4Library("Sample Game Remastered [CUSA00001] [v01.00]", "01.00", has_dlc_pack=False)}
         got = uc.ps4_layout([(Path("d.pkg"), ident("dlc", "", title="Sample Game - Skin"))], known=known)
         self.assertEqual(got[0][3], "Sample Game Remastered DLC Skin [CUSA00001] [v01.00].pkg")
+
+    def test_folder_version_tag(self):
+        self.assertEqual(uc.ps4_folder_with_version("Sample Game [CUSA00001] [v01.00]", "01.04"), "Sample Game [CUSA00001] [v01.04]")
+        self.assertEqual(uc.ps4_folder_with_version("Sample Game [CUSA00001]", "01.04"), "Sample Game [CUSA00001] [v01.04]")
+        self.assertEqual(uc.ps4_folder_with_version("Sample Game [CUSA00001] [v01.00] (EU)", "01.04"),
+                         "Sample Game [CUSA00001] [v01.04] (EU)")
 
     def test_scan_library(self):
         import tempfile
