@@ -29,6 +29,17 @@ BUILDING A .PKG: NO SECOND COPY OF THE GAME, NO HARD LINKS
     while the package grows instead of both sitting side by side. A
     build that fails is unpacked again on Retry.
 
+A .PKG SHOWS ITS REAL PROGRESS, SPEED AND TIME LEFT
+
+  - While Kraken runs, the bar now moves with the bytes done, and Speed
+    and Left are filled in: the backend adds up the files the package
+    already holds and the part of the file being packed. Until now the
+    bar sat at 99 % for the whole pass and both fields showed a dash.
+  - The outer-image pass that follows reports its percentage, speed and
+    time left the same way; before, it stood at 0 % until it was done.
+  - The progress bands of a .pkg job were re-weighted from a full-size
+    run.
+
 A .PKG IS BUILT ON ALL CORES
 
   - Kraken now runs on every core of the Mac instead of one. On a 1 GB

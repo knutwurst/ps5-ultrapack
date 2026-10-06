@@ -1204,6 +1204,169 @@ def _phase(name: str) -> None:
     print(f"[PHASE] {name}", flush=True)
 
 
+class FpkgProgress:
+    """Translate the package tool's log into the GUI's phase markers and progress bars.
+
+    The tool prints LibProsperoPkg's own log: "[stage 3/5] ... 59% (55.77 GiB / 94.25 GiB;
+    71.4 MiB/s)", "[inner] data 17% (25/265): /path -> N bytes (Kraken, ratio 68.4 %)",
+    "[inner] Kraken level -4: 70% of /path", "[finalize] ...: 60% (1,234 / 4,567 blocks)".
+    The GUI understands "[PHASE] <Stage>" markers and "[####----] NN% <label>" bars, and
+    reads speed and time left from a label of the form "... @ 71.4 MB/s ETA 1234s".
+
+    The Kraken pass is metered in bytes: the planning line gives the total, every large
+    file announces its size, and the per-file "NN% of" lines move inside it; smaller files
+    are sized from their output and ratio. The library's own percentage is the floor.
+    Phases only move forward: the tool's late "Source scan" (it scans after staging) is
+    not echoed as a bar once the job is past scanning, which used to pin "Temp PFS" at 99 %.
+    """
+
+    _STAGE_PHASE = {1: "Creating Temp PFS", 2: "Compressing", 3: "Compressing",
+                    4: "Writing Final Image", 5: "Writing Final Image"}
+    _ORDER = ["Scanning Files", "Reading Game", "Creating Temp PFS", "Compressing",
+              "Writing Final Image", "Verifying Output"]
+    _UNIT = {"b": 1, "bytes": 1, "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3, "tib": 1024 ** 4,
+             "kb": 1e3, "mb": 1e6, "gb": 1e9, "tb": 1e12}
+
+    def __init__(self, phase_cb, out=None, clock=None):
+        self._phase_cb = phase_cb
+        self._out = out or (lambda text: print(text, flush=True))
+        self._clock = clock or time.monotonic
+        self.cur = None
+        # Kraken pass meter
+        self.total = 0          # uncompressed bytes the inner image will hold
+        self.done = 0           # bytes of files the image already holds
+        self.file = None        # the large file being encoded, and its size / fraction done
+        self.file_size = 0
+        self.file_frac = 0.0
+        self.t0 = None
+        self.lib_pct = 0
+
+    # ── helpers ───────────────────────────────────────────────────────────
+    def _bar(self, pct, label):
+        pct = max(0, min(100, int(pct)))
+        filled = pct // 5
+        self._out(f"[{'#' * filled}{'-' * (20 - filled)}] {pct}% {label}")
+
+    def _set_phase(self, name):
+        if self.cur != name:
+            self.cur = name
+            self._phase_cb(name)
+
+    def _past(self, name):
+        """True when the job already moved beyond *name*."""
+        return (self.cur in self._ORDER and name in self._ORDER
+                and self._ORDER.index(self.cur) > self._ORDER.index(name))
+
+    @classmethod
+    def _bytes(cls, number, unit):
+        return float(number.replace(",", "")) * cls._UNIT.get(unit.lower(), 1)
+
+    @staticmethod
+    def _rate_eta(done_bytes, total_bytes, seconds):
+        """'@ 71.4 MB/s ETA 1234s' from bytes done, total and elapsed seconds; '' if unknown."""
+        if seconds is None or seconds <= 0 or done_bytes <= 0:
+            return ""
+        rate = done_bytes / seconds
+        left = max(0.0, total_bytes - done_bytes) / rate if total_bytes > done_bytes else 0.0
+        return f" @ {rate / 1e6:.1f} MB/s ETA {int(round(left))}s"
+
+    def _kraken_bar(self):
+        in_flight = self.file_size * self.file_frac if self.file else 0
+        got = self.done + in_flight
+        pct = int(got * 100 / self.total) if self.total else 0
+        pct = max(pct, self.lib_pct)
+        elapsed = (self._clock() - self.t0) if self.t0 is not None else None
+        self._bar(pct, "inner image (Kraken)" + self._rate_eta(got, self.total, elapsed))
+
+    # ── one line of tool output ───────────────────────────────────────────
+    def line(self, line: str) -> None:
+        self._out(line)
+        low = line.lower()
+        if "source scan:" in low:
+            if not self._past("Scanning Files"):
+                self._set_phase("Scanning Files"); self._bar(100, "source scan")
+            return
+        m = re.search(r"planning nwonly inner image: ([\d,]+) files, ([\d,]+) uncompressed bytes", low)
+        if m:
+            self.total = int(m.group(2).replace(",", ""))   # the Kraken meter's denominator
+            return
+        if "[inner] preparing" in low or "prepared inner tree" in low:
+            if not self._past("Reading Game"):
+                self._set_phase("Reading Game"); self._bar(100 if "prepared" in low else 50, "inner files prepared")
+            return
+        if "writing afid-ordered inner data" in low:
+            self._set_phase("Creating Temp PFS"); self.t0 = self._clock()
+            self._bar(0, "inner image (Kraken)"); return
+        m = re.search(r"\[stage\] copy (\d+)%", line)
+        if m:
+            self._set_phase("Reading Game"); self._bar(int(m.group(1)), "staging copy"); return
+        if "[stage] staged in place" in low:
+            self._set_phase("Reading Game"); self._bar(100, "staged in place"); return
+        if self.cur == "Creating Temp PFS":
+            m = re.search(r"processing large file: (/\S+) \(([\d,]+) bytes\)", line)
+            if m:
+                self.file, self.file_size, self.file_frac = m.group(1), int(m.group(2).replace(",", "")), 0.0
+                return
+            m = re.search(r"kraken level -?\d+:\s*(\d+)% of (/\S+)", low)
+            if m:
+                if self.file and m.group(2) == self.file.lower():
+                    self.file_frac = int(m.group(1)) / 100.0
+                self._kraken_bar(); return
+            m = re.search(r"\bdata\s+(\d+)%\s*\(\d+/\d+\): (/\S+) -> ([\d,]+) bytes(?: \((?:kraken|raw)[^)]*?ratio ([\d.]+) %\))?", line, re.I)
+            if m:
+                self.lib_pct = int(m.group(1))
+                path = m.group(2)
+                if self.file and path == self.file:
+                    self.done += self.file_size
+                else:
+                    out_bytes = int(m.group(3).replace(",", ""))
+                    ratio = float(m.group(4)) if m.group(4) else 100.0
+                    self.done += int(out_bytes * 100.0 / ratio) if ratio > 0 else out_bytes
+                self.file, self.file_size, self.file_frac = None, 0, 0.0
+                self._kraken_bar(); return
+        m = re.search(r"\[stage (\d)/5\]", line)
+        if m:
+            st = int(m.group(1))
+            if st == 1:
+                # stage 1 opens with file preparation (Reading Game) and closes with
+                # "Inner image complete" (Creating Temp PFS at 100 %) — no back-jump.
+                if "complete" in low:
+                    self._set_phase("Creating Temp PFS"); self._bar(100, "inner image (Kraken)")
+                elif not self._past("Reading Game"):
+                    self._set_phase("Reading Game")
+                return
+            self._set_phase(self._STAGE_PHASE.get(st, self.cur or "Compressing"))
+            if st == 2:
+                self._bar(100 if "complete" in low else 0, "NAPS tables"); return
+            if st == 3:
+                m2 = re.search(r"(\d+)% \(([\d.,]+) (\w+) / ([\d.,]+) (\w+); ([\d.,]+) (\w+)/s\)", line)
+                if m2:
+                    done_b = self._bytes(m2.group(2), m2.group(3)); total_b = self._bytes(m2.group(4), m2.group(5))
+                    rate = self._bytes(m2.group(6), m2.group(7)) / 1e6
+                    left = (total_b - done_b) / (rate * 1e6) if rate > 0 else 0
+                    self._bar(int(m2.group(1)), f"outer PFS @ {rate:.1f} MB/s ETA {int(round(left))}s"); return
+                if "outer pfs complete" in low:
+                    self._bar(100, "outer PFS"); return
+                if "started" in low or "building" in low:
+                    self._bar(0, "outer PFS"); return
+                return
+            if st == 4:
+                self._bar(40 if "complete" in low else 0, "CNT image"); return
+            if st == 5:
+                self._bar(50, "finalize"); return
+            return
+        m = re.search(r"\[finalize\].*?:\s*(\d+)%\s*\(([\d,]+) / ([\d,]+) blocks\)", line)
+        if m:
+            self._set_phase("Writing Final Image")
+            self._bar(50 + int(m.group(1)) // 2, "finalize (FIH digests)"); return
+        if "build finished" in low:
+            self._set_phase("Writing Final Image"); self._bar(100, "finalized .pkg written"); return
+        if line.startswith("[INFO] Auto-validating"):
+            self._set_phase("Verifying Output"); self._bar(0, "validate checklist"); return
+        if low.startswith("summary:") and "failed" in low:
+            self._bar(100, "validate checklist"); return
+
+
 # macOS / Windows metadata sidecars that must never be packed into a PFS image.
 # All are OS-generated junk, never game data — safe to delete unconditionally.
 # Lower-case, compared case-insensitively (exFAT and Windows volumes keep no case). One
@@ -2730,66 +2893,11 @@ def main() -> None:
         fpkg_temp = Path(args.temp_dir).resolve() if args.temp_dir else Path(tempfile.gettempdir())
         fpkg_temp.mkdir(parents=True, exist_ok=True)
 
-        # GUI progress translation. The native tool prints LibProsperoPkg's own log
-        # ("[+00:00:01.234] [stage 3/5] ...", "[inner] data  42% (5/6): ...",
-        # "[finalize] ...: 60% (18 / 29 blocks)"). The GUI's stage tracker understands
-        # "[PHASE] <Stage>" markers and "[####----] NN% <label>" bars, so each tool line is
-        # echoed verbatim AND, where it carries progress, mirrored into those two forms.
-        _fpkg_phase = {"cur": None}
-        _STAGE_PHASE = {1: "Creating Temp PFS", 2: "Compressing", 3: "Compressing",
-                        4: "Writing Final Image", 5: "Writing Final Image"}
-
-        def _bar(pct: int, label: str) -> None:
-            pct = max(0, min(100, int(pct)))
-            filled = pct // 5
-            print(f"[{'#' * filled}{'-' * (20 - filled)}] {pct}% {label}", flush=True)
-
-        def _set_phase(name: str) -> None:
-            if _fpkg_phase["cur"] != name:
-                _fpkg_phase["cur"] = name
-                _phase(name)
-
-        def _gui_line(line: str) -> None:
-            print(line, flush=True)
-            low = line.lower()
-            if "source scan:" in low:
-                _set_phase("Scanning Files"); _bar(100, "source scan"); return
-            if "[inner] preparing" in low or "prepared inner tree" in low or "planning nwonly inner image" in low:
-                _set_phase("Reading Game"); _bar(100 if "prepared" in low else 50, "inner files prepared"); return
-            if "writing afid-ordered inner data" in low:
-                _set_phase("Creating Temp PFS"); _bar(0, "inner image (Kraken) — pfs_image.dat"); return
-            m = re.search(r"\[stage\] copy (\d+)%", line)
-            if m:
-                _set_phase("Reading Game"); _bar(int(m.group(1)), "staging copy"); return
-            if "[stage] staged in place" in low:
-                _set_phase("Reading Game"); _bar(100, "staged in place"); return
-            m = re.search(r"\[stage (\d)/5\]", line)
-            if m:
-                st = int(m.group(1))
-                if st == 1:
-                    # stage 1 opens with file preparation (Reading Game) and closes with
-                    # "Inner image complete" (Creating Temp PFS at 100 %) — no back-jump.
-                    if "complete" in low:
-                        _set_phase("Creating Temp PFS"); _bar(100, "inner image (Kraken) — pfs_image.dat")
-                    else:
-                        _set_phase("Reading Game")
-                    return
-                _set_phase(_STAGE_PHASE.get(st, _fpkg_phase["cur"] or "Compressing"))
-            m = re.search(r"\bdata\s+(\d+)%\s*\(", line)
-            if m and _fpkg_phase["cur"] == "Creating Temp PFS":
-                _bar(int(m.group(1)), "inner image (Kraken) — pfs_image.dat"); return
-            m = re.search(r":\s*(\d+)%\s*\((\d+) / (\d+) blocks\)", line)
-            if m:
-                lbl = "finalize (FIH digests)" if "[finalize]" in low else "outer PFS AES-XTS"
-                _bar(int(m.group(1)), lbl); return
-            if "outer pfs complete" in low:
-                _bar(100, "outer PFS AES-XTS"); return
-            if "build finished" in low:
-                _set_phase("Writing Final Image"); _bar(100, "finalized .pkg written"); return
-            if line.startswith("[INFO] Auto-validating"):
-                _set_phase("Verifying Output"); _bar(0, "validate checklist"); return
-            if low.startswith("summary:") and "failed" in low:
-                _bar(100, "validate checklist"); return
+        # GUI progress translation: see FpkgProgress. Every tool line is echoed verbatim and,
+        # where it carries progress, mirrored into the "[PHASE] <Stage>" markers and
+        # "[####----] NN% <label>" bars the GUI's stage tracker understands.
+        _fpkg_progress = FpkgProgress(_phase)
+        _gui_line = _fpkg_progress.line
 
         if args.fpkg_extract:
             src = Path(args.fpkg_extract).resolve()
@@ -2798,7 +2906,7 @@ def main() -> None:
             print(f"[INFO] fPKG extract: {src.name} -> {out_dir} ({_describe_drive(out_dir.parent if not out_dir.exists() else out_dir)})",
                   flush=True)
             _phase("Extracting")
-            _bar(0, "extract inner PFS + CNT metadata")
+            _fpkg_progress._bar(0, "extract inner PFS + CNT metadata")
             out_dir.mkdir(parents=True, exist_ok=True)
             _total = _pkg_extract_plan(src, _pkg_content_size(src))
             _tool = {}
@@ -2810,7 +2918,7 @@ def main() -> None:
                 measure=lambda: _proc_bytes_written(_tool["pid"]) if "pid" in _tool else 0)
             if rc != 0:
                 print(f"\n[ERROR] fPKG extract failed (rc={rc}).", flush=True); sys.exit(1)
-            _bar(100, "extract inner PFS + CNT metadata")
+            _fpkg_progress._bar(100, "extract inner PFS + CNT metadata")
             _strip_junk_files(out_dir)   # clutter inside a foreign package stays out of the folder
             print(f"[OK] Extraction complete: {out_dir}", flush=True)
             print("\n[SUCCESS] fPKG extracted.", flush=True)
@@ -2914,7 +3022,7 @@ def main() -> None:
                      f"fake-sign {'off' if args.fpkg_no_fake_sign else 'on'}")
             print(f"[INFO] fPKG build ({args.fpkg_inner}, {args.fpkg_kraken_backend}, level {args.compression_level}; {_opts}): "
                   f"{build_src} -> {out_dir}   [temp: {fpkg_temp}]", flush=True)
-            _set_phase("Scanning Files")
+            _fpkg_progress._set_phase("Scanning Files")
             # The package tool writes its intermediates (the inner pfs_image.dat, about the
             # size of the package, plus CNT and outer-image files) straight into the folder it
             # is given. Give it a run-owned "tmpXXXXXXXX" subfolder of the temp drive — the
@@ -2968,7 +3076,7 @@ def main() -> None:
             try:
                 if built:
                     print(f"\n[INFO] Auto-validating: {built[-1].name}", flush=True)
-                    _set_phase("Verifying Output")
+                    _fpkg_progress._set_phase("Verifying Output")
                     validate_rc = _fpkg.validate(built[-1], on_line=_gui_line)
             except Exception as ve:
                 print(f"[warn] Auto-validate skipped: {ve}", flush=True)

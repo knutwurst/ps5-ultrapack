@@ -1927,14 +1927,18 @@ class CLIWorker(threading.Thread):
     # pfs_image.dat with Kraken (the long part) → NAPS + outer-PFS AES-XTS → CNT/FIH
     # finalize → auto-validate. Bands keep the fixed breadcrumb order forward-only;
     # the backend emits "[PHASE] <Stage>" markers + progress bars for each band.
+    # Bands from a real 160 GB run (2.1.2, fast preset): unpack 16 min, Kraken 75 min on one
+    # worker, outer PFS 22 min on one worker; both passes now use every core, so Kraken and
+    # the outer pass shrink toward the unpack. The split below is the middle of that range,
+    # an estimate; the bars inside each band are metered in bytes by the backend.
     FPKG_BUILD_WEIGHTS = {
         "Scanning Files":      (0,    2),
-        "Extracting":          (2,   30),   # only when the source is a .ffpfsc/.exfat image
-        "Reading Game":        (30,  45),   # the staging copy of a folder source, when one is needed
-        "Creating Temp PFS":   (45,  72),   # inner image incl. Kraken
-        "Compressing":         (72,  84),   # NAPS tables + outer-PFS AES-XTS
-        "Writing Final Image": (84,  94),   # CNT + FIH finalize
-        "Verifying Output":    (94,  98),   # validate checklist
+        "Extracting":          (2,   34),   # only when the source is a .ffpfsc/.exfat image
+        "Reading Game":        (34,  38),   # the staging copy of a folder source, when one is needed
+        "Creating Temp PFS":   (38,  74),   # inner image incl. Kraken
+        "Compressing":         (74,  90),   # NAPS tables + outer-PFS write and hash
+        "Writing Final Image": (90,  96),   # CNT + FIH finalize
+        "Verifying Output":    (96,  98),   # validate checklist
         "Cleaning Up":         (98, 100),
         "Complete":            (100, 100),
     }
@@ -2567,8 +2571,14 @@ class CLIWorker(threading.Thread):
                 # Jobs with markers use the extract-first order, in which every marker
                 # of a normal run moves forward. A marker that would move back (the fPKG
                 # builder's own "Scanning Files" after a chain has unpacked) is dropped,
-                # so the bar never jumps backward.
-                self._set_stage(stage, 0, force=self._stage_order is self._STAGE_ORDER)
+                # so the bar never jumps backward — and so are the bars that follow it
+                # until the next accepted marker: a "100% source scan" credited to the
+                # running stage pinned "Temp PFS" at 99 % for the whole Kraken pass.
+                order = getattr(self, "_stage_order", self._STAGE_ORDER)
+                forced = self._stage_order is self._STAGE_ORDER
+                self._phase_dropped = (not forced and stage in order and self.phase in order
+                                       and order.index(stage) < order.index(self.phase))
+                self._set_stage(stage, 0, force=forced)
             return
 
         # ── Pass-1 complete (folder two-pass build) ──────────────────────────
@@ -2699,6 +2709,8 @@ class CLIWorker(threading.Thread):
             # and its bar labels are free text — lock the bar to the current phase instead of
             # guessing from keywords (a label like "extract inner PFS" is not mkpfs's extract,
             # and "copy" matches no keyword at all).
+            if getattr(self, "_phase_dropped", False) and (self._is_fpkg or self._is_copy):
+                return   # a bar of a phase the tracker refused (see the [PHASE] handling)
             stage = (self.phase if ((self._is_fpkg or self._is_copy) and self.phase in self._weights)
                      else self._stage_from_label(label, line))
             # Two bars for one step (MkPFS counts whole files, the backend's meter counts

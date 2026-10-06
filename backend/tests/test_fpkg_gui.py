@@ -817,6 +817,20 @@ try:
     _cw = m.CLIWorker(app, _xi, ["py", "cli.py", str(_ex), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
     _cw._handle_line("  [consume] freed 1.2 GB so far (3 file(s) the image already holds)")
     ok("cmd.consume-line-marks-the-worker", _cw.consumed, str(_cw.consumed))
+    # J6g2b) the fPKG builder's late "Scanning Files" marker is refused, and so is the
+    # "100% source scan" bar behind it: Temp PFS stays where Kraken puts it; the Kraken
+    # bar's speed and time left reach the worker
+    _dw = m.CLIWorker(app, _xi, ["py", "cli.py", str(_ex), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
+    _dw.start_time = time.time()
+    for _l in ("[PHASE] Extracting", "[####] 100% extract", "[PHASE] Reading Game",
+               "[####################] 100% staged in place",
+               "[PHASE] Scanning Files", "[####################] 100% source scan",
+               "[PHASE] Reading Game", "[##########----------] 50% inner files prepared",
+               "[PHASE] Creating Temp PFS", "[###-----------------] 17% inner image (Kraken) @ 32.3 MB/s ETA 3104s"):
+        _dw._handle_line(_l)
+    ok("progress.refused-phase-bars-ignored",
+       _dw.phase == "Creating Temp PFS" and _dw.stage_progress["Creating Temp PFS"] == 17 and _dw.speed == "32.3 MB/s",
+       f"phase={_dw.phase} temp={_dw.stage_progress['Creating Temp PFS']} speed={_dw.speed}")
     # J6g3) the queue bar: a side message cannot reset the running job, and it never goes back
     _qi = m.GameItem.from_chain(_cpk, to="ffpfsc"); _qi.status = "Running"
     app.queue.insert(0, _qi); app.update_queue_box(); app._batch_running = True
