@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # ultra_core next to the app
 import copy_job
 import ps4pkg
-from ultra_core import _PS4_TID_TAG, is_fs_junk_name, ps4_layout, scan_ps4_library
+from ultra_core import _PS4_TID_TAG, is_fs_junk_name, ps4_layout, scan_ps4_library, strip_fs_junk
 
 _BAR = re.compile(r"^\[#+\]\s*(\d+)%")
 
@@ -78,6 +78,10 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
             continue
         try:
             os.rename(old, new)
+            try:
+                (out_dir / ("._" + lib.folder)).unlink()   # a sidecar the rename left behind
+            except OSError:
+                pass
             _say(on_line, f"[PS4] renamed {lib.folder} -> {folder} (the newest version of the set)")
         except OSError as e:
             _say(on_line, f"[WARN] could not rename {lib.folder} ({e}); the packages go into it as it is")
@@ -138,6 +142,16 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
             rc_all = 1
         done += size
     bar(0, 0, "")
+    # macOS tags every file it writes with a provenance attribute; on exFAT that becomes a
+    # '._' sidecar, which the system drops after a few seconds but which stays for good when
+    # the drive is ejected first. Remove them (and other clutter) from the folders this set
+    # touched, and the sidecar beside each folder, so the library holds only packages.
+    for f in folders:
+        strip_fs_junk(f)
+        try:
+            (f.parent / ("._" + f.name)).unlink()
+        except OSError:
+            pass
     for f in folders:
         _say(on_line, f"[OK] PS4 sorted: {f}")
     return rc_all

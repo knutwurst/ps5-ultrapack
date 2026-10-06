@@ -2007,6 +2007,24 @@ try:
                content_type=0x1A, sfo={"TITLE": "X", "CATEGORY": "gd"})
     _k5, _ = app._classify_extracted_payload(_p5.parent, "ps5.zip")
     ok("ps4.ps5-package-unchanged", _k5 == "pkg" and not m._is_ps4_source(_p5), _k5)
+    # the After-job rule: own packages are copied (moved only for Delete); an archive's
+    # extraction is moved and the archive gets the rule; the worker reports the title folder
+    _aj = m._after_job_module()
+    _p4item.after_source = _aj.KEEP
+    ok("ps4.copy-mode-keep", app._ps4_copy_mode(_p4item) == "keep", app._ps4_copy_mode(_p4item))
+    _p4item.after_source = _aj.DELETE
+    ok("ps4.copy-mode-delete-moves", app._ps4_copy_mode(_p4item) == "move", app._ps4_copy_mode(_p4item))
+    _p4item.after_source = _aj.TRASH if hasattr(_aj, "TRASH") else "trash"
+    ok("ps4.copy-mode-trash-copies", app._ps4_copy_mode(_p4item) == "keep", app._ps4_copy_mode(_p4item))
+    _arch4 = S / "ps4_set.zip"; _arch4.write_bytes(b"PK\x05\x06" + b"\0" * 18)
+    _p4a = app._ps4_item_for(_p4dir, output_path=str(OUT)); _p4a.origin_archive = str(_arch4)
+    _p4a.after_source = _p4item.after_source; _p4a.status = "Done"
+    ok("ps4.copy-mode-archive-moves", app._ps4_copy_mode(_p4a) == "move", app._ps4_copy_mode(_p4a))
+    _w4 = m.CLIWorker(app, _p4a, ["py", "cli.py", "placeholder", str(OUT), "--ps4-sort", str(_p4dir)], _pcwd, _pout, _ptmp)
+    _w4._handle_line(f"[OK] PS4 sorted: {OUT}")
+    _plan = app._after_job_plan(_p4a, _w4)
+    ok("ps4.after-job-acts-on-the-archive", _plan[0] == _p4a.after_source and str(_arch4) in [str(x) for x in _plan[1]],
+       str(_plan))
     # the editor: a PS4 source hides the PS5 changes, offers library or folder, queues a sorted copy
     _d4 = m.JobDialog(app, init_src=str(_p4g)); root.update()
     _d4.to_var.set(_d4._TARGET_LABEL["ffpfsc"]); _d4._refresh(); root.update()

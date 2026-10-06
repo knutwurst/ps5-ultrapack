@@ -2717,6 +2717,8 @@ class CLIWorker(threading.Thread):
             self.output_path = line.split("Compression complete:", 1)[-1].strip()
         if "fPKG complete:" in line:
             self.output_path = line.split("fPKG complete:", 1)[-1].strip()
+        if line.startswith("[OK] PS4 sorted: "):
+            self.output_path = line[len("[OK] PS4 sorted: "):].strip()      # a title folder of the set
         if "Validation reported failures" in line:
             self.validate_failed = True
         if "Extraction complete:" in line:
@@ -8008,7 +8010,7 @@ class App:
                 self._copy_item_payload(item, primary)
                 if kind == "ps4":
                     item.content_kind = "ps4"
-                    item.copy_mode = "organize"
+                    item.copy_mode = "move"   # the app's own extraction (see _ps4_copy_mode)
                     item.ps4_count = getattr(primary, "ps4_count", 0)
                     if getattr(primary, "display_name", None):
                         item.display_name = primary.display_name
@@ -8498,6 +8500,16 @@ class App:
         base.name = src.stem
         return base
 
+    @staticmethod
+    def _ps4_copy_mode(item) -> str:
+        """How a PS4 job transports its packages: the app's own extraction of an archive is
+        moved (its archive gets the After-job rule); your own packages are copied and stay
+        where they are unless the job's After-job rule is Delete (then moved); Trash and
+        Move to folder act on them once the job is Done."""
+        if getattr(item, "origin_archive", None) or getattr(item, "_from_archive", False):
+            return "move"
+        return "move" if (getattr(item, "after_source", None) or "keep") == "delete" else "keep"
+
     def _ps4_item_for(self, src, *, output_path=None):
         """A copy job that sorts PS4 packages into the library: one .pkg, or a folder of
         them (an archive's extraction, a download folder). The backend names and places
@@ -8506,7 +8518,7 @@ class App:
         item = GameItem.from_exfat(src) if src.is_file() else GameItem(src)
         item.operation = "copy"
         item.content_kind = "ps4"
-        item.copy_mode = "organize"
+        item.copy_mode = "keep"            # the command decides, see _ps4_copy_mode
         item.output_path = Path(output_path) if output_path else None
         m = _ps4pkg_module()
         pkgs = [src] if src.is_file() else sorted(x for x in src.rglob("*.pkg")
@@ -9731,7 +9743,8 @@ class App:
             info["Space"] = space.replace("  |  ", " · ")
         aj = _after_job_module()
         act = getattr(item, "after_source", None) or aj.KEEP
-        if act in aj.ACTIONS and act != aj.KEEP and getattr(item, "operation", "") not in ("fake-sign", "copy"):
+        if (act in aj.ACTIONS and act != aj.KEEP
+                and (getattr(item, "operation", "") not in ("fake-sign", "copy") or getattr(item, "content_kind", "") == "ps4")):
             text = aj.DONE_TEXT[act].format(dest=getattr(item, "after_move_to", None) or "a folder")
             info["After"] = text[0].upper() + text[1:] + ", once the job is Done"
         return info
@@ -10067,7 +10080,7 @@ class App:
             head = (pycmd + ["placeholder", str(out)] if getattr(sys, "frozen", False)
                     else pycmd + ["-u", str(cli_py), "placeholder", str(out)])
             cmd = head + ["--ps4-sort", str(item.path),
-                          "--copy-mode", getattr(item, "copy_mode", None) or "organize",
+                          "--copy-mode", self._ps4_copy_mode(item),
                           "--if-exists", self.output_exists_var.get() or "skip"]
             return cmd, backend, out, temp
         if op == "copy":
@@ -11835,9 +11848,12 @@ class App:
         act = getattr(item, "after_source", None) or aj.KEEP
         if act not in aj.ACTIONS or act == aj.KEEP:
             return aj.KEEP, [], None, None
-        if getattr(item, "operation", "") in ("fake-sign", "copy"):
+        ps4 = getattr(item, "content_kind", "") == "ps4"
+        if getattr(item, "operation", "") in ("fake-sign", "copy") and not ps4:
             return aj.KEEP, [], None, None          # these work on the source themselves
-        if getattr(worker, "_is_copy", False) and act == aj.DELETE:
+        if ps4 and act == aj.DELETE and not getattr(item, "origin_archive", None):
+            return aj.KEEP, [], None, None          # the packages were moved (see _ps4_copy_mode)
+        if getattr(worker, "_is_copy", False) and act == aj.DELETE and not ps4:
             return aj.KEEP, [], None, None          # the copy already moved it (--copy-mode move)
         dest = (getattr(item, "after_move_to", None) or None) if act == aj.MOVE else None
         if act == aj.MOVE and not dest:

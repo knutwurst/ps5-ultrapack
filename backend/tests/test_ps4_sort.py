@@ -102,6 +102,20 @@ class Sort(unittest.TestCase):
         self.assertTrue(old.is_dir())
         self.assertIn("[WARN]", buf.getvalue())
 
+    def test_clutter_is_removed_from_the_touched_folders(self):
+        lib = self.out / "Sample Game [CUSA00001] [v01.00]"; lib.mkdir(parents=True)
+        (lib / "._Sample Game [CUSA00001] [v01.00].pkg").write_bytes(b"\0\x05\x16\x07")
+        (lib / ".DS_Store").write_bytes(b"x")
+        (self.out / "._Sample Game [CUSA00001] [v01.00]").write_bytes(b"\0\x05\x16\x07")
+        other = self.out / "Untouched [CUSA00009]"; other.mkdir()
+        (other / "._keep.pkg").write_bytes(b"x")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(ps4_sort.sort_packages(self.src, self.out), 0)
+        names = {p.name for p in self.out.rglob("*") if p.is_relative_to(self.top) or p.parent == self.out}
+        self.assertFalse(any(n.startswith("._") or n == ".DS_Store" for n in names), names)
+        self.assertTrue((other / "._keep.pkg").exists())          # only the folders this set touched
+
     def test_non_ps4_package_is_reported(self):
         (self.src / "other.pkg").write_bytes(b"\x7fFIH" + b"\0" * 5000)
         rc, log = self.run_sort()
