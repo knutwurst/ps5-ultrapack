@@ -2465,6 +2465,14 @@ def main() -> None:
                         help="COPY MODE: transport SRC (.ffpfsc/.ffpfs/.pkg) to OUTPUT (a "
                              "folder) unchanged; --copy-mode says what happens to SRC. Used "
                              "for same-format queue items and the Organize flow.")
+    parser.add_argument("--ps4-sort", type=str, default=None, metavar="SRC",
+                        help="PS4 MODE: sort the PS4 packages in SRC (a .pkg or a folder) into "
+                             "OUTPUT as '<Title> [CUSA…] [vX]/…' (UPDATE, DLC, 'DLC Pack' from four "
+                             "DLCs on; a title folder already in OUTPUT is joined). --copy-mode says "
+                             "what happens to each source package.")
+    parser.add_argument("--if-exists", choices=("skip", "ask", "overwrite", "keep"), default="skip",
+                        help="For --ps4-sort: what happens when a package is already in the library "
+                             "(ask behaves like skip inside a job).")
     parser.add_argument("--copy-name", type=str, default=None, metavar="NAME",
                         help="Destination filename for --copy (defaults to SRC's basename). "
                              "Auto-organize passes the library name here.")
@@ -2771,6 +2779,11 @@ def main() -> None:
     # ── COPY MODE (same-format transport, no re-encode) ──────────────────────────
     # Runs before every mkpfs-shaped path: --copy needs no game_folder positional
     # (SRC is on --copy), the OUTPUT positional is the destination folder.
+    if args.ps4_sort:
+        import ps4_sort as _ps4_sort
+        sys.exit(_ps4_sort.sort_packages(Path(args.ps4_sort).resolve(), Path(args.output).resolve(),
+                                         mode=args.copy_mode, if_exists=args.if_exists))
+
     if args.copy:
         try:
             import copy_job as _copy_job
