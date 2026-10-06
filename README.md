@@ -11,6 +11,10 @@
 </p>
 
 <p align="center">
+  <img src="images/overview.png" alt="What goes in: a game folder, an archive, a disk image, a container or a package. In one job: read and unpack, integrate a patch, backport, sign, build, clean and name, after the job. What comes out: .ffpfsc, .ffpfs, .pkg or a folder, named from the game itself" width="900">
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS (Apple Silicon)">
   <img src="https://img.shields.io/badge/PS5%20fPKG-native-22c55e?style=for-the-badge" alt="PS5 fPKG native">
   <img src="https://img.shields.io/badge/FW%2011.60-verified-22c55e?style=for-the-badge" alt="FW 11.60 verified">
@@ -24,17 +28,10 @@
 
 ## Highlights
 
-- **Every source, every output.** A game folder, an archive (ZIP, RAR and 7z, multi-part and password-protected included), a disk image, a `.ffpfs`, a `.ffpfsc` or a `.pkg` goes in; a folder, a `.ffpfs`, a `.ffpfsc` or an installable `.pkg` comes out. One editor covers every combination.
 - **Installable `.pkg` on macOS.** No Wine, no Sony DLL. Homebrew and a retail title built here install and launch on a retail PS5 on firmware 11.60.
-- **Backport to an older firmware.** The app lowers the SDK version of the game's executables, plain or fake-signed, and checks the game's imports against the target firmware's libraries before it builds. When the target lacks functions, it copies your patched system libraries into the game's `fakelib/` folder, and it prepares those libraries from BestPig's BackPork patches in one click. Targets: 7.61, 6.02, an SDK-only 10.xx, and any firmware whose libraries you keep in a folder.
-- **All changes in one pass.** Integrating an update, backporting and fake-signing run inside the same job as the build, in that order. You do not chain a packer, a patcher, a signer and a package builder by hand.
+- **Backport to an older firmware.** The app lowers the SDK version of the game's executables and checks the game's imports against the target firmware's libraries before it builds. When the target lacks functions, it copies your patched system libraries into the game's `fakelib/` folder, prepared from BestPig's BackPork patches in one click. Targets: 7.61, 6.02, an SDK-only 10.xx, and any firmware whose libraries you keep in a folder.
 - **Look inside without unpacking.** Browse a `.ffpfs`, `.ffpfsc` or `.pkg` and extract single files or folders. Only the blocks you ask for get decoded, byte-identical to the original.
-- **A library that names itself.** Auto-organize files every result as `Title [TITLEID] [version] [fwN.NN]`, read from the game's own metadata and executable, and kept inside ShadowMountPlus's name limit. **Organize** does the same for a folder of containers you already have.
-- **Made for real drives.** The router spreads each build across your SSD and hard disks, checks the free space before it starts, and deletes only its own working files. Your sources stay where they are unless you choose otherwise: once a job is Done it can move its source to the Trash, to a folder, or delete it, and it leaves alone any source another job still needs.
 - **Checked end to end.** The end-to-end test builds every conversion path from a real game and compares every file byte for byte, and a deterministic `.pkg` build of the same folder gives the same bytes, build after build.
-- **A queue you can leave running.** Each job keeps its own source, changes and output, and its own choice of what happens to the source once it is Done. When the last job is through, the Mac can go to sleep or the app can quit, after a 30-second countdown you can cancel. A failed job stays marked while the rest carry on, **Pause** stops the queue once the running job is done, **Stop** ends the batch at once, and any job can be edited where it sits.
-
-Built by Knutwurst on a backend that grew out of Bizkut's `ps5-ffpfs-cli`, with PSBrew MkPFS and drakmor's LibProsperoPkg. Builds and releases are macOS on Apple Silicon.
 
 ## Screenshots
 

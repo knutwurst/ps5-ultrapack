@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 860" width="1600" height="860" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 L9 5 L1 9" fill="none" stroke="#3d8bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="860" rx="30" fill="#0b0d12"/>
+
+  <!-- column headers -->
+  <text x="250" y="78" text-anchor="middle" font-size="15" font-weight="600" fill="#6b7385" letter-spacing="2.5">WHAT GOES IN</text>
+  <text x="800" y="78" text-anchor="middle" font-size="15" font-weight="600" fill="#6b7385" letter-spacing="2.5">IN ONE JOB</text>
+  <text x="1350" y="78" text-anchor="middle" font-size="15" font-weight="600" fill="#6b7385" letter-spacing="2.5">WHAT COMES OUT</text>
+
+  <!-- ========== inputs ========== -->
+  <g id="in">
+    <!-- game folder -->
+    <rect x="60" y="157" width="380" height="94" rx="16" fill="#12161e" stroke="#262d3a"/>
+    <rect x="80" y="180" width="48" height="48" rx="12" fill="#16294a"/>
+    <path d="M91 196 h9 l4 4 h13 a2 2 0 0 1 2 2 v13 a2 2 0 0 1 -2 2 h-26 a2 2 0 0 1 -2 -2 v-17 a2 2 0 0 1 2 -2 z" fill="none" stroke="#7ab0ff" stroke-width="2" stroke-linejoin="round"/>
+    <text x="146" y="198" font-size="21" font-weight="600" fill="#e7ebf2">Game folder</text>
+    <text x="146" y="225" font-size="15" fill="#9aa3b2">A decrypted dump: eboot.bin and sce_sys</text>
+
+    <!-- archive -->
+    <rect x="60" y="271" width="380" height="94" rx="16" fill="#12161e" stroke="#262d3a"/>
+    <rect x="80" y="294" width="48" height="48" rx="12" fill="#16294a"/>
+    <path d="M91 313 h26 v16 a2 2 0 0 1 -2 2 h-22 a2 2 0 0 1 -2 -2 z M89 307 h30 v6 h-30 z M101 319 h6" fill="none" stroke="#7ab0ff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <text x="146" y="312" font-size="21" font-weight="600" fill="#e7ebf2">Archive</text>
+    <text x="146" y="339" font-size="15" fill="#9aa3b2">ZIP, RAR, 7z · multi-part sets, passwords</text>
+
+    <!-- disk image -->
+    <rect x="60" y="385" width="380" height="94" rx="16" fill="#12161e" stroke="#262d3a"/>
+    <rect x="80" y="408" width="48" height="48" rx="12" fill="#16294a"/>
+    <ellipse cx="104" cy="421" rx="12" ry="4.5" fill="none" stroke="#7ab0ff" stroke-width="2"/>
+    <path d="M92 421 v16 c0 2.5 5.4 4.5 12 4.5 s12 -2 12 -4.5 v-16 M92 429 c0 2.5 5.4 4.5 12 4.5 s12 -2 12 -4.5" fill="none" stroke="#7ab0ff" stroke-width="2"/>
+    <text x="146" y="426" font-size="21" font-weight="600" fill="#e7ebf2">Disk image</text>
+    <text x="146" y="453" font-size="15" fill="#9aa3b2">.exfat, .ffpkg</text>
+
+    <!-- container -->
+    <rect x="60" y="499" width="380" height="94" rx="16" fill="#12161e" stroke="#262d3a"/>
+    <rect x="80" y="522" width="48" height="48" rx="12" fill="#16294a"/>
+    <path d="M94 535 h13 l7 7 v18 a2 2 0 0 1 -2 2 h-18 a2 2 0 0 1 -2 -2 v-23 a2 2 0 0 1 2 -2 z M107 535 v7 h7 M98 552 h12 M98 557 h12" fill="none" stroke="#7ab0ff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <text x="146" y="540" font-size="21" font-weight="600" fill="#e7ebf2">Container</text>
+    <text x="146" y="567" font-size="15" fill="#9aa3b2">.ffpfs, .ffpfsc</text>
+
+    <!-- package -->
+    <rect x="60" y="613" width="380" height="94" rx="16" fill="#12161e" stroke="#262d3a"/>
+    <rect x="80" y="636" width="48" height="48" rx="12" fill="#16294a"/>
+    <path d="M104 648 l13 6.5 v13 l-13 6.5 l-13 -6.5 v-13 z M91 654.5 l13 6.5 l13 -6.5 M104 661 v13" fill="none" stroke="#7ab0ff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <text x="146" y="654" font-size="21" font-weight="600" fill="#e7ebf2">Package</text>
+    <text x="146" y="681" font-size="15" fill="#9aa3b2">.pkg (fPKG)</text>
+
+    <!-- merge spine -->
+    <g fill="none" stroke="#3d8bff" stroke-width="2.5" stroke-linecap="round">
+      <path d="M440 204 h30 M440 318 h30 M440 432 h30 M440 546 h30 M440 660 h30"/>
+      <path d="M470 204 v456"/>
+      <path d="M470 432 h66" marker-end="url(#ah)"/>
+    </g>
+  </g>
+
+  <!-- ========== processing ========== -->
+  <g id="do">
+    <rect x="540" y="112" width="520" height="640" rx="22" fill="#12161e" stroke="#3a4354"/>
+    <text x="800" y="158" text-anchor="middle" font-size="27" font-weight="700" fill="#e7ebf2">PS5 UltraPack</text>
+    <text x="800" y="184" text-anchor="middle" font-size="14" fill="#9aa3b2">One queue · each job runs these steps in this order</text>
+
+    <!-- pipeline line -->
+    <path d="M602 236 v420" fill="none" stroke="#262d3a" stroke-width="2"/>
+
+    <!-- step 1 -->
+    <circle cx="602" cy="236" r="15" fill="#1f6feb"/>
+    <text x="602" y="241" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">1</text>
+    <text x="634" y="232" font-size="19" font-weight="600" fill="#e7ebf2">Read and unpack</text>
+    <text x="634" y="254" font-size="14" fill="#9aa3b2">Title, version and SDK from the game itself; archives extracted</text>
+
+    <!-- step 2 -->
+    <circle cx="602" cy="306" r="15" fill="#3a2412" stroke="#f0883e" stroke-width="2"/>
+    <text x="602" y="311" text-anchor="middle" font-size="14" font-weight="700" fill="#f0883e">2</text>
+    <text x="634" y="302" font-size="19" font-weight="600" fill="#e7ebf2">Integrate a patch</text>
+    <rect x="812" y="286" width="70" height="22" rx="11" fill="#3a2412"/>
+    <text x="847" y="301" text-anchor="middle" font-size="12" font-weight="600" fill="#f0883e">optional</text>
+    <text x="634" y="324" font-size="14" fill="#9aa3b2">An update or backport files; every replaced file is kept</text>
+
+    <!-- step 3 -->
+    <circle cx="602" cy="376" r="15" fill="#3a2412" stroke="#f0883e" stroke-width="2"/>
+    <text x="602" y="381" text-anchor="middle" font-size="14" font-weight="700" fill="#f0883e">3</text>
+    <text x="634" y="372" font-size="19" font-weight="600" fill="#e7ebf2">Backport to an older firmware</text>
+    <rect x="922" y="356" width="70" height="22" rx="11" fill="#3a2412"/>
+    <text x="957" y="371" text-anchor="middle" font-size="12" font-weight="600" fill="#f0883e">optional</text>
+    <text x="634" y="394" font-size="14" fill="#9aa3b2">7.61, 6.02, 10.xx: SDK lowered, imports checked first</text>
+
+    <!-- step 4 -->
+    <circle cx="602" cy="446" r="15" fill="#3a2412" stroke="#f0883e" stroke-width="2"/>
+    <text x="602" y="451" text-anchor="middle" font-size="14" font-weight="700" fill="#f0883e">4</text>
+    <text x="634" y="442" font-size="19" font-weight="600" fill="#e7ebf2">Sign</text>
+    <rect x="690" y="426" width="70" height="22" rx="11" fill="#3a2412"/>
+    <text x="725" y="441" text-anchor="middle" font-size="12" font-weight="600" fill="#f0883e">optional</text>
+    <text x="634" y="464" font-size="14" fill="#9aa3b2">Executables fake-signed in place</text>
+
+    <!-- step 5 -->
+    <circle cx="602" cy="516" r="15" fill="#1f6feb"/>
+    <text x="602" y="521" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">5</text>
+    <text x="634" y="512" font-size="19" font-weight="600" fill="#e7ebf2">Build</text>
+    <text x="634" y="534" font-size="14" fill="#9aa3b2">64 KiB PFS images, Kraken .pkg, PlayGo kept, AMPR index</text>
+
+    <!-- step 6 -->
+    <circle cx="602" cy="586" r="15" fill="#1f6feb"/>
+    <text x="602" y="591" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">6</text>
+    <text x="634" y="582" font-size="19" font-weight="600" fill="#e7ebf2">Clean and name</text>
+    <text x="634" y="604" font-size="14" fill="#9aa3b2">OS clutter out, extras kept beside, named from the game</text>
+
+    <!-- step 7 -->
+    <circle cx="602" cy="656" r="15" fill="#1f6feb"/>
+    <text x="602" y="661" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">7</text>
+    <text x="634" y="652" font-size="19" font-weight="600" fill="#e7ebf2">After the job</text>
+    <text x="634" y="674" font-size="14" fill="#9aa3b2">Keep, move or trash the source; sleep when the queue is done</text>
+
+    <!-- bottom strip -->
+    <line x1="564" y1="700" x2="1036" y2="700" stroke="#262d3a"/>
+    <text x="800" y="722" text-anchor="middle" font-size="14" fill="#9aa3b2">Pause and reorder the queue  ·  Look inside any image</text>
+    <text x="800" y="742" text-anchor="middle" font-size="14" fill="#9aa3b2">Every build spread across your SSD and hard disks</text>
+
+    <!-- out arrow -->
+    <path d="M1060 432 h66" fill="none" stroke="#3d8bff" stroke-width="2.5" stroke-linecap="round" marker-end="url(#ah)"/>
+  </g>
+
+  <!-- ========== outputs ========== -->
+  <g id="out">
+    <g fill="none" stroke="#3d8bff" stroke-width="2.5" stroke-linecap="round">
+      <path d="M1130 216 v432"/>
+      <path d="M1130 216 h30 M1130 360 h30 M1130 504 h30 M1130 648 h30"/>
+    </g>
+
+    <!-- ffpfsc -->
+    <rect x="1160" y="160" width="380" height="112" rx="16" fill="#12161e" stroke="#262d3a"/>
+    <text x="1186" y="200" font-size="24" font-weight="700" fill="#7ab0ff">.ffpfsc</text>
+    <text x="1186" y="226" font-size="15" fill="#e7ebf2">Compressed container</text>
+    <text x="1186" y="248" font-size="14" fill="#9aa3b2">Level 1 to 9, for ShadowMountPlus</text>
+
+    <!-- ffpfs -->
+    <rect x="1160" y="304" width="380" height="112" rx="16" fill="#12161e" stroke="#262d3a"/>
+    <text x="1186" y="344" font-size="24" font-weight="700" fill="#7ab0ff">.ffpfs</text>
+    <text x="1186" y="370" font-size="15" fill="#e7ebf2">Uncompressed image</text>
+    <text x="1186" y="392" font-size="14" fill="#9aa3b2">Full size, mounts fastest</text>
+
+    <!-- pkg -->
+    <rect x="1160" y="448" width="380" height="112" rx="16" fill="#12161e" stroke="#262d3a"/>
+    <text x="1186" y="488" font-size="24" font-weight="700" fill="#7ab0ff">.pkg</text>
+    <text x="1186" y="514" font-size="15" fill="#e7ebf2">Installable fake package</text>
+    <circle cx="1192" cy="532" r="4.5" fill="#3fb950"/>
+    <text x="1204" y="536" font-size="14" fill="#9aa3b2">Launches on a retail PS5, firmware 11.60</text>
+
+    <!-- folder -->
+    <rect x="1160" y="592" width="380" height="112" rx="16" fill="#12161e" stroke="#262d3a"/>
+    <text x="1186" y="632" font-size="24" font-weight="700" fill="#7ab0ff">Folder</text>
+    <text x="1186" y="658" font-size="15" fill="#e7ebf2">The unpacked /app0 tree</text>
+    <text x="1186" y="680" font-size="14" fill="#9aa3b2">From any container or package</text>
+  </g>
+
+  <!-- footer -->
+  <line x1="60" y1="784" x2="1540" y2="784" stroke="#262d3a"/>
+  <text x="800" y="820" text-anchor="middle" font-size="15" fill="#9aa3b2">Every result named from the game's own metadata:</text>
+  <text x="800" y="844" text-anchor="middle" font-size="15" font-family="Menlo, Consolas, monospace" fill="#e7ebf2">Title [PPSA00000] [v01.200] [fw7.61].ffpfsc</text>
+</svg>
