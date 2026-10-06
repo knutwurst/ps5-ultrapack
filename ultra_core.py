@@ -24,6 +24,7 @@ import threading
 import time
 import zipfile
 from pathlib import Path
+from typing import NamedTuple
 
 
 def _bundled_backend_dir() -> Path:
@@ -1485,6 +1486,114 @@ def organized_names(ident: dict, ext: str, item=None) -> tuple[str, str]:
     fname = descriptive_ffpfsc_name(item, ext, name_override=base, tid_override=tid, ver_override=ver, v_prefix=True,
                                     fw_override=(ident.get("fw") or "").strip() or None)
     return folder, fname
+
+
+PS4_DLC_PACK_FROM = 4          # from this many DLCs of one title on they go into "DLC Pack/"
+PS4_DLC_PACK = "DLC Pack"
+
+
+class Ps4Library(NamedTuple):
+    """A title folder that is already in the PS4 library: its name, the version in its
+    '[vXX.YY]' tag ('' when it has none) and whether it holds a 'DLC Pack' folder."""
+    folder: str
+    version: str
+    has_dlc_pack: bool
+
+
+_PS4_TID_TAG = re.compile(r"\[(CUSA\d{5})\]", re.I)
+_PS4_VER_TAG = re.compile(r"\[v(\d+(?:\.\d+)*)\]", re.I)
+
+
+def scan_ps4_library(root) -> dict:
+    """{CUSA id: Ps4Library} for the title folders directly under *root*. A folder counts
+    when its name carries a '[CUSA12345]' tag; OS clutter is skipped; the first folder per
+    id wins (sorted by name)."""
+    found: dict = {}
+    try:
+        entries = sorted(Path(root).iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        return found
+    for d in entries:
+        if not d.is_dir() or is_fs_junk_name(d.name):
+            continue
+        m = _PS4_TID_TAG.search(d.name)
+        if not m or m.group(1).upper() in found:
+            continue
+        v = _PS4_VER_TAG.search(d.name)
+        found[m.group(1).upper()] = Ps4Library(d.name, v.group(1) if v else "", (d / PS4_DLC_PACK).is_dir())
+    return found
+
+
+def _ver_key(v: str) -> tuple:
+    return tuple(int(x) if x.isdigit() else 0 for x in re.split(r"[.\-]", v or "0"))
+
+
+def _dlc_name(dlc_title: str, *game_titles: str) -> str:
+    """The DLC's own part of its title: '<Game> - Extra Pack' -> 'Extra Pack' (the longest
+    of *game_titles* that starts it is cut)."""
+    t = canonical_game_title(dlc_title)
+    for g in sorted((g for g in game_titles if g), key=len, reverse=True):
+        if t.lower().startswith(g.lower()):
+            t = t[len(g):]
+            break
+    return t.strip(" -–—:_.") or canonical_game_title(dlc_title)
+
+
+def ps4_layout(items, known: dict | None = None):
+    """Library placement of PS4 packages, grouped by title id:
+         '<Title> [CUSA…] [vX]/<Title> [CUSA…] [v01.00].pkg'            game
+         '…/<Title> [CUSA…] UPDATE [v01.07].pkg'                         update
+         '…/<Title> DLC <name> [CUSA…] [v01.07].pkg'                     DLC (game/update version)
+         '…/DLC Pack/…'                                                   from PS4_DLC_PACK_FROM DLCs on
+    The folder carries the highest version of the set. A DLC carries the version of the
+    game or update it arrives with; alone, its own version, or none when it has none.
+    *items* is [(source path, identity)] with identity.kind/.title/.title_id/.version/.app_ver;
+    *known* ({CUSA id: Ps4Library}, see scan_ps4_library) names the title folders already in
+    the library: a set joins its folder (never renamed), takes the title spelling before the
+    id tag, and a DLC without a game or update in the set takes the folder's version and its
+    'DLC Pack' when there is one. Returns [(source, folder, subdir, filename)]."""
+    known = known or {}
+    groups: dict[str, list] = {}
+    for src, ident in items:
+        groups.setdefault((ident.title_id or "").upper(), []).append((Path(src), ident))
+    out = []
+    for tid, members in groups.items():
+        base_ids = [i for _, i in members if i.kind in ("game", "update")]
+        game = next((i for _, i in members if i.kind == "game"), None) or (base_ids[0] if base_ids else None)
+        if game:
+            title = canonical_game_title(game.title) or tid
+        else:                                            # no game in the set: the title before " - "
+            first = canonical_game_title(members[0][1].title or "")
+            title = re.split(r"\s+[-–—]\s+", first, maxsplit=1)[0].strip() or tid
+        set_ver = max((i.version for i in base_ids if i.version), key=_ver_key, default="")
+        folder_ver = set_ver or max((i.version for _, i in members if i.version), key=_ver_key, default="")
+        dlc_count = sum(1 for _, i in members if i.kind == "dlc")
+        dlc_sub = PS4_DLC_PACK if dlc_count >= PS4_DLC_PACK_FROM else ""
+        pkg_title = title                                # as the packages spell it (for the DLC cut)
+        lib = known.get(tid)
+        if lib:
+            folder = lib.folder
+            title = lib.folder.split(f"[{tid}]", 1)[0].strip() or title
+            if not set_ver:
+                set_ver = lib.version
+            if lib.has_dlc_pack:
+                dlc_sub = PS4_DLC_PACK
+        else:
+            folder = sanitize_filename(" ".join(p for p in (title, f"[{tid}]", f"[v{folder_ver}]" if folder_ver else "") if p))
+        for src, i in members:
+            sub = ""
+            if i.kind == "update":
+                name = f"{title} [{tid}] UPDATE" + (f" [v{i.version}]" if i.version else "")
+            elif i.kind == "dlc":
+                ver = set_ver or i.version or ""
+                name = f"{title} DLC {_dlc_name(i.title, title, pkg_title)} [{tid}]" + (f" [v{ver}]" if ver else "")
+                sub = dlc_sub
+            elif i.kind == "game":
+                name = f"{title} [{tid}]" + (f" [v{i.version}]" if i.version else "")
+            else:
+                name = canonical_game_title(i.title) or src.stem
+            out.append((src, folder, sub, sanitize_filename(name) + ".pkg"))
+    return out
 
 
 def find_artwork(path: Path):
