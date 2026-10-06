@@ -19,6 +19,15 @@ BUILDING A .PKG: NO SECOND COPY OF THE GAME, NO HARD LINKS
   - The package tool never uses hard links any more, on any drive. A
     change made for the package (signing, a dropped PlayGo file, the
     rewritten param.json) can no longer reach the source through a link.
+  - A .ffpfsc or .ffpfs is unpacked in one pass, straight into files:
+    the inner image is no longer written to the disk first. For a big
+    game that is one copy of the game less on the temp drive and a
+    quarter of an hour saved.
+  - While a .pkg is built from the app's own unpacked copy (an image, an
+    archive the app unpacked, a patched or backported game), each file
+    is removed as soon as the package holds it: the unpacked game shrinks
+    while the package grows instead of both sitting side by side. A
+    build that fails is unpacked again on Retry.
 
 ────────────────────────────────────────────────────────────────────────
   v2.1.1

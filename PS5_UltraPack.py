@@ -2075,6 +2075,7 @@ class CLIWorker(threading.Thread):
         self._is_copy = False
         self.patch_backup = ""        # the originals a patch replaced, staged by the backend
         self.validate_failed = False   # the .pkg checklist reported failures: the source stays
+        self.consumed = False          # the backend took the unpacked copy's files into the package as it went
         # Highest whole-job progress sent so far: the queue bar never moves backward.
         self._overall_sent = 0.0
         # Snapshot the copy-extras toggle on the MAIN thread (CLIWorker is constructed
@@ -2554,6 +2555,8 @@ class CLIWorker(threading.Thread):
         if line.startswith("[PATCH-BACKUP] "):
             self.patch_backup = line[len("[PATCH-BACKUP] "):].strip()
             return
+        if "[consume] freed" in line:
+            self.consumed = True           # the extraction is no longer complete: not kept for a retry
         if line == "[JOB] copy":
             self._is_copy = True
             self._weights, self._stage_order = self.COPY_WEIGHTS, self._COPY_ORDER
@@ -9725,6 +9728,8 @@ class App:
             # Should the job end as a plain copy (same format, nothing to change), the source
             # stays unless the job deletes it afterwards anyway: then a move is the fast way.
             cmd += ["--copy-mode", "move" if getattr(item, "after_source", None) == "delete" else "keep"]
+            if to == "pkg" and self._extract_dir_for_item(item) is not None:
+                cmd.append("--stage-in-place")      # our own unpacked copy: built in place, taken in as it goes
             _ps = getattr(item, "patch_source", None)
             if _ps:
                 cmd += ["--patch", str(_ps)]
@@ -9864,6 +9869,8 @@ class App:
                 "--fpkg-inner", str(getattr(item, "fpkg_inner_mode", "kraken") or "kraken"),
                 "--fpkg-kraken-backend", str(getattr(item, "fpkg_kraken_backend", "builtin") or "builtin"),
             ]
+            if self._extract_dir_for_item(item) is not None:
+                cmd.append("--stage-in-place")      # our own unpacked copy: built in place, taken in as it goes
             # Retail switches (CHANGELOG 1.1.12). Only the non-default positions are passed;
             # the backend's defaults are the console-verified configuration.
             if not getattr(item, "fpkg_retail_normalize", True):
@@ -12903,7 +12910,7 @@ class App:
                 self.extract_cancel_event.clear()
                 self._drop_patch_backup(self.worker)
                 if completed_item is not None:
-                    keep = self._extract_is_complete(completed_item)
+                    keep = self._extract_is_complete(completed_item) and not getattr(self.worker, "consumed", False)
                     self._cleanup_after_failure(completed_item, keep_source=keep)
                     self._cleanup_inner_image(completed_item)   # no resume after a cancel
                     self._retire_failed(completed_item, "Cancelled")
@@ -12934,7 +12941,7 @@ class App:
                     # A finished extraction stays, as after a cancel: Edit and Retry run the
                     # job from it again instead of unpacking the archive a second time. A
                     # later job that needs the space frees it (_release_failed_copies).
-                    keep = self._extract_is_complete(completed_item)
+                    keep = self._extract_is_complete(completed_item) and not getattr(self.worker, "consumed", False)
                     self._cleanup_after_failure(completed_item, keep_source=keep)
                     self._cleanup_inner_image(completed_item)   # terminal failure / gave up — no resume
                     # Keep the failed item in the queue (marked Failed, moved to the end) —

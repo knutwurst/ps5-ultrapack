@@ -179,6 +179,7 @@ def build(src_dir: Path, out_dir: Path,
           fake_sign: bool = True,
           ampr_index: bool = True,
           stage_in_place: bool = False,
+          consume_source: bool = False,
           on_line=None) -> int:
     """
     Build a debug fPKG from a prepared /app0-style source folder.
@@ -254,6 +255,10 @@ def build(src_dir: Path, out_dir: Path,
         # src_dir is this app's own working copy (an image unpacked into its scratch): the
         # tool's pre-build changes go straight into it instead of into one more copy.
         argv += ["--stage-in-place"]
+    if consume_source and stage_in_place:
+        # each source file is deleted the moment the inner image holds it, so the unpacked
+        # game shrinks while the image grows (only ever in our own working copy)
+        argv += ["--consume-source"]
     return _run(argv, on_line=on_line)
 
 

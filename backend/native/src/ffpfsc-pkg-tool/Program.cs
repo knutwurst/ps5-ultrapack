@@ -1251,6 +1251,7 @@ internal static class Program
             EnableRelocationAlignmentAdjustment = true,
         };
         bool stageInPlace = false;   // the source is the caller's own working copy: no mirror
+        bool consumeSource = false;  // with it: delete each source file once the inner image holds it
         for (int i = 3; i < args.Length; i++)
         {
             string a = args[i];
@@ -1260,6 +1261,12 @@ internal static class Program
                     // The source is the caller's own working copy (an image it unpacked into
                     // its scratch): the pre-build changes go straight into it, nothing is copied.
                     stageInPlace = true;
+                    break;
+                case "--consume-source":
+                    // Only with --stage-in-place: the moment the library reports a file packed
+                    // into the inner image, that source file is deleted, so the unpacked game
+                    // shrinks while the image grows. The caller unpacks again after a failure.
+                    consumeSource = true;
                     break;
                 case "--content-id": opts.ContentId = Need(args, ref i, a); break;
                 case "--title-id": opts.TitleId = Need(args, ref i, a); break;
@@ -1585,7 +1592,8 @@ internal static class Program
                 if (stageInPlace)
                 {
                     autoStage = effectiveSource;
-                    Console.Error.WriteLine($"  [stage] staged in place: {autoStage} (the caller's working copy; nothing copied)");
+                    Console.Error.WriteLine($"  [stage] staged in place: {autoStage} (the caller's working copy; nothing copied"
+                                            + (consumeSource ? "; its files go as the image takes them in)" : ")"));
                 }
                 else
                 {
@@ -1923,7 +1931,30 @@ internal static class Program
         ProsperoBuildResult result;
         try
         {
-            result = ProsperoPackageBuilder.Build(opts, logger: s => Console.Error.WriteLine("  " + s));
+            long consumedBytes = 0; int consumedFiles = 0;
+            var packedLine = new System.Text.RegularExpressions.Regex(@"\[inner\]\s+data\s+\d+% \(\d+/\d+\): (/\S+) ->");
+            void Log(string s)
+            {
+                Console.Error.WriteLine("  " + s);
+                if (!(consumeSource && stageInPlace && autoStage != null)) return;
+                var m = packedLine.Match(s);
+                if (!m.Success) return;
+                // The library names a file once it sits in the inner image and never reads it
+                // again (verified: a build that deleted each one this way gave the identical
+                // deterministic package). Only files inside the stage, never anything else.
+                var rel = m.Groups[1].Value.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+                var f = Path.GetFullPath(Path.Combine(autoStage, rel));
+                if (!IsInside(f, autoStage) || !File.Exists(f)) return;
+                try
+                {
+                    long len = new FileInfo(f).Length;
+                    File.Delete(f);
+                    consumedBytes += len; consumedFiles++;
+                    Console.Error.WriteLine($"  [consume] freed {consumedBytes / 1073741824.0:F1} GB so far ({consumedFiles} file(s) the image already holds)");
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"  [consume] could not remove {rel}: {ex.Message}"); }
+            }
+            result = ProsperoPackageBuilder.Build(opts, logger: Log);
         }
         catch (Exception) when (signalExit != 0)
         {

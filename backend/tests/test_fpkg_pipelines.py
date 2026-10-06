@@ -639,6 +639,10 @@ def test_chain4_image_to_fpkg_oneclick(r: Runner):
     r.check("chain4.image-to-fpkg.rc", rc == 0, "image unwrapped + fPKG built in one job", log[-400:])
     r.check("chain4.unwrap-phase", "[PHASE] Extracting" in log, "GUI phase marker for the unwrap emitted",
             "no [PHASE] Extracting marker")
+    r.check("chain4.one-pass-unwrap", "in one pass" in log and "Unwrapping nested image" not in log
+            and "staged in place" in log,
+            "the container was unpacked straight into files and the package built in that copy",
+            "\n".join(x for x in log.splitlines() if "Unpacking" in x or "Unwrapping" in x or "[stage]" in x))
     r.check("chain4.level-passthrough", "level=5" in log, "--compression-level reached the builder (level=5)",
             "level not visible in builder banner")
     r.check("chain4.temp-passthrough", str(tmp) in log, "--temp-dir reached the builder", "temp dir not in banner")
@@ -738,6 +742,36 @@ def test_deterministic_build(r: Runner):
             sha(pa) == sha(pb),
             "two builds produced the same .pkg bytes",
             f"drift: {sha(pa)[:16]} vs {sha(pb)[:16]}")
+
+
+def test_stage_in_place_matches_copy(r: Runner):
+    """--stage-in-place (the folder is the caller's own working copy) must give the same
+    deterministic package as the copy-mode build, leave the copy-mode source untouched, and
+    say so in the log."""
+    hbt = fetch_hbt(r.work / "hbt")
+    src_a, src_b = r.work / "sip_src_a", r.work / "sip_src_b"
+    out_a, out_b = r.work / "sip_out_a", r.work / "sip_out_b"
+    for d in (src_a, src_b, out_a, out_b):
+        if d.exists(): shutil.rmtree(d)
+    shutil.copytree(hbt, src_a); shutil.copytree(hbt, src_b); out_a.mkdir(); out_b.mkdir()
+    before = sorted((str(p.relative_to(src_a)), p.stat().st_size) for p in src_a.rglob("*") if p.is_file())
+    common = ["--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+              "--fpkg-title", "HomebrewTest", "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin",
+              "--fpkg-passcode", "0" * 32, "--fpkg-deterministic"]
+    rc_a, log_a = r.run_cli([str(src_a), str(out_a), "--fpkg-build", str(src_a), *common])
+    rc_b, log_b = r.run_cli([str(src_b), str(out_b), "--fpkg-build", str(src_b), *common, "--stage-in-place"])
+    pa, pb = next(out_a.glob("*.pkg"), None), next(out_b.glob("*.pkg"), None)
+    if not r.check("stage.builds", rc_a == 0 and rc_b == 0 and pa and pb, "both builds wrote a .pkg",
+                   f"rc={rc_a}/{rc_b} " + (log_a + log_b)[-300:]):
+        return
+    after = sorted((str(p.relative_to(src_a)), p.stat().st_size) for p in src_a.rglob("*") if p.is_file())
+    r.check("stage.copy-mode-leaves-source", before == after and "[stage] copy " in log_a and "mirrored source into" in log_a,
+            "the copy-mode build copied the folder with progress lines and changed nothing in it",
+            "\n".join(x for x in log_a.splitlines() if "[stage]" in x)[:400])
+    r.check("stage.in-place-says-so", "staged in place" in log_b and "mirrored source into" not in log_b and src_b.is_dir(),
+            "the in-place build staged in the source folder itself", "\n".join(x for x in log_b.splitlines() if "[stage]" in x)[:400])
+    r.check("stage.identical-package", sha(pa) == sha(pb), "copy mode and in place give the same bytes",
+            f"{sha(pa)[:16]} vs {sha(pb)[:16]}")
 
 
 def test_ampr_index_rebuilt(r: Runner):
@@ -1057,6 +1091,7 @@ def main():
         ("chain-4: .ffpfsc → fPKG one-click", test_chain4_image_to_fpkg_oneclick),
         ("gui progress translation",        test_gui_progress_translation),
         ("determinism: byte-identical",     test_deterministic_build),
+        ("stage in place = copy mode",      test_stage_in_place_matches_copy),
         ("list-inner + selective extract",  test_list_and_selective_extract),
         ("ampr index rebuilt in staging",   test_ampr_index_rebuilt),
         ("publishing rules in staging",     test_publishing_rules),

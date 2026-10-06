@@ -791,6 +791,23 @@ try:
     # a chain to .pkg locks bars to the fPKG phases and skips the ShadowMount check
     _kw = m.CLIWorker(app, _cji, ["py", "cli.py", str(_cpk), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
     ok("progress.chain-to-pkg-is-fpkg", _kw._is_fpkg and _kw._weights is m.CLIWorker.FPKG_BUILD_WEIGHTS, "")
+    # a .pkg from the app's own extraction is built in place (the tool takes the files in as it
+    # goes); a .pkg from the user's own folder is not
+    _ex = Path(app.temp_var.get()) / "_extracted" / "release__abcd1234" / "PPSA00042-app0"
+    (_ex / "sce_sys").mkdir(parents=True, exist_ok=True)
+    (_ex / "sce_sys" / "param.json").write_text('{"titleId": "PPSA00042", "contentVersion": "01.000.000"}')
+    (_ex / "eboot.bin").write_bytes(b"\x7fELF")
+    _xi = m.GameItem.from_chain(_ex, to="pkg", output_path=str(OUT))
+    _xcmd, *_ = app.build_command(_xi)
+    _pi = m.GameItem.from_chain(HBT, to="pkg", output_path=str(OUT))
+    _pcmd, *_ = app.build_command(_pi)
+    ok("cmd.pkg-from-own-extraction-in-place", "--stage-in-place" in _xcmd and "--stage-in-place" not in _pcmd,
+       f"own={'--stage-in-place' in _xcmd} user={'--stage-in-place' in _pcmd}")
+    shutil.rmtree(_ex.parent, ignore_errors=True)
+    # the worker notices when the backend took the unpacked files in: the extraction is not kept
+    _cw = m.CLIWorker(app, _xi, ["py", "cli.py", str(_ex), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
+    _cw._handle_line("  [consume] freed 1.2 GB so far (3 file(s) the image already holds)")
+    ok("cmd.consume-line-marks-the-worker", _cw.consumed, str(_cw.consumed))
     # J6g3) the queue bar: a side message cannot reset the running job, and it never goes back
     _qi = m.GameItem.from_chain(_cpk, to="ffpfsc"); _qi.status = "Running"
     app.queue.insert(0, _qi); app.update_queue_box(); app._batch_running = True

@@ -911,6 +911,36 @@ def _extract_exfat_to(exfat_path: Path, dest: Path) -> bool:
     return True
 
 
+def _unwrap_pfs_one_pass(image: Path, dest: Path) -> bool:
+    """Write the game files of a .ffpfs, or of the PFS nested in a .ffpfsc, straight into
+    *dest*, decoding every block once: no intermediate inner image on the disk (the two-pass
+    unpack wrote the whole inner .ffpfs first, one more copy of the game). False when the
+    container is not a plain or PFS-nested one (an exFAT wrapper): the caller then takes
+    the two-pass road. Prints the '[####] N% extract' bars the GUI reads."""
+    image, dest = Path(image), Path(dest)
+    try:
+        listing = list_pfs_image(image)
+    except ValueError as e:
+        print(f"[INFO] {image.name}: {e}; unpacking in two passes.", flush=True)
+        return False
+    except Exception as e:
+        print(f"[WARN] Could not read {image.name} directly ({e}); unpacking in two passes.", flush=True)
+        return False
+    if listing.get("errors"):
+        print(f"[WARN] {image.name}: {listing['errors'][0]}; unpacking in two passes.", flush=True)
+        return False
+    top = sorted({str(e["path"]).strip("/").split("/")[0] for e in listing.get("entries", []) if str(e["path"]).strip("/")})
+    if not top:
+        return False
+    print(f"[INFO] Unpacking {image.name} in one pass ({listing.get('file_count', 0)} files, no intermediate image)...",
+          flush=True)
+    dest.mkdir(parents=True, exist_ok=True)
+    rc = extract_pfs_members(image, top, dest)
+    if rc != 0:
+        raise RuntimeError(f"direct unpack of {image.name} failed (rc={rc})")
+    return True
+
+
 def _fully_unwrap(out_dir: Path, mkpfs_cmd_base, mkpfs_cwd) -> None:
     """Turn a freshly-unpacked image directory into the actual game FOLDER: keep
     unwrapping a SINGLE nested image — .ffpfs/.ffpfsc via another PFS unpack, .exfat/
@@ -2109,9 +2139,10 @@ def _chain_materialize(src: Path, scratch_root: Path, args) -> tuple[Path, Path 
             if not _extract_exfat_to(src, scratch):
                 raise RuntimeError("could not read the exFAT/UFS image on this platform")
         elif kind in ("ffpfs", "ffpfsc"):
-            cmd, cwd = _locate_mkpfs()
-            unpack_pfs_image(src, scratch, cmd, cwd, overwrite=True)
-            _fully_unwrap(scratch, cmd, cwd)
+            if not _unwrap_pfs_one_pass(src, scratch):
+                cmd, cwd = _locate_mkpfs()
+                unpack_pfs_image(src, scratch, cmd, cwd, overwrite=True)
+                _fully_unwrap(scratch, cmd, cwd)
         elif kind == "pkg":
             import fpkg as _fpkg
             content = _pkg_content_size(src)
@@ -2269,6 +2300,9 @@ def main() -> None:
     parser.add_argument("--copy-name", type=str, default=None, metavar="NAME",
                         help="Destination filename for --copy (defaults to SRC's basename). "
                              "Auto-organize passes the library name here.")
+    parser.add_argument("--stage-in-place", action="store_true",
+                        help="The source folder is the caller's own working copy (an archive the app unpacked): "
+                             "a .pkg is built right in it and its files are taken in as the package grows.")
     parser.add_argument("--copy-mode", choices=("keep", "organize", "move"), default="keep",
                         help="For --copy and a chain job that ends as a copy: keep (default) "
                              "leaves SRC in place (an APFS clone on the same drive); organize "
@@ -2800,7 +2834,7 @@ def main() -> None:
                         if not _extract_exfat_to(src, staged):
                             print("[ERROR] Could not read the exFAT/UFS image on this platform.", flush=True)
                             sys.exit(1)
-                    else:
+                    elif not _unwrap_pfs_one_pass(src, staged):
                         mk_cmd, mk_cwd = _locate_mkpfs()
                         unpack_pfs_image(src, staged, mk_cmd, mk_cwd, overwrite=True)
                         _fully_unwrap(staged, mk_cmd, mk_cwd)
@@ -2888,6 +2922,14 @@ def main() -> None:
             # contents, the folder is removed when the build ends, and a leftover after a
             # crash is reclaimed by the GUI's startup sweep (_is_app_tmp_dir).
             build_temp = Path(tempfile.mkdtemp(prefix="tmp", dir=str(fpkg_temp)))
+            # The app's own working copy (an image unwrapped here, a chain's scratch, an archive
+            # the app unpacked) is built in place, and its files are taken in as the package
+            # grows: no copy, and the unpacked game shrinks while the image grows.
+            _in_place = (staged is not None or bool(getattr(args, "_fpkg_in_place", False))
+                         or bool(getattr(args, "stage_in_place", False)))
+            if _in_place:
+                print("[INFO] Building in the unpacked copy itself: each file is removed as soon as the package "
+                      "holds it. A build that fails is unpacked again on Retry.", flush=True)
             try:
                 rc = _fpkg.build(build_src, out_dir,
                                  content_id=_cid,
@@ -2900,8 +2942,8 @@ def main() -> None:
                                  publishing_tools_dll=args.fpkg_pubtools_dll,
                                  deterministic=bool(args.fpkg_deterministic),
                                  temp_dir=str(build_temp),
-                                 # an image we unpacked ourselves is built in place: no copy
-                                 stage_in_place=(staged is not None or bool(getattr(args, "_fpkg_in_place", False))),
+                                 stage_in_place=_in_place,
+                                 consume_source=_in_place,
                                  level=int(args.compression_level),
                                  retail_normalize=not args.fpkg_no_retail_normalize,
                                  hdr_flag=args.fpkg_hdr_flag,
@@ -3164,18 +3206,20 @@ def main() -> None:
                 print("[ERROR] Use --overwrite to replace existing extracted files.")
                 sys.exit(1)
             current_output_dir.parent.mkdir(parents=True, exist_ok=True)
-            unpack_pfs_image(
-                image,
-                current_output_dir,
-                mkpfs_cmd_base,
-                mkpfs_cwd,
-                overwrite=args.overwrite,
-            )
-            # Unwrap nested images all the way to a folder (ffpfsc -> inner .ffpfs ->
-            # game files, or ffpfsc -> inner .exfat -> mount+copy), so one unpack action
-            # yields a folder regardless of how the image was packed.
-            if getattr(args, "unwrap", True):
-                _fully_unwrap(current_output_dir, mkpfs_cmd_base, mkpfs_cwd)
+            # One pass straight into files when the image is a plain or PFS-nested one;
+            # otherwise unpack, then unwrap nested images all the way to a folder (ffpfsc ->
+            # inner .exfat -> mount+copy), so one unpack action yields a folder regardless
+            # of how the image was packed.
+            if not (getattr(args, "unwrap", True) and _unwrap_pfs_one_pass(image, current_output_dir)):
+                unpack_pfs_image(
+                    image,
+                    current_output_dir,
+                    mkpfs_cmd_base,
+                    mkpfs_cwd,
+                    overwrite=args.overwrite,
+                )
+                if getattr(args, "unwrap", True):
+                    _fully_unwrap(current_output_dir, mkpfs_cmd_base, mkpfs_cwd)
             _strip_junk_files(current_output_dir)   # clutter inside a foreign image stays out of the folder
         print("\n[SUCCESS] All operations completed successfully!")
         return
