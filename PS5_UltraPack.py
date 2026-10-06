@@ -6376,8 +6376,10 @@ class App:
             added += 1
 
         self.update_queue_box()
-        action = "move (same-drive) / copy+delete (cross-drive)" if delete_src else "copy (source kept)"
-        msg = (f"Organize: queued {added} file(s) from {src_root} → {out_root} as {action}."
+        # Organize jobs run in copy_job's "organize" mode: a rename on the same drive, a
+        # copy that keeps the source across drives (the After-job rule decides the rest).
+        msg = (f"Organize: queued {added} file(s) from {src_root} → {out_root} "
+               f"(moved on the same drive, copied across drives)."
                + (f"  ({skipped} skipped)" if skipped else ""))
         self.log("OK", msg)
 

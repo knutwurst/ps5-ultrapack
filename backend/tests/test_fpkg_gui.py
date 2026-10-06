@@ -1982,6 +1982,28 @@ try:
     #    open Finder are checked by the handler they are bound to instead of being clicked.
     close_toplevels(); root.update()
     _fd_calls = []
+    # Organize: the dialog walks a folder, queues one copy job per image and logs a summary
+    # (the summary line once referred to a name that did not exist and raised after queueing)
+    _org_src = S / "org_src"; _org_src.mkdir(exist_ok=True); shutil.copy2(FF, _org_src / FF.name)
+    _org_out = S / "org_out"; _org_out.mkdir(exist_ok=True)
+    _org_answers = iter([str(_org_src), str(_org_out)])
+    _org_saved = m.filedialog.askdirectory
+    m.filedialog.askdirectory = lambda *a, **k: next(_org_answers, "")
+    _org_logs = []; _org_log_saved = app.log
+    app.log = lambda lvl, msg, *a, **k: (_org_logs.append((lvl, msg)), _org_log_saved(lvl, msg, *a, **k))
+    _org_before = len(app.queue); _org_err = ""
+    try:
+        app.organize_folder_dialog()
+    except Exception as e:
+        _org_err = f"{type(e).__name__}: {e}"
+    finally:
+        m.filedialog.askdirectory = _org_saved; app.log = _org_log_saved
+    ok("organize.dialog-queues-and-logs", not _org_err and len(app.queue) == _org_before + 1
+       and any("Organize: queued 1 file(s)" in msg for _, msg in _org_logs),
+       _org_err or f"queued={len(app.queue) - _org_before} logs={[m_ for _, m_ in _org_logs if 'Organize' in m_][:1]}")
+    for _it in list(app.queue[_org_before:]):
+        app.queue.remove(_it)
+    app.update_queue_box()
     _fd_saved = (m.filedialog.askdirectory, m.filedialog.askopenfilename)
     m.filedialog.askdirectory = lambda *a, **k: (_fd_calls.append(("dir", k.get("title", ""))), "")[1]
     m.filedialog.askopenfilename = lambda *a, **k: (_fd_calls.append(("file", k.get("title", ""))), "")[1]
