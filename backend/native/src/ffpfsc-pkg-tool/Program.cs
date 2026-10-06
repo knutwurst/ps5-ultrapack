@@ -86,8 +86,7 @@ internal static class Program
         Console.WriteLine("                                   assignments, labels and languages are kept, the image ranges are rebuilt.");
         Console.WriteLine("      --layout-pass on|off         LibProsperoPkg's inner-image layout pass (outer block coalescing + relocation");
         Console.WriteLine("                                   alignment adjustment; default on). off = the layout of the 1.1.x builds");
-        Console.WriteLine("      --parallelism <n> / -j <n>   accepted for compatibility; LibProsperoPkg 1.2.0's encoder is not");
-        Console.WriteLine("                                   thread-safe, so every build runs single-threaded (a warning says so)");
+        Console.WriteLine("      --parallelism <n> / -j <n>   Kraken and outer-PFS workers (default 0 = one per core)");
         Console.WriteLine("      --fake-sign / --no-fake-sign fake-sign raw ELFs in source before packing (default ON; idempotent)");
         Console.WriteLine("      --no-ampr-index              keep the source's ampr_emu.index as it is (default: when fakelib/");
         Console.WriteLine("                                   libSceAmpr.sprx is shipped, rebuild the index over the packed files)");
@@ -1214,16 +1213,14 @@ internal static class Program
             KrakenBackend = ProsperoKrakenBackend.BuiltIn,
             Passcode = new string('0', 32),
             Version = "01.000.000",
-            // Single-threaded, always. LibProsperoPkg 1.2.0's encoder is not thread-safe:
-            // -j 4 crashed 4 of 6 runs with AccessViolationException — inside
-            // OodleKrakenEncoder.Hash under the Task.Run workers of the inner-data pass, and
-            // inside the XtsBlockTransform constructor reached from the ThreadLocal factory
-            // in ProsperoNapsPhysicalIntegrityCollector.Observe — and each crash left a
-            // partial .pkg under the final name. (An earlier note blamed the outer-PFS
-            // AES-XTS worker; that pass no longer runs since PlaintextNoAuth.) --parallelism
-            // is still accepted for compatibility and clamped to 1 with a warning.
-            KrakenMaxDegreeOfParallelism = 1,
-            LegacyZlibMaxDegreeOfParallelism = 1,
+            // Workers: 0 = the library's automatic (one per core). One knob drives both the
+            // inner-image Kraken workers and the outer-PFS Parallel.For. The crashes that once
+            // pinned this to 1 (AccessViolationException on thread-pool workers, 4 of 6 runs
+            // with -j 4) were the compressed single-file bundle, not the encoder: with
+            // EnableCompressionInSingleFile off (PkgTool.csproj) 4, 8 and 12 workers ran 22 of
+            // 22 builds byte-identical to the single-worker package. --parallelism / -j sets it.
+            KrakenMaxDegreeOfParallelism = 0,
+            LegacyZlibMaxDegreeOfParallelism = 0,
             // PS5 debug-image loader only accepts the plaintext-no-auth outer PFS
             // (mode 0x000D with the "PPPLAIN-NOAUTH!" seed marker) — a random-seed
             // AES-XTS wrap validates structurally and extract-inner reads it fine,
@@ -1308,10 +1305,9 @@ internal static class Program
                 case "-j":
                 {
                     var v = Need(args, ref i, a);
-                    if (!int.TryParse(v, out int j) || j < 1) throw new ArgumentException("--parallelism needs an integer >= 1");
-                    // Never applied: see the KrakenMaxDegreeOfParallelism note above.
-                    if (j > 1)
-                        Console.Error.WriteLine($"[warn] --parallelism {j} ignored: LibProsperoPkg 1.2.0's encoder is not thread-safe (crashes observed); running single-threaded");
+                    if (!int.TryParse(v, out int j) || j < 0) throw new ArgumentException("--parallelism needs an integer >= 0 (0 = one worker per core)");
+                    opts.KrakenMaxDegreeOfParallelism = j;
+                    opts.LegacyZlibMaxDegreeOfParallelism = j;
                     break;
                 }
                 case "--deterministic": opts.DeterministicBuild = true; break;
@@ -1887,7 +1883,7 @@ internal static class Program
             return 1;
         }
 
-        Console.Error.WriteLine($"[info] build  {opts.SourceFolder} -> {opts.OutputFolder}  (inner={opts.InnerCompression}, backend={opts.KrakenBackend}, level={opts.KrakenCompressionLevel}, temp={opts.TemporaryDirectory ?? "$TMPDIR"}, chunks={opts.PlayGoChunkCount}, fake-sign={autoFakeSign}, retail-normalize={doRetailNormalize})");
+        Console.Error.WriteLine($"[info] build  {opts.SourceFolder} -> {opts.OutputFolder}  (inner={opts.InnerCompression}, backend={opts.KrakenBackend}, level={opts.KrakenCompressionLevel}, workers={(opts.KrakenMaxDegreeOfParallelism == 0 ? $"auto ({Environment.ProcessorCount})" : opts.KrakenMaxDegreeOfParallelism.ToString())}, temp={opts.TemporaryDirectory ?? "$TMPDIR"}, chunks={opts.PlayGoChunkCount}, fake-sign={autoFakeSign}, retail-normalize={doRetailNormalize})");
 
         // Baselines for the cleanup after a failed or cancelled build: only files that did not
         // exist before the build are removed — a .pkg in the output folder (the library writes

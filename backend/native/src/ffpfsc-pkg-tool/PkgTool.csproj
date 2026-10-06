@@ -24,7 +24,16 @@
          precompilation did not help (4 of 24). JIT-compiled the tool is stable. -->
     <PublishReadyToRun>false</PublishReadyToRun>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- No compression inside the single-file bundle. With it, every multithreaded pass of the
+         tool died within seconds on macOS arm64 with AccessViolationException on thread-pool
+         workers, in runtime code (Task.FinishContinuations, Aes.Create, a string formatter):
+         12 of 12 runs with 4 workers, in stored mode with no Kraken at all, on net10.0 too,
+         unchanged by DOTNET_EnableWriteXorExecute=0 or DOTNET_TieredCompilation=0. The same
+         build with the compression off: 0 crashes in 26 runs, 4/8/12 Kraken workers, every
+         package byte-identical to the single-worker one (measured 2026-10-06). The binary
+         grows from 38 MB to 82 MB. The ReadyToRun finding below was measured WITH the
+         compression on and may be this same bug; it has not been retested. -->
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>

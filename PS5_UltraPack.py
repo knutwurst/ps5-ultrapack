@@ -9453,7 +9453,12 @@ class App:
         elif out == ".pkg":
             p = self._fpkg_params_of(item)
             speed = "fast preset" if int(p.get("level", 7)) < 0 else "level 7"
-            info["Compression"] = (f".pkg, Kraken {speed}, codec layer {p.get('inner', 'kraken')}; "
+            try:
+                cores = int(self.cpu_count_var.get())
+            except (TypeError, ValueError):
+                cores = 0
+            info["Compression"] = (f".pkg, Kraken {speed} on {'all cores' if cores <= 0 else f'{cores} cores'}, "
+                                   f"codec layer {p.get('inner', 'kraken')}; "
                                    f"retail fixes {'on' if p.get('retail_normalize', True) else 'off'}, "
                                    f"HDR {p.get('hdr_flag', 'auto')}")
         elif out == ".ffpfs":
@@ -9745,15 +9750,17 @@ class App:
             tstr = str(Path(bt)) if bt else str(temp)
             if tstr:
                 cmd += ["--temp-dir", tstr]
-            if to in ("ffpfs", "ffpfsc"):
-                _cl = self._ffpfsc_level(item)
-                if _cl != 7:
-                    cmd += ["--compression-level", str(_cl)]
+            if to in ("ffpfs", "ffpfsc", "pkg"):
+                # the CPU cores setting: mkpfs workers for an image, Kraken workers for a .pkg
                 _cpu = getattr(item, "_cpu_retry_override", None)
                 if _cpu is None:
                     _cpu = self.cpu_count_var.get()
                 if _cpu:
                     cmd += ["--cpu-count", str(_cpu)]
+            if to in ("ffpfs", "ffpfsc"):
+                _cl = self._ffpfsc_level(item)
+                if _cl != 7:
+                    cmd += ["--compression-level", str(_cl)]
                 _bs = self.block_size_var.get()
                 if _bs and _bs != "auto":
                     cmd += ["--block-size", _bs]

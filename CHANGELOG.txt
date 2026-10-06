@@ -29,6 +29,17 @@ BUILDING A .PKG: NO SECOND COPY OF THE GAME, NO HARD LINKS
     while the package grows instead of both sitting side by side. A
     build that fails is unpacked again on Retry.
 
+A .PKG IS BUILT ON ALL CORES
+
+  - Kraken now runs on every core of the Mac instead of one. On a 1 GB
+    test game the package took 9 seconds instead of 40, and the result
+    is the same file byte for byte, whatever the core count. The CPU
+    cores setting applies to .pkg jobs too; 0 means all cores.
+  - The package tool had been held to one core since its first release
+    because it crashed with more. The cause was found and fixed: not the
+    compressor, but the way the tool itself was packaged. The tool is
+    now 82 MB instead of 38.
+
 ────────────────────────────────────────────────────────────────────────
   v2.1.1
 ────────────────────────────────────────────────────────────────────────

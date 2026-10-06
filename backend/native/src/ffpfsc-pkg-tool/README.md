@@ -11,11 +11,12 @@ we wrote:
   staging of every build (a hard-link mirror next to the source folder, or in `--temp`;
   a copy into `--temp` only when the source volume takes no hard links, announced by a
   `[stage] ... copying N GB` line), SIGTERM/SIGINT cancellation with cleanup of the
-  mirror, the library's temp files and any partial `.pkg` (exit 143/130), and the pin
-  `KrakenMaxDegreeOfParallelism = 1`: LibProsperoPkg 1.2.0's encoder is not thread-safe
-  (`-j 4` crashed 4 of 6 runs with AccessViolationException in `OodleKrakenEncoder.Hash`
-  and in the `XtsBlockTransform` constructor behind `ProsperoNapsPhysicalIntegrityCollector`),
-  so `--parallelism` is accepted but clamped with a warning.
+  mirror, the library's temp files and any partial `.pkg` (exit 143/130), and the worker
+  count (`--parallelism` / `-j`, default 0 = one per core) that drives both the inner-image
+  Kraken workers and the outer-PFS pass. The tool ran single-threaded until 2.1.2 because
+  `-j 4` crashed with AccessViolationException; that was the compressed single-file bundle
+  (see `PkgTool.csproj`), not the encoder: uncompressed, 4/8/12 workers give the same bytes
+  as one (22 of 22 builds, 2026-10-06).
 - `InnerImage.cs` — random access into the inner PFS for `list-inner` and
   `extract-inner --members` (see below).
 
@@ -23,7 +24,8 @@ Every `--json` document is serialized through the source-generated `PkgToolJsonC
 the end of `Program.cs`. It dates from when the binary was published trimmed (which switches
 reflection-based System.Text.Json off and crashed the anonymous types the commands used with
 "Reflection-based serialization has been disabled"); trimming is off today, the context stays.
-- `PkgTool.csproj` — the publish settings: self-contained single file, ReadyToRun,
+- `PkgTool.csproj` — the publish settings: self-contained single file without bundle
+  compression (compressed, every multithreaded pass crashed; 82 MB instead of 38), no ReadyToRun,
   the native ImageMagick library next to the executable rather than bundled (a bundled
   one is unpacked into `~/.net/ffpfsc-pkg-tool/<hash>/` on first run, a new ~27 MB folder
   per build that nothing removes; the tool deletes folders left by older builds), no trimming (Magick.NET's Prospero-facing path is reflection-driven; trimming pruned

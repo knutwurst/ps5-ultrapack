@@ -180,6 +180,7 @@ def build(src_dir: Path, out_dir: Path,
           ampr_index: bool = True,
           stage_in_place: bool = False,
           consume_source: bool = False,
+          parallelism: int = 0,
           on_line=None) -> int:
     """
     Build a debug fPKG from a prepared /app0-style source folder.
@@ -218,6 +219,8 @@ def build(src_dir: Path, out_dir: Path,
     - level: Kraken preset. Measured: 0..9 give byte-identical output (the encoder's
       'normal' regime); -4..-1 select the faster, slightly weaker preset. The GUI maps
       normal → 7 and fast → -4.
+    - parallelism: Kraken (and outer-PFS) workers; 0 = the tool's default, one per core.
+      Deterministic: any worker count gives the same bytes (measured 4/8/12 vs 1).
     """
     src_dir = Path(src_dir); out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     argv = [
@@ -259,6 +262,8 @@ def build(src_dir: Path, out_dir: Path,
         # each source file is deleted the moment the inner image holds it, so the unpacked
         # game shrinks while the image grows (only ever in our own working copy)
         argv += ["--consume-source"]
+    if parallelism and int(parallelism) > 0:
+        argv += ["--parallelism", str(int(parallelism))]
     return _run(argv, on_line=on_line)
 
 

@@ -803,6 +803,15 @@ try:
     _pcmd, *_ = app.build_command(_pi)
     ok("cmd.pkg-from-own-extraction-in-place", "--stage-in-place" in _xcmd and "--stage-in-place" not in _pcmd,
        f"own={'--stage-in-place' in _xcmd} user={'--stage-in-place' in _pcmd}")
+    # the CPU cores setting reaches a .pkg job (Kraken workers); 0 = all cores sends nothing
+    _cpu_before = app.cpu_count_var.get()
+    try:
+        app.cpu_count_var.set(4); _c4, *_ = app.build_command(_pi)
+        app.cpu_count_var.set(0); _c0, *_ = app.build_command(_pi)
+    finally:
+        app.cpu_count_var.set(_cpu_before)
+    ok("cmd.pkg-carries-cpu-count", "4" == (_c4[_c4.index("--cpu-count") + 1] if "--cpu-count" in _c4 else None)
+       and "--cpu-count" not in _c0, f"four={_c4.count('--cpu-count')} auto={_c0.count('--cpu-count')}")
     shutil.rmtree(_ex.parent, ignore_errors=True)
     # the worker notices when the backend took the unpacked files in: the extraction is not kept
     _cw = m.CLIWorker(app, _xi, ["py", "cli.py", str(_ex), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)

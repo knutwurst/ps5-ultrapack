@@ -36,7 +36,9 @@ The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
    blanked, so `/ampr_emu.index` stays in the image; the other two names stay excluded.
 3. `ProsperoPackageArchive.ResolveParallelism`: returns 1, so package reading
    (`ExtractInnerFiles`, `Verify*`) stays single-threaded; the parallel inner-PFS sessions
-   crash the process on macOS arm64.
+   crashed the process on macOS arm64. Measured while the tool was still published as a
+   compressed single-file bundle, which turned out to crash every multithreaded pass
+   (`../PkgTool.csproj`); this patch has not been retested without the compression.
 
 All three patches are applied by `../patches/CecilPatch` (Mono.Cecil, pattern-based, idempotent);
 the reasoning is in `../patches/README.md`. To reproduce the patched file from the pristine one:

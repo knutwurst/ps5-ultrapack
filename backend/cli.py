@@ -2944,6 +2944,7 @@ def main() -> None:
                                  temp_dir=str(build_temp),
                                  stage_in_place=_in_place,
                                  consume_source=_in_place,
+                                 parallelism=max(0, int(args.cpu_count or 0)),
                                  level=int(args.compression_level),
                                  retail_normalize=not args.fpkg_no_retail_normalize,
                                  hdr_flag=args.fpkg_hdr_flag,

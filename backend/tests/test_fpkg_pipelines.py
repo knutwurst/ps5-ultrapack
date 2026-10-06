@@ -718,13 +718,14 @@ def test_build_temp_is_contained(r: Runner):
 
 
 def test_deterministic_build(r: Runner):
-    """Two --deterministic builds must produce byte-identical fPKGs."""
+    """Two --deterministic builds must produce byte-identical fPKGs, and so must a build on
+    four workers (the CPU cores setting reaches the package tool as --parallelism)."""
     hbt = fetch_hbt(r.work / "hbt")
-    a = r.work / "det_a"; b = r.work / "det_b"
-    for d in (a, b):
+    a = r.work / "det_a"; b = r.work / "det_b"; c = r.work / "det_par4"
+    for d in (a, b, c):
         if d.exists(): shutil.rmtree(d); d.mkdir(parents=True)
         else: d.mkdir(parents=True)
-    def build(dst):
+    def build(dst, *extra):
         return r.run_cli([str(hbt), str(dst),
                           "--fpkg-build", str(hbt),
                           "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
@@ -732,7 +733,7 @@ def test_deterministic_build(r: Runner):
                           "--fpkg-title", "HomebrewTest",
                           "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin",
                           "--fpkg-passcode", "0" * 32,
-                          "--fpkg-deterministic"])
+                          "--fpkg-deterministic", *extra])
     build(a); build(b)
     pa = next(a.glob("*.pkg"), None); pb = next(b.glob("*.pkg"), None)
     if not (pa and pb):
@@ -742,6 +743,13 @@ def test_deterministic_build(r: Runner):
             sha(pa) == sha(pb),
             "two builds produced the same .pkg bytes",
             f"drift: {sha(pa)[:16]} vs {sha(pb)[:16]}")
+    _rc_c, out_c = build(c, "--cpu-count", "4")
+    pc = next(c.glob("*.pkg"), None)
+    r.check("determinism.four-workers",
+            pc is not None and sha(pc) == sha(pa) and "workers=4" in (out_c or ""),
+            "a build on four workers gives the same .pkg bytes as one worker",
+            f"pkg={pc is not None} same={pc is not None and sha(pc) == sha(pa)} "
+            f"workers-line={'workers=4' in (out_c or '')}")
 
 
 def test_stage_in_place_matches_copy(r: Runner):
