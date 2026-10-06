@@ -13,7 +13,7 @@ we wrote:
   `[stage] ... copying N GB` line), SIGTERM/SIGINT cancellation with cleanup of the
   mirror, the library's temp files and any partial `.pkg` (exit 143/130), and the worker
   count (`--parallelism` / `-j`, default 0 = one per core) that drives both the inner-image
-  Kraken workers and the outer-PFS pass. The tool ran single-threaded until 2.1.2 because
+  Kraken workers and the outer-PFS pass. The tool ran single-threaded until 2.2.0 because
   `-j 4` crashed with AccessViolationException; that was the compressed single-file bundle
   (see `PkgTool.csproj`), not the encoder: uncompressed, 4/8/12 workers give the same bytes
   as one (22 of 22 builds, 2026-10-06).

@@ -20,7 +20,7 @@ namespace PkgTool;
 
 internal static class Program
 {
-    const string ToolVersion = "2.1.2";
+    const string ToolVersion = "2.2.0";
 
     static int Main(string[] args)
     {
@@ -818,7 +818,7 @@ internal static class Program
         finally { try { Directory.Delete(tmpCnt, recursive: true); } catch { } }
 
         // The inner PFS is read in place: its file table, then eboot.bin alone through the
-        // random-access reader. Until 2.1.2 this extracted the whole /app0 into the system
+        // random-access reader. Until 2.2.0 this extracted the whole /app0 into the system
         // temp folder to prove the PFS decodes; a 160 GB game filled the Mac's disk while the
         // caller's bar stood at 0 %.
         Step("inner");

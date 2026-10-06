@@ -96,7 +96,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.1.2"
+APP_VERSION = "2.2.0"
 # For archive sources, the GUI extraction occupies the first slice of a game's overall
 # progress; the worker's pack progress is compressed into the remaining tail so the
 # whole-game percentage stays monotonic across extraction → pack (see CLIWorker._set_stage
@@ -1933,7 +1933,7 @@ class CLIWorker(threading.Thread):
     # pfs_image.dat with Kraken (the long part) → NAPS + outer-PFS AES-XTS → CNT/FIH
     # finalize → auto-validate. Bands keep the fixed breadcrumb order forward-only;
     # the backend emits "[PHASE] <Stage>" markers + progress bars for each band.
-    # Bands from a real 160 GB run (2.1.2, fast preset): unpack 16 min, Kraken 75 min on one
+    # Bands from a real 160 GB run (2.2.0, fast preset): unpack 16 min, Kraken 75 min on one
     # worker, outer PFS 22 min on one worker; both passes now use every core, so Kraken and
     # the outer pass shrink toward the unpack. The split below is the middle of that range,
     # an estimate; the bars inside each band are metered in bytes by the backend.
@@ -6196,7 +6196,7 @@ class App:
         except Exception:
             _fl = 0
         if not _fd.get("v212"):
-            # 2.1.2: the two presets ("normal" = 7, "fast" = -4) became a level slider whose
+            # 2.2.0: the two presets ("normal" = 7, "fast" = -4) became a level slider whose
             # default is 0 — measured on a retail sample, 0 to 5 are 0.3 % larger than 7 and
             # 4.5x faster, so the old presets are moved to the new default once.
             _fl = 0
@@ -6412,7 +6412,7 @@ class App:
 
     @staticmethod
     def _pkg_level_text(level: int) -> str:
-        """What a Kraken level buys, from the 2.1.2 measurement on a retail sample."""
+        """What a Kraken level buys, from the 2.2.0 measurement on a retail sample."""
         level = int(level)
         if level < 0:
             return "fastest; about 2 % larger"
