@@ -33,6 +33,7 @@ _BACKEND_REQUIRED = [
     _os.path.join("native", "ffpfsc-pkg-tool"),
     _os.path.join("native", "Magick.Native-Q8-arm64.dll.dylib"),   # loaded from the tool's folder
     _os.path.join("native", "LICENSE.LibProsperoPkg"),
+    _os.path.join("native", "LICENSE.LibOrbisPkg"),
 ]
 
 

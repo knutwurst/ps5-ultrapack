@@ -19,6 +19,10 @@ we wrote:
   as one (22 of 22 builds, 2026-10-06).
 - `InnerImage.cs` — random access into the inner PFS for `list-inner` and
   `extract-inner --members` (see below).
+- `Ps4.cs` — `ps4-list` and `ps4-extract` for PS4 packages (title ids CUSA…), read with the
+  vendored LibOrbisPkg in `../LibOrbisPkg/` (LGPL-3). Only fake packages open (the library's fake
+  keyset recovers their PFS key); the package-header entries (param.sfo, icon0.png, …) are listed
+  under `sce_sys/` as for a PS5 package. Nothing is built for PS4.
 
 Every `--json` document is serialized through the source-generated `PkgToolJsonContext` at
 the end of `Program.cs`. It dates from when the binary was published trimmed (which switches

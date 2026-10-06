@@ -1,0 +1,12 @@
+LibOrbisPkg
+Copyright (C) 2018-2020 Maxton
+
+This library is free software: you can redistribute it and/or modify it under the terms
+of the GNU Lesser General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version. See
+LICENSE.LibOrbisPkg for the full text.
+
+Source: https://github.com/maxton/LibOrbisPkg, commit 643477263b2644e0803e0f58b8726ea4e3f3b7d4
+(2020-07-26). The copy compiled into ffpfsc-pkg-tool is backend/native/src/LibOrbisPkg/,
+changed in one place (see the README there). ffpfsc-pkg-tool uses it to read PS4 packages
+(ps4-list, ps4-extract); it does not build PS4 packages.

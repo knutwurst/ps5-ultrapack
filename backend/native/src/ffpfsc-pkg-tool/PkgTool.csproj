@@ -57,6 +57,11 @@
   </ItemGroup>
   <!-- patches/CecilPatch is its own project (the LibProsperoPkg.dll patcher); keep the
        SDK's default **/*.cs glob from pulling its sources and obj/ into this assembly. -->
+  <!-- LibOrbisPkg (LGPL-3), vendored source, for reading PS4 packages (ps4-list, ps4-extract);
+       see ../LibOrbisPkg/README.md for the commit and the one change made to it. -->
+  <ItemGroup>
+    <ProjectReference Include="..\LibOrbisPkg\LibOrbisPkg.csproj" />
+  </ItemGroup>
   <ItemGroup>
     <Compile Remove="patches\**" />
     <None Remove="patches\**" />

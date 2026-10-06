@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Build file written for this vendored copy (upstream's is an old-style .NET Framework 4.0
+       project). Same sources, compiled for the tool's runtime. -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>LibOrbisPkg</RootNamespace>
+    <AssemblyName>LibOrbisPkg</AssemblyName>
+    <Nullable>disable</Nullable>
+    <LangVersion>13</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsTrimmable>false</IsTrimmable>
+    <!-- written for .NET Framework 4.0: obsolete crypto factory types, unused fields -->
+    <NoWarn>$(NoWarn);SYSLIB0021;SYSLIB0022;SYSLIB0023;CS0618;CS0168;CS0219;CS0649;CS0414;CA2022</NoWarn>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+</Project>

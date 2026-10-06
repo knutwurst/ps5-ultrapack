@@ -18,7 +18,7 @@ namespace PkgTool;
 // Purpose: fPKG extract / inspect / build for ps5-ultrapack.
 // Ships as a self-contained osx-arm64 binary under backend/native/.
 
-internal static class Program
+internal static partial class Program
 {
     const string ToolVersion = "2.2.0";
 
@@ -39,6 +39,8 @@ internal static class Program
                 "build" => CmdBuild(args),
                 "validate" => CmdValidate(args),
                 "ampr-index" => CmdAmprIndex(args),
+                "ps4-list" => CmdPs4List(args),
+                "ps4-extract" => CmdPs4Extract(args),
                 _ => Bad("unknown command: " + args[0]),
             };
         }
@@ -63,6 +65,8 @@ internal static class Program
         Console.WriteLine("      random access, the inner image is NOT decoded as a whole.");
         Console.WriteLine("  extract-inner <pkg> <out-dir> [--passcode P]     [--json]");
         Console.WriteLine("  extract-inner <pkg> <out-dir> --members <file> [--passcode P] [--json]");
+        Console.WriteLine("  ps4-list    <ps4.pkg>                            (JSON tree of a PS4 fake package's files)");
+        Console.WriteLine("  ps4-extract <ps4.pkg> <out-dir> [--members <file>]  (all files, or the listed files/folders)");
         Console.WriteLine("      Selective: <file> lists one path per line (relative to /app0); a directory");
         Console.WriteLine("      means its whole subtree incl. empty folders. Prints '[####] NN% extract (path)'.");
         Console.WriteLine("  extract-outer <pkg> <out-dir> [--passcode P]     [--decompress|--no-decompress]");

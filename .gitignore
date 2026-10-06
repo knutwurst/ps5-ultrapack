@@ -29,6 +29,8 @@ backend/native/src/ffpfsc-pkg-tool/obj/
 backend/native/src/ffpfsc-pkg-tool/out/
 backend/native/src/ffpfsc-pkg-tool/patches/CecilPatch/bin/
 backend/native/src/ffpfsc-pkg-tool/patches/CecilPatch/obj/
+backend/native/src/LibOrbisPkg/bin/
+backend/native/src/LibOrbisPkg/obj/
 
 # macOS
 .DS_Store
