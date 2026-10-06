@@ -51,7 +51,7 @@ class Identity(unittest.TestCase):
         for p in REAL:
             self.assertTrue(ps4pkg.is_ps4_package(p), p.name)
             i = ps4pkg.read_identity(p)
-            self.assertEqual(i.kind, "dlc", p.name)
+            self.assertIn(i.kind, ("game", "update", "dlc"), p.name)
             self.assertTrue(i.title and i.title_id.startswith("CUSA") and i.version, i)
 
 
@@ -81,8 +81,24 @@ class RealThroughBackend(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             self.assertEqual(ps4pkg.parse_sfo((dest / "sce_sys" / "param.sfo").read_bytes())["TITLE_ID"],
                              ps4pkg.read_identity(pkg).title_id)
+            if pkg.stat().st_size > 8 << 20:
+                continue        # never unpack a whole game in a test; the small DLCs show the full path
             full = work / ("full_" + pkg.stem)
             rc, out = self.run_cli("placeholder", full, "--fpkg-extract", pkg)
             self.assertEqual(rc, 0, out)
             files = {p.relative_to(full).as_posix() for p in full.rglob("*") if p.is_file()}
             self.assertEqual(files, {e["path"] for e in doc["entries"] if e["type"] == "file"})
+
+    def test_game_executable_is_decrypted(self):
+        """eboot.bin of a real game or update reads back as a PS4 SELF (members only)."""
+        import json
+        work = Path(tempfile.mkdtemp())
+        games = [p for p in REAL if ps4pkg.read_identity(p).kind in ("game", "update")]
+        if not games:
+            self.skipTest("no real PS4 game or update in unzipped/ps4/")
+        for pkg in games:
+            members = work / "m.txt"; members.write_text("eboot.bin\n")
+            dest = work / ("e_" + pkg.stem)
+            rc, out = self.run_cli("--extract-from", pkg, "--dest", dest, "--members-file", members)
+            self.assertEqual(rc, 0, out)
+            self.assertEqual((dest / "eboot.bin").read_bytes()[:4], bytes.fromhex("4f153d1d"), pkg.name)

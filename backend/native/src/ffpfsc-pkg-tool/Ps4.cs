@@ -35,9 +35,14 @@ internal static partial class Program
                 throw new InvalidDataException("not a PS4 package (no CUSA title id in the content id)");
             if (pkg.Header.pfs_image_size == 0)
                 throw new InvalidDataException("the package has no content image");
-            byte[] ekpfs;
-            try { ekpfs = pkg.GetEkpfs(); }
-            catch (Exception e) { throw new InvalidDataException("not a fake package; its contents cannot be read (" + e.Message + ")"); }
+            // Two kinds of fake package: the PFS key is stored in the package (opens with the
+            // library's fake keyset), or derived from the content id and the all-zero passcode.
+            // Both are tried; the first that opens the image wins.
+            var keys = new List<(string how, Func<byte[]> key)>
+            {
+                ("fake keyset", () => pkg.GetEkpfs()),
+                ("zero passcode", () => Orbis.Util.Crypto.ComputeKeys(pkg.Header.content_id, new string('0', 32), 1)),
+            };
             foreach (var m in pkg.Metas.Metas)
             {
                 if (m.Encrypted || m.DataSize == 0) continue;
@@ -46,15 +51,23 @@ internal static partial class Program
                 Cnt["sce_sys/" + name.Replace('\\', '/').TrimStart('/')] = m;
             }
             Outer = Mmf.CreateViewAccessor((long)pkg.Header.pfs_image_offset, (long)pkg.Header.pfs_image_size, MemoryMappedFileAccess.Read);
-            try
+            var tried = new List<string>();
+            foreach (var (how, key) in keys)
             {
-                var outer = new Orbis.PFS.PfsReader(Outer, pkg.Header.pfs_flags, ekpfs);
-                var image = outer.GetFile("pfs_image.dat") ?? throw new InvalidDataException("no pfs_image.dat in the package");
-                Inner = new Orbis.PFS.PfsReader(new Orbis.PFS.PFSCReader(image.GetView()));
+                try
+                {
+                    var outer = new Orbis.PFS.PfsReader(Outer, pkg.Header.pfs_flags, key());
+                    var image = outer.GetFile("pfs_image.dat") ?? throw new InvalidDataException("no pfs_image.dat");
+                    Inner = new Orbis.PFS.PfsReader(new Orbis.PFS.PFSCReader(image.GetView()));
+                    KeySource = how;
+                    break;
+                }
+                catch (Exception e) { tried.Add($"{how}: {e.Message.Trim()}"); }
             }
-            catch (InvalidDataException) { throw; }
-            catch (Exception e) { throw new InvalidDataException("not a fake package; its contents cannot be read (" + e.Message + ")"); }
+            if (Inner == null)
+                throw new InvalidDataException("not a fake package; its contents cannot be read (" + string.Join("; ", tried) + ")");
         }
+        public readonly string KeySource = "";
         public void Dispose() { Outer?.Dispose(); Mmf?.Dispose(); }
     }
 
