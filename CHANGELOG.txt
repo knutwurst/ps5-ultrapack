@@ -27,6 +27,17 @@ PS4 PACKAGES
     content cannot be read.
   - PS5 packages and images work exactly as before.
 
+NO '._' FILES ON AN EXFAT DRIVE, EVEN WHEN YOU EJECT RIGHT AWAY
+
+  - macOS tags every file the app writes with a provenance attribute.
+    On an exFAT drive that attribute is stored as a '._' file next to
+    the output. macOS removes it a few seconds later, but when the
+    drive was ejected before that, it stayed. Every finished job now
+    removes these files itself: next to a .ffpfsc, .ffpfs or .pkg,
+    inside an unpacked folder, beside the extras copied next to the
+    output, and in a PS4 title folder. Nothing else in your library is
+    touched.
+
 ALSO
 
   - Organize logs its summary again; the last line of the walk raised

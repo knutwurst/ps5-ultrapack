@@ -155,5 +155,31 @@ def tearDownModule():
     shutil.rmtree(_SCRATCH, ignore_errors=True)
 
 
+class WrittenClutter(unittest.TestCase):
+    """strip_written_clutter: only the job's own output and the sidecars beside it."""
+    def test_file_output(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp()); title = root / "Title [PPSA00001]"; title.mkdir()
+        out = title / "Title.ffpfsc"; out.write_bytes(b"x")
+        (title / "._Title.ffpfsc").write_bytes(b"\0\x05\x16\x07")
+        (root / "._Title [PPSA00001]").write_bytes(b"\0\x05\x16\x07")
+        (title / "._other.ffpfsc").write_bytes(b"x")          # not this job's: stays
+        (root / "._Unrelated").write_bytes(b"x")              # beside another folder: stays
+        self.assertEqual(ultra_core.strip_written_clutter(out), 2)
+        self.assertEqual(sorted(p.name for p in root.rglob("._*")), ["._Unrelated", "._other.ffpfsc"])
+
+    def test_folder_output(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp()); out = root / "Game [extracted]"; (out / "sce_sys").mkdir(parents=True)
+        (out / "sce_sys" / "._param.json").write_bytes(b"x"); (out / ".DS_Store").write_bytes(b"x")
+        (root / "._Game [extracted]").write_bytes(b"x")
+        self.assertEqual(ultra_core.strip_written_clutter(out), 3)
+        self.assertFalse(list(root.rglob("._*")) or list(root.rglob(".DS_Store")))
+
+    def test_nothing_to_do(self):
+        self.assertEqual(ultra_core.strip_written_clutter(""), 0)
+        self.assertEqual(ultra_core.strip_written_clutter("/nonexistent/x.ffpfsc"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

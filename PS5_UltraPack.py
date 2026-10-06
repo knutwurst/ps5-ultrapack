@@ -2110,6 +2110,7 @@ class CLIWorker(threading.Thread):
         self.patch_backup = ""        # the originals a patch replaced, staged by the backend
         self.validate_failed = False   # the .pkg checklist reported failures: the source stays
         self.consumed = False          # the backend took the unpacked copy's files into the package as it went
+        self._written: list[str] = []  # extra outputs of this job (bundle extras, PS4 title folders)
         # Highest whole-job progress sent so far: the queue bar never moves backward.
         self._overall_sent = 0.0
         # Snapshot the copy-extras toggle on the MAIN thread (CLIWorker is constructed
@@ -2343,6 +2344,7 @@ class CLIWorker(threading.Thread):
             # sniff (we didn't repack anything). Exit 0 with a printed [SUCCESS] line is
             # the success signal.
             if self.operation == "copy":
+                self._strip_written_clutter()
                 self._write_report(True)
                 self.app.finish(True, "Copy completed successfully.", self.last_cmd_str)
                 return
@@ -2364,6 +2366,7 @@ class CLIWorker(threading.Thread):
                     self._copy_bundle_siblings()
             except Exception as e:
                 self.app.log("WARN", f"Bundle copy failed: {e}")
+            self._strip_written_clutter()
             # ShadowMount compatibility checks (a .pkg is installed, not mounted —
             # the fPKG path has its own validate checklist in the backend log).
             try:
@@ -2719,6 +2722,10 @@ class CLIWorker(threading.Thread):
             self.output_path = line.split("fPKG complete:", 1)[-1].strip()
         if line.startswith("[OK] PS4 sorted: "):
             self.output_path = line[len("[OK] PS4 sorted: "):].strip()      # a title folder of the set
+            self._written.append(self.output_path)
+        _cm = re.match(r"\[SUCCESS\] (?:Copied|Moved) .+? → (.+)$", line)
+        if _cm and self.operation == "copy":
+            self.output_path = _cm.group(1).strip()                         # the copied file
         if "Validation reported failures" in line:
             self.validate_failed = True
         if "Extraction complete:" in line:
@@ -2950,6 +2957,18 @@ class CLIWorker(threading.Thread):
         self.final_size = 0
         return False
 
+    def _strip_written_clutter(self) -> None:
+        """Remove the '._' sidecars and other clutter from what this job wrote (see
+        ultra_core.strip_written_clutter): its output, the bundle extras, PS4 title folders."""
+        n = 0
+        for p in [self.output_path, *self._written]:
+            try:
+                n += strip_written_clutter(str(p).strip('"')) if p else 0
+            except Exception:
+                pass
+        if n:
+            self.app.log("INFO", f"Removed {n} macOS clutter file(s) ('._' sidecars) from the output.")
+
     def _copy_bundle_siblings(self) -> None:
         """Copy the extra files AND folders (DLCs etc.) next to the packed .ffpfsc.
         Handles both loose files and whole subfolders (e.g. an '[ ALL DLC ]' wrapper),
@@ -2979,6 +2998,7 @@ class CLIWorker(threading.Thread):
                         continue
                     self.app.log("INFO", f"Copying extra folder next to output: {src.name} "
                                          f"({format_size(get_folder_size(src))})")
+                    self._written.append(str(target))
                     shutil.copytree(src, target, dirs_exist_ok=True,
                                     ignore=shutil.ignore_patterns(*_COPYTREE_JUNK_GLOBS))
                     copied += 1
@@ -2988,6 +3008,7 @@ class CLIWorker(threading.Thread):
                         continue
                     self.app.log("INFO", f"Copying extra next to output: {src.name} ({format_size(src.stat().st_size)})")
                     shutil.copy2(src, target)
+                    self._written.append(str(target))
                     copied += 1
             except Exception as e:
                 self.app.log("WARN", f"Could not copy extra '{Path(src).name}': {e}")

@@ -2025,6 +2025,18 @@ try:
     _plan = app._after_job_plan(_p4a, _w4)
     ok("ps4.after-job-acts-on-the-archive", _plan[0] == _p4a.after_source and str(_arch4) in [str(x) for x in _plan[1]],
        str(_plan))
+    # a finished job removes the '._' sidecars of what it wrote (exFAT keeps them on a quick eject)
+    _cl = S / "clutter_out" / "Title [PPSA00001]"; _cl.mkdir(parents=True, exist_ok=True)
+    _clf = _cl / "Title.ffpfsc"; _clf.write_bytes(b"x")
+    (_cl / "._Title.ffpfsc").write_bytes(b"x"); (_cl.parent / "._Title [PPSA00001]").write_bytes(b"x")
+    (_cl / "._other.ffpfsc").write_bytes(b"x")
+    _cw2 = m.CLIWorker(app, _p4item, ["py", "cli.py", "placeholder", str(_cl), "--copy", "x"], _pcwd, _pout, _ptmp)
+    _cw2.operation = "copy"
+    _cw2._handle_line(f"[SUCCESS] Copied src.ffpfsc → {_clf}")
+    _cw2._strip_written_clutter()
+    ok("clutter.copy-output-cleaned", _cw2.output_path == str(_clf)
+       and sorted(x.name for x in _cl.parent.rglob("._*")) == ["._other.ffpfsc"],
+       f"{_cw2.output_path} {sorted(x.name for x in _cl.parent.rglob('._*'))}")
     # the editor: a PS4 source hides the PS5 changes, offers library or folder, queues a sorted copy
     _d4 = m.JobDialog(app, init_src=str(_p4g)); root.update()
     _d4.to_var.set(_d4._TARGET_LABEL["ffpfsc"]); _d4._refresh(); root.update()

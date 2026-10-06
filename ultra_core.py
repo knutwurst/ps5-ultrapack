@@ -2758,6 +2758,28 @@ def is_fs_junk_name(name: str) -> bool:
     return name.startswith("._") or name.lower() in FS_JUNK_NAMES
 
 
+def strip_written_clutter(path) -> int:
+    """Remove the macOS clutter a job's own output carries: the '._' sidecar beside *path*
+    and beside the folder holding it, and, when *path* is a folder the job wrote, every
+    clutter entry inside it. On exFAT macOS stores the provenance attribute it adds to each
+    written file as such a sidecar; the system drops it after a few seconds, but an eject
+    before that keeps it for good. Never touches anything else in the folder around *path*.
+    Returns how many entries went."""
+    if not path:
+        return 0
+    p = Path(path)
+    removed = strip_fs_junk(p) if p.is_dir() else 0
+    for q in (p, p.parent):
+        sidecar = q.parent / ("._" + q.name)
+        try:
+            if q.name and sidecar.is_file():
+                sidecar.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def strip_fs_junk(root) -> int:
     """Delete every junk file and folder under *root* (see is_fs_junk_name). Used right
     after an archive is unpacked, so clutter from inside the archive, or AppleDouble
@@ -3267,6 +3289,7 @@ class GameItem:
 # Everything above is re-exported by the GUI module (underscore names included).
 __all__ = [
     "APP_DIR",
+    "strip_written_clutter",
     "_ENV_APP_DIR",
     "_LEGACY_APP_DIRS",
     "RAW_LOG_FILE",
