@@ -30,9 +30,6 @@ backend/native/src/ffpfsc-pkg-tool/out/
 backend/native/src/ffpfsc-pkg-tool/patches/CecilPatch/bin/
 backend/native/src/ffpfsc-pkg-tool/patches/CecilPatch/obj/
 
-# Agent worktrees created by the Claude desktop app
-/.claude/worktrees/
-
 # macOS
 .DS_Store
 
