@@ -1,7 +1,7 @@
 # PS5 UltraPack
 
 <p align="center">
-  <img src="images/main-window.jpg" alt="PS5 UltraPack: the queue with three jobs and the details of the running one" width="900">
+  <img src="images/overview.png" alt="What goes in: a game folder, an archive, a disk image, a container or a package. In one job: read and unpack, integrate a patch, backport, sign, build, clean and name, after the job. What comes out: .ffpfsc, .ffpfs, .pkg or a folder, named from the game itself" width="900">
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="images/overview.png" alt="What goes in: a game folder, an archive, a disk image, a container or a package. In one job: read and unpack, integrate a patch, backport, sign, build, clean and name, after the job. What comes out: .ffpfsc, .ffpfs, .pkg or a folder, named from the game itself" width="900">
+  <img src="images/main-window.jpg" alt="PS5 UltraPack: the queue with three jobs and the details of the running one" width="900">
 </p>
 
 <p align="center">
