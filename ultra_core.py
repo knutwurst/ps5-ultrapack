@@ -454,6 +454,8 @@ def chain_summary(item) -> str:
     """The sentence the dialog shows above 'Add to queue' and the queue row carries:
     'Sign, backport to 7.61, then build .ffpfsc' · 'Unpack to folder' · 'Build .pkg' ·
     'Copy or move (same format)' · 'Sign in place' · 'Nothing to do'."""
+    if getattr(item, "content_kind", "") == "ps4":
+        return "Sort into the PS4 library"
     to = getattr(item, "chain_to", None) or "ffpfsc"
     kind = chain_source_kind(item)
     label = CHAIN_TARGET_LABEL.get(to, to)
@@ -2964,6 +2966,7 @@ class GameItem:
     # Class-level defaults so items built via __new__ (from_*, history, restored queue)
     # always have these attributes even when an older saved queue predates them.
     ampr_emu = False        # PlayGo/APR title? (auto-detected)
+    content_kind = ""       # "ps4": a PS4 package set, sorted into the library by a copy job
     display_name = None     # STABLE queue label captured at add time; survives extraction
                             # (item.name gets rewritten to the extracted stem, which still
                             # drives the OUTPUT filename, but the queue keeps showing this)

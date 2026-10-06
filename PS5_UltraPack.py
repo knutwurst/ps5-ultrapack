@@ -129,6 +129,30 @@ def _backport_module():
     return backport
 
 
+def _ps4pkg_module():
+    """backend/ps4pkg.py: PS4 package identity (Tk-free)."""
+    _bd = str(backend_base_dir())
+    if _bd not in sys.path:
+        sys.path.insert(0, _bd)
+    import ps4pkg
+    return ps4pkg
+
+
+def _is_ps4_source(p) -> bool:
+    """A PS4 package, or a folder (not a game folder) whose packages are all PS4 ones."""
+    try:
+        p = Path(p)
+        m = _ps4pkg_module()
+        if p.is_file():
+            return p.suffix.lower() == ".pkg" and m.is_ps4_package(p)
+        if not p.is_dir() or is_game_folder(p):
+            return False
+        pkgs = [x for x in p.rglob("*.pkg") if x.is_file() and not is_fs_junk_name(x.name)]
+        return bool(pkgs) and all(m.is_ps4_package(x) for x in pkgs)
+    except Exception:
+        return False
+
+
 def _after_job_module():
     """backend/after_job.py: what happens to a job's source once it is done (Tk-free)."""
     _bd = str(backend_base_dir())
@@ -3207,7 +3231,7 @@ class JobDialog(EmbeddedDialog):
                        "generates one from these fields.")
     _KIND_LABEL = {"folder": "Game folder", "parent": "Parent folder", "archive": "Archive",
                    "exfat": "exFAT disk image", "ffpkg": "ffpkg disk image", "ffpfs": ".ffpfs image",
-                   "ffpfsc": ".ffpfsc image", "pkg": "PS5 package (.pkg)"}
+                   "ffpfsc": ".ffpfsc image", "pkg": "PS5 package (.pkg)", "ps4": "PS4 package"}
 
     def __init__(self, app, item=None, init_src: str | None = None, init_to: str | None = None):
         super().__init__(app.root)
@@ -3370,7 +3394,7 @@ class JobDialog(EmbeddedDialog):
 
         # 2 · Change the content — each change is a box: its checkbox line, and its options
         #     frame INSIDE the same box, so the options always sit under their own checkbox.
-        crow = self._group("2", "Change the content", "optional · applied in this order")
+        crow = self._crow = self._group("2", "Change the content", "optional · applied in this order")
         cin = ctk.CTkFrame(crow, fg_color=PANEL); cin.pack(fill="x", padx=10, pady=(2, 6))
 
         opt_font = ctk.CTkFont(size=13)
@@ -3429,7 +3453,7 @@ class JobDialog(EmbeddedDialog):
                                         text_color=MUTED, font=ctk.CTkFont(size=12))
 
         # 3 · Output
-        orow = self._group("3", "Output")
+        orow = self._orow = self._group("3", "Output")
         oin = ctk.CTkFrame(orow, fg_color=PANEL); oin.pack(fill="x", padx=10, pady=(2, 2))
         ctk.CTkSegmentedButton(oin, values=[self._TARGET_LABEL[k] for k in ("folder", "ffpfs", "ffpfsc", "pkg")],
                                 variable=self.to_var, selected_color=ACCENT, selected_hover_color=ACCENT_HOVER).pack(side="left")
@@ -3757,6 +3781,28 @@ class JobDialog(EmbeddedDialog):
                                         f"whether patched libraries are needed")
         return self._hint_cache[target]
 
+    def _ps4_detect_text(self, p: Path) -> str:
+        m = _ps4pkg_module()
+        pkgs = [p] if p.is_file() else sorted(x for x in p.rglob("*.pkg") if x.is_file() and not is_fs_junk_name(x.name))
+        kinds: dict[str, int] = {}
+        first = None
+        for x in pkgs:
+            try:
+                i = m.read_identity(x)
+            except Exception:
+                kinds["unreadable"] = kinds.get("unreadable", 0) + 1
+                continue
+            first = first or i
+            kinds[i.kind] = kinds.get(i.kind, 0) + 1
+        what = ", ".join(f"{n} {k if k != 'dlc' else 'DLC'}{'s' if n != 1 and k != 'dlc' else ''}"
+                         for k, n in kinds.items())
+        bits = ["PS4 package" if p.is_file() else f"PS4 packages · {what}"]
+        if first:
+            bits += [first.title_id, f"v{first.version}" if first.version else ""]
+            if p.is_file():
+                bits.insert(1, {"game": "game", "update": "update", "dlc": "DLC"}.get(first.kind, first.kind))
+        return " · ".join(b for b in bits if b)
+
     def _on_source_changed(self):
         raw = (self.src_var.get() or "").strip()
         p = Path(raw) if raw else None
@@ -3769,6 +3815,13 @@ class JobDialog(EmbeddedDialog):
         if not p or not p.exists():
             self._kind = "none"
             self.detect_var.set("Choose or drop a source." if not raw else "Not found")
+            self._update_identity_for_source(None)
+            self._refresh(); return
+        if _is_ps4_source(p):
+            self._kind = "ps4"; self._games = [p]
+            self.detect_var.set(self._ps4_detect_text(p))
+            if p.is_file():
+                self._look_btn.pack(side="left", padx=(10, 0))
             self._update_identity_for_source(None)
             self._refresh(); return
         if p.is_dir():
@@ -4035,12 +4088,26 @@ class JobDialog(EmbeddedDialog):
             backport_target=(self.backport_target_var.get() if self.backport_on_var.get() else None))
 
     def _refresh(self):
+        ps4 = self._kind == "ps4"
+        if ps4:
+            # a PS4 package is sorted into the library (.pkg) or unpacked (Folder, one file)
+            src = Path((self.src_var.get() or "").strip())
+            if self._to_key() in ("ffpfs", "ffpfsc") or (self._to_key() == "folder" and not src.is_file()):
+                self.to_var.set(self._TARGET_LABEL["pkg"])
+            for v in (self.patch_on_var, self.backport_on_var, self.sign_var):
+                v.set(False)
+        crow, orow = getattr(self, "_crow", None), getattr(self, "_orow", None)
+        if crow is not None and orow is not None:          # both exist once the dialog is built
+            if ps4:
+                crow.pack_forget()
+            elif not crow.winfo_manager():
+                crow.pack(fill="x", padx=20, pady=5, before=orow)
         to = self._to_key()
         # progressive disclosure
         (self._patch_opts.pack(fill="x", pady=(2, 2)) if self.patch_on_var.get() else self._patch_opts.pack_forget())
         (self._backport_opts.pack(fill="x", pady=(2, 2)) if self.backport_on_var.get() else self._backport_opts.pack_forget())
-        (self._pkg_opts.pack(fill="x", pady=(2, 0)) if to == "pkg" else self._pkg_opts.pack_forget())
-        if to in ("ffpfsc", "pkg"):
+        (self._pkg_opts.pack(fill="x", pady=(2, 0)) if to == "pkg" and not ps4 else self._pkg_opts.pack_forget())
+        if to in ("ffpfsc", "pkg") and not ps4:
             show, hide = (self._comp_pkg, self._comp_ffpfsc) if to == "pkg" else (self._comp_ffpfsc, self._comp_pkg)
             hide.pack_forget()
             if not show.winfo_manager():
@@ -4067,7 +4134,9 @@ class JobDialog(EmbeddedDialog):
         self._to_hint.set({"folder": "plain /app0 folder — for a folder source: changes in place",
                            "ffpfs": "uncompressed image — fastest to build and mount, full size",
                            "ffpfsc": "compressed image — mounts with ShadowMount",
-                           "pkg": "installable package"}.get(to, ""))
+                           "pkg": "installable package"}.get(to, "") if not ps4 else
+                          {"pkg": "into the library: '<Title> [CUSA…] [vX]', UPDATE and DLC named, 'DLC Pack' from 4 DLCs",
+                           "folder": "the package's files in a folder"}.get(to, ""))
         in_place = self._in_place(to)
         for w in (self._out_entry, self._out_btn):
             try:
@@ -4097,6 +4166,9 @@ class JobDialog(EmbeddedDialog):
         if self._kind in ("none", "folder-unknown", "file-unknown") or p is None:
             text = "Choose a source"
             ok = False
+        elif ps4:
+            text = "Sort into the PS4 library" if to == "pkg" else "Unpack to folder"
+            ok = True
         elif self._kind == "parent":
             todo = self._parent_todo()
             if todo:
@@ -4202,6 +4274,29 @@ class JobDialog(EmbeddedDialog):
         self.after(150, poll)
 
     # ── commit ───────────────────────────────────────────────────────────────
+    def _add_ps4(self, p: Path, to: str, out: str):
+        """A PS4 source: a sorted copy into the library, or (one package) an unpack job."""
+        aj = _after_job_module()
+        after = self.after_var.get() if self.after_var.get() in aj.ACTIONS else aj.KEEP
+        after_dir = (self.after_dir_var.get() or "").strip()
+        if to == "folder":
+            dest = Path(out) / f"{sanitize_filename(p.stem)} [extracted]"
+            it = GameItem.from_fpkg_extract(p, output_path=str(dest))
+        else:
+            it = self.app._ps4_item_for(p, output_path=out)
+        it.after_source, it.after_move_to = after, after_dir or None
+        it.source_root = str(p.parent if p.is_file() else p)
+        if self.edit_item is not None:
+            try:
+                self.app.queue[self.app.queue.index(self.edit_item)] = it
+            except ValueError:
+                self.app.queue.append(it)
+        else:
+            self.app.queue.append(it)
+        self.app.update_queue_box(select_item=it)
+        self.app.log("OK", f"Queued: {chain_summary(it)} — {it.display_name or it.name}.  Press ▶ START to run.")
+        self.destroy()
+
     def _add(self):
         raw = (self.src_var.get() or "").strip()
         p = Path(raw) if raw else None
@@ -4238,6 +4333,8 @@ class JobDialog(EmbeddedDialog):
                 _backport_module().target_words(target, self._fw_root())
             except ValueError as e:
                 messagebox.showerror("Backport", str(e), parent=self); return
+        if self._kind == "ps4":
+            return self._add_ps4(p, to, out)
         stand = self._stand_in(p)
         if chain_summary(stand).startswith("Nothing to do"):
             messagebox.showerror("Nothing to do", "A folder to a folder with no changes is nothing to do.", parent=self); return
@@ -5888,6 +5985,9 @@ class App:
     def _job_recipe_parts(self, item) -> list[str]:
         op = getattr(item, "operation", "pack")
         src = source_label(item)
+        if op == "copy" and getattr(item, "content_kind", "") == "ps4":
+            n = int(getattr(item, "ps4_count", 0) or 0)
+            return [src, "PS4 library" + (f" · {n} package{'s' if n != 1 else ''}" if n else "")]
         if op == "chain":
             ch = []
             for c in chain_changes(item):
@@ -6562,6 +6662,16 @@ class App:
                 self.log("WARN", f"Dropped path not found: {p}"); continue
             # A dropped .pkg becomes an fPKG-extract job (into a "<name> [extracted]" folder
             # next to it, unless a global Output is set).
+            if p.is_file() and p.suffix.lower() == ".pkg" and _is_ps4_source(p):
+                # a PS4 package goes into the library; without an Output the editor asks where
+                out = (self.output_var.get() or "").strip()
+                if not out:
+                    self.open_job_dialog(init_src=str(p)); continue
+                item = self._ps4_item_for(p, output_path=out)
+                self.queue.append(item)
+                self.update_queue_box(select_item=item)
+                self.log("OK", f"PS4 package queued from drop: {p.name} -> {out}.")
+                continue
             if p.is_file() and p.suffix.lower() == ".pkg":
                 out = (self.output_var.get() or "").strip()
                 if not out:
@@ -6608,6 +6718,15 @@ class App:
         if not path:
             return
         p = Path(path)
+        if p.suffix.lower() == ".pkg" and _is_ps4_source(p):
+            out = (self.output_var.get() or "").strip()
+            if not out:
+                self.open_job_dialog(init_src=str(p)); return
+            item = self._ps4_item_for(p, output_path=out)
+            self.queue.append(item)
+            self.update_queue_box(select_item=item)
+            self.log("OK", f"PS4 package queued: {p.name} -> {out}.")
+            return
         # A picked .pkg becomes an fPKG-extract queue item straight away.
         if p.suffix.lower() == ".pkg":
             out = (self.output_var.get() or "").strip()
@@ -6727,6 +6846,12 @@ class App:
 
         packages = find_files_by_suffix(extracted_root, {".pkg"})
         if packages:
+            ps4 = [x for x in packages if _ps4pkg_module().is_ps4_package(x)]
+            if ps4:
+                others = len(packages) - len(ps4)
+                self.log("INFO", f"Archive payload detected: {len(ps4)} PS4 package(s)"
+                                 + (f"; {others} other package(s) stay in the extraction" if others else ""))
+                return "ps4", [extracted_root]
             self.log("INFO", f"Archive payload detected: {len(packages)} package(s) (.pkg)")
             return "pkg", packages
 
@@ -6751,6 +6876,8 @@ class App:
         )
 
     def _item_from_payload_path(self, kind: str, path: Path) -> GameItem:
+        if kind == "ps4":
+            return self._ps4_item_for(path)
         if kind == "pfs":
             return GameItem.from_pfs_image(path)
         if kind == "pkg":
@@ -6852,6 +6979,18 @@ class App:
         # can never leak into the next folder the user drops.
         _unpack_folder = bool(self.unpack_mode_var.get())
         self.unpack_mode_var.set(False)
+
+        # ── PS4 packages (one, or a folder of them): sorted into the library ─────────
+        if not _unpack_folder and _is_ps4_source(src):
+            out = (self.output_var.get() or "").strip()
+            if not out:
+                self.pending_start = False
+                self.open_job_dialog(init_src=str(src)); return
+            item = self._ps4_item_for(src, output_path=out)
+            self.queue.append(item)
+            self.update_queue_box(select_item=item)
+            self.log("OK", f"PS4 packages queued: {src.name} -> {out}.  Press ▶ START to run.")
+            return
 
         # ── Existing uncompressed .ffpfs — a PACK source (re-pack to .ffpfsc, or copy
         #    when the format toggle is set to uncompressed). Read in place, no extraction. ─
@@ -7854,6 +7993,8 @@ class App:
                 if self.cancel_requested:
                     raise ArchiveExtractionCancelled("Archive extraction cancelled by user.")
                 kind, paths = self._classify_extracted_payload(extracted_root, archive.name)
+                if kind == "ps4":
+                    item.operation = "copy"           # sorted into the library, whatever the job said
                 if kind == "pkg" and getattr(item, "operation", "") != "chain":
                     # A package is unpacked through the chain; an older pack job keeps its
                     # format, an fPKG job builds a .pkg again.
@@ -7865,6 +8006,12 @@ class App:
                 item.origin_archive = str(archive)
                 item.origin_extracted_size = int(getattr(item, "extracted_size", 0) or 0)
                 self._copy_item_payload(item, primary)
+                if kind == "ps4":
+                    item.content_kind = "ps4"
+                    item.copy_mode = "organize"
+                    item.ps4_count = getattr(primary, "ps4_count", 0)
+                    if getattr(primary, "display_name", None):
+                        item.display_name = primary.display_name
                 if kind == "pkg":
                     self._probe_pkg_content(item)
                 try:
@@ -8351,6 +8498,32 @@ class App:
         base.name = src.stem
         return base
 
+    def _ps4_item_for(self, src, *, output_path=None):
+        """A copy job that sorts PS4 packages into the library: one .pkg, or a folder of
+        them (an archive's extraction, a download folder). The backend names and places
+        each package ('<Title> [CUSA…] [vX]/…'); see backend/ps4_sort.py."""
+        src = Path(src)
+        item = GameItem.from_exfat(src) if src.is_file() else GameItem(src)
+        item.operation = "copy"
+        item.content_kind = "ps4"
+        item.copy_mode = "organize"
+        item.output_path = Path(output_path) if output_path else None
+        m = _ps4pkg_module()
+        pkgs = [src] if src.is_file() else sorted(x for x in src.rglob("*.pkg")
+                                                 if x.is_file() and not is_fs_junk_name(x.name))
+        idents = []
+        for x in pkgs:
+            try:
+                idents.append(m.read_identity(x))
+            except Exception:
+                pass
+        main = next((i for i in idents if i.kind == "game"), None) or (idents[0] if idents else None)
+        if main:
+            item.title_id = main.title_id
+            item.display_name = main.title or src.stem
+        item.ps4_count = len(pkgs)
+        return item
+
     # ── Auto-organize: where a job lands and what it is called ───────────────
     def _auto_organize_on(self, item) -> bool:
         v = getattr(item, "auto_organize", None)
@@ -8548,6 +8721,8 @@ class App:
                 return self._ident_from_param_json(pj) if pj.is_file() else None
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
+        if suf == ".pkg" and _is_ps4_source(p):
+            return self._ps4_identity(p)
         if suf == ".pkg":
             tmp = Path(tempfile.mkdtemp(prefix="ffpfsc_pkg_ident_"))
             try:
@@ -8582,11 +8757,21 @@ class App:
             return None
         return {"title": title, "title_id": tid.upper(), "version": ver}
 
+    def _ps4_identity(self, path):
+        """{title, title_id, version} of a PS4 package, or None."""
+        try:
+            i = _ps4pkg_module().read_identity(path)
+            return {"title": i.title, "title_id": i.title_id, "version": i.version}
+        except Exception:
+            return None
+
     def _source_fw(self, p: Path) -> str:
         """The firmware the game in *p* needs, from its eboot.bin's SDK version: read in
         place for a folder, through the backend for a .ffpfs/.ffpfsc/.pkg (headers only).
         '' when unreadable (an encrypted eboot, a disk image)."""
         try:
+            if _is_ps4_source(p):
+                return ""                       # PS5 firmware tags do not apply to PS4 content
             if p.is_dir():
                 bp = _backport_module()
                 words = bp.sdk_words_of_file(p / "eboot.bin")
@@ -8730,7 +8915,9 @@ class App:
         """The file this job will write, named the way build_command names it, or None when
         that cannot be known before the job runs: an archive whose game cannot be read yet
         (its name then comes from the extracted game), a .pkg without auto-organize (the
-        package tool names it), a folder output."""
+        package tool names it), a folder output, a PS4 set (the backend names every package)."""
+        if getattr(item, "content_kind", "") == "ps4":
+            return None
         op = getattr(item, "operation", "pack")
         if op == "chain":
             to = getattr(item, "chain_to", None) or "ffpfsc"
@@ -9871,6 +10058,18 @@ class App:
         # source and target land on the same drive the backend performs an
         # atomic os.rename; otherwise it does a chunked copy and (unless the
         # user unchecked the option) deletes the source afterwards.
+        if op == "copy" and getattr(item, "content_kind", "") == "ps4":
+            # the backend sorts the package(s) into '<Title> [CUSA…] [vX]/…' under the output
+            try:
+                out.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            head = (pycmd + ["placeholder", str(out)] if getattr(sys, "frozen", False)
+                    else pycmd + ["-u", str(cli_py), "placeholder", str(out)])
+            cmd = head + ["--ps4-sort", str(item.path),
+                          "--copy-mode", getattr(item, "copy_mode", None) or "organize",
+                          "--if-exists", self.output_exists_var.get() or "skip"]
+            return cmd, backend, out, temp
         if op == "copy":
             src = Path(item.path)
             out_ext = src.suffix.lower()

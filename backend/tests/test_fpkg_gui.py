@@ -1982,6 +1982,49 @@ try:
     #    open Finder are checked by the handler they are bound to instead of being clicked.
     close_toplevels(); root.update()
     _fd_calls = []
+    # PS4 packages: a sorted copy job, never the PS5 reader; PS5 packages keep their path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from ps4_fixture import make_pkg as _mk4
+    _p4dir = S / "ps4_src"; _p4dir.mkdir(exist_ok=True)
+    _p4g = _mk4(_p4dir / "base.pkg", content_id="UP0000-CUSA00001_00-SAMPLEGAME000000", content_type=0x1A,
+                sfo={"TITLE": "Sample Game", "TITLE_ID": "CUSA00001", "CATEGORY": "gd", "APP_VER": "01.00"})
+    _mk4(_p4dir / "dlc.pkg", content_id="UP0000-CUSA00001_00-SAMPLEDLC0000000", content_type=0x1B,
+         sfo={"TITLE": "Sample Game - Extra", "TITLE_ID": "CUSA00001", "CATEGORY": "ac", "VERSION": "01.00"})
+    _p4item = app._ps4_item_for(_p4dir, output_path=str(OUT))
+    _p4cmd, *_ = app.build_command(_p4item)
+    ok("ps4.item-is-sorted-copy", _p4item.operation == "copy" and _p4item.content_kind == "ps4"
+       and "--ps4-sort" in _p4cmd and "--if-exists" in _p4cmd and _p4item.display_name == "Sample Game",
+       " ".join(_p4cmd[-7:]))
+    ok("ps4.row-text", app._job_recipe_parts(_p4item) == ["Folder", "PS4 library · 2 packages"],
+       str(app._job_recipe_parts(_p4item)))
+    _kind, _paths = app._classify_extracted_payload(_p4dir, "sample.zip")
+    ok("ps4.archive-payload", _kind == "ps4" and _paths == [_p4dir], f"{_kind} {_paths}")
+    ok("ps4.identity", app._read_image_metadata(_p4g) == {"title": "Sample Game", "title_id": "CUSA00001",
+                                                          "version": "01.00"}, str(app._read_image_metadata(_p4g)))
+    ok("ps4.no-predicted-output", app._predicted_output(_p4item) is None, "")
+    (S / "ps5only").mkdir(exist_ok=True)
+    _p5 = _mk4(S / "ps5only" / "x.pkg", content_id="UP0000-PPSA00001_00-SAMPLEGAME000000",
+               content_type=0x1A, sfo={"TITLE": "X", "CATEGORY": "gd"})
+    _k5, _ = app._classify_extracted_payload(_p5.parent, "ps5.zip")
+    ok("ps4.ps5-package-unchanged", _k5 == "pkg" and not m._is_ps4_source(_p5), _k5)
+    # the editor: a PS4 source hides the PS5 changes, offers library or folder, queues a sorted copy
+    _d4 = m.JobDialog(app, init_src=str(_p4g)); root.update()
+    _d4.to_var.set(_d4._TARGET_LABEL["ffpfsc"]); _d4._refresh(); root.update()
+    _hidden = not _d4._crow.winfo_manager()
+    ok("ps4.dialog-view", _d4._kind == "ps4" and _d4._to_key() == "pkg" and _hidden
+       and "PS4 package" in _d4.detect_var.get(), f"{_d4._kind} {_d4._to_key()} hidden={_hidden} {_d4.detect_var.get()}")
+    _q_before = len(app.queue)
+    _d4.out_var.set(str(OUT)); _d4._add(); settle()
+    _q4 = app.queue[-1] if len(app.queue) > _q_before else None
+    ok("ps4.dialog-queues-sorted-copy", _q4 is not None and _q4.content_kind == "ps4" and _q4.path == _p4g,
+       str(getattr(_q4, "content_kind", None)))
+    if _q4 is not None:
+        app.queue.remove(_q4); app.update_queue_box()
+    # switching back to a PS5 source shows the changes again
+    _d5 = m.JobDialog(app, init_src=str(_p4g)); root.update()
+    _d5.src_var.set(str(HBT)); root.update(); _d5._refresh(); root.update()
+    ok("ps4.dialog-back-to-ps5", _d5._kind == "folder" and bool(_d5._crow.winfo_manager()), _d5._kind)
+    _d5.destroy(); root.update()
     # Organize: the dialog walks a folder, queues one copy job per image and logs a summary
     # (the summary line once referred to a name that did not exist and raised after queueing)
     _org_src = S / "org_src"; _org_src.mkdir(exist_ok=True); shutil.copy2(FF, _org_src / FF.name)
