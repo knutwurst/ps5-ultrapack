@@ -20,7 +20,7 @@ namespace PkgTool;
 
 internal static class Program
 {
-    const string ToolVersion = "2.1.1";
+    const string ToolVersion = "2.1.2";
 
     static int Main(string[] args)
     {
@@ -1007,57 +1007,7 @@ internal static class Program
         Console.WriteLine($"summary: {p} passed, {w} warned, {f} failed");
     }
 
-    /// <summary>Where the build's mirror of the source goes and whether it can be made of hard
-    /// links. Hard links only work on the volume the source lives on, so the preferred place is
-    /// a hidden directory next to the source folder (<c>&lt;parent&gt;/.ffpfsc-stage-&lt;id&gt;</c>);
-    /// --temp is tried second (it may be the same volume). Each candidate is proven with one
-    /// real <c>link()</c> of a source file — EXDEV (18) means another volume, EPERM (1) or
-    /// ENOTSUP (45) a file system without hard links (exFAT/FAT). Only when no candidate
-    /// takes a hard link does the mirror become a copy into --temp, and the caller says so
-    /// before copying; the old code fell back to File.Copy per file silently, which turned a
-    /// cross-volume build into an unannounced full copy of the game.</summary>
-    static (string dir, bool hardLinks, string copyReason) ChooseStageDir(string source, string temp)
-    {
-        string id = Guid.NewGuid().ToString("N").Substring(0, 8);
-        string sourceFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(source));
-        string tempFull = Path.GetFullPath(temp);
-        string? parent = Path.GetDirectoryName(sourceFull);
-        string? probeSource = null;
-        try { probeSource = Directory.EnumerateFiles(sourceFull, "*", SearchOption.AllDirectories).FirstOrDefault(f => !IsSymlink(f)); } catch { }
-        bool parentWritable = false, parentSameVolume = false, noHardLinkSupport = false;
-
-        var candidates = new List<(string dir, bool nextToSource)>();
-        if (parent != null) candidates.Add((Path.Combine(parent, ".ffpfsc-stage-" + id), true));
-        candidates.Add((Path.Combine(tempFull, "ffpfsc-stage-" + id), false));
-        foreach (var (cand, nextToSource) in candidates)
-        {
-            // Never inside the source: the mirror would contain itself (the old --temp-inside-
-            // source run recursed until PathTooLongException) and the library refuses it anyway.
-            if (IsInside(cand, sourceFull)) continue;
-            try { Directory.CreateDirectory(cand); } catch { continue; }
-            if (nextToSource) parentWritable = true;
-            if (probeSource == null) return (cand, true, "");   // nothing to link
-            var probe = Path.Combine(cand, ".hardlink-probe");
-            int rc = link(probeSource, probe);
-            int errno = rc == 0 ? 0 : Marshal.GetLastPInvokeError();
-            if (rc == 0)
-            {
-                try { File.Delete(probe); } catch { }
-                return (cand, true, "");
-            }
-            try { Directory.Delete(cand, recursive: true); } catch { }
-            if (errno == 1 || errno == 45) noHardLinkSupport = true;            // EPERM / ENOTSUP
-            if (nextToSource && errno != 18) parentSameVolume = true;           // anything but EXDEV
-        }
-        string dir = Path.Combine(tempFull, "ffpfsc-stage-" + id);
-        Directory.CreateDirectory(dir);
-        string reason = noHardLinkSupport ? "source file system does not support hard links"
-                      : !parentWritable   ? "source volume is read-only"
-                      : parentSameVolume  ? "hard links refused on the source volume"
-                                          : "no writable location on the source volume";
-        return (dir, false, reason);
-    }
-
+    /// <summary>True when <paramref name="path"/> is <paramref name="root"/> or lies below it.</summary>
     static bool IsInside(string path, string root)
     {
         var p = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
@@ -1065,16 +1015,22 @@ internal static class Program
         return p.Equals(r, StringComparison.Ordinal) || p.StartsWith(r + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
-    /// <summary>Mirror *src* into *dst*: real subdirectories and, per regular file, a hard link
-    /// (or a copy when <paramref name="hardLinks"/> is false). Hard links, not symlinks —
-    /// LibProsperoPkg stats the source path and expects a real file layout; some readers get
-    /// the size right but read partial data through symlinks (verified: "ended after 6 of 84
-    /// bytes"). A hard link that fails for one file (EMLINK and the like) is copied with a
-    /// visible line, never silently.</summary>
-    static void MirrorSource(string src, string dst, bool hardLinks)
+    /// <summary>Copy *src* into *dst*: real subdirectories and a real copy of every regular file
+    /// (clutter left out, see FsJunk), modification times kept. Prints "[stage] copy NN% (X of
+    /// Y GB)" about once a second for the GUI's bar. Never hard links: through a link every
+    /// pre-build change (fake-signing, dropped PlayGo files, the rewritten param.json) would
+    /// reach the caller's source.</summary>
+    static void MirrorSource(string src, string dst, long totalBytes)
     {
-        // OS and archiver clutter (._*, .DS_Store, __MACOSX, …) is never staged, so it can
-        // never be packed; see FsJunk.
+        long done = 0, lastTick = Environment.TickCount64 - 1000;
+        void Report(bool force)
+        {
+            if (!force && Environment.TickCount64 - lastTick < 1000) return;
+            lastTick = Environment.TickCount64;
+            int pct = totalBytes > 0 ? (int)Math.Min(100, done * 100 / totalBytes) : 100;
+            Console.Error.WriteLine($"[stage] copy {pct}% ({done / 1073741824.0:F1} of {totalBytes / 1073741824.0:F1} GB)");
+        }
+        var buffer = new byte[4 * 1024 * 1024];
         foreach (var d in Directory.EnumerateDirectories(src, "*", SearchOption.AllDirectories))
         {
             var relDir = Path.GetRelativePath(src, d);
@@ -1088,15 +1044,20 @@ internal static class Program
             var target = Path.Combine(dst, relFile);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             if (File.Exists(target) || IsSymlink(target)) File.Delete(target);
-            if (hardLinks)
+            using (var input = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20))
+            using (var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20))
             {
-                var rc = link(Path.GetFullPath(f), target);
-                if (rc == 0) continue;
-                int errno = Marshal.GetLastPInvokeError();
-                Console.Error.WriteLine($"  [stage] link() failed for {Path.GetRelativePath(src, f)} (errno {errno}); copying that file");
+                int n;
+                while ((n = input.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    output.Write(buffer, 0, n);
+                    done += n;
+                    Report(false);
+                }
             }
-            File.Copy(f, target, overwrite: true);
+            try { File.SetLastWriteTimeUtc(target, File.GetLastWriteTimeUtc(f)); } catch { }
         }
+        Report(true);
     }
 
     static long DirectorySize(string root)
@@ -1106,8 +1067,6 @@ internal static class Program
         return total;
     }
 
-    [DllImport("libc", SetLastError = true)]
-    static extern int link(string source, string target);
 
     static bool IsSymlink(string p)
     {
@@ -1291,11 +1250,17 @@ internal static class Program
             EnableOuterBlockCoalescing = true,
             EnableRelocationAlignmentAdjustment = true,
         };
+        bool stageInPlace = false;   // the source is the caller's own working copy: no mirror
         for (int i = 3; i < args.Length; i++)
         {
             string a = args[i];
             switch (a)
             {
+                case "--stage-in-place":
+                    // The source is the caller's own working copy (an image it unpacked into
+                    // its scratch): the pre-build changes go straight into it, nothing is copied.
+                    stageInPlace = true;
+                    break;
                 case "--content-id": opts.ContentId = Need(args, ref i, a); break;
                 case "--title-id": opts.TitleId = Need(args, ref i, a); break;
                 case "--title": opts.Title = Need(args, ref i, a); break;
@@ -1432,8 +1397,9 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(opts.TitleId)) return Bad("--title-id required");
         Directory.CreateDirectory(opts.OutputFolder);
 
-        // Stage: every build works on a mirror of the source (hard links where possible, no
-        // gigabyte copy). The pre-build transforms run on that mirror:
+        // Stage: every build works on a stage, a real copy of the source, or the source itself
+        // when the caller says it is its own working copy (--stage-in-place). Never hard links.
+        // The pre-build transforms run on that stage:
         //   (a) auto-generate sce_sys/*.dds from PNGs the source only provides as PNG
         //       (LibProsperoPkg's builder moves sce_sys/*.dds into the outer CNT but does
         //       NOT generate the DDS itself; without them the .pkg installs but never
@@ -1616,12 +1582,21 @@ internal static class Program
             // conversion, which runs LAST and is caught per icon.
             {
                 string tempRoot = string.IsNullOrEmpty(opts.TemporaryDirectory) ? Path.GetTempPath() : opts.TemporaryDirectory!;
-                var (stageDir, hardLinks, copyReason) = ChooseStageDir(effectiveSource, tempRoot);
-                autoStage = stageDir;
-                if (!hardLinks)
-                    Console.Error.WriteLine($"[stage] {copyReason}: copying {DirectorySize(effectiveSource) / 1073741824.0:F1} GB into {tempRoot}");
-                MirrorSource(effectiveSource, autoStage, hardLinks);
-                Console.Error.WriteLine($"  [stage] mirrored source into {autoStage} ({(hardLinks ? "hard links" : "copy")})");
+                if (stageInPlace)
+                {
+                    autoStage = effectiveSource;
+                    Console.Error.WriteLine($"  [stage] staged in place: {autoStage} (the caller's working copy; nothing copied)");
+                }
+                else
+                {
+                    // A real copy on every file system, never hard links (see MirrorSource).
+                    autoStage = Path.Combine(tempRoot, "ffpfsc-stage-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                    Directory.CreateDirectory(autoStage);
+                    long stageBytes = DirectorySize(effectiveSource);
+                    Console.Error.WriteLine($"[stage] copying {stageBytes / 1073741824.0:F1} GB into {autoStage} (the source stays untouched)");
+                    MirrorSource(effectiveSource, autoStage, stageBytes);
+                    Console.Error.WriteLine($"  [stage] mirrored source into {autoStage} (copy)");
+                }
 
                 // (0) Drop corrupt/mislabeled sce_sys metadata from the mirror (unlinks the
                 //     hard link; the on-disk source is untouched). Shipping a corrupt PlayGo
@@ -1650,8 +1625,7 @@ internal static class Program
                             var bytes = File.ReadAllBytes(srcFile);
                             if (!ProsperoFself.IsElf(bytes) || ProsperoFself.IsSelf(bytes)) { skipped++; continue; }
                             var fself = ProsperoFself.MakeFself(bytes, new FselfOptions());
-                            // The staged file is a hardlink to the source — unlink it and
-                            // write the new bytes into the staged path so the source stays untouched.
+                            // Replace the staged file (in place it is the source file itself, read above).
                             if (File.Exists(stagedFile) || IsSymlink(stagedFile)) File.Delete(stagedFile);
                             Directory.CreateDirectory(Path.GetDirectoryName(stagedFile)!);
                             File.WriteAllBytes(stagedFile, fself);
@@ -1668,9 +1642,8 @@ internal static class Program
 
                 // (c) Retail-normalize: two moves to make a "standard"-DRM retail dump
                 // produce a package that a JB PS5 with kstuff-lite 1.13+ launches.
-                //   (c.i) Drop placeholder license.dat/info from the staged mirror so
+                //   (c.i) Drop placeholder license.dat/info from the stage so
                 //         LibProsperoPkg's per-file iterator does not warn+skip on them.
-                //         The unlink is against the hardlink; source stays untouched.
                 //   (c.ii) Install a LicenseProvider that returns a valid debug license
                 //         for this contentId. LibProsperoPkg calls GetLicense() during
                 //         CollectMediaEntries and yields the returned bytes as CNT
@@ -1902,7 +1875,7 @@ internal static class Program
             Console.Error.WriteLine("[error] source staging failed (" + chain + "); nothing was built. A package built from the raw source would lack PlayGo validation, license entries, fake-signing and the retail SELF flag.");
             if (Environment.GetEnvironmentVariable("PKG_TOOL_TRACE") == "1")
                 Console.Error.WriteLine(ex.ToString());
-            CleanupStage(autoStage);
+            if (!stageInPlace) CleanupStage(autoStage);
             return 1;
         }
 
@@ -1917,7 +1890,7 @@ internal static class Program
         var tempBefore = new HashSet<string>(LibraryTempFiles(tempFull), StringComparer.Ordinal);
         void CleanupAfterFailure()
         {
-            CleanupStage(autoStage);
+            if (!stageInPlace) CleanupStage(autoStage);
             foreach (var p in SafeEnumerate(outFull, "*.pkg")) if (!pkgBefore.Contains(p)) TryDeleteFile(p, "partial package");
             foreach (var p in LibraryTempFiles(tempFull)) if (!tempBefore.Contains(p)) TryDeleteFile(p, "library temp file");
         }
@@ -1968,7 +1941,7 @@ internal static class Program
         finally
         {
             buildDone.Set();
-            CleanupStage(autoStage);
+            if (!stageInPlace) CleanupStage(autoStage);
         }
         Console.WriteLine($"OK — wrote {result.OutputPath} ({new FileInfo(result.OutputPath).Length:N0} B)");
         if (result.Warnings != null)

@@ -2673,6 +2673,7 @@ def main() -> None:
         args.patch = None; args.backport_target = None; args.backport_libs = None
         args.chain_sign = False; args.fake_sign_first = False; args.chain_to = None
         if to == "pkg":
+            args._fpkg_in_place = owned is not None   # the tool may build right in our scratch
             args.fpkg_build = str(root)
         else:
             args.game_folder = str(root); args.operation = "pack"; args.no_compress = (to == "ffpfs")
@@ -2723,6 +2724,11 @@ def main() -> None:
                 _set_phase("Reading Game"); _bar(100 if "prepared" in low else 50, "inner files prepared"); return
             if "writing afid-ordered inner data" in low:
                 _set_phase("Creating Temp PFS"); _bar(0, "inner image (Kraken) — pfs_image.dat"); return
+            m = re.search(r"\[stage\] copy (\d+)%", line)
+            if m:
+                _set_phase("Reading Game"); _bar(int(m.group(1)), "staging copy"); return
+            if "[stage] staged in place" in low:
+                _set_phase("Reading Game"); _bar(100, "staged in place"); return
             m = re.search(r"\[stage (\d)/5\]", line)
             if m:
                 st = int(m.group(1))
@@ -2894,6 +2900,8 @@ def main() -> None:
                                  publishing_tools_dll=args.fpkg_pubtools_dll,
                                  deterministic=bool(args.fpkg_deterministic),
                                  temp_dir=str(build_temp),
+                                 # an image we unpacked ourselves is built in place: no copy
+                                 stage_in_place=(staged is not None or bool(getattr(args, "_fpkg_in_place", False))),
                                  level=int(args.compression_level),
                                  retail_normalize=not args.fpkg_no_retail_normalize,
                                  hdr_flag=args.fpkg_hdr_flag,

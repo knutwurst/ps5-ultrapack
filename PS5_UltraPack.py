@@ -96,7 +96,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.1.2"
 # For archive sources, the GUI extraction occupies the first slice of a game's overall
 # progress; the worker's pack progress is compressed into the remaining tail so the
 # whole-game percentage stays monotonic across extraction → pack (see CLIWorker._set_stage
@@ -1930,8 +1930,8 @@ class CLIWorker(threading.Thread):
     FPKG_BUILD_WEIGHTS = {
         "Scanning Files":      (0,    2),
         "Extracting":          (2,   30),   # only when the source is a .ffpfsc/.exfat image
-        "Reading Game":        (30,  33),
-        "Creating Temp PFS":   (33,  72),   # inner image incl. Kraken
+        "Reading Game":        (30,  45),   # the staging copy of a folder source, when one is needed
+        "Creating Temp PFS":   (45,  72),   # inner image incl. Kraken
         "Compressing":         (72,  84),   # NAPS tables + outer-PFS AES-XTS
         "Writing Final Image": (84,  94),   # CNT + FIH finalize
         "Verifying Output":    (94,  98),   # validate checklist

@@ -178,6 +178,7 @@ def build(src_dir: Path, out_dir: Path,
           regen_playgo: bool = False,
           fake_sign: bool = True,
           ampr_index: bool = True,
+          stage_in_place: bool = False,
           on_line=None) -> int:
     """
     Build a debug fPKG from a prepared /app0-style source folder.
@@ -249,6 +250,10 @@ def build(src_dir: Path, out_dir: Path,
         argv += ["--no-ampr-index"]
     if not fake_sign:
         argv += ["--no-fake-sign"]
+    if stage_in_place:
+        # src_dir is this app's own working copy (an image unpacked into its scratch): the
+        # tool's pre-build changes go straight into it instead of into one more copy.
+        argv += ["--stage-in-place"]
     return _run(argv, on_line=on_line)
 
 

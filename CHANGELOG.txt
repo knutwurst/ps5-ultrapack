@@ -3,7 +3,25 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.1.1  (current)
+  v2.1.2  (current)
+────────────────────────────────────────────────────────────────────────
+
+BUILDING A .PKG: NO SECOND COPY OF THE GAME, NO HARD LINKS
+
+  - A .pkg built from an image the app unpacked itself (a .ffpfsc,
+    .ffpfs, .exfat or .pkg source) is now built right in that unpacked
+    copy. Until now the package tool made one more copy of the whole game
+    first; on an exFAT drive a real one: for a big game 149 GB and a
+    quarter of an hour, with nothing on the progress bar.
+  - A .pkg built from your own game folder still works on a copy, so the
+    folder stays as it is, and that copy now shows its progress ("staging
+    copy", 30 to 45 % of the job).
+  - The package tool never uses hard links any more, on any drive. A
+    change made for the package (signing, a dropped PlayGo file, the
+    rewritten param.json) can no longer reach the source through a link.
+
+────────────────────────────────────────────────────────────────────────
+  v2.1.1
 ────────────────────────────────────────────────────────────────────────
 
 PAUSE AFTER THE RUNNING JOB
