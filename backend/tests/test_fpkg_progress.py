@@ -83,6 +83,12 @@ class KrakenMeter(unittest.TestCase):
         labels = [b.split("% ", 1)[1] for b in self.r.bars()[-5:]]
         self.assertEqual(labels, ["CNT image", "CNT image", "finalize", "finalize (FIH digests)", "finalized .pkg written"])
         self.assertIn("80% finalize (FIH digests)", self.r.bars()[-2])
+        # the validate checklist prints its table at the end; its milestones move the bar
+        self.r.feed("[INFO] Auto-validating: x.pkg", "[validate] file", "[validate] header", "[validate] cnt",
+                    "[validate] entries", "[validate] inner", "[validate] report", "summary: 40 passed, 0 warned, 0 failed")
+        self.assertEqual(self.r.phases()[-1], "Verifying Output")
+        pcts = [int(b.split("%")[0].rsplit("] ", 1)[1]) for b in self.r.bars()[-8:]]
+        self.assertEqual(pcts, [0, 5, 15, 30, 55, 70, 95, 100])
 
 
 if __name__ == "__main__":

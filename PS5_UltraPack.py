@@ -1452,20 +1452,26 @@ class SettingsView:
                 _cl_lbl.configure(text=str(self.app.compression_level_var.get()))
         self.app.compression_level_var.trace_add("write", _cl_cb)
 
-        ctk.CTkLabel(_st, text=".pkg speed for new jobs:", text_color=WHITE,
+        ctk.CTkLabel(_st, text=".pkg Kraken level for new jobs:", text_color=WHITE,
                       font=ctk.CTkFont(size=12)).grid(row=1, column=0, sticky="w", pady=4)
-        try:
-            _pkg_fast = int(self.app.fpkg_defaults.get("level", 7)) < 0
-        except (TypeError, ValueError):
-            _pkg_fast = False
-        _pkg_speed = tk.StringVar(value="fast" if _pkg_fast else "normal")
+        _pkg_level = tk.IntVar(value=self.app._pkg_level_default())
+        ctk.CTkSlider(_st, from_=-4, to=9, number_of_steps=13, variable=_pkg_level, width=180, height=16,
+                      fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
+                      button_hover_color=ACCENT_HOVER).grid(row=1, column=1, sticky="w", padx=8, pady=4)
+        _pkg_lbl = ctk.CTkLabel(_st, text=str(_pkg_level.get()), text_color=WHITE, width=28, anchor="w",
+                                font=ctk.CTkFont(size=12))
+        _pkg_lbl.grid(row=1, column=2, sticky="w")
 
-        def _set_pkg_speed(value):
-            self.app.fpkg_defaults["level"] = -4 if value == "fast" else 7
+        def _pkg_cb(*_):
+            try:
+                v = max(-4, min(9, int(_pkg_level.get())))
+            except (TypeError, ValueError):
+                return
+            self.app.fpkg_defaults["level"] = v
             save_settings({"fpkg_defaults": self.app.fpkg_defaults})
-        ctk.CTkSegmentedButton(_st, values=["normal", "fast"], variable=_pkg_speed, command=_set_pkg_speed,
-                                selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
-                                height=26).grid(row=1, column=1, sticky="w", padx=8, pady=4)
+            if _pkg_lbl.winfo_exists():
+                _pkg_lbl.configure(text=str(v))
+        _pkg_level.trace_add("write", _pkg_cb)
 
         ctk.CTkLabel(_st, text="CPU cores (0=auto):", text_color=WHITE,
                       font=ctk.CTkFont(size=12)).grid(row=2, column=0, sticky="w", pady=4)
@@ -3184,9 +3190,11 @@ class JobDialog(EmbeddedDialog):
         "codec":  "The codec layer of the image inside the package. kraken is the verified default; zlib and none "
                   "are for experiments.",
         "compression": "How hard this job compresses. .ffpfsc: zlib level 1 to 9, higher gives a smaller "
-                       "file and takes longer; 7 is the default. .pkg: normal is Kraken level 7, the smallest "
-                       "package; fast is the encoder's fast preset, quicker and a little larger. Each job keeps "
-                       "its own; a new job starts from Settings › Compression.",
+                       "file and takes longer; 7 is the default. .pkg: Kraken level -4 to 9. Measured on a "
+                       "retail sample: -4 to -1 are the fastest and about 2 % larger; 0 to 5 cost a tenth "
+                       "more time and are 0.3 % larger than 7; 7 to 9 take 4 to 10 times as long for that "
+                       "last 0.3 %. 0 is the default. Each job keeps its own; a new job starts from "
+                       "Settings › Compression.",
     }
     _CID_RE = re.compile(r"^[A-Z]{2}[0-9]{4}-[A-Z]{4}[0-9]{5}_00-[A-Z0-9]{16}$")
     _TID_RE = re.compile(r"^[A-Z]{4}[0-9]{5}$")
@@ -3263,7 +3271,8 @@ class JobDialog(EmbeddedDialog):
             _lvl = int(fp.get("level", 7))
         except Exception:
             _lvl = 7
-        self.speed_var = tk.StringVar(value="fast" if _lvl < 0 else "normal")
+        self.pkg_level_var = tk.IntVar(value=max(-4, min(9, int(_lvl))))
+        self._pkg_level_text = app._pkg_level_text
         _ff0 = getattr(item, "compression_level", None) if item else None
         try:
             _ff0 = int(_ff0) if _ff0 is not None else int(app.compression_level_var.get())
@@ -3446,10 +3455,26 @@ class JobDialog(EmbeddedDialog):
         self.level_var.trace_add("write", lambda *_: self._level_lbl.winfo_exists()
                                  and self._level_lbl.configure(text=f"level {self.level_var.get()}"))
         self._comp_pkg = ctk.CTkFrame(cr, fg_color=PANEL)
-        ctk.CTkSegmentedButton(self._comp_pkg, values=["normal", "fast"], variable=self.speed_var, selected_color=ACCENT,
-                                selected_hover_color=ACCENT_HOVER, height=24).pack(side="left")
-        ctk.CTkLabel(self._comp_pkg, text="fast: quicker build, a little larger", text_color=MUTED,
-                      font=ctk.CTkFont(size=12)).pack(side="left", padx=(10, 0))
+        ctk.CTkSlider(self._comp_pkg, from_=-4, to=9, number_of_steps=13, variable=self.pkg_level_var, width=180,
+                      height=16, fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
+                      button_hover_color=ACCENT_HOVER).pack(side="left")
+        self._pkg_level_lbl = ctk.CTkLabel(self._comp_pkg, text=f"level {self.pkg_level_var.get()}", text_color=WHITE,
+                                           width=56, anchor="w", font=ctk.CTkFont(size=12))
+        self._pkg_level_lbl.pack(side="left", padx=(8, 0))
+        self._pkg_level_hint = ctk.CTkLabel(self._comp_pkg, text=self._pkg_level_text(self.pkg_level_var.get()),
+                                            text_color=MUTED, font=ctk.CTkFont(size=12))
+        self._pkg_level_hint.pack(side="left", padx=(4, 0))
+
+        def _pkg_level_cb(*_):
+            if not self._pkg_level_lbl.winfo_exists():
+                return
+            try:
+                v = int(self.pkg_level_var.get())
+            except (TypeError, ValueError):
+                return
+            self._pkg_level_lbl.configure(text=f"level {v}")
+            self._pkg_level_hint.configure(text=self._pkg_level_text(v))
+        self.pkg_level_var.trace_add("write", _pkg_level_cb)
         self._bind_help(self._HELP["compression"], cr)
         fin = ctk.CTkFrame(orow, fg_color=PANEL); fin.pack(fill="x", padx=10, pady=(4, 2))
         ctk.CTkLabel(fin, text="Save to:", text_color=MUTED, width=100, anchor="w", font=ctk.CTkFont(size=12)).pack(side="left")
@@ -4217,7 +4242,7 @@ class JobDialog(EmbeddedDialog):
         if chain_summary(stand).startswith("Nothing to do"):
             messagebox.showerror("Nothing to do", "A folder to a folder with no changes is nothing to do.", parent=self); return
 
-        level = -4 if self.speed_var.get() == "fast" else 7
+        level = max(-4, min(9, int(self.pkg_level_var.get())))
         ff_level = max(1, min(9, int(self.level_var.get())))
         ident = {"content_id": "", "title_id": "", "title": "", "version": "01.000.000",
                  "inner": "kraken", "backend": "builtin", "dll": ""}
@@ -5853,10 +5878,11 @@ class App:
                 parts[-1] = f".ffpfsc, level {self._ffpfsc_level(item)}"
             elif parts[-1] == ".pkg":
                 try:
-                    fast = int(getattr(item, "fpkg_level", 7) or 0) < 0
+                    _pl = int(getattr(item, "fpkg_level", None) if getattr(item, "fpkg_level", None) is not None
+                              else self._pkg_level_default())
                 except (TypeError, ValueError):
-                    fast = False
-                parts[-1] = ".pkg, fast" if fast else ".pkg, normal"
+                    _pl = 0
+                parts[-1] = f".pkg, level {_pl}"
         return parts
 
     def _job_recipe_parts(self, item) -> list[str]:
@@ -6166,9 +6192,14 @@ class App:
         # from sce_sys/param.json at build time.
         _fd = settings.get("fpkg_defaults") or {}
         try:
-            _fl = int(_fd.get("level", 7) if _fd.get("level") is not None else 7)
+            _fl = int(_fd.get("level", 0) if _fd.get("level") is not None else 0)
         except Exception:
-            _fl = 7
+            _fl = 0
+        if not _fd.get("v212"):
+            # 2.1.2: the two presets ("normal" = 7, "fast" = -4) became a level slider whose
+            # default is 0 — measured on a retail sample, 0 to 5 are 0.3 % larger than 7 and
+            # 4.5x faster, so the old presets are moved to the new default once.
+            _fl = 0
         _inner = _fd.get("inner") if _fd.get("inner") in ("none", "zlib", "kraken") else "kraken"
         if _inner == "none" and not _fd.get("v1112"):
             # Pre-1.1.12 remembered default. "none" was never verified on a console;
@@ -6178,12 +6209,13 @@ class App:
         self.fpkg_defaults: dict = {
             "inner":   _inner,
             "backend": _fd.get("backend") if _fd.get("backend") in ("builtin", "publishingtools") else "builtin",
-            "level":   max(-4, min(9, _fl)),      # Kraken: <0 = fast preset, else normal (the tool's 0..9 are identical)
+            "level":   max(-4, min(9, _fl)),      # Kraken -4..9; see _pkg_level_text for what the steps buy
             "retail_normalize": bool(_fd.get("retail_normalize", True)),
             "hdr_flag":         _hdr_mode(_fd.get("hdr_flag", "auto")),   # 1.1.12/13 bool → auto/off
             "regen_playgo":     bool(_fd.get("regen_playgo", False)),
             "fake_sign":        bool(_fd.get("fake_sign", True)),
             "v1112":            True,
+            "v212":             True,
         }
         self._pending_fpkg_identity = None   # (source path, identity dict) handed from the dialog to the scan result
         self.verify_output_var   = self._persisted_bool(settings, "verify_output", False)
@@ -6370,6 +6402,27 @@ class App:
     def open_job_dialog(self, init_src: str | None = None):
         """The one door for every job: source → change the content → output (JobDialog)."""
         JobDialog(self, init_src=init_src)
+
+    def _pkg_level_default(self) -> int:
+        """The Kraken level a new .pkg job starts from (Settings › Compression), -4..9."""
+        try:
+            return max(-4, min(9, int(self.fpkg_defaults.get("level", 0))))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _pkg_level_text(level: int) -> str:
+        """What a Kraken level buys, from the 2.1.2 measurement on a retail sample."""
+        level = int(level)
+        if level < 0:
+            return "fastest; about 2 % larger"
+        if level <= 5:
+            return "nearly as fast; 0.3 % larger than 7"
+        if level == 7:
+            return "smallest; 4 to 5 times slower"
+        if level == 6:
+            return "between 5 and 7"
+        return "no smaller than 7, slower still"
 
     def _ffpfsc_level(self, item) -> int:
         """The zlib level of a .ffpfsc build: the job's own, else the default in Settings."""
@@ -9464,7 +9517,7 @@ class App:
                                    f"{'cores by game size' if cores == 0 else f'{cores} cores'}")
         elif out == ".pkg":
             p = self._fpkg_params_of(item)
-            speed = "fast preset" if int(p.get("level", 7)) < 0 else "level 7"
+            speed = f"level {int(p.get('level', 0))}"
             try:
                 cores = int(self.cpu_count_var.get())
             except (TypeError, ValueError):
@@ -9797,7 +9850,7 @@ class App:
                     if _v and not (attr == "fpkg_version" and _v == "01.000.000"):
                         cmd += [flag, _v]
                 _lvl = getattr(item, "fpkg_level", None)
-                cmd += ["--compression-level", str(int(7 if _lvl is None else _lvl))]
+                cmd += ["--compression-level", str(int(self._pkg_level_default() if _lvl is None else _lvl))]
             if self.verbose_var.get():
                 cmd.append("--verbose")
             cmd.append("--overwrite")
@@ -9926,7 +9979,7 @@ class App:
             # identical). Never the tuning-bar level — it means nothing to this encoder.
             _lvl = getattr(item, "fpkg_level", None)
             if _lvl is None:
-                _lvl = 7
+                _lvl = self._pkg_level_default()
             cmd += ["--compression-level", str(int(_lvl))]
             try:
                 out.mkdir(parents=True, exist_ok=True)

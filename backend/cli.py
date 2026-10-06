@@ -1224,6 +1224,8 @@ class FpkgProgress:
                     4: "Writing Final Image", 5: "Writing Final Image"}
     _ORDER = ["Scanning Files", "Reading Game", "Creating Temp PFS", "Compressing",
               "Writing Final Image", "Verifying Output"]
+    # validate's milestones ("[validate] <name>") and roughly where each sits in its run
+    _VALIDATE_STEPS = {"file": 5, "header": 15, "cnt": 30, "entries": 55, "inner": 70, "report": 95}
     _UNIT = {"b": 1, "bytes": 1, "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3, "tib": 1024 ** 4,
              "kb": 1e3, "mb": 1e6, "gb": 1e9, "tb": 1e12}
 
@@ -1363,6 +1365,9 @@ class FpkgProgress:
             self._set_phase("Writing Final Image"); self._bar(100, "finalized .pkg written"); return
         if line.startswith("[INFO] Auto-validating"):
             self._set_phase("Verifying Output"); self._bar(0, "validate checklist"); return
+        m = re.match(r"\[validate\] (\w+)$", line.strip())
+        if m and self.cur == "Verifying Output":
+            self._bar(self._VALIDATE_STEPS.get(m.group(1), 0), "validate checklist"); return
         if low.startswith("summary:") and "failed" in low:
             self._bar(100, "validate checklist"); return
 
@@ -3077,7 +3082,7 @@ def main() -> None:
                 if built:
                     print(f"\n[INFO] Auto-validating: {built[-1].name}", flush=True)
                     _fpkg_progress._set_phase("Verifying Output")
-                    validate_rc = _fpkg.validate(built[-1], on_line=_gui_line)
+                    validate_rc = _fpkg.validate(built[-1], temp_dir=str(fpkg_temp), on_line=_gui_line)
             except Exception as ve:
                 print(f"[warn] Auto-validate skipped: {ve}", flush=True)
             print("\n[SUCCESS] fPKG built.", flush=True)

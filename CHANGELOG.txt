@@ -29,6 +29,22 @@ BUILDING A .PKG: NO SECOND COPY OF THE GAME, NO HARD LINKS
     while the package grows instead of both sitting side by side. A
     build that fails is unpacked again on Retry.
 
+A KRAKEN LEVEL SLIDER FOR .PKG, AND A SAFE CHECK OF THE FINISHED PACKAGE
+
+  - The .pkg compression is a slider from -4 to 9 instead of "normal" and
+    "fast", in the job dialog and in Settings, next to the zlib slider for
+    .ffpfsc. The slider says what each step buys. Measured on a 1 GB game:
+    -4 to -1 are the fastest and about 2 % larger; 0 to 5 cost a tenth
+    more time and are 0.3 % larger than 7; 7 to 9 take 4 to 10 times as
+    long for that last 0.3 %. 0 is the new default; a remembered "normal"
+    or "fast" moves to it once.
+  - The check of the finished .pkg reads the package in place: the file
+    table of the inner image, then eboot.bin alone. Until now it unpacked
+    the whole game into the temp folder to prove the image decodes; for
+    a big game that was a second copy of the game and an hour at "Verify
+    0 %". The check now reports its steps on the bar and keeps the few
+    metadata files it lifts in the app's own temp folder.
+
 A .PKG SHOWS ITS REAL PROGRESS, SPEED AND TIME LEFT
 
   - While Kraken runs, the bar now moves with the bytes done, and Speed

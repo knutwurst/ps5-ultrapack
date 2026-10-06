@@ -217,8 +217,10 @@ def build(src_dir: Path, out_dir: Path,
     - temp_dir: where LibProsperoPkg stages the inner image / CNT / outer image
       (defaults to $TMPDIR). Pass the app's fast temp drive for big games.
     - level: Kraken preset. Measured: 0..9 give byte-identical output (the encoder's
-      'normal' regime); -4..-1 select the faster, slightly weaker preset. The GUI maps
-      normal → 7 and fast → -4.
+      'normal' regime) was true of the 1.2.0 build; on d7090eb6 every level gives a
+      different package. Measured on the retail sample, 8 workers: -4..-1 fastest and ~2 %
+      larger than 7; 0..5 a tenth slower than -4 and 0.3 % larger than 7; 7 is 4.6x slower
+      than 5; 8 and 9 are slower still for 0.1-0.2 MB. The GUI's slider defaults to 0.
     - parallelism: Kraken (and outer-PFS) workers; 0 = the tool's default, one per core.
       Deterministic: any worker count gives the same bytes (measured 4/8/12 vs 1).
     """
@@ -267,12 +269,18 @@ def build(src_dir: Path, out_dir: Path,
     return _run(argv, on_line=on_line)
 
 
-def validate(pkg: Path, *, json_out: bool = False, on_line=None) -> int:
+def validate(pkg: Path, *, json_out: bool = False, temp_dir: Optional[str] = None, on_line=None) -> int:
     """
     Run the CLI's diagnostic checklist against a package. Prints a
     pass/warn/fail table. Returns 0 iff no failures.
+
+    The package is read in place; the few sce_sys entries the checks need are lifted into
+    temp_dir (the app's scratch) for the duration of the run and removed again. Nothing
+    else leaves the package: the inner PFS is read through the random-access reader.
     """
     argv = [str(tool_path()), "validate", str(pkg)]
     if json_out:
         argv.append("--json")
+    if temp_dir:
+        argv += ["--temp", str(temp_dir)]
     return _run(argv, on_line=on_line)

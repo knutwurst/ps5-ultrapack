@@ -66,7 +66,8 @@ internal static class Program
         Console.WriteLine("      Selective: <file> lists one path per line (relative to /app0); a directory");
         Console.WriteLine("      means its whole subtree incl. empty folders. Prints '[####] NN% extract (path)'.");
         Console.WriteLine("  extract-outer <pkg> <out-dir> [--passcode P]     [--decompress|--no-decompress]");
-        Console.WriteLine("  validate      <pkg> [--passcode P]               [--json]");
+        Console.WriteLine("  validate      <pkg> [--passcode P] [--temp DIR]  [--json]   (reads the package in place; --temp only");
+        Console.WriteLine("                                                             holds the lifted sce_sys entries for a moment)");
         Console.WriteLine("      Diagnostic checklist: header magic + fields, CNT wrap, PFS bounds,");
         Console.WriteLine("      required sce_sys entries, param.json coherence, eboot fake-self magic.");
         Console.WriteLine("  build         <src-dir> <out-dir>");
@@ -624,21 +625,27 @@ internal static class Program
         var pkg = args[1];
         bool json = false;
         string passcode = new string('0', 32);
+        string? tempRoot = null;          // --temp: where the lifted CNT entries go (never the user's folders)
         for (int i = 2; i < args.Length; i++)
         {
             switch (args[i])
             {
                 case "--json": json = true; break;
                 case "--passcode": passcode = Need(args, ref i, "--passcode"); break;
+                case "--temp": tempRoot = Need(args, ref i, "--temp"); break;
                 default: return Bad("unknown validate flag: " + args[i]);
             }
         }
         if (!File.Exists(pkg)) throw new FileNotFoundException("package not found", pkg);
         var checks = new System.Collections.Generic.List<ValidateResult>();
+        // The table is printed at the end (aligned columns), so the caller sees nothing until
+        // then; these one-word milestones let it move a progress bar meanwhile.
+        void Step(string name) { if (!json) Console.WriteLine($"[validate] {name}"); }
         void Ok(string k, string msg) => checks.Add(new ValidateResult { Check = k, Level = "pass", Message = msg });
         void Warn(string k, string msg) => checks.Add(new ValidateResult { Check = k, Level = "warn", Message = msg });
         void Fail(string k, string msg) => checks.Add(new ValidateResult { Check = k, Level = "fail", Message = msg });
 
+        Step("file");
         long sz = new FileInfo(pkg).Length;
         // A finalized image starts with a 64 KiB FIH block, so anything smaller cannot be one.
         if (sz >= 0x10000) Ok("file", $"{sz:N0} bytes on disk");
@@ -658,6 +665,7 @@ internal static class Program
         }
 
         // Parse the container
+        Step("header");
         ProsperoPkg pkgObj;
         try { pkgObj = ProsperoPkgReader.Read(pkg); }
         catch (Exception ex) { Fail("parse", "reader threw: " + ex.Message); Report(checks, json); return 1; }
@@ -703,7 +711,8 @@ internal static class Program
         catch (Exception ex) { Fail("cnt.wrap", "check threw: " + ex.Message); }
 
         // Required CNT entries
-        var tmpCnt = Path.Combine(RealPath(Path.GetTempPath()), "fpkg-validate-" + Guid.NewGuid().ToString("N"));
+        Step("cnt");
+        var tmpCnt = Path.Combine(RealPath(tempRoot ?? Path.GetTempPath()), "fpkg-validate-" + Guid.NewGuid().ToString("N"));
         System.Collections.Generic.List<string> cntFiles = new();
         try
         {
@@ -802,25 +811,34 @@ internal static class Program
                 }
                 catch (Exception ex) { Fail("param.parse", ex.Message); }
             }
+            Step("entries");
             ValidateSystemEntries(tmpCnt, h.ContentId, Ok, Warn, Fail);
         }
         catch (Exception ex) { Fail("cnt.entries", "extract threw: " + ex.Message); }
         finally { try { Directory.Delete(tmpCnt, recursive: true); } catch { } }
 
-        // Try extracting inner /app0 to check the PFS decodes
-        var tmpInner = Path.Combine(RealPath(Path.GetTempPath()), "fpkg-validate-inner-" + Guid.NewGuid().ToString("N"));
+        // The inner PFS is read in place: its file table, then eboot.bin alone through the
+        // random-access reader. Until 2.1.2 this extracted the whole /app0 into the system
+        // temp folder to prove the PFS decodes; a 160 GB game filled the Mac's disk while the
+        // caller's bar stood at 0 %.
+        Step("inner");
         try
         {
-            Directory.CreateDirectory(tmpInner);
-            var innerFiles = ProsperoPackageArchive.ExtractInnerFiles(pkg, tmpInner, passcode, decompressFiles: true);
-            Ok("inner.pfs", $"decoded {innerFiles.Count} file(s) from inner PFS");
-            var ebootPath = Path.Combine(tmpInner, "eboot.bin");
-            if (File.Exists(ebootPath) && new FileInfo(ebootPath).Length < 64)
-                Fail("eboot.size", $"{new FileInfo(ebootPath).Length} bytes — truncated or empty, cannot start");
-            else if (File.Exists(ebootPath))
+            using var img = new InnerImage(pkg, passcode, cacheBlockSize: 4 << 20, cacheBlocks: 8);
+            var files = img.Pfs.GetAllFiles().ToList();
+            Ok("inner.pfs", $"{files.Count:N0} file(s) in the inner PFS");
+            var eboot = files.FirstOrDefault(f => SafeRelative(img.RelativePath(f)) == "eboot.bin");
+            if (eboot == null)
+                Fail("inner.eboot", "eboot.bin not present in inner PFS");
+            else if (eboot.size < 64)
+                Fail("eboot.size", $"{eboot.size} bytes — truncated or empty, cannot start");
+            else
             {
-                var head = new byte[4]; int got = 0; using (var f = File.OpenRead(ebootPath)) got = f.Read(head, 0, 4);
-                uint magic = got < 4 ? 0u : (uint)(head[0] | (head[1] << 8) | (head[2] << 16) | (head[3] << 24));
+                using var ms = new MemoryStream();
+                img.CopyFile(eboot, ms);          // the one file the console must start; proves the PFS decodes
+                var head = ms.GetBuffer();
+                uint magic = ms.Length < 4 ? 0u : (uint)(head[0] | (head[1] << 8) | (head[2] << 16) | (head[3] << 24));
+                Ok("inner.decode", $"eboot.bin read through the PFS ({eboot.size:N0} bytes)");
                 // 0xEEF51454 ("SCE" fake-self) is what LibProsperoPkg's MakeFself and Sony's SELFs
                 // carry; 0x1D3D154F is the PS4 SELF magic and does not load on a PS5.
                 if      (magic == 0xEEF51454u) Ok("eboot.magic", "SCE fake-self (0xEEF51454) — good");
@@ -828,14 +846,10 @@ internal static class Program
                 else if (magic == 0x464C457Fu) Fail("eboot.magic", "raw ELF (0x7F454C46) — not fake-signed; kstuff-fpkg install path will refuse");
                 else Warn("eboot.magic", $"unrecognized 0x{magic:X8}");
             }
-            else
-            {
-                Fail("inner.eboot", "eboot.bin not present in inner PFS");
-            }
         }
-        catch (Exception ex) { Fail("inner.pfs", "extract threw: " + ex.Message); }
-        finally { try { Directory.Delete(tmpInner, recursive: true); } catch { } }
+        catch (Exception ex) { Fail("inner.pfs", "read threw: " + ex.Message); }
 
+        Step("report");
         Report(checks, json);
         int fails = 0;
         foreach (var r in checks) if (r.Level == "fail") fails++;

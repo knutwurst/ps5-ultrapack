@@ -127,7 +127,9 @@ try:
     ok("dialog.autofill.cid", dlg.cid_var.get() == CID, dlg.cid_var.get())
     ok("dialog.autofill.tid", dlg.tid_var.get() == "PPSA99099", dlg.tid_var.get())
     ok("dialog.pkg.panel-shown", dlg._to_key() == "pkg" and dlg._pkg_opts.winfo_manager() != "", dlg._to_key())
-    dlg.out_var.set(str(OUT)); dlg.inner_var.set("kraken"); dlg.speed_var.set("fast")
+    ok("dialog.pkg-level-default-0", dlg.pkg_level_var.get() == 0 and app.fpkg_defaults.get("level") == 0,
+       f"dialog={dlg.pkg_level_var.get()} default={app.fpkg_defaults.get('level')}")
+    dlg.out_var.set(str(OUT)); dlg.inner_var.set("kraken"); dlg.pkg_level_var.set(-4)
     n0 = len(app.queue); dlg._add(); settle()
     q = app.queue[-1] if app.queue else None
     ok("dialog.add.queued", len(app.queue) == n0 + 1 and q.operation == "chain" and q.chain_to == "pkg", f"queue={len(app.queue)} errors={errors[-1:]}")
@@ -161,8 +163,8 @@ try:
     idx = app.queue.index(q)
     dlg3 = m.JobDialog(app, item=q); root.update()
     ok("dialog.edit.preselects-pkg", dlg3._to_key() == "pkg" and dlg3._pkg_opts.winfo_manager() != ""
-       and dlg3.speed_var.get() == "fast", f"{dlg3._to_key()}/{dlg3.speed_var.get()}")
-    dlg3.speed_var.set("normal"); dlg3.title_var.set("Edited"); dlg3._add(); settle()
+       and dlg3.pkg_level_var.get() == -4, f"{dlg3._to_key()}/{dlg3.pkg_level_var.get()}")
+    dlg3.pkg_level_var.set(7); dlg3.title_var.set("Edited"); dlg3._add(); settle()
     q = app.queue[idx]
     ok("dialog.edit.saved", q.fpkg_level == 7 and q.fpkg_title == "Edited", f"{q.fpkg_level}/{q.fpkg_title} errors={errors[-1:]}")
     dlg3b = m.JobDialog(app, item=q); root.update(); dlg3b.to_var.set(L["ffpfsc"]); root.update()
@@ -517,7 +519,7 @@ try:
     # J2) .ffpfsc source → .pkg: pkg flags present, sign forced, Look inside offered
     jd2 = m.JobDialog(app, init_src=str(FF)); root.update()
     ok("job.detect.ffpfsc", jd2._kind == "ffpfsc" and jd2._look_btn.winfo_manager() == "pack", jd2.detect_var.get())
-    jd2.to_var.set(".pkg"); jd2.out_var.set(str(OUT / "job")); jd2.speed_var.set("fast"); root.update()
+    jd2.to_var.set(".pkg"); jd2.out_var.set(str(OUT / "job")); jd2.pkg_level_var.set(-4); root.update()
     ok("job.pkg.sign-forced", jd2._sign_cb.cget("state") == "disabled" and jd2._sign_fixed.winfo_manager() == "pack"
        and jd2._sign_cb.winfo_manager() == "", str(jd2._sign_cb.cget("state")))
     # the compatibility check reads a .ffpfsc too (only its executables are pulled out)

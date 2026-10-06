@@ -118,7 +118,7 @@ One button, **Add job** (⌘N), or drop a file or folder anywhere in the window.
 
 1. **Source**: a game folder, a parent folder of games (one job each), an archive (`.zip` / `.rar` / `.7z`), a disk image (`.exfat` / `.ffpkg`), a `.ffpfs`, a `.ffpfsc` or a `.pkg`. One line says what was detected: kind, title ID, version, SDK version. For an image or a package, **Look inside…** opens the browser.
 2. **Change the content**, optional, applied in this order: **integrate a patch** (folder or archive), **backport** to an older firmware, **sign** the executables (fake-sign). Each shows its options only when checked.
-3. **Output**: **Folder**, **`.ffpfs`**, **`.ffpfsc`** or **`.pkg`**, for any source. A compressed format shows its compression in one row: a level from 1 to 9 for `.ffpfsc`, normal or fast for `.pkg`. `.pkg` also shows its retail switches, and the identity and codec under **More options**.
+3. **Output**: **Folder**, **`.ffpfs`**, **`.ffpfsc`** or **`.pkg`**, for any source. A compressed format shows its compression in one row: a zlib level from 1 to 9 for `.ffpfsc`, a Kraken level from -4 to 9 for `.pkg` (0 by default; the slider says what each step buys). `.pkg` also shows its retail switches, and the identity and codec under **More options**.
 
 A sentence above the button says what the queue will do (*Backport to 7.61, then build .pkg*, *Unpack to folder*, *Build .pkg*, *Sign in place*) and the queue row carries the same sentence. The same format with nothing to change is a copy or move; a folder to a folder with nothing to change is refused. The editor remembers your choices per kind of source, so the next drop is source, then Enter.
 
