@@ -361,6 +361,9 @@ def _peak_factor_for(item) -> float:
 # ── chain job helpers (Tk-free; the job dialog and the queue row both use them) ──
 CHAIN_TARGETS = ("folder", "ffpfs", "ffpfsc", "pkg")
 CHAIN_TARGET_LABEL = {"folder": "folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "pkg": ".pkg"}
+# "Organize": the source goes into the library in its own format (a copy job, see
+# GameItem.content_kind); not a chain target, the job dialog offers it beside them.
+ORGANIZE_TARGET = "organize"
 ARCHIVE_SUFFIXES = (".zip", ".rar", ".7z", ".r00")
 
 
@@ -456,6 +459,8 @@ def chain_summary(item) -> str:
     'Copy or move (same format)' · 'Sign in place' · 'Nothing to do'."""
     if getattr(item, "content_kind", "") == "ps4":
         return "Sort into the PS4 library"
+    if getattr(item, "content_kind", "") == ORGANIZE_TARGET or getattr(item, "chain_to", None) == ORGANIZE_TARGET:
+        return "Organize into the library (same format)"
     to = getattr(item, "chain_to", None) or "ffpfsc"
     kind = chain_source_kind(item)
     label = CHAIN_TARGET_LABEL.get(to, to)
@@ -3193,7 +3198,8 @@ class GameItem:
     # Class-level defaults so items built via __new__ (from_*, history, restored queue)
     # always have these attributes even when an older saved queue predates them.
     ampr_emu = False        # PlayGo/APR title? (auto-detected)
-    content_kind = ""       # "ps4": a PS4 package set, sorted into the library by a copy job
+    content_kind = ""       # "ps4": a PS4 package set, sorted into the library by a copy job;
+                            # "organize": any source written into the library in its own format
     display_name = None     # STABLE queue label captured at add time; survives extraction
                             # (item.name gets rewritten to the extracted stem, which still
                             # drives the OUTPUT filename, but the queue keeps showing this)
@@ -3581,6 +3587,9 @@ __all__ = [
     "save_settings",
     "CHAIN_TARGETS",
     "CHAIN_TARGET_LABEL",
+    "ORGANIZE_TARGET",
+    "LibItem",
+    "library_layout",
     "ARCHIVE_SUFFIXES",
     "chain_source_kind",
     "chain_changes",

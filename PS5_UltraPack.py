@@ -2720,6 +2720,9 @@ class CLIWorker(threading.Thread):
             self.output_path = line.split("Compression complete:", 1)[-1].strip()
         if "fPKG complete:" in line:
             self.output_path = line.split("fPKG complete:", 1)[-1].strip()
+        if line.startswith("[OK] Organized: "):
+            self.output_path = line[len("[OK] Organized: "):].split(" (replaced)")[0].strip()
+            self._written.append(self.output_path)
         if line.startswith("[OK] PS4 sorted: "):
             self.output_path = line[len("[OK] PS4 sorted: "):].strip()      # a title folder of the set
             self._written.append(self.output_path)
@@ -3167,7 +3170,8 @@ class JobDialog(EmbeddedDialog):
     Edit mode (item given) refills the dialog and swaps the item in place."""
     LARGE = True
 
-    _TARGET_LABEL = {"folder": "Folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "pkg": ".pkg"}
+    _TARGET_LABEL = {"folder": "Folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "pkg": ".pkg", "organize": "Organize"}
+    _TARGETS = ("folder", "ffpfs", "ffpfsc", "pkg", "organize")
     _TARGET_KEY = {v: k for k, v in _TARGET_LABEL.items()}
     _SOURCE_HINT = ("Game folder, parent folder of games, archive (.zip/.rar/.7z), disk image "
                     "(.exfat/.ffpkg), .ffpfs, .ffpfsc or .pkg")
@@ -3478,7 +3482,7 @@ class JobDialog(EmbeddedDialog):
         # 3 · Output
         orow = self._orow = self._group("3", "Output")
         oin = ctk.CTkFrame(orow, fg_color=PANEL); oin.pack(fill="x", padx=10, pady=(2, 2))
-        self._to_seg = ctk.CTkSegmentedButton(oin, values=[self._TARGET_LABEL[k] for k in ("folder", "ffpfs", "ffpfsc", "pkg")],
+        self._to_seg = ctk.CTkSegmentedButton(oin, values=[self._TARGET_LABEL[k] for k in self._TARGETS],
                                               variable=self.to_var, selected_color=ACCENT, selected_hover_color=ACCENT_HOVER)
         self._to_seg.pack(side="left")
         self._to_hint = tk.StringVar(value="")
@@ -3965,6 +3969,8 @@ class JobDialog(EmbeddedDialog):
             return "folder"
         if op == "patch":
             return "ffpfsc"                  # a patch job always writes "<game> [patched].ffpfsc"
+        if op == "copy" and getattr(item, "content_kind", "") == ORGANIZE_TARGET:
+            return ORGANIZE_TARGET
         if op == "copy":
             return {".ffpfsc": "ffpfsc", ".ffpfs": "ffpfs", ".pkg": "pkg"}.get(
                 Path(str(getattr(item, "path", "") or "")).suffix.lower(), "ffpfsc")
@@ -4169,13 +4175,14 @@ class JobDialog(EmbeddedDialog):
             for v in (self.patch_on_var, self.backport_on_var, self.sign_var):
                 v.set(False)
         crow, orow = getattr(self, "_crow", None), getattr(self, "_orow", None)
+        org = not ps4 and self._to_key() == ORGANIZE_TARGET     # the source goes over as it is
         if crow is not None and orow is not None:          # both exist once the dialog is built
-            if ps4:
+            if ps4 or org:
                 crow.pack_forget()
             elif not crow.winfo_manager():
                 crow.pack(fill="x", padx=20, pady=5, before=orow)
-        if not ps4 and seg is not None and len(seg.cget("values")) != 4:
-            seg.configure(values=[self._TARGET_LABEL[k] for k in ("folder", "ffpfs", "ffpfsc", "pkg")])
+        if not ps4 and seg is not None and len(seg.cget("values")) != len(self._TARGETS):
+            seg.configure(values=[self._TARGET_LABEL[k] for k in self._TARGETS])
             seg.set(self.to_var.get())
         to = self._to_key()
         # progressive disclosure
@@ -4209,7 +4216,9 @@ class JobDialog(EmbeddedDialog):
         self._to_hint.set({"folder": "plain /app0 folder — for a folder source: changes in place",
                            "ffpfs": "uncompressed image — fastest to build and mount, full size",
                            "ffpfsc": "compressed image — mounts with ShadowMount",
-                           "pkg": "installable package"}.get(to, "") if not ps4 else
+                           "pkg": "installable package",
+                           "organize": "into the library as it is: '<Title> [ID] [vX]/…', the same format, "
+                                       "joining a title folder that is already there"}.get(to, "") if not ps4 else
                           {"pkg": "into the library: '<Title> [CUSA…] [vX]', UPDATE and DLC named, 'DLC Pack' from 4 DLCs",
                            "folder": "the package's files in a folder"}.get(to, ""))
         in_place = self._in_place(to)
@@ -4372,6 +4381,49 @@ class JobDialog(EmbeddedDialog):
         self.app.log("OK", f"Queued: {chain_summary(it)} — {it.display_name or it.name}.  Press ▶ START to run.")
         self.destroy()
 
+    def _add_organize(self, p: Path, out: str):
+        """The Organize output: each source goes into the library in its own format."""
+        aj = _after_job_module()
+        after = self.after_var.get() if self._after_box.winfo_manager() else aj.KEEP
+        after_dir = self.after_dir_var.get().strip() if after == aj.MOVE else ""
+        if after == aj.MOVE and not after_dir:
+            messagebox.showerror("After the job", "Choose the folder the source moves to once the job is Done.",
+                                 parent=self); return
+        self._defaults[self._kind] = dict(self._defaults.get(self._kind) or {}, to=ORGANIZE_TARGET)
+        try:
+            save_settings({"job_dialog_defaults": self._defaults, "last_source": str(p),
+                           "last_source_dir": str(p if p.is_dir() else p.parent),
+                           "rescan_template": {"to": ORGANIZE_TARGET, "output": out, "after_source": after,
+                                               "after_move_to": after_dir or None}})
+        except Exception:
+            pass
+        self.app.output_var.set(out)
+        sources = (self._parent_todo() if self._kind == "parent"
+                   else self._games if self._kind == "folder" else [p])
+        root = str(p if (p.is_dir() and not ultra_core.is_game_folder(p)) else p.parent)
+        app = self.app
+
+        def make(s):
+            it = app._organize_item_for(s, output_path=out)
+            it.after_source, it.after_move_to = after, after_dir or None
+            it.source_root = root
+            return it
+
+        if self.edit_item is None:
+            app._add_jobs_async(list(sources), make)
+            self.destroy(); return
+        try:
+            new = make(sources[0])
+        except Exception as e:
+            messagebox.showerror("Source", f"Could not read {sources[0]}:\n{e}", parent=self); return
+        try:
+            app.queue[app.queue.index(self.edit_item)] = new
+        except ValueError:
+            app.queue.append(new)
+        app.update_queue_box(select_item=new)
+        app.log("OK", f"Job updated: {chain_summary(new)} — {new.display_name or new.name}.")
+        self.destroy()
+
     def _add(self):
         raw = (self.src_var.get() or "").strip()
         p = Path(raw) if raw else None
@@ -4410,6 +4462,8 @@ class JobDialog(EmbeddedDialog):
                 messagebox.showerror("Backport", str(e), parent=self); return
         if self._kind == "ps4":
             return self._add_ps4(p, to, out)
+        if to == ORGANIZE_TARGET:
+            return self._add_organize(p, out)
         stand = self._stand_in(p)
         if chain_summary(stand).startswith("Nothing to do"):
             messagebox.showerror("Nothing to do", "A folder to a folder with no changes is nothing to do.", parent=self); return
@@ -4726,6 +4780,246 @@ class CountdownWindow(MessageWindow):
     def destroy(self):
         self._stop()
         super().destroy()
+
+
+class OrganizeView:
+    """Organize as a view of the main window: pick a folder, see where everything in it
+    belongs (old -> new, a checkbox each; what stays and why), Apply. Apply only renames on
+    the folder's drive; Undo last organize moves it back. The backend does the work
+    (--organize-scan / --organize-apply / --organize-undo); nothing here touches the files."""
+    CHECK, UNCHECK = "☑", "☐"
+
+    def __init__(self, parent, app):
+        self.app = app
+        kit = app.kit
+        self._q = queue.Queue()
+        self._busy = False
+        self._plan = None
+        self._checked: set[int] = set()
+        self._iid_move: dict[str, int] = {}
+        self.plan_file = Path(APP_DIR) / "organize_plan.json"
+        self.journal = Path(APP_DIR) / "organize_journal.json"
+        v = self.frame = kit.frame(parent)
+        v.grid_columnconfigure(0, weight=1)
+        v.grid_rowconfigure(4, weight=1)
+        head, btns = app._column_header(v, "Organize", subtitle="Names and sorts everything in one folder in "
+                                        "place: one title folder per game. Archives keep their names.")
+        head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
+        self.undo_btn = app._small(btns, "Undo last organize", "history", self.undo,
+                                   tooltip="Move back what the last Apply moved")
+        self.undo_btn.pack(side="left", padx=(0, 2))
+        kit.rule(v).grid(row=1, column=0, sticky="ew")
+        row = ctk.CTkFrame(v, fg_color="transparent")
+        row.grid(row=2, column=0, sticky="ew", padx=18, pady=(12, 4))
+        self.root_var = tk.StringVar(value=str(app.output_var.get() or ""))
+        ctk.CTkEntry(row, textvariable=self.root_var, fg_color=CARD2, text_color=WHITE).pack(
+            side="left", fill="x", expand=True)
+        ctk.CTkButton(row, text="Choose…", width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._pick).pack(side="left", padx=(6, 0))
+        self.scan_btn = ctk.CTkButton(row, text="Scan", width=90, fg_color=BTN, hover_color=BTN_HOVER,
+                                      text_color=WHITE, border_width=1, border_color=BTN_BORDER, command=self.scan)
+        self.scan_btn.pack(side="left", padx=(6, 0))
+        self.status_var = tk.StringVar(value="Pick a folder and press Scan. Nothing moves before Apply.")
+        ctk.CTkLabel(v, textvariable=self.status_var, text_color=MUTED, anchor="w", justify="left").grid(
+            row=3, column=0, sticky="ew", padx=18, pady=(2, 6))
+        style = ttk.Style(v)
+        try:
+            style.theme_use("default")          # the Aqua theme ignores the colours below
+        except Exception:
+            pass
+        _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
+        style.configure("Org.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
+                        foreground=_pal["text"], rowheight=24, borderwidth=0)
+        style.configure("Org.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
+        style.map("Org.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
+        tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
+        tframe.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 6))
+        self.tree = ttk.Treeview(tframe, columns=("game", "src", "dst"), style="Org.Treeview", selectmode="browse")
+        for col, text, w in (("#0", "", 34), ("game", "Game", 170), ("src", "Now", 330), ("dst", "Becomes", 330)):
+            self.tree.heading(col, text=text, anchor="w")
+            self.tree.column(col, width=w, minwidth=30 if col == "#0" else 80, stretch=col != "#0", anchor="w")
+        self.tree.tag_configure("stay", foreground=_pal["muted"])
+        vsb = ctk.CTkScrollbar(tframe, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
+        vsb.pack(side="right", fill="y", pady=6)
+        self.tree.bind("<Button-1>", self._click)
+        self.tree.bind("<space>", lambda _e: self._toggle(self.tree.focus()))
+        bottom = ctk.CTkFrame(v, fg_color="transparent")
+        bottom.grid(row=5, column=0, sticky="ew", padx=18, pady=(0, 14))
+        ctk.CTkButton(bottom, text="Select all", width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=lambda: self._select_all(True)).pack(side="left")
+        ctk.CTkButton(bottom, text="Select none", width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=lambda: self._select_all(False)).pack(
+            side="left", padx=(6, 0))
+        self.apply_btn = ctk.CTkButton(bottom, text="Apply", width=120, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                       text_color=ON_ACCENT, command=self.apply, state="disabled")
+        self.apply_btn.pack(side="right")
+        self._refresh_buttons()
+
+    # ── helpers ──
+    def on_show(self):
+        if not self.root_var.get().strip():
+            self.root_var.set(str(self.app.output_var.get() or ""))
+        self._refresh_buttons()
+
+    def _pick(self):
+        d = filedialog.askdirectory(title="Organize — the folder to sort in place", parent=self.app.root,
+                                    initialdir=self.root_var.get() or str(self.app.output_var.get() or Path.home()))
+        if d:
+            self.root_var.set(d)
+            self.scan()
+
+    def _refresh_buttons(self):
+        n = len(self._checked)
+        busy = self._busy or bool(getattr(self.app, "_batch_running", False))
+        self.apply_btn.configure(text=f"Apply ({n})" if n else "Apply",
+                                 state="normal" if n and not busy else "disabled")
+        self.scan_btn.configure(state="disabled" if self._busy else "normal")
+        self.undo_btn.configure(state="normal" if self.journal.is_file() and not busy else "disabled")
+
+    def _rel(self, p: str) -> str:
+        root = (self._plan or {}).get("root", "")
+        return p[len(root):].lstrip("/\\") if root and p.startswith(root) else p
+
+    def _render(self):
+        self.tree.delete(*self.tree.get_children())
+        self._iid_move.clear()
+        plan = self._plan or {"moves": [], "stays": []}
+        for i, m in enumerate(plan["moves"]):
+            iid = self.tree.insert("", "end", text=self.CHECK if i in self._checked else self.UNCHECK,
+                                   values=(m.get("label", ""), self._rel(m["src"]), self._rel(m["dst"])))
+            self._iid_move[iid] = i
+        for st in plan["stays"]:
+            self.tree.insert("", "end", text="", tags=("stay",),
+                             values=("", self._rel(st["path"]), "stays: " + st["reason"]))
+        self._refresh_buttons()
+
+    def _toggle(self, iid):
+        i = self._iid_move.get(iid)
+        if i is None:
+            return
+        self._checked.symmetric_difference_update({i})
+        self.tree.item(iid, text=self.CHECK if i in self._checked else self.UNCHECK)
+        self._refresh_buttons()
+
+    def _click(self, e):
+        if self.tree.identify_column(e.x) == "#0" and self.tree.identify_region(e.x, e.y) in ("tree", "cell"):
+            self._toggle(self.tree.identify_row(e.y))
+            return "break"
+
+    def _select_all(self, on: bool):
+        self._checked = set(range(len((self._plan or {}).get("moves", [])))) if on else set()
+        self._render()
+
+    # ── backend runs ──
+    def _run(self, kind, args):
+        self._busy = True
+        self._refresh_buttons()
+        cmd = self.app._backend_cmd(*args)
+
+        def work():
+            lines = []
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                        encoding="utf-8", errors="replace", bufsize=1)
+                for line in proc.stdout:
+                    line = line.rstrip("\n")
+                    lines.append(line)
+                    if line.startswith("ORGANIZE_PROGRESS: "):
+                        self._q.put(("progress", line[len("ORGANIZE_PROGRESS: "):]))
+                rc = proc.wait()
+            except Exception as ex:
+                lines.append(f"[ERROR] {ex}")
+                rc = 1
+            self._q.put((kind, (rc, lines)))
+        threading.Thread(target=work, daemon=True).start()
+        self.frame.after(100, self._poll)
+
+    def _poll(self):
+        try:
+            while True:
+                kind, data = self._q.get_nowait()
+                if kind == "progress":
+                    self.status_var.set(f"Reading {data}")
+                    continue
+                self._busy = False
+                getattr(self, "_done_" + kind)(*data)
+                self._refresh_buttons()
+                return
+        except queue.Empty:
+            pass
+        self.frame.after(100, self._poll)
+
+    def scan(self, then_status: str = ""):
+        root = self.root_var.get().strip()
+        if not root or not Path(root).is_dir():
+            messagebox.showerror("Organize", "Pick a folder first.", parent=self.app.root)
+            return
+        self._then = then_status
+        self.status_var.set("Looking through the folder…")
+        try:
+            self.plan_file.unlink()
+        except OSError:
+            pass
+        self._run("scan", ("--organize-scan", root, "--organize-plan", str(self.plan_file)))
+
+    def _done_scan(self, rc, lines):
+        try:
+            self._plan = json.loads(self.plan_file.read_text(encoding="utf-8")) if rc == 0 else None
+        except Exception:
+            self._plan = None
+        if self._plan is None:
+            err = next((ln for ln in reversed(lines) if ln.startswith("[ERROR]")), lines[-1] if lines else "no output")
+            self.status_var.set(f"Scan failed: {err}")
+            self.app.log("ERROR", f"Organize: scan failed: {err}")
+            return
+        self._checked = set(range(len(self._plan["moves"])))
+        moves, stays, ok = len(self._plan["moves"]), len(self._plan["stays"]), self._plan.get("in_place", 0)
+        summary = (f"{moves} to move" if moves else "Nothing to move") + f", {ok} already in place" \
+            + (f", {stays} staying (see why below)" if stays else "") + "."
+        self.status_var.set(" ".join(x for x in (self._then, summary) if x))
+        self._render()
+
+    def apply(self):
+        if not self._plan or not self._checked or self._busy:
+            return
+        if getattr(self.app, "_batch_running", False):
+            messagebox.showinfo("Organize", "Wait until the queue has finished.", parent=self.app.root)
+            return
+        only = ",".join(str(i) for i in sorted(self._checked))
+        self.status_var.set("Moving…")
+        self._run("apply", ("--organize-apply", "--organize-plan", str(self.plan_file),
+                            "--organize-journal", str(self.journal), "--organize-only", only))
+
+    def _done_apply(self, rc, lines):
+        for ln in lines:
+            if ln.startswith(("[ORGANIZE]", "[WARN]", "[ERROR]")):
+                self.app.log("WARN" if ln.startswith("[WARN]") else "ERROR" if ln.startswith("[ERROR]") else "INFO",
+                             "Organize: " + ln.split("] ", 1)[-1])
+        last = next((ln for ln in reversed(lines) if ln.startswith(("[OK]", "[ERROR]"))), "")
+        self.app.log("OK" if rc == 0 else "WARN", "Organize: " + last.split("] ", 1)[-1])
+        self.scan(then_status=last.split("] ", 1)[-1] + ".")
+
+    def undo(self):
+        if self._busy or not self.journal.is_file():
+            return
+        if not messagebox.askyesno("Undo last organize", "Move everything the last Apply moved back where it was?",
+                                   parent=self.app.root):
+            return
+        self.status_var.set("Moving back…")
+        self._run("undo", ("--organize-undo", "--organize-journal", str(self.journal)))
+
+    def _done_undo(self, rc, lines):
+        last = next((ln for ln in reversed(lines) if ln.startswith(("[OK]", "[ERROR]"))), "")
+        self.app.log("OK" if rc == 0 else "WARN", "Organize: " + last.split("] ", 1)[-1])
+        for ln in lines:
+            if ln.startswith("[WARN]"):
+                self.app.log("WARN", "Organize: " + ln[7:])
+        if self.root_var.get().strip() and Path(self.root_var.get().strip()).is_dir():
+            self.scan(then_status=last.split("] ", 1)[-1] + ".")
+        else:
+            self.status_var.set(last)
 
 
 class PfsBrowserDialog(EmbeddedDialog):
@@ -5412,8 +5706,8 @@ class App:
         kit.label(side, bg="sidebar", fg="faint", font=kit.fonts.caption, text="Tools").pack(anchor="w", padx=18, pady=(0, 3))
         nav(side, "Look inside", "search", self.open_pfs_browser,
             "Browse a .ffpfsc, .ffpfs or .pkg and pull single files out")
-        nav(side, "Organize", "folders", self.organize_folder_dialog,
-            "Sort a folder of containers into Title [ID] [version] folders")
+        self._nav["organize"] = nav(side, "Organize", "folders", lambda: self._show_view("organize"),
+                                    "Name and sort everything in a folder in place")
         nav(side, "Clean temp", "broom", self.clear_temp_files, "Delete leftovers in the temp folder")
         bottom = kit.frame(side, bg="sidebar")
         bottom.pack(side="bottom", fill="x", pady=(0, 10))
@@ -5423,6 +5717,11 @@ class App:
         if name == "settings" and "settings" not in self._views:
             self._settings_view = SettingsView(self._views_parent, self)
             self._views["settings"] = self._settings_view.frame
+        if name == "organize" and "organize" not in self._views:
+            self._organize_view = OrganizeView(self._views_parent, self)
+            self._views["organize"] = self._organize_view.frame
+        if name == "organize":
+            self._organize_view.on_show()
         for n, f in self._views.items():
             if n == name:
                 f.grid(row=0, column=0, sticky="nsew")
@@ -6060,6 +6359,10 @@ class App:
     def _job_recipe_parts(self, item) -> list[str]:
         op = getattr(item, "operation", "pack")
         src = source_label(item)
+        if op == "copy" and getattr(item, "content_kind", "") == ORGANIZE_TARGET:
+            if getattr(item, "archive_path", None) and not getattr(item, "path", None):
+                src = "Archive"
+            return [src, "Organize"]
         if op == "copy" and getattr(item, "content_kind", "") == "ps4":
             n = int(getattr(item, "ps4_count", 0) or 0)
             if getattr(item, "archive_path", None) and not getattr(item, "path", None):
@@ -6214,7 +6517,7 @@ class App:
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="Add Job…", accelerator=ACCEL["add"], command=guard(self.open_job_dialog))
         fm.add_command(label="Look Inside…", accelerator=ACCEL["open"], command=guard(self.open_pfs_browser))
-        fm.add_command(label="Organize…", command=guard(self.organize_folder_dialog))
+        fm.add_command(label="Organize…", command=guard(lambda: self._show_view("organize")))
         fm.add_separator()
         fm.add_command(label="Start Queue", accelerator=ACCEL["start"], command=guard(self.start))
         fm.add_command(label="Pause After This Job", command=self.toggle_pause)
@@ -6480,85 +6783,6 @@ class App:
         except Exception:
             pass
 
-
-
-    def organize_folder_dialog(self):
-        """Walk a folder tree, batch-enqueue every .ffpfsc/.ffpfs/.pkg as a copy job.
-
-        The user picks a source root and an output root; each match is added as an
-        individual copy item so the queue's progress, cancel, edit and save-queue
-        machinery all work per file. Same-drive → atomic rename; cross-drive →
-        chunked copy (source deleted when Delete-source is on). Auto-organize
-        places each file under its own ``<Title> [TID] [vX.Y.Z]/…`` folder derived
-        from the source's param.json."""
-        src_root = filedialog.askdirectory(
-            title="Organize — pick a folder to scan (recursively) for .ffpfsc / .ffpfs / .pkg",
-            parent=self.root)
-        if not src_root:
-            return
-        src_root = Path(src_root)
-        out_root = filedialog.askdirectory(
-            title="Organize — pick the destination root (files land in ‹Title [TID] [vX.Y.Z]›/… inside it)",
-            parent=self.root, initialdir=str(self.output_var.get() or src_root))
-        if not out_root:
-            return
-        out_root = Path(out_root)
-
-        # Recursive scan. rglob is cheap even on large libraries; the metadata read
-        # per file is where time is spent (each hit reads sce_sys/param.json).
-        hits: list[Path] = []
-        for suf in (".ffpfsc", ".ffpfs", ".pkg"):
-            hits.extend(src_root.rglob(f"*{suf}"))
-        # Deduplicate deterministically and drop anything already living in the
-        # destination tree (organizing in place onto themselves would collide).
-        seen: set[str] = set()
-        picked: list[Path] = []
-        for p in sorted(hits, key=lambda q: str(q).lower()):
-            try:
-                rp = p.resolve()
-            except Exception:
-                continue
-            key = str(rp).lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            picked.append(p)
-
-        if not picked:
-            messagebox.showinfo("Organize",
-                                f"No .ffpfsc / .ffpfs / .pkg files were found under:\n{src_root}",
-                                parent=self.root)
-            return
-
-        organize = True   # organizing without auto-organize would be a plain copy — that's not this feature
-        # Persist the target as the app's output folder — matches what Pack does and gives
-        # a nice default for a follow-up Add.
-        self.output_var.set(str(out_root))
-
-        added = 0
-        skipped = 0
-        for src in picked:
-            try:
-                item = self._copy_item_for(src, output_path=str(out_root),
-                                           mode="organize",
-                                           auto_organize=organize, parent=self.root)
-            except Exception as e:
-                self.log("ERROR", f"Organize: could not enqueue {src}: {e}")
-                skipped += 1
-                continue
-            if item is None:
-                skipped += 1
-                continue
-            self.queue.append(item)
-            added += 1
-
-        self.update_queue_box()
-        # Organize jobs run in copy_job's "organize" mode: a rename on the same drive, a
-        # copy that keeps the source across drives (the After-job rule decides the rest).
-        msg = (f"Organize: queued {added} file(s) from {src_root} → {out_root} "
-               f"(moved on the same drive, copied across drives)."
-               + (f"  ({skipped} skipped)" if skipped else ""))
-        self.log("OK", msg)
 
 
     def open_settings(self):
@@ -8078,6 +8302,19 @@ class App:
                 if self.cancel_requested:
                     raise ArchiveExtractionCancelled("Archive extraction cancelled by user.")
                 kind, paths = self._classify_extracted_payload(extracted_root, archive.name)
+                if getattr(item, "content_kind", "") == ORGANIZE_TARGET:
+                    # The whole extraction goes into the library, each item in its own format.
+                    item.origin_archive = str(archive)
+                    item.origin_extracted_size = int(getattr(item, "extracted_size", 0) or 0)
+                    item.path, item.archive_path = Path(extracted_root), None
+                    item.source_kind, item.copy_mode = "inplace", "move"
+                    item._from_archive = True
+                    try:
+                        item.size = item.extracted_size = int(get_folder_size(Path(extracted_root)))
+                    except Exception:
+                        pass
+                    self._extract_q.put(("ok", (item, [])))
+                    return
                 if kind == "ps4":
                     item.operation = "copy"           # sorted into the library, whatever the job said
                 if kind == "pkg" and getattr(item, "operation", "") != "chain":
@@ -8598,6 +8835,17 @@ class App:
         n = p.name.lower()
         return p.is_file() and (p.suffix.lower() in (".zip", ".rar", ".7z") or bool(re.search(r"\.r\d{2,}$", n)))
 
+    def _organize_item_for(self, src, *, output_path=None):
+        """A copy job that writes *src* (a game folder, an image, a package, an archive or a
+        folder of them) into the library in its own format: '<Title> [ID] [vX]/…' under the
+        output, see backend/organize_lib.organize_into. Tk-free."""
+        item = GameItem.from_chain(Path(src), to="ffpfsc", output_path=output_path)
+        item.operation = "copy"
+        item.content_kind = ORGANIZE_TARGET
+        item.chain_to = ORGANIZE_TARGET
+        item.copy_mode = "move" if getattr(item, "archive_path", None) else "keep"
+        return item
+
     def _ps4_archive_item(self, archive, info: dict, *, output_path=None):
         """A sorting job for an archive of PS4 packages (see _ps4_item_for), named from the
         first package's param.sfo when the archive allows reading it. Tk-free."""
@@ -9041,7 +9289,7 @@ class App:
         that cannot be known before the job runs: an archive whose game cannot be read yet
         (its name then comes from the extracted game), a .pkg without auto-organize (the
         package tool names it), a folder output, a PS4 set (the backend names every package)."""
-        if getattr(item, "content_kind", "") == "ps4":
+        if getattr(item, "content_kind", "") in ("ps4", ORGANIZE_TARGET):
             return None
         op = getattr(item, "operation", "pack")
         if op == "chain":
@@ -9857,7 +10105,8 @@ class App:
         aj = _after_job_module()
         act = getattr(item, "after_source", None) or aj.KEEP
         if (act in aj.ACTIONS and act != aj.KEEP
-                and (getattr(item, "operation", "") not in ("fake-sign", "copy") or getattr(item, "content_kind", "") == "ps4")):
+                and (getattr(item, "operation", "") not in ("fake-sign", "copy")
+                     or getattr(item, "content_kind", "") in ("ps4", ORGANIZE_TARGET))):
             text = aj.DONE_TEXT[act].format(dest=getattr(item, "after_move_to", None) or "a folder")
             info["After"] = text[0].upper() + text[1:] + ", once the job is Done"
         return info
@@ -10184,6 +10433,19 @@ class App:
         # source and target land on the same drive the backend performs an
         # atomic os.rename; otherwise it does a chunked copy and (unless the
         # user unchecked the option) deletes the source afterwards.
+        if op == "copy" and getattr(item, "content_kind", "") == ORGANIZE_TARGET:
+            # the backend writes the source into '<Title> [ID] [vX]/…' under the output, in its
+            # own format, joining a title folder that is already there
+            try:
+                out.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            head = (pycmd + ["placeholder", str(out)] if getattr(sys, "frozen", False)
+                    else pycmd + ["-u", str(cli_py), "placeholder", str(out)])
+            cmd = head + ["--organize-into", str(item.path),
+                          "--copy-mode", self._ps4_copy_mode(item),
+                          "--if-exists", self.output_exists_var.get() or "skip"]
+            return cmd, backend, out, temp
         if op == "copy" and getattr(item, "content_kind", "") == "ps4":
             # the backend sorts the package(s) into '<Title> [CUSA…] [vX]/…' under the output
             try:
@@ -11405,6 +11667,11 @@ class App:
         root = str(tpl.get("_rescan_root") or "") or None
 
         def make(src):
+            if to == ORGANIZE_TARGET:
+                it = self._organize_item_for(src, output_path=out or None)
+                it.after_source, it.after_move_to = after, after_dir
+                it.source_root = root
+                return it
             it = GameItem.from_chain(src, to=to, output_path=out or None, sign=sign,
                                      patch_source=patch, backport_target=target,
                                      backport_libs_root=None)
@@ -11961,7 +12228,7 @@ class App:
         act = getattr(item, "after_source", None) or aj.KEEP
         if act not in aj.ACTIONS or act == aj.KEEP:
             return aj.KEEP, [], None, None
-        ps4 = getattr(item, "content_kind", "") == "ps4"
+        ps4 = getattr(item, "content_kind", "") in ("ps4", ORGANIZE_TARGET)   # library jobs (see _ps4_copy_mode)
         if getattr(item, "operation", "") in ("fake-sign", "copy") and not ps4:
             return aj.KEEP, [], None, None          # these work on the source themselves
         if ps4 and act == aj.DELETE and not getattr(item, "origin_archive", None):

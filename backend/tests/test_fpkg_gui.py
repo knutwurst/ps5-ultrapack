@@ -2103,28 +2103,69 @@ try:
     _d5.src_var.set(str(HBT)); root.update(); _d5._refresh(); root.update()
     ok("ps4.dialog-back-to-ps5", _d5._kind == "folder" and bool(_d5._crow.winfo_manager()), _d5._kind)
     _d5.destroy(); root.update()
-    # Organize: the dialog walks a folder, queues one copy job per image and logs a summary
-    # (the summary line once referred to a name that did not exist and raised after queueing)
-    _org_src = S / "org_src"; _org_src.mkdir(exist_ok=True); shutil.copy2(FF, _org_src / FF.name)
-    _org_out = S / "org_out"; _org_out.mkdir(exist_ok=True)
-    _org_answers = iter([str(_org_src), str(_org_out)])
-    _org_saved = m.filedialog.askdirectory
-    m.filedialog.askdirectory = lambda *a, **k: next(_org_answers, "")
-    _org_logs = []; _org_log_saved = app.log
-    app.log = lambda lvl, msg, *a, **k: (_org_logs.append((lvl, msg)), _org_log_saved(lvl, msg, *a, **k))
-    _org_before = len(app.queue); _org_err = ""
+    # Organize: a view of the main window; scan a folder (no '._' rows), Apply, Undo
+    _org = S / "org_lib"; (_org / "Some.Release").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(FF, _org / "Some.Release" / "x.ffpfsc")
+    (_org / "Some.Release" / "info.nfo").write_text("notes")
+    (_org / "Some.Release" / "._x.ffpfsc").write_bytes(b"\x00\x05\x16\x07" + b"\0" * 60)
+    (_org / "._Some.Release").write_bytes(b"\x00\x05\x16\x07")
+    app.output_var.set(str(_org))
+    app._show_view("organize"); root.update()
+    _ov = app._organize_view
+    ok("organize.view-opens", app._view == "organize" and _ov.root_var.get() == str(_org), _ov.root_var.get())
+    app.output_var.set(str(OUT))
+    _ov.scan(); pump(lambda: not _ov._busy, timeout=60.0); root.update()
+    _rows = [_ov.tree.item(i, "values") for i in _ov.tree.get_children()]
+    ok("organize.scan-no-clutter", [r_[1] for r_ in _rows] == ["Some.Release", "Some.Release/x.ffpfsc"]
+       and len(_ov._checked) == 2 and all("LibProsperoPKG [PPSA99099]" in r_[2] for r_ in _rows), str(_rows))
+    _ov.apply(); pump(lambda: not _ov._busy, timeout=60.0); pump(lambda: not _ov._busy, timeout=60.0); root.update()
+    _t = "LibProsperoPKG [PPSA99099] [v01.000.000]"
+    _after = sorted(x.name for x in _org.iterdir())
+    ok("organize.apply-renames-in-place", _after == [_t] and sorted(x.name for x in (_org / _t).iterdir())
+       == ["LibProsperoPKG [PPSA99099] [v01.000] [fw2.00].ffpfsc", "info.nfo"] and _ov.journal.is_file(), str(_after))
+    _ask = m.messagebox.askyesno; m.messagebox.askyesno = lambda *a, **k: True
     try:
-        app.organize_folder_dialog()
-    except Exception as e:
-        _org_err = f"{type(e).__name__}: {e}"
+        _ov.undo(); pump(lambda: not _ov._busy, timeout=60.0); pump(lambda: not _ov._busy, timeout=60.0); root.update()
     finally:
-        m.filedialog.askdirectory = _org_saved; app.log = _org_log_saved
-    ok("organize.dialog-queues-and-logs", not _org_err and len(app.queue) == _org_before + 1
-       and any("Organize: queued 1 file(s)" in msg for _, msg in _org_logs),
-       _org_err or f"queued={len(app.queue) - _org_before} logs={[m_ for _, m_ in _org_logs if 'Organize' in m_][:1]}")
-    for _it in list(app.queue[_org_before:]):
-        app.queue.remove(_it)
-    app.update_queue_box()
+        m.messagebox.askyesno = _ask
+    ok("organize.undo", sorted(x.name for x in _org.iterdir() if not x.name.startswith("._")) == ["Some.Release"]
+       and (_org / "Some.Release" / "x.ffpfsc").is_file() and not _ov.journal.is_file(), str(sorted(x.name for x in _org.iterdir())))
+    app._show_view("queue"); root.update()
+    # Organize as an Add job output: the source goes into the library in its own format
+    _do = m.JobDialog(app, init_src=str(FF)); root.update()
+    ok("organize.output-offered", "Organize" in list(_do._to_seg.cget("values")), str(_do._to_seg.cget("values")))
+    _do.to_var.set("Organize"); _do._refresh(); root.update()
+    ok("organize.output-hides-changes", not _do._crow.winfo_manager() and not _do._comp_row.winfo_manager()
+       and _do.summary_var.get().startswith("Organize into the library"), _do.summary_var.get())
+    _libo = S / "org_library"; shutil.rmtree(_libo, ignore_errors=True); _libo.mkdir()
+    _do.out_var.set(str(_libo)); _qb = len(app.queue); _do._add(); settle()
+    _qo = app.queue[-1] if len(app.queue) > _qb else None
+    _cmdo = app.build_command(_qo)[0] if _qo is not None else []
+    ok("organize.output-job", _qo is not None and _qo.operation == "copy" and _qo.content_kind == "organize"
+       and app._job_recipe_parts(_qo) == [".ffpfsc", "Organize"] and "--organize-into" in _cmdo
+       and _cmdo[_cmdo.index("--copy-mode") + 1] == "keep", f"{app._job_recipe_parts(_qo) if _qo else None} {_cmdo[-6:]}")
+    if _qo is not None:
+        app.queue.remove(_qo); app.update_queue_box()
+    _q0, _act0 = list(app.queue), app._active_item
+    _inflight1 = getattr(app, "_cleanup_inflight", 0)
+    _runs = [app._organize_item_for(FF, output_path=str(_libo)), app._organize_item_for(ZP, output_path=str(_libo))]
+    for _r in _runs:
+        _r.after_source = "keep"
+    app._cleanup_inflight = 0; app.cancel_requested = False; app.extract_cancel_event.clear()
+    try:
+        app.queue[:] = list(_runs); app._active_item = None
+        app.start()
+        pump(lambda: all(_r.status in ("Done", "Failed", "Skipped", "Cancelled") for _r in _runs)
+             and not app._batch_running, timeout=180.0)
+        _t = "LibProsperoPKG [PPSA99099] [v01.000.000]"
+        _got = sorted(x.relative_to(_libo).as_posix() for x in _libo.rglob("*") if x.is_file() and "sce_sys" not in x.parts)
+        ok("organize.output-run-end-to-end", [r_.status for r_ in _runs] == ["Done", "Done"]
+           and f"{_t}/LibProsperoPKG [PPSA99099] [v01.000] [fw2.00].ffpfsc" in _got and f"{_t}/{_t}/eboot.bin" in _got
+           and not any("/._" in g or g.startswith("._") for g in _got) and FF.is_file() and ZP.is_file(),
+           f"{[r_.status for r_ in _runs]} {_got}")
+    finally:
+        app._batch_running = False; app._cleanup_inflight = _inflight1
+        app.queue[:] = _q0; app._active_item = _act0; app.update_queue_box()
     _fd_saved = (m.filedialog.askdirectory, m.filedialog.askopenfilename)
     m.filedialog.askdirectory = lambda *a, **k: (_fd_calls.append(("dir", k.get("title", ""))), "")[1]
     m.filedialog.askopenfilename = lambda *a, **k: (_fd_calls.append(("file", k.get("title", ""))), "")[1]
@@ -2191,7 +2232,8 @@ try:
         tools = {b._text: b for b in app._nav_all}
         ok("wire.tool.clean-temp", tools["Clean temp"]._command == app.clear_temp_files, "")
         tools["Organize"].invoke(); root.update()
-        ok("wire.tool.organize", any(k == "dir" and "Organize" in t for k, t in _fd_calls), str(_fd_calls))
+        ok("wire.tool.organize", app._view == "organize" and not _fd_calls[-1:] == [("dir", "")], app._view)
+        app._show_view("queue"); root.update()
         tools["Look inside"].invoke(); root.update()
         ok("wire.tool.look-inside", _top() == "PfsBrowserDialog", str(_top()))
         ok("wire.panel.sidebar-paused", all(b._state == "disabled" for b in app._nav_all), "")
@@ -2352,9 +2394,9 @@ try:
         menus["File"].invoke(_entry(menus["File"], "Look Inside…")); root.update()
         ok("wire.menubar.look-inside", _top() == "PfsBrowserDialog", str(_top()))
         close_toplevels(); root.update()
-        n_fd = len(_fd_calls)
         menus["File"].invoke(_entry(menus["File"], "Organize…")); root.update()
-        ok("wire.menubar.organize", len(_fd_calls) == n_fd + 1, str(_fd_calls[n_fd:]))
+        ok("wire.menubar.organize", app._view == "organize", app._view)
+        app._show_view("queue"); root.update()
         was = app._inspector_open
         menus["View"].invoke(_entry(menus["View"], "Hide Details" if was else "Show Details")); root.update()
         ok("wire.menubar.details", app._inspector_open != was, f"{was} -> {app._inspector_open}")

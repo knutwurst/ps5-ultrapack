@@ -393,6 +393,21 @@ def _drop_sidecar(p: Path) -> None:
         pass
 
 
+def _drop_sidecars_of(ops: list) -> None:
+    """On exFAT macOS gives a folder it creates, and a file it moves, a '._' sidecar (the
+    provenance attribute); remove those beside everything the operations touched, and
+    beside the folders above them."""
+    seen: set = set()
+    for op in ops:
+        for key in ("src", "dst", "path"):
+            if key in op:
+                p = Path(op[key])
+                for q in (p, p.parent):
+                    if q not in seen:
+                        seen.add(q)
+                        _drop_sidecar(q)
+
+
 def _rename(src: Path, dst: Path) -> None:
     """os.rename, also for a change of case alone on a drive that ignores case."""
     if src != dst and str(src).lower() == str(dst).lower():
@@ -496,6 +511,7 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
                 ops.append({"op": "rmdir", "path": str(q)})
                 q = q.parent
     finally:
+        _drop_sidecars_of(ops)
         if ops:
             _write_json(Path(journal_path), {"root": str(root), "ops": ops})
     return {"moved": moved, "failed": failed}
@@ -530,6 +546,7 @@ def undo(journal_path, on_line=None) -> dict:
             _drop_sidecar(src)
             back += 1
             _say(on_line, f"[ORGANIZE] back: {dst.name} -> {src}")
+    _drop_sidecars_of(data.get("ops", []))
     os.replace(journal_path, journal_path.with_name(journal_path.stem + ".undone.json"))
     return {"moved": back, "failed": failed}
 
