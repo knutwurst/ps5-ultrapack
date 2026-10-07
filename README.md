@@ -141,6 +141,7 @@ Saved archive passwords are tried automatically. When none unlocks an archive's 
 
 - **`.ffpfsc`**, the compressed container, or **`.ffpfs`**, the uncompressed image (faster to mount, full size). Chosen per job.
 - **`.pkg`**, an installable PS5 debug fake package, from any source; see the fPKG section above. The tool generates `sce_sys/icon0.dds` with Magick.NET, which the console needs to launch.
+- **Organize**: the source goes into your library as it is, in its own format, under its library name and into its title folder (see [Organize a library](#organize-a-library)).
 - **Auto-organize** (on by default) names the result from the game's own `param.json`, whatever the source was called: `<Output>/<Title> [TITLEID] [vXX.YYY.ZZZ]/<Title> [TITLEID] [vXX.YYY] [fwN.NN].ffpfsc` (or `.pkg`), with the extras that came with the game copied into that folder. `[fwN.NN]` is the firmware the game needs, read from the SDK version in `eboot.bin` (for a container through its headers only); a backport lowers it to the target, an integrated patch counts with its own `eboot.bin`, and an unreadable one leaves the tag out. An archive inside a folder named `convert` still ends up as `Example Quest Deluxe Edition [PPSA00001] [v01.200.007]/Example Quest [PPSA00001] [v01.200] [fw8.00].ffpfsc`: a name that would break ShadowMountPlus's byte limit is shortened on a byte budget, dropping edition words ("Deluxe Edition", "Remastered") before truncating.
 
 ## Why this one
@@ -154,6 +155,15 @@ A plain packer asks you to prepare a clean folder, then writes a single image to
 - **It keeps the image clean without losing your files.** Extras that ship next to a game, such as text files, checksum files or a bundle folder, never enter the image, and none of them is deleted: the app moves them next to the finished container. OS clutter (`.DS_Store`, `._*`, `__MACOSX`) is dropped everywhere: it is not unpacked, not copied, not packed and not moved along.
 - **It changes what you ask for, in one run.** Patch, backport and sign are steps of the same job, applied in a fixed order on a staging copy, and the result is validated before it counts as done.
 - **It opens a packed image and pulls one file out.** **Look inside** decompresses only the blocks it touches, so opening a 100 GB container does not wait for a full decompression, and one file costs a fraction of a full unpack.
+
+## Organize a library
+
+**Organize** (in the sidebar) sorts a folder in place. Pick the folder (it starts with your output folder) and press **Scan**: the app reads every game folder, `.ffpfsc`, `.ffpfs`, `.exfat`, `.ffpkg`, PS5 and PS4 `.pkg` and archive inside it, at any depth, and lists where each one belongs, old name next to new name, with a checkbox each. **Apply** renames what is checked; nothing is copied, so it takes seconds on any drive. **Undo last organize** moves it all back.
+
+- Every game gets one title folder directly in the chosen folder: `<Title> [PPSA12345] [v01.300.000]`, named after the newest version it holds. Images and packages inside get the names Auto-organize gives a new build, an unpacked game moves in as `<Title> [PPSA12345] [v01.000.000]/`, and PS4 packages follow the PS4 layout (UPDATE, DLC, `DLC Pack` from four DLCs on).
+- Archives keep their file names, since the parts of a set have to. A folder holding one game's archives is renamed to the title folder; a folder with several games' archives is split per game; when it is unclear which archive belongs to which game, nothing in that folder moves.
+- Notes, pictures and DLC folders beside a game move with it. In a folder shared by several games they move only when their name names one game.
+- A row that stays says why. `._` files are never listed, and none are left behind, even on an exFAT drive ejected right after Apply.
 
 ## Look inside an image
 

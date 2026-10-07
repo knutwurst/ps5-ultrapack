@@ -6,6 +6,47 @@
   v2.2.1  (current)
 ────────────────────────────────────────────────────────────────────────
 
+ORGANIZE SORTS A FOLDER IN PLACE
+
+  - Organize is now a view of the main window. Pick a folder (it starts
+    with your output folder), and the app reads every game folder,
+    .ffpfsc, .ffpfs, .exfat, .ffpkg, PS5 and PS4 .pkg and archive in it,
+    at any depth, and shows where each one belongs: old name, new name,
+    a checkbox each. Apply renames them; nothing is copied, so a whole
+    drive is sorted in seconds.
+  - Each game gets one title folder directly in the chosen folder,
+    '<Title> [PPSA12345] [v01.300.000]', named after the newest version
+    it holds. Images and packages inside get the names Auto-organize
+    gives a new build; an unpacked game moves in as
+    '<Title> [PPSA12345] [v01.000.000]'; PS4 packages follow the PS4
+    layout with UPDATE, DLC and 'DLC Pack'.
+  - Archives keep their file names, because the parts of a set must.
+    A folder that holds one game's archives is renamed instead; a folder
+    with several games' archives is split into one folder per game.
+    When the app cannot tell which archive belongs to which game,
+    nothing in that folder moves.
+  - Notes, pictures and DLC folders next to a game move with it. In a
+    folder shared by several games, they move only when their name
+    names one of the games.
+  - Rows that stay say why: the game could not be read, it is unclear
+    whose archives these are, or two files would end up with the same
+    name.
+  - Undo last organize moves everything back where it was.
+  - '._' files never show up in the list, and none are left behind
+    after Apply or Undo, even on an exFAT drive ejected right away.
+    Folders that Apply leaves empty are removed.
+
+ORGANIZE AS A JOB OUTPUT
+
+  - Add job has a fifth output next to Folder, .ffpfs, .ffpfsc and .pkg:
+    Organize. The source goes into your library in the format it already
+    has, under its library name, without being rebuilt. An archive is
+    unpacked and what it holds goes over in its own format.
+  - An existing title folder is joined, and its version tag goes up
+    when the new item is newer.
+  - The After-job rule decides between copy and move, as for every
+    other job.
+
 PS4 PACKAGES
 
   - A PS4 package (.pkg) in an archive, in a folder or on its own is
@@ -48,8 +89,6 @@ ALSO
     or a solid set inside) is named from the folder it sits in when that
     folder carries the title id and a name, until the real name is read
     after unpacking.
-  - Organize logs its summary again; the last line of the walk raised
-    an error after the jobs were queued.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.0
