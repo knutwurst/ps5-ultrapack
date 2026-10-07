@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 MAGIC = 0x7F434E54
 ENTRY_PARAM_SFO = 0x1000
+ENTRY_ICON0_PNG = 0x1200
 CT_GD, CT_AC, CT_AL, CT_DP = 0x1A, 0x1B, 0x1C, 0x1E
 
 
@@ -149,6 +150,15 @@ def identity_from_prefix(read_prefix, limit: int = 32 << 20) -> Ps4Identity:
                 raise Ps4PackageError("param.sfo cut short")
             return _identity(h, parse_sfo(data[off:off + size]))
     raise Ps4PackageError("no param.sfo in the package")
+
+
+def read_icon(path) -> bytes | None:
+    """The package's icon0.png (stored in the clear like param.sfo), or None."""
+    try:
+        data = _read_entry(path, read_header(path), ENTRY_ICON0_PNG)
+    except Ps4PackageError:
+        return None
+    return data if data[:8] == b"\x89PNG\r\n\x1a\n" else None
 
 
 def read_identity(path) -> Ps4Identity:

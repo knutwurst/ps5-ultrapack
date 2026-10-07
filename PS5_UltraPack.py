@@ -6033,7 +6033,7 @@ class App:
         hdr = kit.frame(body, bg=B)
         hdr.grid(row=0, column=0, sticky="ew")
         hdr.grid_columnconfigure(1, weight=1)
-        self.art_label = ArtView(hdr, kit, size=56, bg=B)
+        self.art_label = ArtView(hdr, kit, size=self.ART_PX, bg=B)
         self.art_label.grid(row=0, column=0, rowspan=3, sticky="nw", padx=(0, 14))
         t = kit.label(hdr, bg=B, font=kit.fonts.title, textvariable=self.card_title_var)
         t.grid(row=0, column=1, sticky="ew")
@@ -6041,7 +6041,7 @@ class App:
         m.grid(row=1, column=1, sticky="ew", pady=(3, 0))
         tg = kit.label(hdr, bg=B, fg="faint", font=kit.fonts.small, textvariable=self.card_target_var)
         tg.grid(row=2, column=1, sticky="ew", pady=(2, 0))
-        self._bind_dynamic_wrap(hdr, [t, m, tg], padding=110, min_width=160)
+        self._bind_dynamic_wrap(hdr, [t, m, tg], padding=self.ART_PX + 54, min_width=160)
         self._small(hdr, "", "x", lambda: self._set_inspector(False), bg=B,
                     tooltip=f"Hide the details  {SHORTCUT['details']}").grid(row=0, column=2, sticky="ne", padx=(8, 0))
 
@@ -7090,22 +7090,27 @@ class App:
         self.load_art(find_artwork(p))
         self.update_command_preview()
 
+    ART_PX = 96          # the cover in the details pane
+
     def load_art(self, art):
-        # Cache: skip disk I/O if the path hasn't changed
-        art_key = str(art) if art else None
+        # Cache: skip disk I/O if the file hasn't changed
+        try:
+            art_key = (str(art), Path(str(art)).stat().st_mtime_ns) if art else None
+        except OSError:
+            art_key = None
         if art_key == getattr(self, "_loaded_art_key", object()):
             return
         self._loaded_art_key = art_key
         photo = None
-        if Image and ImageTk and art and Path(str(art)).exists():
+        if Image and ImageTk and art_key:
             try:
                 img = Image.open(art).convert("RGBA")
-                img.thumbnail((56, 56))
+                img.thumbnail((self.ART_PX, self.ART_PX), Image.LANCZOS)
                 try:
                     from PIL import ImageChops, ImageDraw
                     mask = Image.new("L", img.size, 0)
                     ImageDraw.Draw(mask).rounded_rectangle(
-                        [0, 0, img.size[0] - 1, img.size[1] - 1], radius=10, fill=255)
+                        [0, 0, img.size[0] - 1, img.size[1] - 1], radius=max(10, self.ART_PX // 7), fill=255)
                     img.putalpha(ImageChops.multiply(img.getchannel("A"), mask))
                 except Exception:
                     pass
@@ -7232,6 +7237,10 @@ class App:
         target.size         = source.size
         target.files        = source.files
         target.artwork      = source.artwork
+        if source.artwork and not art_cache_file(getattr(target, "art_key", "") or ""):
+            key = art_source_key(target)
+            if store_art(key, source.artwork):
+                target.art_key = key
         target.status       = source.status
         # After extraction the source is a real folder on the build drive: it becomes
         # 'inplace' (packed in place), so the post-extraction re-gate sizes only the
@@ -9021,9 +9030,106 @@ class App:
                     ident = None
                 if self._take_game_name(it, ident):
                     changed = True
+                try:
+                    if self._fetch_art(it, pw.get(id(it))):
+                        changed = True
+                except Exception:
+                    pass
             if changed:
                 self._names_dirty = True
         threading.Thread(target=work, daemon=True).start()
+
+    def _job_art(self, item):
+        """The cover to show for *item*: its cached copy, else the icon in its folder (cached
+        on the way, so it stays when the folder goes)."""
+        f = art_cache_file(getattr(item, "art_key", "") or "") or art_cache_file(art_source_key(item))
+        if f is not None:
+            return f
+        art = getattr(item, "artwork", None)
+        if art and Path(str(art)).is_file():
+            key = art_source_key(item)
+            if store_art(key, art):
+                item.art_key = key
+                return art_cache_file(key)
+            return art
+        return None
+
+    def _fetch_art(self, item, passwords=None) -> bool:
+        """Read *item*'s icon0.png from its source and cache it: a folder, an archive read
+        alone (ZIP, RAR and 7z that are not solid), a .ffpfs/.ffpfsc or a .pkg (only that
+        one entry is decoded). Runs off the main thread. True when a cover was added."""
+        key = art_source_key(item)
+        if not key or art_cache_file(getattr(item, "art_key", "") or "") or art_cache_file(key):
+            if art_cache_file(key) and not getattr(item, "art_key", ""):
+                item.art_key = key
+            return False
+        data = None
+        arc = getattr(item, "archive_path", None)
+        p = Path(str(getattr(item, "path", "") or "")) if getattr(item, "path", None) else None
+        if arc and p is None:
+            data = ArchiveExtractor.read_shallowest(Path(str(arc)), "sce_sys/icon0.png", passwords or [])
+            if data is None:
+                info = ArchiveExtractor.ps4_archive_info(Path(str(arc)), passwords or [])
+                if info and info.get("packages"):
+                    data = self._ps4_icon_from_archive(Path(str(arc)), info["packages"][0], passwords or [])
+        elif p is not None and p.is_dir():
+            data = find_artwork(p)
+        elif p is not None and p.is_file():
+            data = self._icon_of_container(p)
+        if data and store_art(key, data):
+            item.art_key = key
+            return True
+        return False
+
+    def _icon_of_container(self, p: Path):
+        """sce_sys/icon0.png out of a .ffpfs/.ffpfsc or a PS5/PS4 .pkg, or None."""
+        suf = p.suffix.lower()
+        if suf == ".pkg" and _is_ps4_source(p):
+            return _ps4pkg_module().read_icon(p)
+        if suf not in (".ffpfs", ".ffpfsc", ".pkg"):
+            return None
+        tmp = Path(tempfile.mkdtemp(prefix="ffpfsc_icon_"))
+        try:
+            mfile = tmp / "members.txt"
+            mfile.write_text("sce_sys/icon0.png\n", encoding="utf-8")
+            dest = tmp / "out"
+            if suf == ".pkg":
+                backend = backend_base_dir()
+                if str(backend) not in sys.path:
+                    sys.path.insert(0, str(backend))
+                import fpkg as _fpkg
+                _fpkg.extract_members(p, dest, mfile, on_line=lambda _l: None)
+            else:
+                subprocess.run(self._backend_cmd("--extract-from", str(p), "--dest", str(dest),
+                                                 "--members-file", str(mfile)),
+                               capture_output=True, text=True, timeout=300)
+            f = dest / "sce_sys" / "icon0.png"
+            return f.read_bytes() if f.is_file() else None
+        except Exception:
+            return None
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @staticmethod
+    def _ps4_icon_from_archive(archive: Path, member: str, passwords):
+        """A PS4 package's icon0.png read from the start of the package inside *archive*."""
+        m = _ps4pkg_module()
+        try:
+            head = ArchiveExtractor.read_member_prefix(archive, member, 0x1000, passwords) or b""
+            h = m.header_from_bytes(head)
+            need = h.entry_table_offset + 32 * h.entry_count
+            if not 0 < h.entry_count < 10000 or need > 32 << 20:
+                return None
+            table = ArchiveExtractor.read_member_prefix(archive, member, need, passwords) or b""
+            import struct as _st
+            for i in range(h.entry_count):
+                eid, _fn, _f1, _f2, off, size = _st.unpack_from(">IIIIII", table, h.entry_table_offset + i * 32)
+                if eid == m.ENTRY_ICON0_PNG and off + size <= 32 << 20:
+                    data = ArchiveExtractor.read_member_prefix(archive, member, off + size, passwords) or b""
+                    return data[off:off + size] if len(data) >= off + size else None
+        except Exception:
+            return None
+        return None
 
     @staticmethod
     def _take_game_name(item, ident) -> bool:
@@ -9768,7 +9874,7 @@ class App:
                         self._ampr_cleanup(obj)
                     except Exception:
                         pass
-                obj.artwork = None   # re-detected lazily when the row is selected
+                obj.artwork = None   # the cover comes back from the art cache (art_key)
                 # A queue saved before per-job formats existed has no format snapshot; it
                 # was a compressed .ffpfsc job then. Without this, the snapshot step below
                 # would turn it into whatever format is remembered today (e.g. .pkg).
@@ -9782,6 +9888,9 @@ class App:
                 skipped += 1
         self._queue_missing_saved = missing   # re-persisted by _save_queue, untouched
         self._queue_restored = True   # from here on, queue mutations persist
+        # Covers no job uses any more go after a while (the parked jobs keep theirs).
+        _keep = {getattr(o, "art_key", "") for o in self.queue} | {str(d.get("art_key") or "") for d in missing}
+        threading.Thread(target=prune_art_cache, args=(_keep,), daemon=True).start()
         if self.queue:
             self.update_queue_box()
         if restored:
@@ -9977,7 +10086,7 @@ class App:
         else:
             self.orig_var.set(f"Original Size: {format_size(item.size)}")
         self.files_var.set(f"Files: {item.files:,}")
-        self.load_art(item.artwork)
+        self.load_art(self._job_art(item))
         self._refresh_space_for_item(item)
         self.update_command_preview()
         self._fill_job_card(item)
@@ -13063,6 +13172,7 @@ class App:
                 self.update_queue_box(select_item=_sel)
                 if _sel is not None and _sel in self.queue:
                     self._fill_job_card(_sel)
+                    self.load_art(self._job_art(_sel))
             self._card_tick = getattr(self, "_card_tick", 0) + 1
             if self._card_tick >= 5 and getattr(self, "_inspector_open", False):
                 self._card_tick = 0

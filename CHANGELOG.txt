@@ -85,6 +85,13 @@ NO '._' FILES ON AN EXFAT DRIVE, EVEN WHEN YOU EJECT RIGHT AWAY
 
 ALSO
 
+  - The game's picture in the job details stays. It used to vanish when
+    you picked another job: after a restart every job lost it, and a
+    job from an archive lost it once its unpacked copy was gone. The
+    picture is now read when the job is added, straight from the
+    archive (ZIP, and RAR or 7z that are not solid), the .ffpfsc or
+    .ffpfs, or the PS5 or PS4 .pkg, and kept by the app. It is also
+    larger.
   - An archive whose game cannot be read before it is unpacked (an image
     or a solid set inside) is named from the folder it sits in when that
     folder carries the title id and a name, until the real name is read

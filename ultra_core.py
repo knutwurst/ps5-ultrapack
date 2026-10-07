@@ -1711,6 +1711,72 @@ def library_layout(items, known: dict | None = None):
     return out
 
 
+# ── Cover art cache ───────────────────────────────────────────────────────────
+# A job's cover (sce_sys/icon0.png) is read once, as early as its source allows (a folder,
+# an archive read alone, an image, a package), and kept as a small PNG in the app folder.
+# The job carries only the key, so the cover outlives the job's extraction and a restart.
+ART_DIR = APP_DIR / "art"
+ART_STORE_PX = 256              # stored size: twice the largest size shown
+_ART_KEEP_DAYS = 30
+
+
+def art_source_key(item) -> str:
+    """The cache key of *item*'s cover: its original source (the archive it came from, else
+    its own path). '' when the job has no source."""
+    src = (getattr(item, "origin_archive", None) or getattr(item, "archive_path", None)
+           or getattr(item, "path", None))
+    src = str(src or "").strip()
+    return hashlib.sha1(src.encode("utf-8", "replace")).hexdigest()[:20] if src else ""
+
+
+def art_cache_file(key: str) -> Path | None:
+    """The cached cover for *key*, or None when there is none."""
+    if not key:
+        return None
+    f = ART_DIR / f"{key}.png"
+    return f if f.is_file() else None
+
+
+def store_art(key: str, data) -> Path | None:
+    """Keep *data* (PNG/JPEG bytes or a path to one) as the cover for *key*, scaled down to
+    ART_STORE_PX. None when it is no readable picture. Safe off the main thread (no Tk)."""
+    if not key or not data:
+        return None
+    try:
+        import io
+        from PIL import Image
+        img = Image.open(io.BytesIO(data) if isinstance(data, (bytes, bytearray)) else str(data))
+        img = img.convert("RGBA")
+        img.thumbnail((ART_STORE_PX, ART_STORE_PX))
+        ART_DIR.mkdir(parents=True, exist_ok=True)
+        dest = ART_DIR / f"{key}.png"
+        tmp = dest.with_name(f"{key}.{os.getpid()}.{threading.get_ident()}.tmp")
+        img.save(tmp, "PNG")
+        os.replace(tmp, dest)
+        return dest
+    except Exception:
+        return None
+
+
+def prune_art_cache(keep_keys) -> int:
+    """Remove cached covers that no job uses and nobody looked at for _ART_KEEP_DAYS days."""
+    keep = set(keep_keys or ())
+    cutoff = time.time() - _ART_KEEP_DAYS * 86400
+    n = 0
+    try:
+        files = list(ART_DIR.iterdir())
+    except OSError:
+        return 0
+    for f in files:
+        try:
+            if f.stem not in keep and f.stat().st_mtime < cutoff:
+                f.unlink()
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
 def find_artwork(path: Path):
     if path.is_file():
         return None
@@ -3198,6 +3264,7 @@ class GameItem:
     # Class-level defaults so items built via __new__ (from_*, history, restored queue)
     # always have these attributes even when an older saved queue predates them.
     ampr_emu = False        # PlayGo/APR title? (auto-detected)
+    art_key = ""            # the job's cover in the art cache (see store_art); survives a restart
     content_kind = ""       # "ps4": a PS4 package set, sorted into the library by a copy job;
                             # "organize": any source written into the library in its own format
     display_name = None     # STABLE queue label captured at add time; survives extraction
@@ -3579,6 +3646,11 @@ __all__ = [
     "ident_from_param_bytes",
     "organized_names",
     "find_artwork",
+    "ART_DIR",
+    "art_source_key",
+    "art_cache_file",
+    "store_art",
+    "prune_art_cache",
     "load_history",
     "save_history",
     "_SETTINGS_UNREADABLE",

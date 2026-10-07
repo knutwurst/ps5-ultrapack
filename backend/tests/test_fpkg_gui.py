@@ -2166,6 +2166,27 @@ try:
     finally:
         app._batch_running = False; app._cleanup_inflight = _inflight1
         app.queue[:] = _q0; app._active_item = _act0; app.update_queue_box()
+    # Cover art: read before unpacking, cached, and still there after a restart or once the
+    # extraction is gone (it used to vanish when the row changed)
+    _art_items = {"zip": m.GameItem.from_archive(ZP), "ffpfsc": app._organize_item_for(FF),
+                  "pkg": app._organize_item_for(next((S / "c1_pkg").glob("*.pkg")))}
+    for _v in _art_items.values():
+        _f = m.art_cache_file(m.art_source_key(_v))
+        if _f is not None:
+            _f.unlink()            # the naming thread may have cached it already: read it anew
+    _art_got = {k: bool(app._fetch_art(v, [])) and m.art_cache_file(v.art_key) is not None for k, v in _art_items.items()}
+    ok("art.read-before-unpacking", all(_art_got.values()), str(_art_got))
+    _ai = _art_items["zip"]; _ai.artwork = None
+    _q0 = list(app.queue)
+    app.queue[:] = [_ai]; app._details_item = None; app.update_queue_box(); root.update()
+    ok("art.shown-at-size", app.art_label._photo is not None and app.art_label.size_ == app.ART_PX >= 96
+       and max(app.art_img.width(), app.art_img.height()) == app.ART_PX, str(getattr(app, "art_img", None)))
+    app._save_queue(); app.queue.clear(); app._details_item = None; app._restore_queue(); root.update()
+    _rest = app.queue[0] if app.queue else None
+    app.update_game_details(_rest); root.update()
+    ok("art.after-restart", _rest is not None and _rest.artwork is None and app.art_label._photo is not None,
+       str(getattr(_rest, "art_key", None)))
+    app.queue[:] = _q0; app._details_item = None; app.update_queue_box(); root.update()
     _fd_saved = (m.filedialog.askdirectory, m.filedialog.askopenfilename)
     m.filedialog.askdirectory = lambda *a, **k: (_fd_calls.append(("dir", k.get("title", ""))), "")[1]
     m.filedialog.askopenfilename = lambda *a, **k: (_fd_calls.append(("file", k.get("title", ""))), "")[1]

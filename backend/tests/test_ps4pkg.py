@@ -46,6 +46,16 @@ class Identity(unittest.TestCase):
         with self.assertRaises(ps4pkg.Ps4PackageError):
             ps4pkg.read_identity(junk)
 
+    def test_icon_missing_is_none(self):
+        self.assertIsNone(ps4pkg.read_icon(self._pkg("g.pkg", 0x1A, "gd")))
+        self.assertIsNone(ps4pkg.read_icon(self.tmp / "missing.pkg"))
+
+    @unittest.skipUnless(REAL, "no real PS4 packages in unzipped/ps4/")
+    def test_real_icons(self):
+        for p in REAL:
+            icon = ps4pkg.read_icon(p)
+            self.assertTrue(icon and icon.startswith(b"\x89PNG"), p.name)
+
     @unittest.skipUnless(REAL, "no real PS4 packages in unzipped/ps4/")
     def test_real_packages(self):
         for p in REAL:
