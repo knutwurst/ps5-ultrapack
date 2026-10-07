@@ -75,6 +75,19 @@ class RarFile:
             self._filelist = [RarInfo(item) for item in raw_list]
         return self._filelist
 
+    def read_prefix(self, name: str, nbytes: int) -> bytes:
+        """The first *nbytes* of one member (a package's header), without extracting it.
+        Raises SolidArchive for a later member of a solid archive."""
+        try:
+            return _unrar.read_prefix(self.filename, name, int(nbytes), self.pwd)
+        except PermissionError as exc:
+            raise RarWrongPassword(str(exc)) from exc
+        except _unrar.UnrarError as exc:
+            msg = str(exc)
+            if "solid archive" in msg.lower():
+                raise SolidArchive(msg) from exc
+            raise BadRarFile(msg) from exc
+
     def read(self, name: str) -> bytes:
         """The bytes of one member, without extracting the others (they are skipped, which
         is cheap unless the archive is solid: then SolidArchive is raised)."""

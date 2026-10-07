@@ -3478,8 +3478,9 @@ class JobDialog(EmbeddedDialog):
         # 3 · Output
         orow = self._orow = self._group("3", "Output")
         oin = ctk.CTkFrame(orow, fg_color=PANEL); oin.pack(fill="x", padx=10, pady=(2, 2))
-        ctk.CTkSegmentedButton(oin, values=[self._TARGET_LABEL[k] for k in ("folder", "ffpfs", "ffpfsc", "pkg")],
-                                variable=self.to_var, selected_color=ACCENT, selected_hover_color=ACCENT_HOVER).pack(side="left")
+        self._to_seg = ctk.CTkSegmentedButton(oin, values=[self._TARGET_LABEL[k] for k in ("folder", "ffpfs", "ffpfsc", "pkg")],
+                                              variable=self.to_var, selected_color=ACCENT, selected_hover_color=ACCENT_HOVER)
+        self._to_seg.pack(side="left")
         self._to_hint = tk.StringVar(value="")
         ctk.CTkLabel(oin, textvariable=self._to_hint, text_color=MUTED, font=ctk.CTkFont(size=12),
                       wraplength=420, justify="left").pack(side="left", padx=(10, 0))
@@ -3804,7 +3805,45 @@ class JobDialog(EmbeddedDialog):
                                         f"whether patched libraries are needed")
         return self._hint_cache[target]
 
+    def _probe_ps4_archive(self, p: Path, raw: str):
+        """Read, off the main thread, whether the archive holds PS4 packages; when it does
+        (and the source is still the same), the editor switches to the PS4 view."""
+        pw = self.app._candidate_passwords()
+        box: dict = {}
+
+        def work():
+            try:
+                box["info"] = ArchiveExtractor.ps4_archive_info(p, pw)
+            except Exception:
+                box["info"] = None
+
+        def poll():                       # Tk is touched on the main thread only
+            try:
+                if not self.winfo_exists() or (self.src_var.get() or "").strip() != raw:
+                    return
+            except Exception:
+                return
+            if "info" not in box:
+                self.after(80, poll); return
+            info = box["info"]
+            if info is None:
+                return
+            self._ps4_info = info
+            self._kind = "ps4"; self._games = [p]
+            self.detect_var.set(self._ps4_detect_text(p))
+            self._refresh()
+        threading.Thread(target=work, daemon=True).start()
+        self.after(80, poll)
+
     def _ps4_detect_text(self, p: Path) -> str:
+        info = getattr(self, "_ps4_info", None)
+        if self.app._is_archive_path(p) and info is not None:
+            i = info.get("ident")
+            n = len(info.get("packages") or [])
+            bits = ["PS4 archive", f"{n} package{'s' if n != 1 else ''}"]
+            if i is not None:
+                bits += [i.title, i.title_id]
+            return " · ".join(b for b in bits if b)
         m = _ps4pkg_module()
         pkgs = [p] if p.is_file() else sorted(x for x in p.rglob("*.pkg") if x.is_file() and not is_fs_junk_name(x.name))
         kinds: dict[str, int] = {}
@@ -3840,6 +3879,7 @@ class JobDialog(EmbeddedDialog):
             self.detect_var.set("Choose or drop a source." if not raw else "Not found")
             self._update_identity_for_source(None)
             self._refresh(); return
+        self._ps4_info = None
         if _is_ps4_source(p):
             self._kind = "ps4"; self._games = [p]
             self.detect_var.set(self._ps4_detect_text(p))
@@ -3896,6 +3936,8 @@ class JobDialog(EmbeddedDialog):
             self.detect_var.set(" · ".join(x for x in (self._KIND_LABEL[kind], tid, size) if x))
             if kind in ("ffpfs", "ffpfsc", "pkg"):
                 self._look_btn.pack(side="left", padx=(10, 0))
+            if kind == "archive":
+                self._probe_ps4_archive(p, raw)
         self._update_identity_for_source(p)
         # Remembered choices for this kind of source (add mode only, once per kind).
         if self.edit_item is None and self._defaults_kind != self._kind:
@@ -4112,11 +4154,18 @@ class JobDialog(EmbeddedDialog):
 
     def _refresh(self):
         ps4 = self._kind == "ps4"
+        seg = getattr(self, "_to_seg", None)
         if ps4:
-            # a PS4 package is sorted into the library (.pkg) or unpacked (Folder, one file)
+            # a PS4 package is sorted into the library (.pkg) or unpacked (Folder, one package);
+            # an archive or a folder of them only goes to the library
             src = Path((self.src_var.get() or "").strip())
-            if self._to_key() in ("ffpfs", "ffpfsc") or (self._to_key() == "folder" and not src.is_file()):
+            one_pkg = src.is_file() and src.suffix.lower() == ".pkg"
+            allowed = ("folder", "pkg") if one_pkg else ("pkg",)
+            if self._to_key() not in allowed:
                 self.to_var.set(self._TARGET_LABEL["pkg"])
+            if seg is not None:
+                seg.configure(values=[self._TARGET_LABEL[k] for k in allowed])
+                seg.set(self.to_var.get())
             for v in (self.patch_on_var, self.backport_on_var, self.sign_var):
                 v.set(False)
         crow, orow = getattr(self, "_crow", None), getattr(self, "_orow", None)
@@ -4125,6 +4174,9 @@ class JobDialog(EmbeddedDialog):
                 crow.pack_forget()
             elif not crow.winfo_manager():
                 crow.pack(fill="x", padx=20, pady=5, before=orow)
+        if not ps4 and seg is not None and len(seg.cget("values")) != 4:
+            seg.configure(values=[self._TARGET_LABEL[k] for k in ("folder", "ffpfs", "ffpfsc", "pkg")])
+            seg.set(self.to_var.get())
         to = self._to_key()
         # progressive disclosure
         (self._patch_opts.pack(fill="x", pady=(2, 2)) if self.patch_on_var.get() else self._patch_opts.pack_forget())
@@ -4306,7 +4358,7 @@ class JobDialog(EmbeddedDialog):
             dest = Path(out) / f"{sanitize_filename(p.stem)} [extracted]"
             it = GameItem.from_fpkg_extract(p, output_path=str(dest))
         else:
-            it = self.app._ps4_item_for(p, output_path=out)
+            it = self.app._ps4_item_for(p, output_path=out, info=getattr(self, "_ps4_info", None))
         it.after_source, it.after_move_to = after, after_dir or None
         it.source_root = str(p.parent if p.is_file() else p)
         if self.edit_item is not None:
@@ -6010,6 +6062,8 @@ class App:
         src = source_label(item)
         if op == "copy" and getattr(item, "content_kind", "") == "ps4":
             n = int(getattr(item, "ps4_count", 0) or 0)
+            if getattr(item, "archive_path", None) and not getattr(item, "path", None):
+                src = "Archive"
             return [src, "PS4 library" + (f" · {n} package{'s' if n != 1 else ''}" if n else "")]
         if op == "chain":
             ch = []
@@ -7071,8 +7125,16 @@ class App:
             self.status_update("Scanning", f"Reading archive headers: {src.name}…",
                                 "Scanning Files", 0, 0, "00:00", "—", "—", side=True)
 
+            _ps4_out = (self.output_var.get() or "").strip()
+            _ps4_pw = self._candidate_passwords()
+
             def _read_archive(a=src):
                 try:
+                    info = ArchiveExtractor.ps4_archive_info(a, _ps4_pw)
+                    if info is not None:
+                        # PS4 packages inside: a sorting job, named from the first package
+                        self.scan_q.put(("archive", self._ps4_archive_item(a, info, output_path=_ps4_out or None)))
+                        return
                     self.scan_q.put(("archive", GameItem.from_archive(a)))
                 except Exception as e:
                     self.scan_q.put(("error", f"Could not read {a.name}: {e}"))
@@ -8531,11 +8593,36 @@ class App:
             return "move"
         return "move" if (getattr(item, "after_source", None) or "keep") == "delete" else "keep"
 
-    def _ps4_item_for(self, src, *, output_path=None):
+    @staticmethod
+    def _is_archive_path(p: Path) -> bool:
+        n = p.name.lower()
+        return p.is_file() and (p.suffix.lower() in (".zip", ".rar", ".7z") or bool(re.search(r"\.r\d{2,}$", n)))
+
+    def _ps4_archive_item(self, archive, info: dict, *, output_path=None):
+        """A sorting job for an archive of PS4 packages (see _ps4_item_for), named from the
+        first package's param.sfo when the archive allows reading it. Tk-free."""
+        item = GameItem.from_archive(Path(archive))
+        item.operation = "copy"
+        item.content_kind = "ps4"
+        item.copy_mode = "move"
+        item.output_path = Path(output_path) if output_path else None
+        item.ps4_count = len(info.get("packages") or [])
+        ident = info.get("ident")
+        if ident is not None:
+            item.archive_title, item.archive_title_id = ident.title, ident.title_id
+            item.archive_version = ident.version
+            self._take_game_name(item, {"title": ident.title, "title_id": ident.title_id})
+        return item
+
+    def _ps4_item_for(self, src, *, output_path=None, info=None):
         """A copy job that sorts PS4 packages into the library: one .pkg, or a folder of
-        them (an archive's extraction, a download folder). The backend names and places
-        each package ('<Title> [CUSA…] [vX]/…'); see backend/ps4_sort.py."""
+        them (an archive's extraction, a download folder), or an archive of them. The
+        backend names and places each package ('<Title> [CUSA…] [vX]/…'); see
+        backend/ps4_sort.py."""
         src = Path(src)
+        if self._is_archive_path(src):
+            info = info or ArchiveExtractor.ps4_archive_info(src, self._candidate_passwords()) or {"packages": []}
+            return self._ps4_archive_item(src, info, output_path=output_path)
         item = GameItem.from_exfat(src) if src.is_file() else GameItem(src)
         item.operation = "copy"
         item.content_kind = "ps4"
@@ -8675,6 +8762,11 @@ class App:
                 try:
                     if id(it) in pw:
                         ident = self._archive_identity(it, pw[id(it)])
+                        if ident is None:
+                            info = ArchiveExtractor.ps4_archive_info(Path(str(it.archive_path)), pw[id(it)])
+                            i4 = info.get("ident") if info else None
+                            ident = ({"title": i4.title, "title_id": i4.title_id} if i4 is not None
+                                     else ident_from_folder_name(it.archive_path))
                     else:
                         ident = self._game_identity(it)
                 except Exception:

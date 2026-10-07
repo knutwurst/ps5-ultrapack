@@ -25,6 +25,10 @@ PS4 PACKAGES
     folders; Unpack writes its files to a folder. Both need a fake
     package; any other package is recognised and sorted, but its
     content cannot be read.
+  - An archive of PS4 packages is recognised as such the moment you add
+    it: the job is named from the first package, the editor offers the
+    library only, and the PS5 options are hidden. A single PS4 package
+    offers the library or an unpacked folder.
   - PS5 packages and images work exactly as before.
 
 NO '._' FILES ON AN EXFAT DRIVE, EVEN WHEN YOU EJECT RIGHT AWAY
@@ -40,6 +44,10 @@ NO '._' FILES ON AN EXFAT DRIVE, EVEN WHEN YOU EJECT RIGHT AWAY
 
 ALSO
 
+  - An archive whose game cannot be read before it is unpacked (an image
+    or a solid set inside) is named from the folder it sits in when that
+    folder carries the title id and a name, until the real name is read
+    after unpacking.
   - Organize logs its summary again; the last line of the walk raised
     an error after the jobs were queued.
 

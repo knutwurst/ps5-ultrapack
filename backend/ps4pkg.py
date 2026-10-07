@@ -48,6 +48,10 @@ def read_header(path) -> Ps4Header:
             h = f.read(0x1000)
     except OSError as e:
         raise Ps4PackageError(f"cannot read {path}: {e}") from e
+    return header_from_bytes(h)
+
+
+def header_from_bytes(h: bytes) -> Ps4Header:
     if len(h) < 0x420 or struct.unpack_from(">I", h, 0)[0] != MAGIC:
         raise Ps4PackageError("not a CNT package")
     cid = h[0x40:0x40 + 36].split(b"\0", 1)[0].decode("ascii", "replace")
@@ -123,9 +127,36 @@ def _kind(category: str, content_type: int) -> str:
     return "other"
 
 
+def identity_from_prefix(read_prefix, limit: int = 32 << 20) -> Ps4Identity:
+    """The identity of a package that can only be read from its start (a member of an
+    archive): *read_prefix(n)* returns the first n bytes. Reads the header, then as far as
+    the entry table and param.sfo reach (at most *limit* bytes)."""
+    head = read_prefix(0x1000)
+    h = header_from_bytes(head)
+    if not 0 < h.entry_count < 10000:
+        raise Ps4PackageError("implausible entry count")
+    need = h.entry_table_offset + 32 * h.entry_count
+    if need > limit:
+        raise Ps4PackageError("entry table beyond the readable start")
+    data = read_prefix(need)
+    for i in range(h.entry_count):
+        eid, _fn, _f1, _f2, off, size = struct.unpack_from(">IIIIII", data, h.entry_table_offset + i * 32)
+        if eid == ENTRY_PARAM_SFO:
+            if off + size > limit:
+                raise Ps4PackageError("param.sfo beyond the readable start")
+            data = read_prefix(off + size)
+            if len(data) < off + size:
+                raise Ps4PackageError("param.sfo cut short")
+            return _identity(h, parse_sfo(data[off:off + size]))
+    raise Ps4PackageError("no param.sfo in the package")
+
+
 def read_identity(path) -> Ps4Identity:
     h = read_header(path)
-    sfo = parse_sfo(_read_entry(path, h, ENTRY_PARAM_SFO))
+    return _identity(h, parse_sfo(_read_entry(path, h, ENTRY_PARAM_SFO)))
+
+
+def _identity(h: Ps4Header, sfo: dict) -> Ps4Identity:
     app_ver = str(sfo.get("APP_VER") or "")
     tid = str(sfo.get("TITLE_ID") or h.content_id[7:16])
     return Ps4Identity(

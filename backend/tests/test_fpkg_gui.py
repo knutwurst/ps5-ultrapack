@@ -2050,6 +2050,54 @@ try:
        str(getattr(_q4, "content_kind", None)))
     if _q4 is not None:
         app.queue.remove(_q4); app.update_queue_box()
+    # a single PS4 package offers Folder and .pkg only; an archive of them only .pkg
+    _segv = lambda d: list(d._to_seg.cget("values"))
+    ok("ps4.dialog-targets-one-package", _segv(_d4) == ["Folder", ".pkg"], str(_segv(_d4)))
+    _z4 = S / "ps4_set.zip"
+    with zipfile.ZipFile(_z4, "w", zipfile.ZIP_STORED) as _zf:
+        for _f in sorted(_p4dir.glob("*.pkg")):
+            _zf.write(_f, "Sample.Set/" + _f.name)
+    _dz = m.JobDialog(app, init_src=str(_z4)); root.update()
+    pump(lambda: _dz._kind == "ps4", timeout=10.0)
+    ok("ps4.dialog-archive-detected", _dz._kind == "ps4" and _segv(_dz) == [".pkg"] and not _dz._crow.winfo_manager()
+       and "Sample Game" in _dz.detect_var.get(), f"{_dz._kind} {_segv(_dz)} {_dz.detect_var.get()}")
+    _dz.out_var.set(str(OUT)); _qb = len(app.queue); _dz._add(); settle()
+    _qz = app.queue[-1] if len(app.queue) > _qb else None
+    ok("ps4.archive-job", _qz is not None and _qz.content_kind == "ps4" and _qz.operation == "copy"
+       and str(_qz.archive_path) == str(_z4) and _qz.display_name == "Sample Game [CUSA00001]"
+       and app._job_recipe_parts(_qz) == ["Archive", "PS4 library · 2 packages"],
+       f"{getattr(_qz, 'display_name', None)} {app._job_recipe_parts(_qz) if _qz else None}")
+    if _qz is not None:
+        _need = m._space_requirements(_qz, Path(_ptmp), OUT)
+        ok("ps4.archive-space", [x[0] for x in _need] == ["Temp drive (archive unpacked)", "Output drive"], str(_need))
+        app.queue.remove(_qz); app.update_queue_box()
+    # a whole run: the PS4 archive is unpacked, the job goes on by itself, the backend sorts it
+    _lib4 = S / "ps4_library"; shutil.rmtree(_lib4, ignore_errors=True); _lib4.mkdir()
+    _run4 = app._ps4_item_for(_z4, output_path=str(_lib4))
+    _run4.after_source = "keep"
+    _q0, _act0 = list(app.queue), app._active_item
+    _inflight1 = getattr(app, "_cleanup_inflight", 0)
+    app._cleanup_inflight = 0; app.cancel_requested = False; app.extract_cancel_event.clear()
+    try:
+        app.queue[:] = [_run4]; app._active_item = None
+        app.start()
+        pump(lambda: _run4.status in ("Done", "Failed", "Skipped", "Cancelled") and not app._batch_running, timeout=180.0)
+        _tree4 = sorted(x.relative_to(_lib4).as_posix() for x in _lib4.rglob("*.pkg"))
+        ok("ps4.archive-run-end-to-end", _run4.status == "Done" and _tree4 == [
+            "Sample Game [CUSA00001] [v01.00]/Sample Game DLC Extra [CUSA00001] [v01.00].pkg",
+            "Sample Game [CUSA00001] [v01.00]/Sample Game [CUSA00001] [v01.00].pkg"]
+           and _z4.is_file(), f"{_run4.status} {_tree4}")
+    finally:
+        app._batch_running = False; app._cleanup_inflight = _inflight1
+        app.queue[:] = _q0; app._active_item = _act0; app.update_queue_box()
+    # an archive whose game cannot be read before unpacking is named from its folder
+    _gdir = S / "PPSA03671 Example Game"; _gdir.mkdir(exist_ok=True)
+    _g7 = _gdir / "PPSA03671-Compressed.7z"; _g7.write_bytes(b"7z\xbc\xaf\x27\x1c" + b"\0" * 64)
+    _gi = m.GameItem.from_archive(_g7); app.queue.append(_gi); app.update_queue_box()
+    app._name_jobs_from_games()
+    pump(lambda: _gi.display_name == "Example Game [PPSA03671]", timeout=10.0)
+    ok("names.archive-from-folder", _gi.display_name == "Example Game [PPSA03671]", str(_gi.display_name))
+    app.queue.remove(_gi); app.update_queue_box()
     # switching back to a PS5 source shows the changes again
     _d5 = m.JobDialog(app, init_src=str(_p4g)); root.update()
     _d5.src_var.set(str(HBT)); root.update(); _d5._refresh(); root.update()

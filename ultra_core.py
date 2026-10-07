@@ -551,6 +551,10 @@ def _space_requirements(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, 
             src_dir = src.parent if src.exists() else None
         except Exception:
             src_dir = None
+        if getattr(item, "archive_path", None) and not getattr(item, "path", None):
+            # an archive of PS4 packages: unpacked to the temp drive, then copied or moved over
+            return [("Temp drive (archive unpacked)", temp_dir, int(size)),
+                    ("Output drive", out_dir, int(size * 1.02))]
         if src_dir is not None and same_drive(src_dir, out_dir):
             return []
         # Streamed through a .copy-tmp then os.replace (no doubling); 1.02x slack.
@@ -1928,6 +1932,82 @@ class ArchiveExtractor:
         return None
 
     @staticmethod
+    def read_member_prefix(archive: Path, name: str, nbytes: int, passwords=None) -> bytes | None:
+        """The first *nbytes* of one member, read without extracting it (a package's
+        header). ZIP and RAR (the first member of a solid RAR, any member otherwise); None
+        when the format or the archive does not allow it (7z, a later member of a solid RAR,
+        a wrong password)."""
+        archive = Path(archive)
+        if re.match(r"^\.r\d{2,}$", archive.suffix.lower()) or archive.suffix.lower() == ".rar":
+            archive = ArchiveExtractor._first_volume(archive)
+        suffix = archive.suffix.lower()
+        pwds = [p.strip() for p in (passwords or []) if p and p.strip()]
+        try:
+            if suffix == ".zip":
+                with zipfile.ZipFile(archive, "r") as zf:
+                    for pwd in [""] + pwds:
+                        try:
+                            with zf.open(name, pwd=pwd.encode() if pwd else None) as f:
+                                return f.read(nbytes)
+                        except RuntimeError:
+                            continue
+                        except NotImplementedError:
+                            return None
+                return None
+            if suffix == ".rar":
+                backend_dir = backend_base_dir()
+                if str(backend_dir) not in sys.path:
+                    sys.path.insert(0, str(backend_dir))
+                from unrar import rarfile as _br  # type: ignore
+                for pwd in pwds + [""]:
+                    try:
+                        return _br.RarFile(str(archive), pwd=pwd or None).read_prefix(name, nbytes)
+                    except _br.RarWrongPassword:
+                        continue
+                    except Exception:
+                        return None
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def ps4_archive_info(archive: Path, passwords=None) -> dict | None:
+        """{'packages': [member names], 'ident': Ps4Identity or None} for an archive whose
+        payload is PS4 packages; None for anything else. The first package's header and
+        param.sfo are read from the archive alone (ZIP, RAR); when that is not possible, a
+        CUSA title id in the package or archive names decides, and 'ident' is None."""
+        archive = Path(archive)
+        names = ArchiveExtractor.list_members(
+            ArchiveExtractor._first_volume(archive) if archive.suffix.lower() == ".rar" else archive, passwords)
+        pkgs = [n for n in names if n.lower().endswith(".pkg")
+                and not any(is_fs_junk_name(part) for part in n.split("/"))]
+        if not pkgs or any(n.lower().rstrip("/").endswith(("eboot.bin", "sce_sys/param.json")) for n in names):
+            return None
+        backend_dir = backend_base_dir()
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        try:
+            import ps4pkg  # type: ignore
+        except Exception:
+            return None
+        cache: dict[int, bytes] = {}
+
+        def prefix(n: int) -> bytes:
+            if n not in cache:
+                cache[n] = ArchiveExtractor.read_member_prefix(archive, pkgs[0], n, passwords) or b""
+            return cache[n]
+        ident = None
+        try:
+            ident = ps4pkg.identity_from_prefix(prefix)
+        except Exception:
+            ident = None
+        if ident is not None:
+            return {"packages": pkgs, "ident": ident} if ident.title_id.startswith("CUSA") else None
+        if any(re.search(r"CUSA\d{5}", s, re.I) for s in pkgs + [archive.name, archive.parent.name]):
+            return {"packages": pkgs, "ident": None}
+        return None
+
+    @staticmethod
     def list_members(archive: Path, passwords=None) -> list[str]:
         """Return member names ('/'-separated) WITHOUT extracting — a cheap peek
         used to tell a game archive from a DLC/extra. Tries candidate passwords
@@ -2758,6 +2838,27 @@ def is_fs_junk_name(name: str) -> bool:
     return name.startswith("._") or name.lower() in FS_JUNK_NAMES
 
 
+def ident_from_folder_name(archive) -> dict | None:
+    """A stand-in name for an archive whose game cannot be read before it is unpacked (an
+    image or a solid set inside): the folder around it, when that folder carries the title id
+    and words besides ('PPSA03671 Example Game' -> 'Example Game'). Release tags in brackets
+    and words such as 'Compressed' are dropped. None when no readable title is left."""
+    a = Path(archive)
+    for name in (a.parent.name, re.sub(r"(\.part\d+)?\.(rar|zip|7z|r\d{2,})$", "", a.name, flags=re.I)):
+        m = TITLE_RE.search(name)
+        if not m:
+            continue
+        tid = m.group(1).upper()
+        t = TITLE_RE.sub(" ", name)
+        t = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", t)
+        t = re.sub(r"\b(compressed|ffpfsc|ffpfs|pkg|backport|fw\s*\d[\d.]*|v\d[\d.]*|usa|eur|jpn|asia|app\d*)\b", " ", t, flags=re.I)
+        t = re.sub(r"[_.\-–—]+", " ", t)
+        t = re.sub(r"\s{2,}", " ", t).strip()
+        if re.search(r"[A-Za-z]{3,}", t):
+            return {"title": t, "title_id": tid, "version": ""}
+    return None
+
+
 def strip_written_clutter(path) -> int:
     """Remove the macOS clutter a job's own output carries: the '._' sidecar beside *path*
     and beside the folder holding it, and, when *path* is a folder the job wrote, every
@@ -3290,6 +3391,7 @@ class GameItem:
 __all__ = [
     "APP_DIR",
     "strip_written_clutter",
+    "ident_from_folder_name",
     "_ENV_APP_DIR",
     "_LEGACY_APP_DIRS",
     "RAW_LOG_FILE",

@@ -358,11 +358,119 @@ static PyObject* py_extract_names(PyObject* self, PyObject* args, PyObject* kwar
     return PyLong_FromLong(found);
 }
 
+
+// ── read_prefix: the first bytes of one member, then stop ──────────────────────
+// UnRAR hands decompressed data to UCM_PROCESSDATA in RAR_TEST mode; we copy until
+// `want` bytes are in and then return -1, which aborts the processing of that member.
+// Reading the head of a large member (a package's header) costs that head only, as long
+// as the member is the first one or the archive is not solid.
+struct PrefixCtx {
+    std::string buf;
+    size_t want;
+};
+static int CALLBACK PrefixCallback(UINT msg, LPARAM userData, LPARAM p1, LPARAM p2) {
+    if (msg == UCM_CHANGEVOLUME || msg == UCM_CHANGEVOLUMEW)
+        return p2 == RAR_VOL_ASK ? -1 : 1;
+    if (msg == UCM_PROCESSDATA) {
+        PrefixCtx* ctx = reinterpret_cast<PrefixCtx*>(userData);
+        size_t room = ctx->want > ctx->buf.size() ? ctx->want - ctx->buf.size() : 0;
+        size_t take = (size_t)p2 < room ? (size_t)p2 : room;
+        if (take)
+            ctx->buf.append(reinterpret_cast<const char*>(p1), take);
+        if (ctx->buf.size() >= ctx->want)
+            return -1;
+    }
+    return 0;
+}
+
+static PyObject* py_read_prefix(PyObject* self, PyObject* args, PyObject* kwargs) {
+    static const char* kwlist[] = {"archive_path", "name", "nbytes", "password", NULL};
+    const char* archive_path = NULL;
+    PyObject* name_obj = NULL;
+    Py_ssize_t nbytes = 0;
+    const char* password = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "sOn|z", (char**)kwlist,
+                                     &archive_path, &name_obj, &nbytes, &password))
+        return NULL;
+    if (nbytes <= 0) return PyBytes_FromStringAndSize("", 0);
+    wchar_t* wname = PyUnicode_AsWideCharString(name_obj, NULL);
+    if (!wname) return NULL;
+    std::wstring want_name(wname);
+    PyMem_Free(wname);
+    for (auto& ch : want_name) if (ch == L'\\') ch = L'/';
+
+    RAROpenArchiveDataEx arcData = {};
+    arcData.ArcName = const_cast<char*>(archive_path);
+    arcData.OpenMode = RAR_OM_EXTRACT;
+    HANDLE hArc; int openRes;
+    Py_BEGIN_ALLOW_THREADS
+    hArc = RAROpenArchiveEx(&arcData);
+    openRes = arcData.OpenResult;
+    Py_END_ALLOW_THREADS
+    if (!hArc || openRes != ERAR_SUCCESS) {
+        PyErr_Format(UnrarError, "Failed to open archive (error %d)", openRes);
+        return NULL;
+    }
+    bool solid = (arcData.Flags & ROADF_SOLID) != 0;
+    if (password && password[0])
+        RARSetPassword(hArc, const_cast<char*>(password));
+    PrefixCtx ctx;
+    ctx.want = (size_t)nbytes;
+    RARSetCallback(hArc, PrefixCallback, reinterpret_cast<LPARAM>(&ctx));
+
+    int result, first = 1, found = 0, pres = ERAR_SUCCESS;
+    RARHeaderDataEx header = {};
+    for (;;) {
+        Py_BEGIN_ALLOW_THREADS
+        result = RARReadHeaderEx(hArc, &header);
+        Py_END_ALLOW_THREADS
+        if (result != ERAR_SUCCESS)
+            break;
+        std::wstring name(header.FileNameW);
+        for (auto& ch : name) if (ch == L'\\') ch = L'/';
+        if (name == want_name) {
+            found = 1;
+            Py_BEGIN_ALLOW_THREADS
+            pres = RARProcessFile(hArc, RAR_TEST, NULL, NULL);
+            Py_END_ALLOW_THREADS
+            break;
+        }
+        if (solid && first) {            // a later member of a solid archive: skipping decodes all before it
+            RARCloseArchive(hArc);
+            PyErr_SetString(UnrarError, "solid archive: only the first member can be read cheaply");
+            return NULL;
+        }
+        first = 0;
+        Py_BEGIN_ALLOW_THREADS
+        pres = RARProcessFile(hArc, RAR_SKIP, NULL, NULL);
+        Py_END_ALLOW_THREADS
+        if (pres != ERAR_SUCCESS) break;
+    }
+    RARCloseArchive(hArc);
+    if (!found) {
+        if (pres == ERAR_MISSING_PASSWORD || pres == ERAR_BAD_PASSWORD) {
+            PyErr_SetString(PyExc_PermissionError, "Password required or incorrect");
+            return NULL;
+        }
+        PyErr_SetString(PyExc_KeyError, "member not found");
+        return NULL;
+    }
+    // the deliberate abort shows as an error code; what counts is what was read
+    if (ctx.buf.empty() && (pres == ERAR_MISSING_PASSWORD || pres == ERAR_BAD_PASSWORD)) {
+        PyErr_SetString(PyExc_PermissionError, "Password required or incorrect");
+        return NULL;
+    }
+    return PyBytes_FromStringAndSize(ctx.buf.data(), (Py_ssize_t)ctx.buf.size());
+}
+
 static PyMethodDef UnrarMethods[] = {
     {"list_files", (PyCFunction)py_list_files, METH_VARARGS | METH_KEYWORDS,
      "list_files(archive_path, password=None) -> list[dict]\n\nReturn list of file info dicts from a RAR archive."},
     {"extract_all", (PyCFunction)py_extract_all, METH_VARARGS | METH_KEYWORDS,
      "extract_all(archive_path, dest_path, password=None) -> int\n\nExtract all files from a RAR archive. Returns count of extracted files."},
+    {"read_prefix", (PyCFunction)py_read_prefix, METH_VARARGS | METH_KEYWORDS,
+     "read_prefix(archive_path, name, nbytes, password=None) -> bytes\n\n"
+     "The first nbytes of one member (fewer when it is shorter), without writing anything."},
     {"extract_names", (PyCFunction)py_extract_names, METH_VARARGS | METH_KEYWORDS,
      "extract_names(archive_path, names, dest_paths, password=None, allow_solid=False) -> int\n\n"
      "Extract only the named members, each to its own path; refuses a solid archive unless allowed."},
