@@ -85,6 +85,9 @@ NO '._' FILES ON AN EXFAT DRIVE, EVEN WHEN YOU EJECT RIGHT AWAY
 
 ALSO
 
+  - The up and down arrow keys move the selection in the queue instead
+    of moving the job; Shift extends the selection. Drag and drop and
+    Move up / Move down in the context menu still move a job.
   - The game's picture in the job details stays. It used to vanish when
     you picked another job: after a restart every job lost it, and a
     job from an archive lost it once its unpacked copy was gone. The

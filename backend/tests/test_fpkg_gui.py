@@ -2187,6 +2187,26 @@ try:
     ok("art.after-restart", _rest is not None and _rest.artwork is None and app.art_label._photo is not None,
        str(getattr(_rest, "art_key", None)))
     app.queue[:] = _q0; app._details_item = None; app.update_queue_box(); root.update()
+    # Arrow keys move the selection, never a job (moving is drag and drop or the context menu)
+    _q0 = list(app.queue)
+    _three = [m.GameItem.from_archive(ZP) for _ in range(3)]
+    app.queue[:] = list(_three); app._details_item = None; app.update_queue_box(select_item=_three[0]); root.update()
+    _lb = app.queue_listbox
+
+    def _press(seq):
+        # a withdrawn window gets no key events: run the key's binding as Tk would
+        _scr = _lb.cv.bind(seq).replace("%#", "0").replace("%", "")
+        _lb.cv.tk.eval("foreach __once 1 {" + _scr + "}"); root.update()   # 'break' needs a loop
+    _press("<Down>"); _press("<Down>"); _press("<Up>")
+    ok("queue.arrows-select-not-move", app.queue == _three and _lb.curselection() == (1,)
+       and app._details_item is _three[1] and _lb.marked_rows() == [1],
+       f"order kept={app.queue == _three} sel={_lb.curselection()} details={_three.index(app._details_item) if app._details_item in _three else None}")
+    _press("<Shift-Down>")
+    ok("queue.shift-arrow-extends", _lb.marked_rows() == [1, 2] and _lb.curselection() == (2,) and app.queue == _three,
+       str(_lb.marked_rows()))
+    _press("<Up>"); _press("<Up>"); _press("<Up>")
+    ok("queue.arrows-stop-at-the-ends", _lb.curselection() == (0,) and _lb.marked_rows() == [0], str(_lb.curselection()))
+    app.queue[:] = _q0; app._details_item = None; app.update_queue_box(); root.update()
     _fd_saved = (m.filedialog.askdirectory, m.filedialog.askopenfilename)
     m.filedialog.askdirectory = lambda *a, **k: (_fd_calls.append(("dir", k.get("title", ""))), "")[1]
     m.filedialog.askopenfilename = lambda *a, **k: (_fd_calls.append(("file", k.get("title", ""))), "")[1]

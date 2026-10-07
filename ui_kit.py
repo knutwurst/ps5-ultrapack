@@ -1148,7 +1148,7 @@ class QueueList(tk.Frame):
     DRAG_START = 6     # points the pointer moves before a press turns into a drag
 
     def __init__(self, parent, kit: Kit, on_select=None, on_activate=None, on_context=None,
-                 on_key_up=None, on_key_down=None, on_delete=None, on_move=None, bg="surface",
+                 on_delete=None, on_move=None, bg="surface",
                  empty_title="", empty_body=""):
         super().__init__(parent, bd=0, highlightthickness=0, bg=kit.c(bg))
         self.kit, self._bg = kit, bg
@@ -1156,7 +1156,7 @@ class QueueList(tk.Frame):
         self.on_move = on_move               # on_move(src, dst): drop row src before row dst
         self._press = None                   # (row, y) of a left press that may become a drag
         self._drop = None                    # insertion index (0..len) while dragging
-        self.on_key_up, self.on_key_down, self.on_delete = on_key_up, on_key_down, on_delete
+        self.on_delete = on_delete
         self.empty_title, self.empty_body = empty_title, empty_body
         self.rows: list[dict] = []
         self.sel: int | None = None          # the row in focus (the details pane shows it)
@@ -1192,8 +1192,12 @@ class QueueList(tk.Frame):
         cv.bind("<Motion>", self._motion)
         cv.bind("<Leave>", lambda e: self._set_hover(None))
         attach_wheel_scroll(cv, pixel_unit=1, notch_px=40)   # wheel, Linux buttons, Tk 9 trackpad
-        cv.bind("<Up>", lambda e: self._key(self.on_key_up))
-        cv.bind("<Down>", lambda e: self._key(self.on_key_down))
+        # The arrow keys move the selection, as in a Finder list; Shift extends it. A job is
+        # moved by drag and drop or the context menu, never by an arrow key.
+        cv.bind("<Up>", lambda e: self._step(-1))
+        cv.bind("<Down>", lambda e: self._step(1))
+        cv.bind("<Shift-Up>", lambda e: self._step(-1, extend=True))
+        cv.bind("<Shift-Down>", lambda e: self._step(1, extend=True))
         cv.bind("<BackSpace>", lambda e: self._key(self.on_delete))
         cv.bind("<Delete>", lambda e: self._key(self.on_delete))
 
@@ -1422,6 +1426,28 @@ class QueueList(tk.Frame):
         if i != self.hover:
             self.hover = i
             self._draw()
+
+    def _step(self, delta: int, extend: bool = False):
+        """Select the row above (-1) or below (+1) the focus row; *extend* keeps the rows
+        from the anchor on (Shift). Stops at the first and the last row."""
+        if not self.rows:
+            return "break"
+        if self.sel is not None and 0 <= self.sel < len(self.rows):
+            cur = self.sel
+            i = max(0, min(len(self.rows) - 1, cur + delta))
+        else:                                       # nothing selected: start at that end
+            cur = i = 0 if delta > 0 else len(self.rows) - 1
+        if extend:
+            a = self._anchor if self._anchor is not None and 0 <= self._anchor < len(self.rows) else cur
+            self.marked = set(range(min(a, i), max(a, i) + 1))
+        else:
+            self.marked, self._anchor = {i}, i
+        self.sel = i
+        self._draw()
+        self.see(i)
+        if self.on_select:
+            self.on_select(i)
+        return "break"
 
     def _key(self, fn):
         if fn:

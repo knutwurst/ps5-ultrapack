@@ -5855,7 +5855,7 @@ class App:
         self.queue_listbox = QueueList(
             left, kit, on_select=lambda i: self._on_queue_clicked(), on_activate=self._on_queue_double_click,
             on_move=self.move_job,
-            on_context=self._queue_context_menu, on_key_up=self._lb_key_up, on_key_down=self._lb_key_down,
+            on_context=self._queue_context_menu,
             on_delete=self.queue_remove_selected, empty_title="Your queue is empty",
             empty_body="Drop a game folder, archive, disk image, .ffpfs, .ffpfsc or .pkg into this window, "
                        "or use Add job.")
@@ -8478,14 +8478,6 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     # ── Listbox keyboard reorder ──────────────────────────────────────────────
-    def _lb_key_up(self, _event=None):
-        self.queue_move_up()
-        return "break"   # prevent default selection-navigation
-
-    def _lb_key_down(self, _event=None):
-        self.queue_move_down()
-        return "break"
-
     # ── Queue selection helper ─────────────────────────────────────────────────
     def _queue_sel_idx(self) -> int | None:
         """Return the currently selected listbox index, or None."""
