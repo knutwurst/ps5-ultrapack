@@ -283,6 +283,12 @@ class Into(Tree):
                          ["Alpha Game [PPSA00001] [v01.000].ffpfsc", "Alpha Game [PPSA00001] [v01.200].ffpfsc"])
         self.assertFalse(src.exists())
 
+    def test_library_inside_the_source_is_refused(self):
+        self.put("dl/a.ffpfsc", A)
+        self.assertEqual(ol.organize_into(self.root / "dl", self.root / "dl" / "lib", fake_identify,
+                                          on_line=lambda _l: None), 1)
+        self.assertFalse((self.root / "dl" / "lib").exists())
+
     def test_existing_name_follows_the_rule(self):
         self.put(f"library/{FA}/Alpha Game [PPSA00001] [v01.000].ffpfsc", text="old")
         src = self.put("dl/a.ffpfsc", A)

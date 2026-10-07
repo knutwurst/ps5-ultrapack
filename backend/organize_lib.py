@@ -660,6 +660,9 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
     ' (2)' suffix). 0 when everything readable is in the library."""
     import copy_job
     src, out = Path(src), Path(out)
+    if src.is_dir() and (out == src or src in out.parents):
+        _say(on_line, f"[ERROR] the library {out} lies inside the source {src}; choose another output folder")
+        return 1
     _say(on_line, "[JOB] copy")
     _say(on_line, "[PHASE] Writing Final Image")
     if src.is_dir() and _game_folder_kind(src):

@@ -10442,6 +10442,8 @@ class App:
                 pass
             head = (pycmd + ["placeholder", str(out)] if getattr(sys, "frozen", False)
                     else pycmd + ["-u", str(cli_py), "placeholder", str(out)])
+            if not str(getattr(item, "path", "") or "").strip():      # Path("") is the working folder
+                raise RuntimeError("This Organize job has no source.")
             cmd = head + ["--organize-into", str(item.path),
                           "--copy-mode", self._ps4_copy_mode(item),
                           "--if-exists", self.output_exists_var.get() or "skip"]

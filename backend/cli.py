@@ -285,6 +285,9 @@ def _organize_identify():
 def _organize_main(args) -> int:
     import organize_lib
     out = lambda line: print(line, flush=True)
+    if args.organize_scan is not None and not args.organize_scan.strip():
+        print("[ERROR] --organize-scan needs a folder", flush=True)
+        return 2
     if args.organize_scan:
         root = Path(args.organize_scan).expanduser().resolve()
         if not root.is_dir():
@@ -319,8 +322,8 @@ def _organize_main(args) -> int:
             out(f"[WARN] {f}")
         out(f"[OK] Undone: {res['moved']} moved back" + (f", {len(res['failed'])} failed" if res["failed"] else ""))
         return 0 if not res["failed"] else 1
-    if not args.output:
-        print("[ERROR] --organize-into needs OUTPUT", flush=True)
+    if not args.output or not args.organize_into.strip() or not args.output.strip():
+        print("[ERROR] --organize-into needs SRC and OUTPUT", flush=True)       # Path("") would be "."
         return 2
     return organize_lib.organize_into(Path(args.organize_into).resolve(), Path(args.output).resolve(),
                                       _organize_identify(), mode="move" if args.copy_mode == "move" else "keep",
@@ -2868,7 +2871,8 @@ def main() -> None:
     # ── COPY MODE (same-format transport, no re-encode) ──────────────────────────
     # Runs before every mkpfs-shaped path: --copy needs no game_folder positional
     # (SRC is on --copy), the OUTPUT positional is the destination folder.
-    if args.organize_scan or args.organize_apply or args.organize_undo or args.organize_into:
+    if (args.organize_scan is not None or args.organize_apply or args.organize_undo
+            or args.organize_into is not None):
         sys.exit(_organize_main(args))
 
     if args.ps4_sort:
