@@ -3004,7 +3004,7 @@ def is_fs_junk_name(name: str) -> bool:
 def ident_from_folder_name(archive) -> dict | None:
     """A stand-in name for an archive whose game cannot be read before it is unpacked (an
     image or a solid set inside): the folder around it, when that folder carries the title id
-    and words besides ('PPSA03671 Example Game' -> 'Example Game'). Release tags in brackets
+    and words besides ('PPSA99097 Example Game' -> 'Example Game'). Release tags in brackets
     and words such as 'Compressed' are dropped. None when no readable title is left."""
     a = Path(archive)
     for name in (a.parent.name, re.sub(r"(\.part\d+)?\.(rar|zip|7z|r\d{2,})$", "", a.name, flags=re.I)):

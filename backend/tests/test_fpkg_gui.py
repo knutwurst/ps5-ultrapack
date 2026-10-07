@@ -2091,12 +2091,12 @@ try:
         app._batch_running = False; app._cleanup_inflight = _inflight1
         app.queue[:] = _q0; app._active_item = _act0; app.update_queue_box()
     # an archive whose game cannot be read before unpacking is named from its folder
-    _gdir = S / "PPSA03671 Example Game"; _gdir.mkdir(exist_ok=True)
-    _g7 = _gdir / "PPSA03671-Compressed.7z"; _g7.write_bytes(b"7z\xbc\xaf\x27\x1c" + b"\0" * 64)
+    _gdir = S / "PPSA99097 Example Game"; _gdir.mkdir(exist_ok=True)
+    _g7 = _gdir / "PPSA99097-Compressed.7z"; _g7.write_bytes(b"7z\xbc\xaf\x27\x1c" + b"\0" * 64)
     _gi = m.GameItem.from_archive(_g7); app.queue.append(_gi); app.update_queue_box()
     app._name_jobs_from_games()
-    pump(lambda: _gi.display_name == "Example Game [PPSA03671]", timeout=10.0)
-    ok("names.archive-from-folder", _gi.display_name == "Example Game [PPSA03671]", str(_gi.display_name))
+    pump(lambda: _gi.display_name == "Example Game [PPSA99097]", timeout=10.0)
+    ok("names.archive-from-folder", _gi.display_name == "Example Game [PPSA99097]", str(_gi.display_name))
     app.queue.remove(_gi); app.update_queue_box()
     # switching back to a PS5 source shows the changes again
     _d5 = m.JobDialog(app, init_src=str(_p4g)); root.update()
