@@ -258,6 +258,75 @@ def required_firmware(src) -> dict:
     return {"fw": _bp.sdk_firmware(words[0]), "ps5": words[0], "ps4": words[1]}
 
 
+def _organize_identify():
+    """organize_lib's reader over this backend: param.json out of an image (only that member is
+    decompressed), the firmware from eboot.bin, the archive passwords from Settings."""
+    import organize_lib
+    import ultra_core
+
+    def image_member(img, member):
+        with tempfile.TemporaryDirectory(prefix="organize-") as td:
+            with contextlib.redirect_stdout(open(os.devnull, "w")):
+                extract_pfs_members(img, [member], Path(td))
+            f = Path(td) / member
+            return f.read_bytes() if f.is_file() else None
+
+    def firmware(path):
+        with contextlib.redirect_stdout(open(os.devnull, "w")):
+            return required_firmware(path).get("fw", "")
+
+    try:
+        pw = [str(p).strip() for p in (ultra_core.load_settings().get("archive_passwords") or []) if str(p).strip()]
+    except Exception:
+        pw = []
+    return organize_lib.make_identify(image_member, firmware, pw)
+
+
+def _organize_main(args) -> int:
+    import organize_lib
+    out = lambda line: print(line, flush=True)
+    if args.organize_scan:
+        root = Path(args.organize_scan).expanduser().resolve()
+        if not root.is_dir():
+            print(f"[ERROR] not a folder: {root}", flush=True)
+            return 1
+        entries, companions = organize_lib.scan(
+            root, _organize_identify(), on_progress=lambda n, t, name: out(f"ORGANIZE_PROGRESS: {n}/{t} {name}"))
+        data = organize_lib.plan_to_json(organize_lib.plan(root, entries, companions))
+        if args.organize_plan:
+            organize_lib._write_json(Path(args.organize_plan), data)
+        else:
+            out("ORGANIZE_PLAN: " + json.dumps(data))
+        out(f"[OK] {len(data['moves'])} to move, {len(data['stays'])} staying, {data['in_place']} already in place")
+        return 0
+    if args.organize_apply:
+        if not args.organize_plan or not args.organize_journal:
+            print("[ERROR] --organize-apply needs --organize-plan and --organize-journal", flush=True)
+            return 2
+        plan = organize_lib.plan_from_json(json.loads(Path(args.organize_plan).read_text(encoding="utf-8")))
+        only = {int(i) for i in args.organize_only.split(",") if i.strip()} if args.organize_only is not None else None
+        res = organize_lib.apply(plan, Path(args.organize_journal), selected=only, on_line=out)
+        for f in res["failed"]:
+            out(f"[WARN] {f}")
+        out(f"[OK] Organized: {res['moved']} moved" + (f", {len(res['failed'])} failed" if res["failed"] else ""))
+        return 0 if not res["failed"] else 1
+    if args.organize_undo:
+        if not args.organize_journal:
+            print("[ERROR] --organize-undo needs --organize-journal", flush=True)
+            return 2
+        res = organize_lib.undo(Path(args.organize_journal), on_line=out)
+        for f in res["failed"]:
+            out(f"[WARN] {f}")
+        out(f"[OK] Undone: {res['moved']} moved back" + (f", {len(res['failed'])} failed" if res["failed"] else ""))
+        return 0 if not res["failed"] else 1
+    if not args.output:
+        print("[ERROR] --organize-into needs OUTPUT", flush=True)
+        return 2
+    return organize_lib.organize_into(Path(args.organize_into).resolve(), Path(args.output).resolve(),
+                                      _organize_identify(), mode="move" if args.copy_mode == "move" else "keep",
+                                      if_exists=args.if_exists, on_line=out)
+
+
 def list_pfs_image(image_path):
     """Return the directory tree of a .ffpfs/.ffpfsc as a dict (no full decompression)."""
     pfs, consts = _import_mkpfs()
@@ -2471,8 +2540,28 @@ def main() -> None:
                              "DLCs on; a title folder already in OUTPUT is joined). --copy-mode says "
                              "what happens to each source package.")
     parser.add_argument("--if-exists", choices=("skip", "ask", "overwrite", "keep"), default="skip",
-                        help="For --ps4-sort: what happens when a package is already in the library "
-                             "(ask behaves like skip inside a job).")
+                        help="For --ps4-sort and --organize-into: what happens when an item is already in "
+                             "the library (ask behaves like skip inside a job).")
+    parser.add_argument("--organize-scan", type=str, default=None, metavar="ROOT",
+                        help="ORGANIZE: read every game folder, image, package and archive under ROOT and "
+                             "plan the library layout in place. Prints 'ORGANIZE_PROGRESS: n/total name' "
+                             "lines and writes the plan as JSON to --organize-plan (else prints "
+                             "'ORGANIZE_PLAN: <json>'). Nothing is moved.")
+    parser.add_argument("--organize-plan", type=str, default=None, metavar="FILE",
+                        help="The plan file --organize-scan writes and --organize-apply reads.")
+    parser.add_argument("--organize-apply", action="store_true",
+                        help="ORGANIZE: carry out --organize-plan (renames on the same drive only) and "
+                             "write --organize-journal.")
+    parser.add_argument("--organize-only", type=str, default=None, metavar="I,J,...",
+                        help="With --organize-apply: only these moves of the plan (0-based).")
+    parser.add_argument("--organize-journal", type=str, default=None, metavar="FILE",
+                        help="The journal --organize-apply writes and --organize-undo reads.")
+    parser.add_argument("--organize-undo", action="store_true",
+                        help="ORGANIZE: move back what --organize-journal records.")
+    parser.add_argument("--organize-into", type=str, default=None, metavar="SRC",
+                        help="ORGANIZE OUTPUT: write SRC (a game folder, image, package or a folder "
+                             "holding them) into the library OUTPUT in its own format and under its "
+                             "library name. --copy-mode keep copies, move moves; --if-exists applies.")
     parser.add_argument("--copy-name", type=str, default=None, metavar="NAME",
                         help="Destination filename for --copy (defaults to SRC's basename). "
                              "Auto-organize passes the library name here.")
@@ -2779,6 +2868,9 @@ def main() -> None:
     # ── COPY MODE (same-format transport, no re-encode) ──────────────────────────
     # Runs before every mkpfs-shaped path: --copy needs no game_folder positional
     # (SRC is on --copy), the OUTPUT positional is the destination folder.
+    if args.organize_scan or args.organize_apply or args.organize_undo or args.organize_into:
+        sys.exit(_organize_main(args))
+
     if args.ps4_sort:
         import ps4_sort as _ps4_sort
         sys.exit(_ps4_sort.sort_packages(Path(args.ps4_sort).resolve(), Path(args.output).resolve(),

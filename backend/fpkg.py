@@ -112,6 +112,17 @@ def inspect(pkg: Path, *, json_out: bool = False) -> int:
     return _run(argv)
 
 
+def inspect_json(pkg: Path) -> dict:
+    """The tool's header summary of a PS5 package (content_id, content_type: 32 game, 33/34
+    additional content, entries ...). Reads the header and the entry table only."""
+    r = subprocess.run([str(tool_path()), "inspect", str(pkg), "--json"], capture_output=True, text=True,
+                       timeout=120, encoding="utf-8", errors="replace")
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or "").strip().splitlines()
+        raise RuntimeError(msg[-1] if msg else f"inspect failed (rc={r.returncode})")
+    return json.loads(r.stdout)
+
+
 def extract(pkg: Path, out_dir: Path,
             *, passcode: str = "0" * 32,
             outer: bool = False,

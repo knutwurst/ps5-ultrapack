@@ -1101,6 +1101,52 @@ def test_ps4_archive_to_library(r: Runner):
             "a later DLC joins the title folder and its DLC Pack", log[-300:])
 
 
+def test_organize_real(r: Runner):
+    """Organize with the real readers: a .ffpfsc, a .pkg, an unpacked folder and a zip of the
+    same title scattered over release folders (with OS clutter) end in one title folder; undo
+    restores the tree; --organize-into writes an image into an empty library."""
+    hbt = fetch_hbt(r.work / "hbt")
+    lib = r.work / "org_lib"; shutil.rmtree(lib, ignore_errors=True); lib.mkdir()
+    (lib / "Rel.A").mkdir(); (lib / "Rel.B").mkdir()
+    rc1, _ = r.run_cli([str(hbt), str(lib / "Rel.A"), "--pack", "--overwrite"])
+    rc2, _ = r.run_cli([str(hbt), str(lib / "Rel.B"), "--fpkg-build", str(hbt), "--fpkg-inner", "none"])
+    shutil.copytree(hbt, lib / "loose unpacked")
+    (lib / "dl").mkdir()
+    with zipfile.ZipFile(lib / "dl" / "set.zip", "w") as z:
+        for f in hbt.rglob("*"):
+            if f.is_file():
+                z.write(f, f"Set/{f.relative_to(hbt)}")
+    (lib / "dl" / "set.nfo").write_text("notes")
+    for junk in ("._x.pkg", "Rel.A/._y.ffpfsc", ".DS_Store"):
+        (lib / junk).write_bytes(b"\0")
+    if not r.check("organize.fixture", rc1 == 0 and rc2 == 0, "image and package built", f"rc={rc1},{rc2}"):
+        return
+    before = sorted(str(p.relative_to(lib)) for p in lib.rglob("*") if not p.name.startswith("._") and p.name != ".DS_Store")
+    planf, journal = r.work / "org_plan.json", r.work / "org_journal.json"
+    rc, log = r.run_cli(["--organize-scan", str(lib), "--organize-plan", str(planf)])
+    plan = json.loads(planf.read_text()) if planf.is_file() else {"moves": [], "stays": []}
+    listed = [m["src"] for m in plan["moves"]] + [s["path"] for s in plan["stays"]]
+    r.check("organize.scan", rc == 0 and "ORGANIZE_PROGRESS: 4/4" in log and not any("/._" in x for x in listed),
+            f"{len(plan['moves'])} moves, no clutter listed", log[-400:])
+    rc, log = r.run_cli(["--organize-apply", "--organize-plan", str(planf), "--organize-journal", str(journal)])
+    tops = sorted(p.name for p in lib.iterdir() if not p.name.startswith("."))
+    title = [t for t in tops if "[PPSA" in t]
+    inside = sorted(p.name for p in (lib / title[0]).iterdir()) if title else []
+    r.check("organize.apply", rc == 0 and len(title) == 1 and len([t for t in tops if t not in title]) == 0
+            and any(n.endswith(".ffpfsc") for n in inside) and any(n.endswith(".pkg") for n in inside)
+            and "set.zip" in inside and "set.nfo" in inside and not any(n.startswith("._") for n in inside),
+            f"one title folder: {inside}", f"{tops} {inside} {log[-300:]}")
+    rc, log = r.run_cli(["--organize-undo", "--organize-journal", str(journal)])
+    after = sorted(str(p.relative_to(lib)) for p in lib.rglob("*") if not p.name.startswith("._") and p.name != ".DS_Store")
+    r.check("organize.undo", rc == 0 and after == before, "the tree is back as it was", log[-300:])
+    empty = r.work / "org_into"; shutil.rmtree(empty, ignore_errors=True)
+    img = next((lib / "Rel.A").glob("*.ffpfsc"))
+    rc, log = r.run_cli(["placeholder", str(empty), "--organize-into", str(img), "--copy-mode", "keep"])
+    got = [p.relative_to(empty).as_posix() for p in empty.rglob("*.ffpfsc")]
+    r.check("organize.into", rc == 0 and len(got) == 1 and "/" in got[0] and img.exists(),
+            f"{got}", log[-400:])
+
+
 def main():
     ap = argparse.ArgumentParser(description="fPKG pipeline end-to-end tests")
     ap.add_argument("--work", type=Path, default=Path(tempfile.gettempdir()) / "ffpfsc-fpkg-tests",
@@ -1136,6 +1182,7 @@ def main():
         ("gui progress translation",        test_gui_progress_translation),
         ("determinism: byte-identical",     test_deterministic_build),
         ("ps4: archive to library",         test_ps4_archive_to_library),
+        ("organize: real containers",       test_organize_real),
         ("stage in place = copy mode",      test_stage_in_place_matches_copy),
         ("list-inner + selective extract",  test_list_and_selective_extract),
         ("ampr index rebuilt in staging",   test_ampr_index_rebuilt),

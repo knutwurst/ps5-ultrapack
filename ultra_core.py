@@ -1614,6 +1614,98 @@ def ps4_layout(items, known: dict | None = None):
     return out
 
 
+# ── Library layout for every format (Organize) ────────────────────────────────
+LIB_IMAGE_KINDS = ("ffpfs", "ffpfsc", "exfat", "ffpkg")
+
+
+class LibItem(NamedTuple):
+    """One thing Organize recognised: a game folder, an image, a package or an archive set.
+    *key* is its path (the first volume for an archive set); *kind* folder | ffpfs | ffpfsc |
+    exfat | ffpkg | pkg | archive; *role* game | update | dlc | backport | other; *ps4* the
+    Ps4Identity of a PS4 package, folder or archive (None for PS5)."""
+    key: Path
+    kind: str
+    role: str
+    title: str
+    title_id: str
+    version: str
+    fw: str = ""
+    ps4: object = None
+
+
+def _lib_version_tag(folder: str) -> str:
+    v = _PS4_VER_TAG.search(folder or "")
+    return v.group(1) if v else ""
+
+
+def library_layout(items, known: dict | None = None):
+    """Where each recognised item belongs in a library: [(key, title folder, subdir, name)].
+    One title folder per title id, named after the highest version among the title's game
+    and update items (a joined folder's tag is never lowered):
+      PS5 image / game package   organized_names (the name auto-organize gives a build)
+      PS5 game folder            '<Title> [ID] [vFULL]'
+      PS5 update package         '<Title> [ID] UPDATE [vSHORT].pkg'
+      PS5 DLC package            '<Title> DLC <name> [ID] [v<set>].pkg', 'DLC Pack/' from
+                                 PS4_DLC_PACK_FROM DLCs on
+      PS5 backport package       '<Title> BACKPORT [fwX] [ID].pkg'
+      PS4 packages               ps4_layout (a folder: the package name without '.pkg')
+      archives                   keep their own name
+    *known* is {title id: Ps4Library} for title folders already in the library: PS4 keeps the
+    folder's spelling (ps4_layout), PS5 takes the canonical title; both join its 'DLC Pack'."""
+    known = known or {}
+    groups: dict[str, list] = {}
+    for it in items:
+        groups.setdefault((it.title_id or "").upper(), []).append(it)
+    out = []
+    for tid, members in groups.items():
+        lib = known.get(tid)
+        if tid.startswith("CUSA"):
+            with_ident = [it for it in members if it.ps4 is not None]
+            placed = {p: (f, s, n) for p, f, s, n in
+                      ps4_layout([(it.key, it.ps4) for it in with_ident], known={tid: lib} if lib else None)}
+            folder = next(iter(placed.values()))[0] if placed else (lib.folder if lib else sanitize_filename(
+                " ".join(p for p in (canonical_game_title(members[0].title) or tid, f"[{tid}]") if p)))
+            for it in members:
+                f, s, n = placed.get(Path(it.key), (folder, "", it.key.name))
+                if it.kind == "folder":
+                    n, s = n[:-4] if n.lower().endswith(".pkg") else n, ""
+                elif it.kind == "archive":
+                    n, s = Path(it.key).name, ""
+                out.append((it.key, f, s, n))
+            continue
+        base = [it for it in members if it.role in ("game", "update")]
+        main = max((it for it in members if it.role == "game"), key=lambda it: _ver_key(it.version), default=None) \
+            or (base[0] if base else members[0])
+        title = canonical_game_title(main.title) or tid
+        set_ver = max((it.version for it in base if it.version), key=_ver_key, default="")
+        top = set_ver or max((it.version for it in members if it.version), key=_ver_key, default="")
+        if lib and lib.version and _ver_key(lib.version) > _ver_key(top or "0"):
+            top = lib.version
+        folder = organized_names({"title": title, "title_id": tid, "version": top}, "")[0]
+        dlcs = sum(1 for it in members if it.role == "dlc" and it.kind == "pkg")
+        dlc_sub = PS4_DLC_PACK if dlcs >= PS4_DLC_PACK_FROM or (lib and lib.has_dlc_pack) else ""
+        for it in members:
+            ident = {"title": title, "title_id": tid, "version": it.version, "fw": it.fw}
+            sub = ""
+            if it.kind == "archive" or it.role == "other":
+                name = Path(it.key).name
+            elif it.kind == "folder":
+                name = organized_names(ident, "")[0]
+            elif it.kind == "pkg" and it.role == "update":
+                name = sanitize_filename(f"{title} [{tid}] UPDATE" + (f" [v{short_version(it.version)}]" if it.version else "")) + ".pkg"
+            elif it.kind == "pkg" and it.role == "dlc":
+                ver = set_ver or it.version
+                name = sanitize_filename(f"{title} DLC {_dlc_name(it.title, title)} [{tid}]"
+                                         + (f" [v{short_version(ver)}]" if ver else "")) + ".pkg"
+                sub = dlc_sub
+            elif it.kind == "pkg" and it.role == "backport":
+                name = sanitize_filename(f"{title} BACKPORT" + (f" [fw{it.fw}]" if it.fw else "") + f" [{tid}]") + ".pkg"
+            else:
+                name = organized_names(ident, "." + it.kind)[1]
+            out.append((it.key, folder, sub, name))
+    return out
+
+
 def find_artwork(path: Path):
     if path.is_file():
         return None

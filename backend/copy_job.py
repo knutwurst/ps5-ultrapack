@@ -279,3 +279,108 @@ def run_copy(src, dst_dir, *,
     _print(on_line, f"[SUCCESS] {'Moved' if delete_source else 'Copied'} "
                     f"{src.name} → {dst}")
     return 0
+
+
+def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str], None]] = None) -> int:
+    """Copy or move the folder *src* to the new folder *dst* (an unpacked game). Same drive
+    and a move: one rename. Otherwise every file is copied in chunks into '<dst>.copy-tmp',
+    flushed, and the folder takes its name only once all of it is there; a move then removes
+    the source. OS clutter is never copied. Exit codes as run_copy (3: *dst* exists)."""
+    if mode not in MODES:
+        _print(on_line, f"[ERROR] copy: unknown mode {mode!r} (keep, organize or move)")
+        return 1
+    src, dst = Path(src), Path(dst)
+    if not src.is_dir():
+        _print(on_line, f"[ERROR] copy: source folder not found: {src}")
+        return 1
+    if _resolves_same(src, dst):
+        _print(on_line, f"[WARN] copy: source and destination are the same folder, skipping: {src}")
+        return 2
+    if dst.exists():
+        _print(on_line, f"[WARN] copy: destination already exists, skipping: {dst}")
+        return 3
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        _print(on_line, f"[ERROR] copy: cannot create destination folder {dst.parent}: {e}")
+        return 1
+    _print(on_line, "[JOB] copy")
+    _print(on_line, "[PHASE] Writing Final Image")
+    same_drive = _same_device(src, dst.parent)
+    if same_drive and mode != KEEP:
+        try:
+            os.rename(src, dst)
+        except OSError as e:
+            _print(on_line, f"[ERROR] copy: rename failed: {e}")
+            return 1
+        _print(on_line, "[####] 100% move")
+        _print(on_line, f"[SUCCESS] Moved {src.name} → {dst}")
+        return 0
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # ultra_core next to the app
+    from ultra_core import is_fs_junk_name as junk
+    files, dirs = [], []
+    for dirpath, dirnames, filenames in os.walk(src):
+        dirnames[:] = [d for d in dirnames if not junk(d)]
+        rel = Path(dirpath).relative_to(src)
+        dirs.extend(rel / d for d in dirnames)
+        files.extend(rel / f for f in filenames if not junk(f))
+    total = sum(os.lstat(src / f).st_size for f in files)
+    try:
+        free = shutil.disk_usage(dst.parent).free
+    except OSError:
+        free = None
+    if free is not None and free < total:
+        _print(on_line, f"[ERROR] copy: not enough space on the destination: {total / 1e9:.2f} GB needed, "
+                        f"{free / 1e9:.2f} GB free")
+        return 1
+    tmp = dst.with_name(dst.name + ".copy-tmp")
+    _print(on_line, f"[INFO] copy: folder copy — {src.name} → {dst}")
+    written, last_pct, t0 = 0, -1, time.monotonic()
+    try:
+        tmp.mkdir()
+        for d in dirs:
+            (tmp / d).mkdir(parents=True, exist_ok=True)
+        for f in files:
+            s, t = src / f, tmp / f
+            if s.is_symlink():
+                os.symlink(os.readlink(s), t)
+                continue
+            with open(s, "rb", buffering=0) as fin, open(t, "wb", buffering=0) as fout:
+                while True:
+                    buf = fin.read(CHUNK)
+                    if not buf:
+                        break
+                    view = memoryview(buf)
+                    while view:
+                        n = fout.write(view) or len(view)
+                        written += n
+                        view = view[n:]
+                    if total:
+                        pct = min(99, int(written * 100 / total))
+                        if pct != last_pct:
+                            secs = time.monotonic() - t0
+                            rate = written / secs if secs > 0.5 else 0
+                            tail = (f" @ {rate / 1e6:.2f} MB/s ETA {int((total - written) / rate)}s" if rate else "")
+                            _print(on_line, f"[####] {pct}% copy{tail}")
+                            last_pct = pct
+                _fsync_file(fout.fileno())
+                if os.fstat(fout.fileno()).st_size != os.lstat(s).st_size:
+                    raise OSError(f"short copy: {f}")
+            shutil.copystat(s, t, follow_symlinks=False)
+        os.rename(tmp, dst)
+        _fsync_dir(dst.parent)
+    except Exception as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        _print(on_line, f"[ERROR] copy: write failed: {e}")
+        return 1
+    _print(on_line, "[####] 100% copy")
+    if mode == MOVE:
+        _print(on_line, "[PHASE] Cleaning Up")
+        try:
+            shutil.rmtree(src)
+            _print(on_line, f"[INFO] copy: source removed after a complete copy: {src}")
+        except Exception as e:
+            _print(on_line, f"[WARN] copy: source could not be removed: {e}")
+    _print(on_line, f"[SUCCESS] {'Moved' if mode == MOVE else 'Copied'} {src.name} → {dst}")
+    return 0
