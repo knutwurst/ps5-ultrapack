@@ -1,4 +1,4 @@
-"""The line under a job's name reads the same whatever became of the source: Archive,
+"""The line under a job's name reads the same whatever became of the source: the archive's kind,
 Folder, or the container's type; never a placeholder glyph for the title id.
 
     PYTHONPATH=. /tmp/ps5venv/bin/python -m unittest backend.tests.test_queue_labels
@@ -38,11 +38,16 @@ class SourceLabel(unittest.TestCase):
         d.mkdir(parents=True)
         self.assertEqual(ultra_core.source_label(item(path=str(d))), "Folder")
 
-    def test_an_extraction_that_came_from_an_archive_reads_as_archive(self):
+    def test_an_archive_reads_as_its_kind_also_once_it_is_unpacked(self):
         self.assertEqual(ultra_core.source_label(item(path=str(_SCRATCH / "x" / "PPSA00003-app0"),
-                                                      origin_archive="/dl/release.part1.rar")), "Archive")
+                                                      origin_archive="/dl/release.part1.rar")), ".rar")
         self.assertEqual(ultra_core.source_label(item(path="/dl/release.rar", archive_path="/dl/release.rar",
-                                                      source_kind="archive")), "Archive")
+                                                      source_kind="archive")), ".rar")
+        for name, label in (("set.part01.rar", ".rar"), ("set.r00", ".rar"), ("set.RAR", ".rar"),
+                            ("set.7z", ".7z"), ("set.7z.001", ".7z"), ("set.zip", ".zip"), ("set.z01", ".zip"),
+                            ("set.zip.001", ".zip")):
+            self.assertEqual(ultra_core.source_label(item(archive_path=f"/dl/{name}", source_kind="archive")), label, name)
+        self.assertEqual(ultra_core.source_label(item(source_kind="archive")), "Archive")   # nothing to go by
 
     def test_containers_keep_their_type_on_disk_or_not(self):
         for suf in (".ffpfsc", ".ffpfs", ".pkg", ".exfat", ".ffpkg"):

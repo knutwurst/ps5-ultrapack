@@ -30,6 +30,9 @@ FIXES
     uses for its own revision. The master version now counts when it is
     the higher one and the package's name, its folder or the archive it
     came in states that same version, e.g. '(v1.71)'.
+  - The queue says what kind of archive a job starts from: '.rar',
+    '.7z' or '.zip' instead of 'Archive', also for multi-part sets and
+    once the archive is unpacked.
   - While an archive is unpacked, Speed, Elapsed and Left are filled in.
   - A waiting job's details show where it will run: where the archive
     is unpacked, which drive builds the image (an extra temp drive such

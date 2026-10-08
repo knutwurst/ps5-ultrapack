@@ -386,14 +386,26 @@ _CONTAINER_LABELS = {".exfat": ".exfat", ".ffpkg": ".ffpkg", ".ffpfs": ".ffpfs",
 _TITLE_ID_PLACEHOLDERS = {"Unknown", "📦", "💾", "📤", ""}
 
 
+_ARCHIVE_KINDS = ((re.compile(r"\.(part\d+\.rar|rar|r\d{2,})$", re.I), ".rar"),
+                  (re.compile(r"\.7z(\.\d{3})?$", re.I), ".7z"),
+                  (re.compile(r"\.(zip|z\d{2}|zip\.\d{3})$", re.I), ".zip"))
+
+
+def archive_label(path) -> str:
+    """'.rar', '.7z' or '.zip' for an archive or any volume of a set; 'Archive' otherwise."""
+    name = Path(str(path or "")).name
+    return next((label for rx, label in _ARCHIVE_KINDS if rx.search(name)), "Archive")
+
+
 def source_label(item) -> str:
-    """What the job's source was, for the queue row: 'Archive', 'Folder' or a container's
-    suffix. Decided from what the job knows about itself, not from whether the source is
-    still on the disk: after Move to folder or Delete, or once an extraction is gone, a
-    folder name such as 'Example 1.000 ppsa00001' must not read as a '.000 ppsa00001' file."""
-    if (getattr(item, "archive_path", None) or getattr(item, "origin_archive", None)
-            or getattr(item, "source_kind", "") == "archive"):
-        return "Archive"
+    """What the job's source was, for the queue row: the archive's kind ('.rar', '.7z',
+    '.zip'), 'Folder' or a container's suffix. Decided from what the job knows about itself,
+    not from whether the source is still on the disk: after Move to folder or Delete, or once
+    an extraction is gone, a folder name such as 'Example 1.000 ppsa00001' must not read as a
+    '.000 ppsa00001' file."""
+    arc = getattr(item, "archive_path", None) or getattr(item, "origin_archive", None)
+    if arc or getattr(item, "source_kind", "") == "archive":
+        return archive_label(arc)
     raw = str(getattr(item, "path", "") or "").strip()
     if not raw:                          # Path("") would be ".", the working folder
         return "Folder"
@@ -3679,6 +3691,7 @@ __all__ = [
     "is_fs_junk_name",
     "strip_fs_junk",
     "source_label",
+    "archive_label",
     "shown_title_id",
     "_COPYTREE_JUNK_GLOBS",
     "detect_game_bundle",

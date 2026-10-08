@@ -6424,13 +6424,9 @@ class App:
         op = getattr(item, "operation", "pack")
         src = source_label(item)
         if op == "copy" and getattr(item, "content_kind", "") == ORGANIZE_TARGET:
-            if getattr(item, "archive_path", None) and not getattr(item, "path", None):
-                src = "Archive"
             return [src, "Organize"]
         if op == "copy" and getattr(item, "content_kind", "") == "ps4":
             n = int(getattr(item, "ps4_count", 0) or 0)
-            if getattr(item, "archive_path", None) and not getattr(item, "path", None):
-                src = "Archive"
             return [src, "PS4 library" + (f" · {n} package{'s' if n != 1 else ''}" if n else "")]
         if op == "chain":
             ch = []

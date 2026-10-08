@@ -2087,7 +2087,7 @@ try:
     _qz = app.queue[-1] if len(app.queue) > _qb else None
     ok("ps4.archive-job", _qz is not None and _qz.content_kind == "ps4" and _qz.operation == "copy"
        and str(_qz.archive_path) == str(_z4) and _qz.display_name == "Sample Game [CUSA00001]"
-       and app._job_recipe_parts(_qz) == ["Archive", "PS4 library · 2 packages"],
+       and app._job_recipe_parts(_qz) == [".zip", "PS4 library · 2 packages"],
        f"{getattr(_qz, 'display_name', None)} {app._job_recipe_parts(_qz) if _qz else None}")
     if _qz is not None:
         _need = m._space_requirements(_qz, Path(_ptmp), OUT)
@@ -2178,6 +2178,9 @@ try:
     _do.out_var.set(str(_libo)); _qb = len(app.queue); _do._add(); settle()
     _qo = app.queue[-1] if len(app.queue) > _qb else None
     _cmdo = app.build_command(_qo)[0] if _qo is not None else []
+    _qoz = app._organize_item_for(ZP, output_path=str(OUT))
+    ok("queue.archive-kind-shown", app._job_recipe_parts(_qoz) == [".zip", "Organize"]
+       and app._job_recipe_parts(m.GameItem.from_chain(ZP, to="ffpfsc"))[0] == ".zip", str(app._job_recipe_parts(_qoz)))
     ok("organize.output-job", _qo is not None and _qo.operation == "copy" and _qo.content_kind == "organize"
        and app._job_recipe_parts(_qo) == [".ffpfsc", "Organize"] and "--organize-into" in _cmdo
        and _cmdo[_cmdo.index("--copy-mode") + 1] == "keep", f"{app._job_recipe_parts(_qo) if _qo else None} {_cmdo[-6:]}")
