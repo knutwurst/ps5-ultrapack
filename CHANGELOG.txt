@@ -17,6 +17,12 @@ FIXES
   - Such a job no longer asks for free space on the temp drive, which
     it never uses; it needs the space once, on the output drive. Its
     details say where it unpacks and what it needs there.
+  - A PS4 game package with its update merged in got the game's version
+    (v01.00): such a package keeps the game's version as its app version
+    and states the update's in its master version, which an ordinary game
+    uses for its own revision. The master version now counts when it is
+    the higher one and the package's name, its folder or the archive it
+    came in states that same version, e.g. '(v1.71)'.
   - While an archive is unpacked, Speed, Elapsed and Left are filled in.
   - The details pane belongs to the job you selected. Its progress
     block shows only while that job runs; a waiting job no longer shows

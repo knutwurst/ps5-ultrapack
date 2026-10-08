@@ -46,6 +46,29 @@ class Identity(unittest.TestCase):
         with self.assertRaises(ps4pkg.Ps4PackageError):
             ps4pkg.read_identity(junk)
 
+    def _merged(self, name, version="01.71", sub=""):
+        d = self.tmp / sub if sub else self.tmp
+        d.mkdir(parents=True, exist_ok=True)
+        sfo = {"TITLE": "Sample Game", "TITLE_ID": "CUSA00001", "CONTENT_ID": CID, "CATEGORY": "gd",
+               "APP_VER": "01.00", "VERSION": version}
+        return make_pkg(d / name, content_id=CID, content_type=0x1A, sfo=sfo)
+
+    def test_merged_update_version_needs_the_name(self):
+        # a game with its update merged in keeps the game's APP_VER; the update's version is in
+        # VERSION, which an ordinary game uses for its master revision (01.02 on a 01.00 game)
+        self.assertEqual(ps4pkg.read_identity(self._merged("g.pkg")).version, "01.00")
+        self.assertEqual(ps4pkg.read_identity(self._merged("Sample Game (v1.71).pkg")).version, "01.71")
+        self.assertEqual(ps4pkg.read_identity(self._merged("g.pkg", sub="Set-CUSA00001 - USA (v1.71).part01__ab12/x")).version, "01.71")
+        self.assertEqual(ps4pkg.read_identity(self._merged("Sample [v01.71].pkg")).version, "01.71")
+        self.assertEqual(ps4pkg.read_identity(self._merged("Sample [v01.00].pkg", version="01.02")).version, "01.00")
+        self.assertEqual(ps4pkg.read_identity(self._merged("Sample (v1.50).pkg")).version, "01.00")   # name says another
+
+    def test_merged_update_version_from_an_archive_prefix(self):
+        data = self._merged("g.pkg").read_bytes()
+        read = lambda n: data[:n]
+        self.assertEqual(ps4pkg.identity_from_prefix(read).version, "01.00")
+        self.assertEqual(ps4pkg.identity_from_prefix(read, hints=["Set-CUSA00001 - USA (v1.71).part01.rar"]).version, "01.71")
+
     def test_icon_missing_is_none(self):
         self.assertIsNone(ps4pkg.read_icon(self._pkg("g.pkg", 0x1A, "gd")))
         self.assertIsNone(ps4pkg.read_icon(self.tmp / "missing.pkg"))

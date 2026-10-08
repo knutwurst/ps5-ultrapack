@@ -582,11 +582,7 @@ def make_identify(read_image_member: Callable, firmware_of: Callable, passwords=
             if pj.is_file():
                 return ps5_dict(pj.read_bytes(), path)
             sfo = ps4pkg.parse_sfo((path / "sce_sys" / "param.sfo").read_bytes())
-            app_ver = str(sfo.get("APP_VER") or "")
-            i = ps4pkg.Ps4Identity(title=str(sfo.get("TITLE") or ""), title_id=str(sfo.get("TITLE_ID") or "").upper(),
-                                   content_id=str(sfo.get("CONTENT_ID") or ""),
-                                   kind=ps4pkg._kind(str(sfo.get("CATEGORY") or ""), 0),
-                                   version=app_ver or str(sfo.get("VERSION") or ""), app_ver=app_ver, content_type=0)
+            i = ps4pkg.identity_from_sfo(sfo, [path.name, path.parent.name])
             return ps4_dict(i) if i.title_id else None
         if kind in ("ffpfs", "ffpfsc"):
             return ps5_dict(read_image_member(path, "sce_sys/param.json"), path)

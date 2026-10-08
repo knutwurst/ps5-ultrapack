@@ -2161,7 +2161,7 @@ class ArchiveExtractor:
             return cache[n]
         ident = None
         try:
-            ident = ps4pkg.identity_from_prefix(prefix)
+            ident = ps4pkg.identity_from_prefix(prefix, hints=[pkgs[0], archive.name, archive.parent.name])
         except Exception:
             ident = None
         if ident is not None:
