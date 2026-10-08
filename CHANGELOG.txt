@@ -3,7 +3,23 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.2.1  (current)
+  v2.2.2  (current)
+────────────────────────────────────────────────────────────────────────
+
+FIXES
+
+  - A PS4 or Organize job from an archive showed a quarter of the
+    unpack in the queue (17 % while the unpack stood at 71 %) and then
+    jumped to the end. The archive is unpacked on the output drive and
+    then only renamed into the library, so the queue bar now follows
+    the unpack. When a copy to another drive follows, the unpack counts
+    for half.
+  - Such a job no longer asks for free space on the temp drive, which
+    it never uses; it needs the space once, on the output drive. Its
+    details say where it unpacks and what it needs there.
+
+────────────────────────────────────────────────────────────────────────
+  v2.2.1
 ────────────────────────────────────────────────────────────────────────
 
 ORGANIZE SORTS A FOLDER IN PLACE

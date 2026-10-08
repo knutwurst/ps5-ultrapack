@@ -2069,7 +2069,10 @@ try:
        f"{getattr(_qz, 'display_name', None)} {app._job_recipe_parts(_qz) if _qz else None}")
     if _qz is not None:
         _need = m._space_requirements(_qz, Path(_ptmp), OUT)
-        ok("ps4.archive-space", [x[0] for x in _need] == ["Temp drive (archive unpacked)", "Output drive"], str(_need))
+        ok("ps4.archive-space", [x[0] for x in _need] == ["Output drive (archive unpacked)"], str(_need))
+        _info = app._card_info_text(_qz)
+        ok("ps4.archive-details-drives", str(_info.get("Drives", "")).startswith("unpacks and writes on"),
+           str(_info.get("Drives")))
         app.queue.remove(_qz); app.update_queue_box()
     # a whole run: the PS4 archive is unpacked, the job goes on by itself, the backend sorts it
     _lib4 = S / "ps4_library"; shutil.rmtree(_lib4, ignore_errors=True); _lib4.mkdir()
@@ -2078,6 +2081,13 @@ try:
     _q0, _act0 = list(app.queue), app._active_item
     _inflight1 = getattr(app, "_cleanup_inflight", 0)
     app._cleanup_inflight = 0; app.cancel_requested = False; app.extract_cancel_event.clear()
+    _su_saved, _overall4 = app.status_update, []
+
+    def _su(title, detail, stage, stage_pct, overall_pct, *a, **k):
+        if k.get("job") is _run4 and stage == "Extracting":
+            _overall4.append((stage_pct, overall_pct))
+        return _su_saved(title, detail, stage, stage_pct, overall_pct, *a, **k)
+    app.status_update = _su
     try:
         app.queue[:] = [_run4]; app._active_item = None
         app.start()
@@ -2087,7 +2097,12 @@ try:
             "Sample Game [CUSA00001] [v01.00]/Sample Game DLC Extra [CUSA00001] [v01.00].pkg",
             "Sample Game [CUSA00001] [v01.00]/Sample Game [CUSA00001] [v01.00].pkg"]
            and _z4.is_file(), f"{_run4.status} {_tree4}")
+        # the unpack lands on the output drive and is followed by a rename: the queue bar
+        # follows the unpack instead of stopping at a quarter
+        _last4 = max((o for s_, o in _overall4 if s_ >= 100), default=None)
+        ok("ps4.archive-bar-follows-unpack", _last4 is not None and _last4 >= 95, str(_overall4[-3:]))
     finally:
+        app.status_update = _su_saved
         app._batch_running = False; app._cleanup_inflight = _inflight1
         app.queue[:] = _q0; app._active_item = _act0; app.update_queue_box()
     # an archive whose game cannot be read before unpacking is named from its folder

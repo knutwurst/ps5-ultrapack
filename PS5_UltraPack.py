@@ -102,6 +102,10 @@ APP_VERSION = "2.2.1"
 # whole-game percentage stays monotonic across extraction → pack (see CLIWorker._set_stage
 # and the extraction status_update calls).
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
+# A copy job (PS4 library, Organize) unpacks its archive on the output drive: what follows is
+# a rename, so the unpack is nearly the whole job. Across drives a copy of the same size follows.
+ARCHIVE_EXTRACT_RENAME_PCT = 97
+ARCHIVE_EXTRACT_COPY_PCT = 50
 BACKEND_NAME = "bizkut/ps5-ffpfs-cli"
 MKPFS_NAME    = "MkPFS"
 MKPFS_VERSION = "1.0.0"
@@ -2486,7 +2490,8 @@ class CLIWorker(threading.Thread):
         heartbeat and the progress lines can no longer disagree."""
         overall = self._overall()
         if getattr(self.item, "_from_archive", False):
-            overall = ARCHIVE_EXTRACT_OVERALL_PCT + overall * (100 - ARCHIVE_EXTRACT_OVERALL_PCT) / 100.0
+            share = self.app._archive_extract_pct(self.item)
+            overall = share + overall * (100 - share) / 100.0
         self._overall_sent = max(self._overall_sent, overall)
         return self._overall_sent
 
@@ -7826,6 +7831,21 @@ class App:
         except Exception:
             return False
 
+    def _archive_extract_pct(self, item) -> float:
+        """The share of the whole job an archive's unpack takes in the queue bar: a copy job
+        whose unpack lands on its output drive only renames afterwards (nearly all of it),
+        one that copies across drives moves the same bytes again (half); a build follows
+        with its own long stages (ARCHIVE_EXTRACT_OVERALL_PCT)."""
+        if getattr(item, "operation", "") != "copy":
+            return ARCHIVE_EXTRACT_OVERALL_PCT
+        root, out = getattr(item, "_build_root", None), self._job_output_dir(item)
+        try:
+            if root is not None and out is not None and same_drive(Path(str(root)).parent, out):
+                return ARCHIVE_EXTRACT_RENAME_PCT
+        except Exception:
+            pass
+        return ARCHIVE_EXTRACT_COPY_PCT
+
     def _resolve_extract_root(self, item) -> Path:
         """Place this run's artifacts across drives to maximise fast (SSD) temp use, and
         record the choice on the item: _build_root (where an archive extracts) and
@@ -8287,6 +8307,8 @@ class App:
                             "Extracting", 0, 0, "00:00", "—", "—", job=item)
 
         _last_pct = [-1]
+        _share = self._archive_extract_pct(item)
+
         def _progress(pct, filename):
             if pct - _last_pct[0] >= 2 or pct >= 100:
                 _last_pct[0] = pct
@@ -8295,7 +8317,7 @@ class App:
                 # two bars don't move in lockstep and the queue bar doesn't overshoot.
                 self.status_update("Extracting",
                                     f"Unpacking {archive.name}…  {pct}%",
-                                    "Extracting", pct, pct * ARCHIVE_EXTRACT_OVERALL_PCT / 100.0,
+                                    "Extracting", pct, pct * _share / 100.0,
                                     "—", "—", "—", job=item)
 
         candidate_passwords = self._candidate_passwords(item)  # includes per-archive override
@@ -10193,7 +10215,12 @@ class App:
             info["Compression"] = ".ffpfs, uncompressed"
         work = getattr(item, "_build_temp", None) or (self.temp_var.get() or "").strip()
         out_dir = self._job_output_dir(item)
-        if work or out_dir:
+        if getattr(item, "operation", "") == "copy" and out_dir:
+            # nothing is built: an archive is unpacked on the output drive, then moved in
+            arc = getattr(item, "archive_path", None) and not getattr(item, "path", None)
+            info["Drives"] = (f"unpacks and writes on {_drive_name(out_dir)} ({out_dir})" if arc
+                              else f"writes to {_drive_name(out_dir)} ({out_dir})")
+        elif work or out_dir:
             bits = []
             if work:
                 bits.append(f"works on {_drive_name(Path(str(work)))} ({work})")
@@ -10244,6 +10271,21 @@ class App:
             item = self._shown_or_next()
         if item is None or getattr(item, "size", 0) == 0:
             self.temp_space_var.set("Temp Needed: —")
+            return
+        if getattr(item, "operation", "pack") == "copy":
+            out_dir = self._job_output_dir(item)
+            tp = self.temp_var.get().strip()
+            try:
+                needs = _space_requirements(item, Path(tp) if tp else out_dir, out_dir) if out_dir else []
+                if not needs:
+                    self.temp_space_var.set("Same drive: renamed, no extra space")
+                else:
+                    ok = all(get_free_space(d) >= n for _l, d, n in needs)
+                    self.temp_space_var.set("  |  ".join(f"{label}: ~{format_size(n)}, {format_size(get_free_space(d))} free"
+                                                         for label, d, n in needs)
+                                            + f"  |  {'fits' if ok else 'LOW, may not fit'}")
+            except Exception:
+                self.temp_space_var.set(f"Needs: ~{format_size(_build_size_of(item))}")
             return
         if getattr(item, "operation", "pack") == "unpack":
             try:
@@ -12246,7 +12288,7 @@ class App:
         self.header_status_var.set(
             f"v{APP_VERSION}  |  Game {current}/{self._batch_total}  |  ✓{self._batch_done} ✗{self._batch_failed}"
         )
-        _floor = ARCHIVE_EXTRACT_OVERALL_PCT if getattr(item, "_from_archive", False) else 0
+        _floor = self._archive_extract_pct(item) if getattr(item, "_from_archive", False) else 0
         if not getattr(item, "_from_archive", False):
             self._begin_job_progress(item)
         self.status_update(
@@ -12835,7 +12877,7 @@ class App:
         self.start_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
         label = f"Game 1/{self._batch_total}" if self._batch_total > 1 else "Starting"
-        _floor = ARCHIVE_EXTRACT_OVERALL_PCT if getattr(item, "_from_archive", False) else 0
+        _floor = self._archive_extract_pct(item) if getattr(item, "_from_archive", False) else 0
         if not getattr(item, "_from_archive", False):
             self._begin_job_progress(item)
         self.status_update(label, "Launching backend.", "Starting", 0, _floor, "00:00", "—", "—", job=item)

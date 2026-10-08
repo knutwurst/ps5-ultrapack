@@ -557,9 +557,9 @@ def _space_requirements(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, 
         except Exception:
             src_dir = None
         if getattr(item, "archive_path", None) and not getattr(item, "path", None):
-            # an archive of PS4 packages: unpacked to the temp drive, then copied or moved over
-            return [("Temp drive (archive unpacked)", temp_dir, int(size)),
-                    ("Output drive", out_dir, int(size * 1.02))]
+            # an archive (PS4 packages, Organize): unpacked on the output drive itself (see
+            # _item_is_single_pass and the router), then renamed into place
+            return [("Output drive (archive unpacked)", out_dir, int(size * 1.02))]
         if src_dir is not None and same_drive(src_dir, out_dir):
             return []
         # Streamed through a .copy-tmp then os.replace (no doubling); 1.02x slack.
