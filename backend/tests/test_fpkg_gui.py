@@ -61,6 +61,15 @@ _backup = _settings.with_suffix(".json.driver-backup")
 if _settings.exists():
     _sh.copy2(_settings, _backup)
 m.ensure_app_dir()
+import title_db as _tdb
+def _no_network(url): raise OSError("the GUI driver never goes online")
+_tdb.FETCH = _no_network
+(S / "app_dir" / "titles").mkdir(parents=True, exist_ok=True)
+(S / "app_dir" / "titles" / "PS5_Titles.tsv").write_text(
+    "titleId\tconceptId\tname\tcontentId\tregion\tpublisherId\n"
+    "PPSA99096_00\t1\tListed Example\u2122\tUP9000-PPSA99096_00-LISTEDEXAMPLE000\tUP\tUP9000\n", encoding="utf-8")
+(S / "app_dir" / "titles" / "PS4_Titles.tsv").write_text(
+    "titleId\tconceptId\tname\tcontentId\tregion\tpublisherId\n", encoding="utf-8")
 root = m._CTkDnD(); root.withdraw()
 app = m.App(root)
 app.queue.clear()
@@ -2135,6 +2144,19 @@ try:
     pump(lambda: _gi.display_name == "Example Game [PPSA99097]", timeout=10.0)
     ok("names.archive-from-folder", _gi.display_name == "Example Game [PPSA99097]", str(_gi.display_name))
     app.queue.remove(_gi); app.update_queue_box()
+    # an id the public title list knows: its name, ahead of the folder's words; switched off, the folder's
+    _ldir = S / "PPSA99096 Folder Words"; _ldir.mkdir(exist_ok=True)
+    _l7 = _ldir / "PPSA99096-Compressed.7z"; _l7.write_bytes(b"7z\xbc\xaf\x27\x1c" + b"\0" * 64)
+    _li = m.GameItem.from_archive(_l7); app.queue.append(_li); app.update_queue_box()
+    app._name_jobs_from_games()
+    pump(lambda: _li.display_name == "Listed Example [PPSA99096]", timeout=10.0)
+    ok("names.from-the-title-list", _li.display_name == "Listed Example [PPSA99096]", str(_li.display_name))
+    app.queue.remove(_li); app.online_names_var.set(False)
+    _li2 = m.GameItem.from_archive(_l7); app.queue.append(_li2); app.update_queue_box()
+    app._name_jobs_from_games()
+    pump(lambda: _li2.display_name == "Folder Words [PPSA99096]", timeout=10.0)
+    ok("names.title-list-off", _li2.display_name == "Folder Words [PPSA99096]", str(_li2.display_name))
+    app.online_names_var.set(True); app.queue.remove(_li2); app.update_queue_box()
     # switching back to a PS5 source shows the changes again
     _d5 = m.JobDialog(app, init_src=str(_p4g)); root.update()
     _d5.src_var.set(str(HBT)); root.update(); _d5._refresh(); root.update()

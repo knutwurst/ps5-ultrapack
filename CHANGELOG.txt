@@ -30,6 +30,13 @@ FIXES
     uses for its own revision. The master version now counts when it is
     the higher one and the package's name, its folder or the archive it
     came in states that same version, e.g. '(v1.71)'.
+  - A job from an archive whose game cannot be read before it is
+    unpacked (an image or a solid 7z or RAR inside) is named after the
+    title id in its name, from the public PlayStation title lists
+    (github.com/andshrew/PlayStation-Titles). The lists are downloaded
+    when first needed and again once a week; without a connection the
+    last copy is used. Settings › General › Game names switches it off.
+    The unpacked game's own name still names the output.
   - The queue says what kind of archive a job starts from: '.rar',
     '.7z' or '.zip' instead of 'Archive', also for multi-part sets and
     once the archive is unpacked.

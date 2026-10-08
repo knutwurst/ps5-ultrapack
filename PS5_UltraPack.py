@@ -147,6 +147,15 @@ def _backport_module():
     return backport
 
 
+def _title_db_module():
+    """backend/title_db.py: game names by title id from the public title lists."""
+    _bd = str(backend_base_dir())
+    if _bd not in sys.path:
+        sys.path.insert(0, _bd)
+    import title_db
+    return title_db
+
+
 def _ps4pkg_module():
     """backend/ps4pkg.py: PS4 package identity (Tk-free)."""
     _bd = str(backend_base_dir())
@@ -1476,6 +1485,20 @@ class SettingsView:
                                        command=lambda v: self.app._set_theme(v.lower()))
         _mode.set("Light" if self.app._theme == "light" else "Dark")
         _mode.pack(side="left")
+
+        # GAME NAMES
+        self._section_label(scroll, "Game names")
+        gn = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
+        gn.pack(fill="x", pady=(4, 12))
+        ctk.CTkCheckBox(gn, text="Look up a game's name by its title id", variable=self.app.online_names_var,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18,
+                        checkbox_height=18).pack(anchor="w", padx=14, pady=(10, 2))
+        ctk.CTkLabel(gn, text="For an archive whose game cannot be read before it is unpacked (an image or "
+                              "a solid 7z or RAR). Uses the public PlayStation title lists "
+                              "(github.com/andshrew/PlayStation-Titles), downloaded when first needed and "
+                              "again once a week. The unpacked game's own name replaces it.",
+                     text_color=MUTED, font=ctk.CTkFont(size=12), wraplength=600, justify="left").pack(
+            anchor="w", padx=14 + 28, pady=(0, 10))
 
 
     def _page_compression(self, scroll):
@@ -6687,6 +6710,8 @@ class App:
         self.summary_popup_var   = self._persisted_bool(settings, "summary_popup", True)
         self.sound_complete_var  = self._persisted_bool(settings, "sound_complete", True)
         self.sound_error_var     = self._persisted_bool(settings, "sound_error", True)
+        # a job whose game cannot be read before unpacking is named from the public title list
+        self.online_names_var    = self._persisted_bool(settings, "online_title_names", True)
         self.batch_var = tk.BooleanVar(value=False)        # session state — not persisted
         self.unpack_mode_var = tk.BooleanVar(value=False)  # session state — not persisted
         # Output format for the whole queue: compressed .ffpfsc (smaller) vs uncompressed
@@ -9105,6 +9130,7 @@ class App:
             it._name_probed = True
         pw = {id(it): self._candidate_passwords(it) for it in todo
               if getattr(it, "archive_path", None) and not getattr(it, "path", None)}
+        online = bool(self.online_names_var.get())          # a Tk variable: read it here
 
         def work():
             changed = False
@@ -9116,7 +9142,7 @@ class App:
                             info = ArchiveExtractor.ps4_archive_info(Path(str(it.archive_path)), pw[id(it)])
                             i4 = info.get("ident") if info else None
                             ident = ({"title": i4.title, "title_id": i4.title_id} if i4 is not None
-                                     else ident_from_folder_name(it.archive_path))
+                                     else self._listed_title(it, online) or ident_from_folder_name(it.archive_path))
                     else:
                         ident = self._game_identity(it)
                 except Exception:
@@ -9131,6 +9157,22 @@ class App:
             if changed:
                 self._names_dirty = True
         threading.Thread(target=work, daemon=True).start()
+
+    @staticmethod
+    def _listed_title(item, enabled: bool) -> dict | None:
+        """{'title', 'title_id'} from the public title list for the title id in the archive's
+        name or its folder's, or None (switched off in Settings, no id, not listed, no list
+        and no connection)."""
+        arc = Path(str(getattr(item, "archive_path", "") or ""))
+        if not enabled or not str(getattr(item, "archive_path", "") or "").strip():
+            return None
+        try:
+            tdb = _title_db_module()
+            tid = tdb.title_id_in(arc.name, arc.parent.name)
+            name = tdb.lookup(tid, Path(APP_DIR) / "titles") if tid else None
+        except Exception:
+            return None
+        return {"title": name, "title_id": tid} if name else None
 
     def _job_art(self, item):
         """The cover to show for *item*: its cached copy, else the icon in its folder (cached

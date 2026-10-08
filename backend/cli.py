@@ -2578,6 +2578,9 @@ def main() -> None:
     parser.add_argument("--if-exists", choices=("skip", "ask", "overwrite", "keep"), default="skip",
                         help="For --ps4-sort and --organize-into: what happens when an item is already in "
                              "the library (ask behaves like skip inside a job).")
+    parser.add_argument("--title-name", type=str, default=None, metavar="ID",
+                        help="Print the name the public title list gives a title id (PPSA… / CUSA…); "
+                             "fetches the list into the app folder when it is missing or a week old.")
     parser.add_argument("--organize-scan", type=str, default=None, metavar="ROOT",
                         help="ORGANIZE: read every game folder, image, package and archive under ROOT and "
                              "plan the library layout in place. Prints 'ORGANIZE_PROGRESS: n/total name' "
@@ -2904,6 +2907,13 @@ def main() -> None:
     # ── COPY MODE (same-format transport, no re-encode) ──────────────────────────
     # Runs before every mkpfs-shaped path: --copy needs no game_folder positional
     # (SRC is on --copy), the OUTPUT positional is the destination folder.
+    if args.title_name:
+        import title_db
+        import ultra_core
+        name = title_db.lookup(args.title_name, Path(ultra_core.APP_DIR) / "titles")
+        print(f"TITLE_NAME: {name}" if name else "[ERROR] not in the title list", flush=True)
+        sys.exit(0 if name else 1)
+
     if (args.organize_scan is not None or args.organize_apply or args.organize_undo
             or args.organize_into is not None):
         sys.exit(_organize_main(args))
