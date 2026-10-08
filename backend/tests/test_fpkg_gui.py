@@ -2202,6 +2202,34 @@ try:
     ok("art.after-restart", _rest is not None and _rest.artwork is None and app.art_label._photo is not None,
        str(getattr(_rest, "art_key", None)))
     app.queue[:] = _q0; app._details_item = None; app.update_queue_box(); root.update()
+    # Speed and time left while an archive is unpacked
+    ok("unpack.rate", m.unpack_rate(50, 100, 100 * 10**9) == ("500.0 MB/s", "1m 40s") and m.unpack_rate(50, 10, 100 * 10**9)[0] == "5.00 GB/s"
+       and m.unpack_rate(25, 60, 12 * 10**9) == ("50.0 MB/s", "3m 00s")
+       and m.unpack_rate(1, 60, 10**9) == ("—", "—") and m.unpack_rate(40, 20, 0) == ("—", "30s"),
+       str([m.unpack_rate(50, 100, 100 * 10**9), m.unpack_rate(25, 60, 12 * 10**9)]))
+    # The details pane belongs to the selected job: the progress block shows only for the
+    # running one, and a job you picked stays picked when the next job starts
+    _q0 = list(app.queue)
+    _ja, _jb, _jc = (m.GameItem.from_archive(ZP) for _ in range(3))
+    app.queue[:] = [_ja, _jb, _jc]; app._details_item = None; app.update_queue_box(select_item=_ja); root.update()
+    _br0, _act0 = app._batch_running, app._active_item
+    try:
+        app._batch_running, app._active_item = True, _ja
+        app.update_game_details(_jb); root.update()
+        _hidden = not app._progress_box.winfo_manager()
+        app.update_game_details(_ja); root.update()
+        ok("details.progress-only-for-the-running-job", _hidden and bool(app._progress_box.winfo_manager()),
+           f"hidden for a waiting job={_hidden}")
+        app.update_queue_box(select_item=_jb); app.update_game_details(_jb); root.update()
+        app._follow_next_job(_ja, _jc); root.update()
+        _kept = app._details_item is _jb and app.queue_listbox.curselection() == (1,)
+        app.update_queue_box(select_item=_ja); app.update_game_details(_ja); root.update()
+        app._follow_next_job(_ja, _jc); root.update()
+        ok("details.follow-the-run-only-when-watching", _kept and app._details_item is _jc
+           and app.queue_listbox.curselection() == (2,), f"kept={_kept} now={app.queue_listbox.curselection()}")
+    finally:
+        app._batch_running, app._active_item = _br0, _act0
+        app.queue[:] = _q0; app._details_item = None; app.update_queue_box(); root.update()
     # Arrow keys move the selection, never a job (moving is drag and drop or the context menu)
     _q0 = list(app.queue)
     _three = [m.GameItem.from_archive(ZP) for _ in range(3)]

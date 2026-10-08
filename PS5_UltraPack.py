@@ -106,6 +106,19 @@ ARCHIVE_EXTRACT_OVERALL_PCT = 25
 # a rename, so the unpack is nearly the whole job. Across drives a copy of the same size follows.
 ARCHIVE_EXTRACT_RENAME_PCT = 97
 ARCHIVE_EXTRACT_COPY_PCT = 50
+
+
+def unpack_rate(pct: float, secs: float, total_bytes: int) -> tuple[str, str]:
+    """(speed, time left) of an archive unpack at *pct* after *secs*: the time left from the
+    pace so far, the speed from the share of *total_bytes* done. '—' until there is enough
+    to go on (2 % and 3 s), and for a speed without a known size."""
+    if pct < 2 or secs < 3 or pct >= 100:
+        return "—", "—"
+    left = humanize_eta(f"{int(secs * (100 - pct) / pct)}s")
+    if total_bytes <= 0:
+        return "—", left
+    rate = total_bytes * pct / 100.0 / secs
+    return (f"{rate / 1e9:.2f} GB/s" if rate >= 1e9 else f"{rate / 1e6:.1f} MB/s"), left
 BACKEND_NAME = "bizkut/ps5-ffpfs-cli"
 MKPFS_NAME    = "MkPFS"
 MKPFS_VERSION = "1.0.0"
@@ -6167,21 +6180,44 @@ class App:
         self._bind_dynamic_wrap(self._cmd_frame, [self.command_label], padding=26, min_width=200)
 
     def _sync_run_ui(self):
-        """Show the progress block only while a job runs (checked on every poll tick)."""
+        """The run controls follow the batch; the progress block shows only while the job
+        in the details pane is the one running (checked on every poll tick)."""
         running = bool(getattr(self, "_batch_running", False))
-        if running == getattr(self, "_run_ui_shown", None):
+        if running != getattr(self, "_run_ui_shown", None):
+            self._run_ui_shown = running
+            try:
+                self._pause_requested = False        # a pause belongs to the run it was asked in
+                self._show_pause_state()
+                if running:
+                    self.pause_btn.configure(state="normal")
+                    self.stop_btn.configure(state="normal")
+                self.transport.set_running(running)
+            except Exception:
+                pass
+        self._sync_progress_box()
+
+    def _follow_next_job(self, before, item):
+        """A job starts after *before*: whoever watched the running job keeps watching, so
+        the list and the details move on to *item*. A job you picked yourself stays picked."""
+        shown = getattr(self, "_details_item", None)
+        if shown is None or shown is before or shown is item or shown not in self.queue:
+            self.update_queue_box(select_item=item)
+            if self._details_item is not item:
+                self.update_game_details(item)
+
+    def _sync_progress_box(self):
+        """The details pane belongs to the selected job: its progress block shows that
+        job's progress, so it is there only while the selected job runs (or while nothing
+        is selected). A waiting job's own line says it waits; the running job's bar stays
+        in its queue row."""
+        shown = getattr(self, "_details_item", None)
+        run = self._running_item() if getattr(self, "_batch_running", False) else None
+        want = run is not None and (shown is None or shown is run)
+        if want == getattr(self, "_progress_shown", None):
             return
-        self._run_ui_shown = running
+        self._progress_shown = want
         try:
-            self._pause_requested = False        # a pause belongs to the run it was asked in
-            self._show_pause_state()
-            if running:
-                self._progress_box.grid()
-                self.pause_btn.configure(state="normal")
-                self.stop_btn.configure(state="normal")
-            else:
-                self._progress_box.grid_remove()
-            self.transport.set_running(running)
+            self._progress_box.grid() if want else self._progress_box.grid_remove()
         except Exception:
             pass
 
@@ -8308,17 +8344,22 @@ class App:
 
         _last_pct = [-1]
         _share = self._archive_extract_pct(item)
+        _t0 = time.monotonic()
+        # what the unpack writes: the size read from the archive's headers, else (an
+        # encrypted header) the archive itself, which game data hardly shrinks
+        _unpacked = int(getattr(item, "extracted_size", 0) or 0) or int(archive_set_ondisk_size(archive) or 0)
 
         def _progress(pct, filename):
-            if pct - _last_pct[0] >= 2 or pct >= 100:
+            if pct - _last_pct[0] >= 1 or pct >= 100:
                 _last_pct[0] = pct
-                # Step bar shows the FULL extraction %; the queue bar (overall) only counts
-                # extraction as the first ARCHIVE_EXTRACT_OVERALL_PCT% of this game — so the
-                # two bars don't move in lockstep and the queue bar doesn't overshoot.
+                # Step bar shows the FULL extraction %; the queue bar (overall) counts the
+                # unpack as its share of the whole job (see _archive_extract_pct).
+                secs = time.monotonic() - _t0
+                speed, eta = unpack_rate(pct, secs, _unpacked)
                 self.status_update("Extracting",
                                     f"Unpacking {archive.name}…  {pct}%",
                                     "Extracting", pct, pct * _share / 100.0,
-                                    "—", "—", "—", job=item)
+                                    format_duration(secs), speed, eta, job=item)
 
         candidate_passwords = self._candidate_passwords(item)  # includes per-archive override
 
@@ -10085,6 +10126,7 @@ class App:
 
     def update_game_details(self, item):
         self._details_item = item   # record before any call that might raise
+        self._sync_progress_box()
         self.game_name_var.set(f"Name: {getattr(item, 'display_name', None) or item.name}")
         mode = {"unpack": "Convert", "patch": "Integrate patch",
                 "fake-sign": "Fake sign",
@@ -12196,8 +12238,9 @@ class App:
             if self._batch_total > 1:
                 self._show_batch_complete()
             return
+        _before = getattr(self, "_active_item", None)
         item = self._pick_next()
-        self.update_game_details(item)   # refreshes art + space stats for next game
+        self._follow_next_job(_before, item)
         if not self._due_checks(item):
             return
         if self._release_failed_copies(item):

@@ -17,6 +17,12 @@ FIXES
   - Such a job no longer asks for free space on the temp drive, which
     it never uses; it needs the space once, on the output drive. Its
     details say where it unpacks and what it needs there.
+  - While an archive is unpacked, Speed, Elapsed and Left are filled in.
+  - The details pane belongs to the job you selected. Its progress
+    block shows only while that job runs; a waiting job no longer shows
+    another job's bar. When the next job starts, the list and the
+    details move on to it only if you were watching the running job;
+    a job you picked yourself stays picked.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.1
