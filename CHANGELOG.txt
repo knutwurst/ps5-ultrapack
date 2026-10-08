@@ -6,36 +6,8 @@
   v2.2.2  (current)
 ────────────────────────────────────────────────────────────────────────
 
-FIXES
+GAME NAMES BEFORE THE UNPACK
 
-  - The app could quit on the spot when a folder or file chooser opened:
-    macOS attached it to the main window as a sheet and ended the app
-    when it refused that sheet. Choosers and messages now open as
-    windows of their own.
-  - Empty work folders no longer stay behind: '_ffpfsc_temp',
-    '_ffpfsc_extract' and their kind are removed from every drive the
-    app worked on (the temp folder, extra temp drives, output folders
-    and earlier outputs) once the queue stands still and when the app
-    starts, '._' files beside them included. A folder that still holds
-    something, such as the kept unpack of a failed job, stays.
-  - After such a crash the running job kept going without the app,
-    writing to the drive for nobody, and a restarted app ran the same
-    job again. A job now ends together with the app.
-  - A PS4 or Organize job from an archive showed a quarter of the
-    unpack in the queue (17 % while the unpack stood at 71 %) and then
-    jumped to the end. The archive is unpacked on the output drive and
-    then only renamed into the library, so the queue bar now follows
-    the unpack. When a copy to another drive follows, the unpack counts
-    for half.
-  - Such a job no longer asks for free space on the temp drive, which
-    it never uses; it needs the space once, on the output drive. Its
-    details say where it unpacks and what it needs there.
-  - A PS4 game package with its update merged in got the game's version
-    (v01.00): such a package keeps the game's version as its app version
-    and states the update's in its master version, which an ordinary game
-    uses for its own revision. The master version now counts when it is
-    the higher one and the package's name, its folder or the archive it
-    came in states that same version, e.g. '(v1.71)'.
   - A job from an archive whose game cannot be read before it is
     unpacked (an image or a solid 7z or RAR inside) is named after the
     title id in its name, from the public PlayStation title lists
@@ -43,6 +15,12 @@ FIXES
     when first needed and again once a week; without a connection the
     last copy is used. Settings › General › Game names switches it off.
     The unpacked game's own name still names the output.
+  - The queue says what kind of archive a job starts from: '.rar',
+    '.7z' or '.zip' instead of 'Archive', also for multi-part sets and
+    once the archive is unpacked.
+
+LOOK INSIDE AND THE SIDEBAR
+
   - Look inside is a view of the main window, laid out like Organize:
     the image's path with Choose and Open, the list, Extract all and
     Extract selected. No Close button; any entry in the sidebar leaves
@@ -50,10 +28,14 @@ FIXES
   - The sidebar works at all times. With Add job (or another page) open,
     a click in the sidebar, or a View menu entry or its shortcut, goes
     there and closes the page.
-  - The queue says what kind of archive a job starts from: '.rar',
-    '.7z' or '.zip' instead of 'Archive', also for multi-part sets and
-    once the archive is unpacked.
-  - While an archive is unpacked, Speed, Elapsed and Left are filled in.
+  - The details pane belongs to the job you selected. Its progress
+    block shows only while that job runs; a waiting job no longer shows
+    another job's bar. When the next job starts, the list and the
+    details move on to it only if you were watching the running job;
+    a job you picked yourself stays picked.
+
+PROGRESS AND TIME LEFT
+
   - The time left is worked out from what each step really takes. It
     used to follow fixed shares of a job and said "about 11 min left"
     while the compression alone still needed 38 minutes. Now the running
@@ -61,16 +43,43 @@ FIXES
     the steps still to come are timed at the speed this Mac showed for
     them before. Left shows the job's time, the foot of the queue the
     whole run's.
+  - While an archive is unpacked, Speed, Elapsed and Left are filled in.
+  - A PS4 or Organize job from an archive showed a quarter of the
+    unpack in the queue (17 % while the unpack stood at 71 %) and then
+    jumped to the end. The archive is unpacked on the output drive and
+    then only renamed into the library, so the queue bar now follows
+    the unpack. When a copy to another drive follows, the unpack counts
+    for half.
   - A waiting job's details show where it will run: where the archive
     is unpacked, which drive builds the image (an extra temp drive such
     as a second SSD included), where the result goes, and what each of
     these drives needs and has free. They used to name the temp folder
     from Settings even when the job would use another drive.
-  - The details pane belongs to the job you selected. Its progress
-    block shows only while that job runs; a waiting job no longer shows
-    another job's bar. When the next job starts, the list and the
-    details move on to it only if you were watching the running job;
-    a job you picked yourself stays picked.
+
+FIXES
+
+  - The app could quit on the spot when a folder or file chooser opened:
+    macOS attached it to the main window as a sheet and ended the app
+    when it refused that sheet. Choosers and messages now open as
+    windows of their own.
+  - After such a crash the running job kept going without the app,
+    writing to the drive for nobody, and a restarted app ran the same
+    job again. A job now ends together with the app.
+  - Empty work folders no longer stay behind: '_ffpfsc_temp',
+    '_ffpfsc_extract' and their kind are removed from every drive the
+    app worked on (the temp folder, extra temp drives, output folders
+    and earlier outputs) once the queue stands still and when the app
+    starts, '._' files beside them included. A folder that still holds
+    something, such as the kept unpack of a failed job, stays.
+  - A PS4 or Organize job from an archive no longer asks for free space
+    on the temp drive, which it never uses; it needs the space once, on
+    the output drive.
+  - A PS4 game package with its update merged in got the game's version
+    (v01.00): such a package keeps the game's version as its app version
+    and states the update's in its master version, which an ordinary game
+    uses for its own revision. The master version now counts when it is
+    the higher one and the package's name, its folder or the archive it
+    came in states that same version, e.g. '(v1.71)'.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.1
