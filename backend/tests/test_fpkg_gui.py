@@ -885,7 +885,7 @@ try:
        and m._peak_factor_for(_si) == m.PKG_UNPACK_PEAK_FACTOR, f"{_got} {_si.extracted_size}")
     app._active_item = None
     _ci = app._card_info_text(_pj)
-    ok("card.info.drives", "writes to" in _ci.get("Drives", "") and "works on" in _ci.get("Drives", ""),
+    ok("card.info.drives", "writes to" in _ci.get("Drives", "") and "builds on" in _ci.get("Drives", ""),
        _ci.get("Drives", ""))
     # J6h) a cancel keeps a finished extraction until the job leaves the queue
     _kt = S / "keep_temp"; (_kt / "_extracted" / "Arc__1" / "inner").mkdir(parents=True, exist_ok=True)
@@ -2224,6 +2224,22 @@ try:
     ok("art.after-restart", _rest is not None and _rest.artwork is None and app.art_label._photo is not None,
        str(getattr(_rest, "art_key", None)))
     app.queue[:] = _q0; app._details_item = None; app.update_queue_box(); root.update()
+    # The details show where the router will put a waiting job, the numbers the space gate
+    # checks, and looking at a job neither moves it nor writes placement lines to the log
+    _pa = m.GameItem.from_chain(ZP, to="ffpfsc", output_path=str(OUT))
+    _plogs = []; _plog_saved = app.log
+    app.log = lambda lvl, msg, *a, **k: (_plogs.append(msg), _plog_saved(lvl, msg, *a, **k))
+    try:
+        _pinfo = app._card_info_text(_pa); app._refresh_space_for_item(_pa)
+    finally:
+        app.log = _plog_saved
+    _pdrv, _pspace = str(_pinfo.get("Drives", "")), app.temp_space_var.get()
+    ok("details.drives-from-the-plan", _pdrv.startswith("unpacks on") and "builds on" in _pdrv and "writes to" in _pdrv
+       and " on the system drive: ~" in _pspace and _pspace.endswith("fits") and not hasattr(_pa, "_build_temp")
+       and not any(x.startswith("Auto:") for x in _plogs),
+       f"unpack={_pdrv.startswith('unpacks on')} builds={'builds on' in _pdrv} drive={' on the system drive: ~' in _pspace} "
+       f"fits={_pspace.endswith('fits')} untouched={not hasattr(_pa, '_build_temp')} "
+       f"quiet={not any(x.startswith('Auto:') for x in _plogs)} space={_pspace[-60:]!r}")
     # Speed and time left while an archive is unpacked
     ok("unpack.rate", m.unpack_rate(50, 100, 100 * 10**9) == ("500.0 MB/s", "1m 40s") and m.unpack_rate(50, 10, 100 * 10**9)[0] == "5.00 GB/s"
        and m.unpack_rate(25, 60, 12 * 10**9) == ("50.0 MB/s", "3m 00s")

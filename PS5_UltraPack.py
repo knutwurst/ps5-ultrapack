@@ -8,6 +8,7 @@ import time
 import json
 import queue
 import zipfile
+import copy
 import threading
 import subprocess
 import tempfile
@@ -7904,7 +7905,26 @@ class App:
             pass
         return ARCHIVE_EXTRACT_COPY_PCT
 
-    def _resolve_extract_root(self, item) -> Path:
+    def _planned(self, item):
+        """*item* as the router would place it now: the running job (or one already placed and
+        unpacked) as it is, any other job as a copy placed without a log line, so looking at a
+        job never moves it. Cached for 10 s per job (free space changes slowly)."""
+        if item is self._running_item() or getattr(item, "_from_archive", False):
+            return item
+        cache = self.__dict__.setdefault("_plan_cache", {})
+        hit = cache.get(id(item))
+        now = time.monotonic()
+        if hit is not None and hit[0] is item and now - hit[1] < 10:
+            return hit[2]
+        probe = copy.copy(item)
+        try:
+            self._resolve_extract_root(probe, quiet=True)
+        except Exception:
+            probe = item
+        cache[id(item)] = (item, now, probe)
+        return probe
+
+    def _resolve_extract_root(self, item, quiet: bool = False) -> Path:
         """Place this run's artifacts across drives to maximise fast (SSD) temp use, and
         record the choice on the item: _build_root (where an archive extracts) and
         _build_temp (the backend --temp-dir = where the inner image goes). The pass-2 spool
@@ -7952,7 +7972,7 @@ class App:
         # step, and the post-extraction re-gate), so log a given decision only ONCE per
         # item — re-log only if the decision actually changes — to keep the log clean.
         def _plog(level, msg):
-            if getattr(item, "_last_placement_log", None) == msg:
+            if quiet or getattr(item, "_last_placement_log", None) == msg:
                 return
             item._last_placement_log = msg
             self.log(level, msg)
@@ -10284,6 +10304,18 @@ class App:
             arc = getattr(item, "archive_path", None) and not getattr(item, "path", None)
             info["Drives"] = (f"unpacks and writes on {_drive_name(out_dir)} ({out_dir})" if arc
                               else f"writes to {_drive_name(out_dir)} ({out_dir})")
+        elif out_dir and getattr(item, "operation", "") in ("chain", "pack", "fpkg-build", "patch"):
+            # where the router will put this job (or has put it), not the temp setting
+            plan = self._planned(item)
+            bits = []
+            root = getattr(plan, "_build_root", None)
+            if getattr(item, "archive_path", None) and not getattr(item, "path", None) and root:
+                bits.append(f"unpacks on {_drive_name(Path(str(root)))} ({root})")
+            img = getattr(plan, "_build_temp", None)
+            if img and not _item_is_single_pass(plan):
+                bits.append(f"builds on {_drive_name(Path(str(img)))} ({img})")
+            bits.append(f"writes to {_drive_name(out_dir)} ({out_dir})")
+            info["Drives"] = ", ".join(bits)
         elif work or out_dir:
             bits = []
             if work:
@@ -10362,6 +10394,27 @@ class App:
             except Exception:
                 self.temp_space_var.set(f"Extract Needs: ~{format_size(item.size)}+")
             return
+        out_dir = self._job_output_dir(item)
+        if out_dir is not None and getattr(item, "operation", "pack") in ("chain", "pack", "fpkg-build", "patch"):
+            # the same numbers the space gate checks when the job starts, on the drives the
+            # router picks for it
+            try:
+                plan = self._planned(item)
+                img = Path(str(getattr(plan, "_build_temp", None) or self.temp_var.get().strip() or out_dir))
+                needs = _space_requirements(plan, img, out_dir)
+                if needs:
+                    ok = all(get_free_space(d) >= n for _l, d, n in needs)
+                    short = {"Temp drive (inner image)": "Image", "Inner image drive": "Image",
+                             "Extracted source drive": "Unpacked game", "Output drive": "Output",
+                             "Temp drive (whole scratch)": "Unpack and image",
+                             "Output drive (archive unpacked)": "Output"}
+                    self.temp_space_var.set(
+                        "  |  ".join(f"{short.get(label, label)} on {_drive_name(Path(str(d)))}: ~{format_size(n)}, "
+                                     f"{format_size(get_free_space(d))} free" for label, d, n in needs)
+                        + f"  |  {'fits' if ok else 'LOW, may not fit'}")
+                    return
+            except Exception:
+                pass
         try:
             tp = self.temp_var.get().strip()
             temp_dir = Path(tp) if tp else None

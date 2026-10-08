@@ -31,6 +31,11 @@ FIXES
     the higher one and the package's name, its folder or the archive it
     came in states that same version, e.g. '(v1.71)'.
   - While an archive is unpacked, Speed, Elapsed and Left are filled in.
+  - A waiting job's details show where it will run: where the archive
+    is unpacked, which drive builds the image (an extra temp drive such
+    as a second SSD included), where the result goes, and what each of
+    these drives needs and has free. They used to name the temp folder
+    from Settings even when the job would use another drive.
   - The details pane belongs to the job you selected. Its progress
     block shows only while that job runs; a waiting job no longer shows
     another job's bar. When the next job starts, the list and the
