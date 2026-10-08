@@ -6231,6 +6231,8 @@ class App:
         running = bool(getattr(self, "_batch_running", False))
         if running != getattr(self, "_run_ui_shown", None):
             self._run_ui_shown = running
+            if not running:
+                self._prune_scratch_later()       # the queue stands still (also at startup)
             try:
                 self._pause_requested = False        # a pause belongs to the run it was asked in
                 self._show_pause_state()
@@ -6241,6 +6243,58 @@ class App:
             except Exception:
                 pass
         self._sync_progress_box()
+
+    def _scratch_bases(self) -> list:
+        """Every folder the app may have made its work folders in: the temp folder, the
+        extra temp drives, the output folder, the jobs' own outputs and the outputs of the
+        last 100 jobs in the history (and their parents). Main thread (Tk variables)."""
+        out = [self.temp_var.get().strip(), self.output_var.get().strip()]
+        try:
+            # every configured extra temp drive, also one the router skips today
+            out += [str(p) for p in self._temp_pool_dirs()] + [str(p) for p in (getattr(self, "temp_pool", None) or [])]
+        except Exception:
+            pass
+        for it in list(self.queue):
+            try:
+                d = self._job_output_dir(it)
+                if d:
+                    out.append(str(d))
+            except Exception:
+                pass
+        try:
+            for h in (load_history() or [])[-100:]:
+                o = str((h or {}).get("output") or "").strip()
+                if o:
+                    # beside the output, or the library above its title folder
+                    out += [o, str(Path(o).parent), str(Path(o).parent.parent)]
+        except Exception:
+            pass
+        return [b for b in dict.fromkeys(out) if b]
+
+    def _prune_scratch_later(self, delay: float = 15.0) -> None:
+        """Once the queue stands still, remove the app's work folders that are left empty on
+        every drive (ultra_core.prune_empty_scratch). Waits *delay* seconds first, so the
+        clean-up of the last job is done; nothing is removed while a job runs."""
+        if getattr(self, "_prune_pending", False):
+            return
+        self._prune_pending = True
+        bases = self._scratch_bases()
+        busy = lambda: bool(getattr(self, "_batch_running", False))
+
+        def work():
+            try:
+                time.sleep(delay)
+                if busy():
+                    return
+                gone = prune_empty_scratch(bases, min_age=10.0, stop=busy)
+                if gone:
+                    self.log("INFO", "Removed empty work folders: " + ", ".join(str(g) for g in gone[:6])
+                                     + (f" (+{len(gone) - 6} more)" if len(gone) > 6 else ""))
+            except Exception:
+                pass
+            finally:
+                self._prune_pending = False
+        threading.Thread(target=work, daemon=True).start()
 
     def _follow_next_job(self, before, item):
         """A job starts after *before*: whoever watched the running job keeps watching, so

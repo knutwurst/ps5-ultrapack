@@ -181,5 +181,46 @@ class WrittenClutter(unittest.TestCase):
         self.assertEqual(ultra_core.strip_written_clutter("/nonexistent/x.ffpfsc"), 0)
 
 
+class EmptyScratch(unittest.TestCase):
+    """The app's own work folders go once they are empty (or hold only OS clutter); real
+    files and folders of the user's own stay."""
+
+    def setUp(self):
+        import ultra_core
+        self.uc = ultra_core
+        self.base = Path(tempfile.mkdtemp(prefix="scratch_prune_"))
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def test_empty_work_folders_go_and_real_files_stay(self):
+        b = self.base
+        (b / "_ffpfsc_temp" / "_extracted").mkdir(parents=True)
+        (b / "_ffpfsc_temp" / ".DS_Store").write_bytes(b"x")
+        (b / "._" "_ffpfsc_temp").write_bytes(b"\0\5\26\7")            # the exFAT sidecar beside it
+        (b / "_ffpfsc_extract" / "kept-job" / "sce_sys").mkdir(parents=True)
+        (b / "_ffpfsc_extract" / "kept-job" / "eboot.bin").write_bytes(b"E")
+        (b / "_ffpfsc_extract" / "empty-job").mkdir(parents=True)
+        (b / "_ffpfsc_inner").mkdir()
+        (b / "_mine").mkdir()                                            # not ours
+        (b / "Library" / "_extracted").mkdir(parents=True)               # deeper: not where we work
+        gone = self.uc.prune_empty_scratch([b, b / "missing"])
+        left = sorted(str(p.relative_to(b)) for p in b.rglob("*"))
+        self.assertEqual(left, ["Library", "Library/_extracted", "_ffpfsc_extract", "_ffpfsc_extract/kept-job",
+                                "_ffpfsc_extract/kept-job/eboot.bin", "_ffpfsc_extract/kept-job/sce_sys", "_mine"])
+        self.assertIn(b / "_ffpfsc_temp", gone)
+
+    def test_a_fresh_folder_and_a_running_job_are_left_alone(self):
+        b = self.base
+        (b / "_ffpfsc_temp").mkdir()
+        self.assertEqual(self.uc.prune_empty_scratch([b], min_age=60), [])      # made just now
+        self.assertEqual(self.uc.prune_empty_scratch([b], stop=lambda: True), [])   # a job runs
+        (b / "_ffpfsc_temp" / "_extracted").mkdir()
+        old = os.path.getmtime(b) - 120
+        for d in (b / "_ffpfsc_temp" / "_extracted", b / "_ffpfsc_temp"):
+            os.utime(d, (old, old))
+        gone = self.uc.prune_empty_scratch([b], min_age=60)            # a nested pair, both settled
+        self.assertEqual(gone, [b / "_ffpfsc_temp" / "_extracted", b / "_ffpfsc_temp"])
+
 if __name__ == "__main__":
     unittest.main()

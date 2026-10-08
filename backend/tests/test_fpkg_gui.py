@@ -2265,6 +2265,29 @@ try:
        f"unpack={_pdrv.startswith('unpacks on')} builds={'builds on' in _pdrv} drive={' on the system drive: ~' in _pspace} "
        f"fits={_pspace.endswith('fits')} untouched={not hasattr(_pa, '_build_temp')} "
        f"quiet={not any(x.startswith('Auto:') for x in _plogs)} space={_pspace[-60:]!r}")
+    # Empty work folders on every drive the app used go once the queue stands still
+    _pool = S / "pool_drive"; _hist = S / "old_library" / "Game [PPSA99095] [v01.000.000]"
+    for _d in (_pool / "_ffpfsc_temp" / "_extracted", _hist.parent / "_ffpfsc_temp", _hist.parent / "_ffpfsc_extract" / "kept"):
+        _d.mkdir(parents=True, exist_ok=True)
+    (_hist.parent / "_ffpfsc_extract" / "kept" / "eboot.bin").write_bytes(b"E")
+    _old = time.time() - 600
+    for _d in [x for x in S.rglob("*") if x.is_dir() and ("pool_drive" in x.parts or "old_library" in x.parts)]:
+        os.utime(_d, (_old, _old))
+    _pool0, _hist0 = list(getattr(app, "temp_pool", []) or []), m.load_history()
+    app.temp_pool = [str(_pool)]
+    m.save_history(_hist0 + [{"output": str(_hist / "Game.ffpfsc"), "name": "x"}])
+    try:
+        app._batch_running = True
+        app._prune_scratch_later(delay=0.0); pump(lambda: not app._prune_pending, timeout=10.0)
+        _while = (_pool / "_ffpfsc_temp").exists()
+        app._batch_running = False
+        app._prune_scratch_later(delay=0.0); pump(lambda: not app._prune_pending, timeout=10.0)
+        ok("scratch.empty-work-folders-go", _while and not (_pool / "_ffpfsc_temp").exists()
+           and not (_hist.parent / "_ffpfsc_temp").exists()
+           and (_hist.parent / "_ffpfsc_extract" / "kept" / "eboot.bin").is_file(),
+           f"kept while running={_while} pool={(_pool / '_ffpfsc_temp').exists()} hist={(_hist.parent / '_ffpfsc_temp').exists()}")
+    finally:
+        app._batch_running = False; app.temp_pool = _pool0; m.save_history(_hist0)
     # Speed and time left while an archive is unpacked
     ok("unpack.rate", m.unpack_rate(50, 100, 100 * 10**9) == ("500.0 MB/s", "1m 40s") and m.unpack_rate(50, 10, 100 * 10**9)[0] == "5.00 GB/s"
        and m.unpack_rate(25, 60, 12 * 10**9) == ("50.0 MB/s", "3m 00s")

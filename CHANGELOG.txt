@@ -12,6 +12,12 @@ FIXES
     macOS attached it to the main window as a sheet and ended the app
     when it refused that sheet. Choosers and messages now open as
     windows of their own.
+  - Empty work folders no longer stay behind: '_ffpfsc_temp',
+    '_ffpfsc_extract' and their kind are removed from every drive the
+    app worked on (the temp folder, extra temp drives, output folders
+    and earlier outputs) once the queue stands still and when the app
+    starts, '._' files beside them included. A folder that still holds
+    something, such as the kept unpack of a failed job, stays.
   - After such a crash the running job kept going without the app,
     writing to the drive for nobody, and a restarted app ran the same
     job again. A job now ends together with the app.

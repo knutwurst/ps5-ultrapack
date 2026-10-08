@@ -3086,6 +3086,91 @@ def strip_fs_junk(root) -> int:
     return removed
 
 
+# The work folders this app creates beside a temp folder, on an extra temp drive and in an
+# output folder. Nothing else is ever pruned.
+SCRATCH_DIR_NAMES = ("_ffpfsc_temp", "_ffpfsc_extract", "_extracted", "_ffpfsc_inner")
+
+
+def _only_clutter_below(d: Path) -> bool:
+    """True when nothing but OS clutter (files) and empty folders lie below *d*."""
+    try:
+        for e in d.iterdir():
+            if e.is_symlink():
+                return False
+            if e.is_dir():
+                if not _only_clutter_below(e):
+                    return False
+            elif not is_fs_junk_name(e.name):
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def _remove_with_sidecar(d: Path) -> bool:
+    try:
+        shutil.rmtree(d)
+    except OSError:
+        return False
+    try:
+        (d.parent / ("._" + d.name)).unlink()
+    except OSError:
+        pass
+    return True
+
+
+def prune_empty_scratch(bases, min_age: float = 0.0, stop=None) -> list:
+    """Remove the app's work folders (SCRATCH_DIR_NAMES) directly inside each of *bases*
+    once nothing but OS clutter is left in them, with their '._' sidecars. Inside a work
+    folder, a job's folder goes only as a whole and only when it is empty in the same way;
+    one with a real file anywhere below it (a kept unpack) stays exactly as it is, empty
+    subfolders included. Nothing outside the work folders is touched. Call only while no
+    job runs: a job's empty folder may be about to fill; as a second guard a folder changed
+    within *min_age* seconds stays, and *stop()* (when given) is asked before each removal.
+    Returns the work folders removed."""
+    gone = []
+
+    def settled(d: Path) -> bool:
+        if stop is not None and stop():
+            return False
+        try:
+            return time.time() - d.stat().st_mtime >= min_age
+        except OSError:
+            return False
+
+    def prune(c: Path) -> None:
+        was_settled = settled(c)              # before this pass changes it by removing below
+        try:
+            children = list(c.iterdir())
+        except OSError:
+            return
+        for e in children:
+            if e.is_symlink() or not e.is_dir():
+                continue
+            if e.name in SCRATCH_DIR_NAMES:
+                prune(e)
+            elif _only_clutter_below(e) and settled(e):
+                _remove_with_sidecar(e)
+        if was_settled and _only_clutter_below(c) and (stop is None or not stop()) and _remove_with_sidecar(c):
+            gone.append(c)
+
+    seen = set()
+    for base in bases or ():
+        try:
+            base = Path(base)
+            key = base.resolve()
+        except (OSError, RuntimeError, TypeError, ValueError):
+            continue
+        if key in seen or not base.is_dir():
+            continue
+        seen.add(key)
+        for name in SCRATCH_DIR_NAMES:
+            top = base / name
+            if top.is_dir() and not top.is_symlink():
+                prune(top)
+    return gone
+
+
 # Glob patterns for the dir-copy path (shutil.ignore_patterns) so a copied DLC/extra
 # folder never carries OS/archiver metadata to the destination.
 _COPYTREE_JUNK_GLOBS = ("._*", ".DS_Store", ".localized", ".LSOverride", ".apdisk", ".VolumeIcon.icns",
@@ -3568,6 +3653,8 @@ class GameItem:
 __all__ = [
     "APP_DIR",
     "strip_written_clutter",
+    "prune_empty_scratch",
+    "SCRATCH_DIR_NAMES",
     "ident_from_folder_name",
     "_ENV_APP_DIR",
     "_LEGACY_APP_DIRS",
