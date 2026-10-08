@@ -466,7 +466,10 @@ class PanelHost:
             return
         m = self.MARGIN
         slot = top._slot
-        if top.LARGE:
+        if getattr(top, "FULL", False):
+            # a work surface like the views: the whole content area, no card around it
+            slot.place(x=0, y=0, relwidth=1, relheight=1)
+        elif top.LARGE:
             max_w = getattr(top, "MAX_W", self.LARGE_MAX_W)
             slot.place(relx=0.5, y=m, anchor="n", width=min(max_w, W - 2 * m), height=H - 2 * m)
         else:
@@ -496,6 +499,7 @@ class EmbeddedDialog(ctk.CTkFrame):
     Callers that wait for a result keep using root.wait_window(dialog)."""
 
     LARGE = False          # large panels fill the content area; small ones keep their size
+    FULL = False           # the whole content area, edge to edge, like a view (Look inside)
     host = None            # the App's PanelHost
 
     def __init__(self, master=None, **kw):
@@ -504,7 +508,9 @@ class EmbeddedDialog(ctk.CTkFrame):
         # the configure() of a CTk widget's tk master, and a hook left behind by a closed
         # panel would break recolouring the shared backdrop.
         self._slot = host.app.kit.frame(host.frame, bg="bg")
-        super().__init__(self._slot, fg_color=BLACK, corner_radius=12, border_width=1, border_color=BORDER2)
+        full = type(self).FULL
+        super().__init__(self._slot, fg_color=BLACK, corner_radius=0 if full else 12,
+                         border_width=0 if full else 1, border_color=BORDER2)
         self.pack(fill="both", expand=True)
         self._title, self._pref, self._close_cb, self._keys, self._gone = "", (560, 420), None, {}, False
         self._close_btn = IconButton(self, host.app.kit, icon="x", command=self.request_close, variant="ghost",
@@ -5091,6 +5097,7 @@ class PfsBrowserDialog(EmbeddedDialog):
     pull out individual files or whole folders, WITHOUT unpacking the whole image. The
     backend reads only the blocks it needs (--list-image / --extract-from). Read-only."""
     LARGE = True
+    FULL = True
 
     def __init__(self, app, image_path=None, standalone=False):
         super().__init__(app.root)

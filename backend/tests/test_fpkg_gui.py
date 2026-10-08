@@ -487,6 +487,11 @@ try:
         pump(lambda: "files" in br.status_var.get() or br.status_var.get().startswith(("Failed", "Could not", "Bad")), timeout=90)
         ok("browser.dialog.pkg-listing", "files" in br.status_var.get() and any(p.endswith("param.json") for p in br._iid_path.values())
            and "fPKG" in br.title(), br.status_var.get())
+        # Look inside takes the whole content area, as the Organize view does
+        root.geometry("1500x900"); root.update(); app._panels._layout(); root.update()
+        _hw, _hh = app._panels.frame.winfo_width(), app._panels.frame.winfo_height()
+        ok("browser.full-width", br._slot.winfo_width() == _hw and br._slot.winfo_height() == _hh and _hw > 1000,
+           f"panel {br._slot.winfo_width()}x{br._slot.winfo_height()} of {_hw}x{_hh}")
         br.destroy()
     # 15) queue save/restore keeps fpkg fields
     app._queue_restored = True; app._save_queue()
