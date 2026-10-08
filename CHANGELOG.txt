@@ -54,6 +54,13 @@ FIXES
     '.7z' or '.zip' instead of 'Archive', also for multi-part sets and
     once the archive is unpacked.
   - While an archive is unpacked, Speed, Elapsed and Left are filled in.
+  - The time left is worked out from what each step really takes. It
+    used to follow fixed shares of a job and said "about 11 min left"
+    while the compression alone still needed 38 minutes. Now the running
+    step's own time left counts (the compressor's, the unpack's), and
+    the steps still to come are timed at the speed this Mac showed for
+    them before. Left shows the job's time, the foot of the queue the
+    whole run's.
   - A waiting job's details show where it will run: where the archive
     is unpacked, which drive builds the image (an extra temp drive such
     as a second SSD included), where the result goes, and what each of

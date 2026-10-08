@@ -6773,6 +6773,9 @@ class App:
         self.sound_error_var     = self._persisted_bool(settings, "sound_error", True)
         # a job whose game cannot be read before unpacking is named from the public title list
         self.online_names_var    = self._persisted_bool(settings, "online_title_names", True)
+        # the speed each long step of a job showed on this Mac (bytes of the game per second)
+        self._stage_rates = {k: float(v) for k, v in (settings.get("stage_rates") or {}).items()
+                             if k in LONG_STEPS and isinstance(v, (int, float)) and v > 0}
         self.batch_var = tk.BooleanVar(value=False)        # session state — not persisted
         self.unpack_mode_var = tk.BooleanVar(value=False)  # session state — not persisted
         # Output format for the whole queue: compressed .ffpfsc (smaller) vs uncompressed
@@ -12074,12 +12077,25 @@ class App:
         threading.Thread(target=work, daemon=True).start()
         self._show_add_progress()
 
-    def _estimate_left(self, left_bytes: int, cur_bytes: int, cur_pct: float, cur_item) -> float | None:
-        """Seconds the whole run still needs, roughly: the bytes still to do times the pace
-        (seconds per byte) of the jobs this run finished, or, before the first one is done,
-        of the running job so far. None while there is too little to go on (the first
-        ninety seconds, or under two percent of the running job)."""
+    def _estimate_left(self, left_bytes: int, cur_bytes: int, cur_pct: float, cur_item,
+                       cur_left: float | None = None) -> float | None:
+        """Seconds the whole run still needs. With *cur_left* (the running job's own time
+        left, see _job_time_left): that, plus the waiting jobs' bytes at the pace of the
+        jobs this run finished, else at the running job's whole projected pace. Without
+        it, roughly: the bytes still to do times that pace, or, before the first job is
+        done, the running job's pace so far. None while there is too little to go on (the
+        first ninety seconds, or under two percent of the running job)."""
         now = time.time()
+        if cur_left is not None:
+            fin_s, fin_b = getattr(self, "_batch_fin_secs", 0.0), getattr(self, "_batch_fin_bytes", 0)
+            t0 = (getattr(self, "_job_t0", {}) or {}).get(id(cur_item)) if cur_item is not None else None
+            if fin_b > 0 and fin_s > 0:
+                pace = fin_s / fin_b
+            elif t0 and cur_bytes > 0:
+                pace = ((now - t0) + cur_left) / cur_bytes
+            else:
+                pace = 0.0
+            return max(0.0, cur_left + left_bytes * pace)
         if now - getattr(self, "_batch_t0", now) < 90:
             return None
         rest = left_bytes + cur_bytes * max(0.0, 1.0 - cur_pct / 100.0)
@@ -12093,6 +12109,49 @@ class App:
                 return None
             pace = (now - t0) / done
         return max(0.0, rest * pace)
+
+    def _job_phases(self, item) -> list:
+        """The long steps *item* runs, in order (see ultra_core.LONG_STEPS)."""
+        op = getattr(item, "operation", "pack")
+        arc = bool(getattr(item, "archive_path", None) or getattr(item, "origin_archive", None))
+        if op == "copy":
+            return ["Extracting"] if arc else ["Writing Final Image"]
+        if op in ("unpack", "fpkg-extract"):
+            return ["Extracting"]
+        to = (getattr(item, "chain_to", None) or "ffpfsc") if op == "chain" else "ffpfsc"
+        if to == "folder":
+            return ["Extracting"]
+        if to == "ffpfs" or (op == "pack" and getattr(item, "output_compressed", True) is False):
+            return ["Extracting", "Creating Temp PFS"]
+        return ["Extracting", "Creating Temp PFS", "Compressing"]
+
+    _STEP_WIDTHS = {"Extracting": 28, "Creating Temp PFS": 24, "Compressing": 34, "Writing Final Image": 97}
+
+    def _job_time_left(self, item, stage, stage_pct, eta, size) -> float | None:
+        """Seconds the running *item* still needs (ultra_core.job_time_left): the running
+        step's own time left (the backend's ETA, else its pace so far), the later steps at
+        the speed they showed before. Learns that speed when a long step ends (30 s at
+        least), kept in the settings."""
+        now = time.time()
+        clock = getattr(self, "_stage_clock", None)
+        if clock is None or clock[0] is not item or clock[1] != stage:
+            if clock is not None and clock[0] is item and clock[1] in LONG_STEPS and size:
+                took = now - clock[2]
+                if took >= 30:
+                    old = self._stage_rates.get(clock[1])
+                    new = size / took
+                    self._stage_rates[clock[1]] = new if not old else 0.5 * old + 0.5 * new
+                    try:
+                        save_settings({"stage_rates": dict(self._stage_rates)})
+                    except Exception:
+                        pass
+            clock = self._stage_clock = (item, stage, now)
+        elapsed = now - clock[2]
+        left = eta_seconds(eta)
+        if left is None and stage_pct >= 2 and elapsed >= 10:
+            left = elapsed * (100.0 - stage_pct) / stage_pct
+        return job_time_left(self._job_phases(item), stage, left, elapsed, size, self._stage_rates,
+                             self._STEP_WIDTHS)
 
     @staticmethod
     def _fmt_left(secs: float) -> str:
@@ -13745,7 +13804,11 @@ class App:
                         _left = sum(_sz(it) for it in _items if it is not _ri
                                     and getattr(it, "status", "") not in self._TERMINAL_STATUSES)
                         _cur = _sz(_ri) if _ri is not None else 0
-                        self._all_eta = self._estimate_left(_left, _cur, overall_pct, _ri)
+                        _jl = (self._job_time_left(_ri, stage, stage_pct, eta, _cur)
+                               if _ri is not None and job in (None, _ri) else None)
+                        self._all_eta = self._estimate_left(_left, _cur, overall_pct, _ri, cur_left=_jl)
+                        if _jl is not None:
+                            eta = humanize_eta(f"{int(_jl)}s")      # Left: the job's, not the step's
                     except Exception:
                         self._all_eta = None
                     self._update_batch_counter()

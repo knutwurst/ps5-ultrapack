@@ -2294,6 +2294,25 @@ try:
            f"kept while running={_while} pool={(_pool / '_ffpfsc_temp').exists()} hist={(_hist.parent / '_ffpfsc_temp').exists()}")
     finally:
         app._batch_running = False; app.temp_pool = _pool0; m.save_history(_hist0)
+    # Time left: the running step's own, later steps at the speed seen before (learned when a
+    # step ends); it was 11 min from the progress bands while the compress alone needed 38
+    _tj = m.GameItem.from_chain(ZP, to="ffpfsc"); _gb = 10**9
+    _rates0 = dict(app._stage_rates); app._stage_rates.clear()
+    try:
+        app._stage_clock = (_tj, "Creating Temp PFS", time.time() - 774)
+        _l1 = app._job_time_left(_tj, "Compressing", 3, "38m 08s", 128 * _gb)
+        _learned = app._stage_rates.get("Creating Temp PFS", 0)
+        app._stage_clock = (_tj, "Compressing", time.time() - 2400)
+        app._job_time_left(_tj, "Cleaning Up", 0, "—", 128 * _gb)
+        _tj2 = m.GameItem.from_chain(ZP, to="ffpfsc")
+        app._stage_clock = (_tj2, "Creating Temp PFS", time.time() - 60)
+        _l2 = app._job_time_left(_tj2, "Creating Temp PFS", 50, "1m 00s", 64 * _gb)
+        _comp = app._stage_rates.get("Compressing", 0)
+        ok("eta.job-time-left", _l1 == 2288 and abs(_learned - 128 * _gb / 774) < 1e6
+           and abs(_l2 - (60 + 64 * _gb / _comp)) < 2 and m.load_settings().get("stage_rates"),
+           f"compress={_l1} temp-rate={_learned / 1e6:.0f}MB/s next={_l2:.0f}s compress-rate={_comp / 1e6:.0f}MB/s")
+    finally:
+        app._stage_rates.clear(); app._stage_rates.update(_rates0); app._stage_clock = None
     # Speed and time left while an archive is unpacked
     ok("unpack.rate", m.unpack_rate(50, 100, 100 * 10**9) == ("500.0 MB/s", "1m 40s") and m.unpack_rate(50, 10, 100 * 10**9)[0] == "5.00 GB/s"
        and m.unpack_rate(25, 60, 12 * 10**9) == ("50.0 MB/s", "3m 00s")

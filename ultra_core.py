@@ -149,6 +149,41 @@ def humanize_eta(raw) -> str:
     return f"{ss}s"
 
 
+def eta_seconds(text) -> float | None:
+    """Seconds in a time-left text the app shows or the backend prints ('38m 08s', '1h 05m',
+    '45s', 'ETA 2m 00s'); None when there is none."""
+    m = re.search(r"(?:(\d+)\s*h)?\s*(?:(\d+)\s*m(?:in)?)?\s*(?:(\d+)\s*s)?\s*$", str(text or "").strip())
+    if not m or not any(m.groups()):
+        return None
+    h, mi, se = (int(g) if g else 0 for g in m.groups())
+    return float(h * 3600 + mi * 60 + se)
+
+
+# The long steps of a job, in the order they run; the time-left estimate works over these.
+LONG_STEPS = ("Extracting", "Creating Temp PFS", "Compressing", "Writing Final Image")
+
+
+def job_time_left(phases, stage, stage_left, stage_elapsed, size, rates, widths) -> float | None:
+    """Seconds a job still needs: *stage_left* for the running *stage*, then every later step
+    of *phases* at the speed this Mac showed for it before (*rates*: bytes of the game per
+    second), else in the proportion of the progress bands (*widths*) to the running step's
+    whole time (elapsed + left). None when the running step is not one of the job's long
+    steps or its time left is not known."""
+    if stage not in phases or stage_left is None:
+        return None
+    total = float(stage_left)
+    whole = max(1.0, float(stage_elapsed) + float(stage_left))
+    for later in phases[phases.index(stage) + 1:]:
+        rate = (rates or {}).get(later)
+        if rate and size:
+            total += size / float(rate)
+        elif widths.get(later) and widths.get(stage):
+            total += whole * widths[later] / widths[stage]
+        else:
+            return None
+    return total
+
+
 def get_free_space(path: Path) -> int:
     try:
         target = path if path.exists() else path.parent
@@ -3672,6 +3707,9 @@ __all__ = [
     "now_datetime",
     "format_size",
     "format_duration",
+    "eta_seconds",
+    "job_time_left",
+    "LONG_STEPS",
     "humanize_eta",
     "get_free_space",
     "get_total_space",
