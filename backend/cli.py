@@ -2911,7 +2911,9 @@ def main() -> None:
         import title_db
         import ultra_core
         name = title_db.lookup(args.title_name, Path(ultra_core.APP_DIR) / "titles")
-        print(f"TITLE_NAME: {name}" if name else "[ERROR] not in the title list", flush=True)
+        print(f"TITLE_NAME: {name}" if name else
+              f"[ERROR] not in the title list" + (f" (fetch failed: {title_db.LAST_ERROR})" if title_db.LAST_ERROR else ""),
+              flush=True)
         sys.exit(0 if name else 1)
 
     if (args.organize_scan is not None or args.organize_apply or args.organize_undo

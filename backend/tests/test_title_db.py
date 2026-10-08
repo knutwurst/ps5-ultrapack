@@ -21,11 +21,13 @@ class TitleDb(unittest.TestCase):
         self.calls = []
         self._fetch = title_db.FETCH
         title_db.FETCH = self.fake
+        self._pause, title_db.RETRY_PAUSE = title_db.RETRY_PAUSE, 0.0
         title_db.reset()
         self.answer = {"PS5": PS5, "PS4": PS4}
 
     def tearDown(self):
         title_db.FETCH = self._fetch
+        title_db.RETRY_PAUSE = self._pause
         title_db.reset()
         shutil.rmtree(self.dir, ignore_errors=True)
 
@@ -59,9 +61,22 @@ class TitleDb(unittest.TestCase):
         title_db.reset()
         self.answer["PS5"] = OSError("offline")
         self.assertEqual(title_db.lookup("PPSA00001", self.dir), "Sample Quest™ (US)")
-        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(len(self.calls), 3)            # the refresh was tried twice
+        self.assertIn("offline", title_db.LAST_ERROR)
         self.assertEqual(title_db.lookup("PPSA00002", self.dir), "Other Game")
-        self.assertEqual(len(self.calls), 2)            # no new attempt right after a failure
+        self.assertEqual(len(self.calls), 3)            # no new attempt right after a failure
+
+    def test_a_dropped_connection_is_tried_again_at_once(self):
+        tries = []
+
+        def flaky(url):
+            tries.append(url)
+            if len(tries) == 1:
+                raise OSError("EOF occurred in violation of protocol")
+            return PS5.encode("utf-8")
+        title_db.FETCH = flaky
+        self.assertEqual(title_db.lookup("PPSA00002", self.dir), "Other Game")
+        self.assertEqual((len(tries), title_db.LAST_ERROR), (2, ""))
 
     def test_something_else_than_a_list_is_not_kept(self):
         self.answer["PS5"] = "<html>rate limited</html>"

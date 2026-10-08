@@ -18,13 +18,15 @@ from pathlib import Path
 _BASE = "https://raw.githubusercontent.com/andshrew/PlayStation-Titles/main/"
 LISTS = {"PPSA": "PS5_Titles.tsv", "CUSA": "PS4_Titles.tsv"}
 MAX_AGE = 7 * 86400              # fetch a list again after a week
-RETRY_AFTER = 3600               # after a failed fetch, the next try waits an hour
+RETRY_AFTER = 600                # after a failed fetch (two tries), the next waits 10 minutes
+RETRY_PAUSE = 2.0                # between the two tries of one fetch (a dropped connection)
 _REGIONS = ("UP", "EP", "HP", "IP", "KP", "JP")   # English names first
 _TITLE_ID = re.compile(r"\b(PPSA\d{5}|CUSA\d{5})\b", re.I)
 
 _lock = threading.Lock()
 _tables: dict = {}               # {(path, mtime): {title id: name}}
 _failed: dict = {}               # {url: time of the last failed fetch}
+LAST_ERROR = ""                  # why the last fetch failed ('' after a good one)
 
 
 def _ssl_context() -> ssl.SSLContext:
@@ -91,8 +93,8 @@ def title_id_in(*names) -> str:
 
 def lookup(title_id: str, cache_dir, online: bool = True) -> str | None:
     """The name the title list gives *title_id* ('PPSA01234' / 'CUSA01234'), or None. With
-    *online* a missing or week-old list is fetched first (once an hour at most after a
-    failure); a failed fetch keeps the list on disk."""
+    *online* a missing or week-old list is fetched first (tried twice; after a failure not
+    again for 10 minutes); a failed fetch keeps the list on disk."""
     tid = (title_id or "").strip().upper()[:9]
     fname = LISTS.get(tid[:4])
     if fname is None or not re.fullmatch(r"[A-Z]{4}\d{5}", tid):
@@ -105,16 +107,23 @@ def lookup(title_id: str, cache_dir, online: bool = True) -> str | None:
         except OSError:
             age = None
         if online and (age is None or age > MAX_AGE) and time.time() - _failed.get(url, 0) > RETRY_AFTER:
+            global LAST_ERROR
             try:
-                data = FETCH(url)
+                try:
+                    data = FETCH(url)
+                except OSError:
+                    time.sleep(RETRY_PAUSE)            # seen: a TLS connection cut once, fine the next time
+                    data = FETCH(url)
                 if b"titleId\t" not in data[:200]:
                     raise ValueError("not a title list")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 tmp = path.with_name(path.name + ".part")
                 tmp.write_bytes(data)
                 os.replace(tmp, path)
-            except Exception:
+                LAST_ERROR = ""
+            except Exception as e:
                 _failed[url] = time.time()
+                LAST_ERROR = f"{type(e).__name__}: {e}"
         try:
             key = (str(path), path.stat().st_mtime_ns)
         except OSError:
