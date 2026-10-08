@@ -27,13 +27,45 @@ import re
 import unicodedata
 import shlex
 import shutil
+import signal
 import struct
 import subprocess
 import tempfile
+import threading
 import time
 import zipfile
 import zlib
 from pathlib import Path
+
+
+def _exit_with_parent(poll: float = 2.0) -> None:
+    """End this backend, and everything it started, once the app that started it is gone.
+    A crashed app used to leave its job (and the job's MkPFS) running on the drive, writing
+    for nobody and in the way of the job the restarted app runs again. A job backend leads a
+    process group of its own and takes the whole group along; one in the app's group (a scan)
+    takes its children."""
+    if os.name == "nt":
+        return
+    parent = os.getppid()
+    if parent <= 1:
+        return
+
+    def watch():
+        while os.getppid() == parent:
+            time.sleep(poll)
+        try:
+            if os.getpgrp() == os.getpid():
+                os.killpg(os.getpid(), signal.SIGTERM)
+            else:
+                try:
+                    import psutil
+                    for c in psutil.Process().children(recursive=True):
+                        c.kill()
+                except Exception:
+                    pass
+        finally:
+            os._exit(1)
+    threading.Thread(target=watch, name="parent-watch", daemon=True).start()
 
 
 # ── PFS browse (list a .ffpfs/.ffpfsc tree + extract selected members) ─────────
@@ -2482,6 +2514,7 @@ def _extracted_zip_source(path: Path, *, temp_root=None, password: str | None = 
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    _exit_with_parent()
     parser = argparse.ArgumentParser(
         description="PS5 UltraPack backend — create .ffpfsc containers or extract .ffpfs/.ffpfsc images."
     )

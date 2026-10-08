@@ -8,6 +8,13 @@
 
 FIXES
 
+  - The app could quit on the spot when a folder or file chooser opened:
+    macOS attached it to the main window as a sheet and ended the app
+    when it refused that sheet. Choosers and messages now open as
+    windows of their own.
+  - After such a crash the running job kept going without the app,
+    writing to the drive for nobody, and a restarted app ran the same
+    job again. A job now ends together with the app.
   - A PS4 or Organize job from an archive showed a quarter of the
     unpack in the queue (17 % while the unpack stood at 71 %) and then
     jumped to the end. The archive is unpacked on the output drive and

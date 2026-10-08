@@ -282,6 +282,28 @@ MONO_FONT = "Menlo"                   # ships with macOS (Consolas does not)
 # Shortcuts: Command on macOS, Control elsewhere. ACCEL is what a menu shows (Tk on macOS
 # turns "Command-N" into a real key equivalent), SHORTCUT what a tooltip says.
 IS_MAC = sys.platform == "darwin"
+
+
+def _without_sheet(fn):
+    """*fn* (a tkinter file or message dialog) without its parent window. On macOS Tk opens a
+    dialog with a parent as a sheet on that window, and AppKit ends the app with an abort
+    when it refuses the sheet (it did, on a folder chooser while a job ran). Without a
+    parent the dialog is a window of its own, modal to the app, which needs no sheet."""
+    def call(*args, **kw):
+        kw.pop("parent", None)
+        return fn(*args, **kw)
+    call.__wrapped__ = fn
+    call.__name__ = getattr(fn, "__name__", "dialog")
+    return call
+
+
+if IS_MAC:
+    for _mod, _names in ((filedialog, ("askdirectory", "askopenfilename", "askopenfilenames", "asksaveasfilename")),
+                         (messagebox, ("showinfo", "showwarning", "showerror", "askyesno", "askokcancel",
+                                       "askyesnocancel", "askretrycancel", "askquestion"))):
+        for _n in _names:
+            setattr(_mod, _n, _without_sheet(getattr(_mod, _n)))
+
 MOD = "Command" if IS_MAC else "Control"
 _KEYS = {"add": "N", "open": "O", "start": "R", "stop": ".", "settings": ",", "queue": "1",
          "history": "2", "log": "3", "details": "I"}

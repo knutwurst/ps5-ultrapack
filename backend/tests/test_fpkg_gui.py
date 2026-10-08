@@ -29,7 +29,11 @@ S.mkdir(parents=True)
 os.environ["PS5_FFPFSC_APP_DIR"] = str(S / "app_dir")
 # A profile that has been through first-run setup, so no setup wizard pops up on screen.
 (S / "app_dir").mkdir(parents=True, exist_ok=True)
-(S / "app_dir" / "settings.json").write_text('{"first_run_done": true, "show_space_dialog": false}', encoding="utf-8")
+# Silent: the jobs this driver runs to the end must not play the done/failed sounds or post
+# notifications on the machine it runs on.
+(S / "app_dir" / "settings.json").write_text('{"first_run_done": true, "show_space_dialog": false, '
+                                             '"sound_complete": false, "sound_error": false, "notify": "off"}',
+                                             encoding="utf-8")
 HBT = fetch_hbt(S / "hbt"); OUT = S / "gui_drive_out"; OUT.mkdir()
 # seed artefacts: one .ffpfsc (image-source path), one .pkg (extract path), one .zip (archive path)
 subprocess.run([sys.executable, "-u", str(CLI), str(HBT), str(S / "c2_ffpfsc"), "--pack", "--overwrite"], capture_output=True, timeout=300)
@@ -43,6 +47,7 @@ os.chdir(REPO)
 spec = importlib.util.spec_from_file_location("ultra", str(REPO / "PS5_UltraPack.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 errors = []
+_real_showerror, _real_askyesno = m.messagebox.showerror, m.messagebox.askyesno
 def showerror(title, msg, **kw): errors.append(f"{title}: {msg}")
 m.messagebox.showerror = showerror
 m.messagebox.showinfo = lambda *a, **k: None
@@ -68,6 +73,8 @@ res = []
 def ok(name, cond, detail=""):
     res.append((name, bool(cond), detail))
 ok("driver.no-first-run-wizard", _no_wizard, "the isolated profile is a finished setup, so no wizard window opens")
+ok("driver.silent", not app.sound_complete_var.get() and not app.sound_error_var.get() and app.notify_var.get() == "off",
+   "no done/failed sounds and no notifications while the driver runs jobs")
 def pump(cond, timeout=20.0):
     """Run the Tk loop (after-callbacks included: the scan_q consumer) until cond() or timeout."""
     t0 = time.monotonic()
@@ -93,6 +100,21 @@ def close_toplevels():
             if isinstance(w, m.ctk.CTkToplevel): w.destroy()
         except Exception: pass
 try:
+    # macOS: dialogs open as windows of their own, never as a sheet on the main window (a
+    # sheet AppKit refused once ended the app with an abort)
+    import tkinter.commondialog as _cd
+    _seen_opts, _cd_show = [], _cd.Dialog.show
+    _cd.Dialog.show = lambda self, **o: (_seen_opts.append(dict(self.options, **o)), "")[1]
+    try:
+        m.filedialog.askdirectory(parent=root, title="t"); m.filedialog.askopenfilename(parent=root)
+        _ow = (m.messagebox.showerror, m.messagebox.askyesno)
+        m.messagebox.showerror, m.messagebox.askyesno = _real_showerror, _real_askyesno
+        m.messagebox.showerror("t", "m", parent=root); m.messagebox.askyesno("t", "q", parent=root)
+        m.messagebox.showerror, m.messagebox.askyesno = _ow
+    finally:
+        _cd.Dialog.show = _cd_show
+    ok("dialogs.no-sheets-on-macos", len(_seen_opts) == 4 and not any("parent" in o for o in _seen_opts)
+       if sys.platform == "darwin" else True, str([sorted(o) for o in _seen_opts]))
     # 0) the profile dir is the isolated one (needs the GUI's PS5_FFPFSC_APP_DIR support)
     ok("driver.app-dir-isolated", Path(m.APP_DIR).resolve() == (S / "app_dir").resolve(), f"APP_DIR={m.APP_DIR}")
     # 1) build_command for an fpkg-build item (folder) — identity fields ride along as fallbacks
