@@ -483,16 +483,17 @@ try:
         ok("browser.cli.extract-pkg-members", r2.returncode == 0 and (dest / "sce_sys" / "param.json").is_file() and (dest / "eboot.bin").is_file()
            and re.search(r"\[#{2,}\]\s*\d{1,3}%", r2.stdout) is not None and not (dest / "sce_sys" / "icon0.png").exists(),
            f"rc={r2.returncode} {r2.stdout[-140:]}")
-        br = m.PfsBrowserDialog(app, image_path=pkg); root.update()
+        app.open_pfs_browser(str(pkg)); root.update(); br = app._look_view
         pump(lambda: "files" in br.status_var.get() or br.status_var.get().startswith(("Failed", "Could not", "Bad")), timeout=90)
         ok("browser.dialog.pkg-listing", "files" in br.status_var.get() and any(p.endswith("param.json") for p in br._iid_path.values())
            and "fPKG" in br.title(), br.status_var.get())
-        # Look inside takes the whole content area, as the Organize view does
-        root.geometry("1500x900"); root.update(); app._panels._layout(); root.update()
-        _hw, _hh = app._panels.frame.winfo_width(), app._panels.frame.winfo_height()
-        ok("browser.full-width", br._slot.winfo_width() == _hw and br._slot.winfo_height() == _hh and _hw > 1000,
-           f"panel {br._slot.winfo_width()}x{br._slot.winfo_height()} of {_hw}x{_hh}")
-        br.destroy()
+        # Look inside is a view of the main window, as Organize is: the whole content area,
+        # its sidebar entry selected, no panel over the window
+        root.geometry("1500x900"); root.update()
+        ok("browser.is-a-view", app._view == "look" and not app._panels.stack
+           and br.frame.winfo_width() == app._views_parent.winfo_width() and br.frame.winfo_width() > 1000,
+           f"view={app._view} {br.frame.winfo_width()} of {app._views_parent.winfo_width()}")
+        app._show_view("queue"); root.update()
     # 15) queue save/restore keeps fpkg fields
     app._queue_restored = True; app._save_queue()
     saved = m.load_settings().get("queue") or []
@@ -2010,7 +2011,7 @@ try:
     ok("message.prompts-own-window", all(issubclass(c, m.MessageWindow) for c in
        (m.SpaceDiagnosticsDialog, m.ArchivePasswordPrompt)), "")
     ok("work-surface.panels", all(issubclass(c, m.EmbeddedDialog) for c in
-       (m.JobDialog, m.PfsBrowserDialog, m.FirstRunWizard)), "")
+       (m.JobDialog, m.FirstRunWizard)) and not hasattr(m, "PfsBrowserDialog"), "")
     sd.destroy(); ed.destroy(); root.update()
 
     # W) main-window wiring: every sidebar entry, header button, card action, menu entry and
@@ -2410,10 +2411,17 @@ try:
         ok("wire.tool.organize", app._view == "organize" and not _fd_calls[-1:] == [("dir", "")], app._view)
         app._show_view("queue"); root.update()
         tools["Look inside"].invoke(); root.update()
-        ok("wire.tool.look-inside", _top() == "PfsBrowserDialog", str(_top()))
-        ok("wire.panel.sidebar-paused", all(b._state == "disabled" for b in app._nav_all), "")
+        ok("wire.tool.look-inside", app._view == "look" and _top() is None, f"{app._view} {_top()}")
+        # the sidebar works with a panel open and leaves it, whatever is open
+        app.open_job_dialog(); root.update()
+        _with_panel = _top() == "JobDialog" and all(b._state == "normal" for b in app._nav_all)
+        tools["Organize"].invoke(); root.update()
+        ok("wire.panel.sidebar-leaves-it", _with_panel and _top() is None and app._view == "organize",
+           f"{_with_panel} {_top()} {app._view}")
+        app.open_job_dialog(); root.update()
         app._panels._on_key("<Escape>", None); root.update()
-        ok("wire.panel.escape-closes", _top() is None and all(b._state == "normal" for b in app._nav_all), str(_top()))
+        ok("wire.panel.escape-closes", _top() is None, str(_top()))
+        app._show_view("queue"); root.update()
 
         # header; Return in Add job adds the job through the panel host
         ok("wire.header.start", app.start_btn._command == app.start, "")
@@ -2529,8 +2537,10 @@ try:
         _fire(root, "<Command-n>"); root.update()
         ok("wire.shortcut.add-job", _top() == "JobDialog", str(_top()))
         _fire(root, "<Command-Key-2>"); root.update()
-        ok("wire.shortcut.ignored-while-panel-open", app._view == "queue", f"view={app._view}")
-        close_toplevels(); root.update()
+        ok("wire.shortcut.view-leaves-panel", app._view == "history" and _top() is None, f"view={app._view} {_top()}")
+        _fire(root, "<Command-n>"); _fire(root, "<Command-r>"); root.update()
+        ok("wire.shortcut.actions-wait-behind-panel", _top() == "JobDialog" and not app._batch_running, str(_top()))
+        close_toplevels(); app._show_view("queue"); root.update()
 
         # History and Log view buttons
         app._nav["history"].invoke(); root.update()
@@ -2564,10 +2574,12 @@ try:
         menus["File"].invoke(_entry(menus["File"], "Add Job…")); root.update()
         ok("wire.menubar.add-job", _top() == "JobDialog", str(_top()))
         menus["View"].invoke(_entry(menus["View"], "History")); root.update()
-        ok("wire.menubar.ignored-behind-panel", app._view == "queue", f"view={app._view}")
+        ok("wire.menubar.view-leaves-panel", app._view == "history" and _top() is None, f"view={app._view} {_top()}")
+        app._show_view("queue"); root.update()
         close_toplevels(); root.update()
         menus["File"].invoke(_entry(menus["File"], "Look Inside…")); root.update()
-        ok("wire.menubar.look-inside", _top() == "PfsBrowserDialog", str(_top()))
+        ok("wire.menubar.look-inside", app._view == "look" and _top() is None, f"{app._view} {_top()}")
+        app._show_view("queue"); root.update()
         close_toplevels(); root.update()
         menus["File"].invoke(_entry(menus["File"], "Organize…")); root.update()
         ok("wire.menubar.organize", app._view == "organize", app._view)

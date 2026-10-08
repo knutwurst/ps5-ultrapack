@@ -437,7 +437,6 @@ class PanelHost:
         if len(self.stack) == 1:
             self.frame.place(in_=self.content, x=0, y=0, relwidth=1, relheight=1)
             self.frame.lift()
-            self.app._set_nav_enabled(False)
         self.frame.after_idle(self._layout)
 
     def pop(self, panel):
@@ -447,9 +446,17 @@ class PanelHost:
         self.stack.remove(panel)
         if not self.stack:
             self.frame.place_forget()
-            self.app._set_nav_enabled(True)
         elif was_top:
             self._layout()
+
+    def close_all(self) -> None:
+        """Close every open panel, newest first: going to a view from the sidebar leaves
+        whatever was open, without a question."""
+        for panel in list(reversed(self.stack)):
+            try:
+                panel.destroy()
+            except Exception:
+                pass
 
     def _layout(self):
         if not self.stack:
@@ -466,10 +473,7 @@ class PanelHost:
             return
         m = self.MARGIN
         slot = top._slot
-        if getattr(top, "FULL", False):
-            # a work surface like the views: the whole content area, no card around it
-            slot.place(x=0, y=0, relwidth=1, relheight=1)
-        elif top.LARGE:
+        if top.LARGE:
             max_w = getattr(top, "MAX_W", self.LARGE_MAX_W)
             slot.place(relx=0.5, y=m, anchor="n", width=min(max_w, W - 2 * m), height=H - 2 * m)
         else:
@@ -499,7 +503,6 @@ class EmbeddedDialog(ctk.CTkFrame):
     Callers that wait for a result keep using root.wait_window(dialog)."""
 
     LARGE = False          # large panels fill the content area; small ones keep their size
-    FULL = False           # the whole content area, edge to edge, like a view (Look inside)
     host = None            # the App's PanelHost
 
     def __init__(self, master=None, **kw):
@@ -508,9 +511,7 @@ class EmbeddedDialog(ctk.CTkFrame):
         # the configure() of a CTk widget's tk master, and a hook left behind by a closed
         # panel would break recolouring the shared backdrop.
         self._slot = host.app.kit.frame(host.frame, bg="bg")
-        full = type(self).FULL
-        super().__init__(self._slot, fg_color=BLACK, corner_radius=0 if full else 12,
-                         border_width=0 if full else 1, border_color=BORDER2)
+        super().__init__(self._slot, fg_color=BLACK, corner_radius=12, border_width=1, border_color=BORDER2)
         self.pack(fill="both", expand=True)
         self._title, self._pref, self._close_cb, self._keys, self._gone = "", (560, 420), None, {}, False
         self._close_btn = IconButton(self, host.app.kit, icon="x", command=self.request_close, variant="ghost",
@@ -3825,7 +3826,7 @@ class JobDialog(EmbeddedDialog):
     def _look_inside(self):
         p = Path((self.src_var.get() or "").strip())
         if p.is_file():
-            PfsBrowserDialog(self.app, image_path=str(p))
+            self.app.open_pfs_browser(str(p))      # a view: this panel closes
 
     # ── detection ────────────────────────────────────────────────────────────
     def _to_key(self) -> str:
@@ -5092,121 +5093,119 @@ class OrganizeView:
             self.status_var.set(last)
 
 
-class PfsBrowserDialog(EmbeddedDialog):
-    """Browse a packed (.ffpfs) or compressed (.ffpfsc) image: list its contents and
-    pull out individual files or whole folders, WITHOUT unpacking the whole image. The
-    backend reads only the blocks it needs (--list-image / --extract-from). Read-only."""
-    LARGE = True
-    FULL = True
+class LookInsideView:
+    """Look inside as a view of the main window, laid out like Organize: open a .ffpfs,
+    .ffpfsc or .pkg (fPKG), see what is inside, and extract single files or folders without
+    unpacking the whole image. The backend reads only the blocks it needs (--list-image /
+    --extract-from). Read-only. Leaving the view (any sidebar entry) leaves an extraction
+    running; it reports here when it is done."""
 
-    def __init__(self, app, image_path=None, standalone=False):
-        super().__init__(app.root)
+    def __init__(self, parent, app):
         self.app = app
-        self.standalone = standalone   # the only window (launched by double-clicking a .ffpfsc)
+        kit = app.kit
         self.image_path = None
         self._entries = []          # full [{path, type, size}]
         self._iid_path = {}         # tree item id -> rel path
         self._proc = None           # running extract subprocess (for cancel)
         self._q = queue.Queue()
-        self.title("Look inside")
-        self.geometry("780x560")
-        self.configure(fg_color=BLACK)
-        self.resizable(True, True)
-        # When this IS the only window (browser-only launch), behave as a normal top-level
-        # rather than a modal transient of the hidden main window.
-        if standalone:
-            self.lift(); self.focus_force()
-        else:
-            self.transient(app.root); self.lift(); self.focus_force()
-            self.after(50, self.grab_set)
-
-        ctk.CTkLabel(self, text="Look inside",
-                      font=ctk.CTkFont(size=17, weight="bold"), text_color=WHITE
-                      ).pack(anchor="w", padx=18, pady=(14, 2))
-        ctk.CTkLabel(self, text="Open a .ffpfs, .ffpfsc or .pkg (fPKG), see what's inside, and extract "
-                                "individual files or folders. The image is never fully unpacked — a .pkg "
-                                "is read block by block through its encryption.",
-                      text_color=MUTED, wraplength=720, justify="left").pack(anchor="w", padx=18, pady=(0, 8))
-
-        srow = ctk.CTkFrame(self, fg_color=PANEL, corner_radius=8); srow.pack(fill="x", padx=18, pady=4)
-        sin = ctk.CTkFrame(srow, fg_color=PANEL); sin.pack(fill="x", padx=10, pady=8)
-        self.src_var = tk.StringVar(value=str(image_path or ""))
-        ctk.CTkEntry(sin, textvariable=self.src_var, fg_color=CARD2, text_color=WHITE).pack(side="left", fill="x", expand=True)
-        # Secondary: Extract selected is the one primary action of this panel.
-        ctk.CTkButton(sin, text="Open image…", width=110, fg_color=BTN, hover_color=BTN_HOVER,
-                       text_color=WHITE, border_width=1, border_color=BTN_BORDER, font=ctk.CTkFont(size=13),
-                       command=self._pick).pack(side="left", padx=(6, 0))
-
-        frow = ctk.CTkFrame(self, fg_color="transparent"); frow.pack(fill="x", padx=18, pady=(2, 0))
-        ctk.CTkLabel(frow, text="Filter:", text_color=MUTED).pack(side="left")
-        self.filter_var = tk.StringVar()
-        ctk.CTkEntry(frow, textvariable=self.filter_var, fg_color=CARD2, text_color=WHITE, width=240,
-                      placeholder_text="name contains…").pack(side="left", padx=(6, 0))
-        self.filter_var.trace_add("write", lambda *_: self._render())
+        self._title = "Look inside"
+        v = self.frame = kit.frame(parent)
+        v.grid_columnconfigure(0, weight=1)
+        v.grid_rowconfigure(4, weight=1)
+        head, _btns = app._column_header(v, "Look inside", subtitle="Opens a .ffpfs, .ffpfsc or .pkg and "
+                                         "extracts single files or folders; the image is never unpacked as a whole.")
+        head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
+        kit.rule(v).grid(row=1, column=0, sticky="ew")
+        row = ctk.CTkFrame(v, fg_color="transparent")
+        row.grid(row=2, column=0, sticky="ew", padx=18, pady=(12, 4))
+        self.src_var = tk.StringVar(value="")
+        e = ctk.CTkEntry(row, textvariable=self.src_var, fg_color=CARD2, text_color=WHITE)
+        e.pack(side="left", fill="x", expand=True)
+        e.bind("<Return>", lambda _e: self._load())
+        ctk.CTkButton(row, text="Choose…", width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._pick).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(row, text="Open", width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._load).pack(side="left", padx=(6, 0))
+        srow = ctk.CTkFrame(v, fg_color="transparent")
+        srow.grid(row=3, column=0, sticky="ew", padx=18, pady=(2, 6))
+        self.status_var = tk.StringVar(value="Choose an image, or drop one on the window. Nothing is unpacked.")
+        ctk.CTkLabel(srow, textvariable=self.status_var, text_color=MUTED, anchor="w").pack(side="left")
         self.count_var = tk.StringVar(value="")
-        ctk.CTkLabel(frow, textvariable=self.count_var, text_color=MUTED).pack(side="right")
-
-        style = ttk.Style(self)
+        ctk.CTkLabel(srow, textvariable=self.count_var, text_color=MUTED).pack(side="right")
+        self.filter_var = tk.StringVar()
+        # (a CTkEntry bound to a variable shows no placeholder: the label says what it is)
+        ctk.CTkEntry(srow, textvariable=self.filter_var, fg_color=CARD2, text_color=WHITE, width=220).pack(
+            side="right", padx=(0, 10))
+        ctk.CTkLabel(srow, text="Filter", text_color=MUTED).pack(side="right", padx=(16, 6))
+        self.filter_var.trace_add("write", lambda *_: self._render())
+        style = ttk.Style(v)
         try:
-            style.theme_use("default")
+            style.theme_use("default")          # the Aqua theme ignores the colours below
         except Exception:
             pass
         _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
         style.configure("PFS.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
-                         foreground=_pal["text"], rowheight=24, borderwidth=0)
+                        foreground=_pal["text"], rowheight=24, borderwidth=0)
         style.configure("PFS.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
         style.map("PFS.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
-        tframe = ctk.CTkFrame(self, fg_color=PANEL, corner_radius=8); tframe.pack(fill="both", expand=True, padx=18, pady=6)
+        tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
+        tframe.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 6))
         self.tree = ttk.Treeview(tframe, columns=("size", "type"), style="PFS.Treeview", selectmode="extended")
         self.tree.heading("#0", text="Name", anchor="w"); self.tree.heading("size", text="Size", anchor="e")
         self.tree.heading("type", text="Type", anchor="center")
         self.tree.column("#0", width=470, anchor="w")
-        self.tree.column("size", width=110, anchor="e")
-        self.tree.column("type", width=80, anchor="center")
-        vsb = ctk.CTkScrollbar(tframe, command=self.tree.yview)   # the dark one, not the Aqua bar
+        self.tree.column("size", width=110, anchor="e", stretch=False)
+        self.tree.column("type", width=80, anchor="center", stretch=False)
+        vsb = ctk.CTkScrollbar(tframe, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
         vsb.pack(side="right", fill="y", pady=6)
+        bottom = ctk.CTkFrame(v, fg_color="transparent")
+        bottom.grid(row=5, column=0, sticky="ew", padx=18, pady=(0, 14))
+        self.extract_all_btn = ctk.CTkButton(bottom, text="Extract all…", width=120, fg_color=BTN,
+                                             hover_color=BTN_HOVER, text_color=WHITE, border_width=1,
+                                             border_color=BTN_BORDER, command=lambda: self._extract(True),
+                                             state="disabled")
+        self.extract_all_btn.pack(side="left")
+        self.cancel_btn = ctk.CTkButton(bottom, text="Cancel", width=90, fg_color=BTN, hover_color=BTN_HOVER,
+                                        text_color=WHITE, border_width=1, border_color=BTN_BORDER,
+                                        command=self._cancel)
+        self.progress = ctk.CTkProgressBar(bottom, width=220)
+        self.progress.set(0)
+        self.extract_sel_btn = ctk.CTkButton(bottom, text="Extract selected…", width=150, fg_color=ACCENT,
+                                             hover_color=ACCENT_HOVER, text_color=ON_ACCENT,
+                                             command=lambda: self._extract(False), state="disabled")
+        self.extract_sel_btn.pack(side="right")
+        self.frame.after(120, self._poll)
 
-        bottom = ctk.CTkFrame(self, fg_color=BLACK); bottom.pack(fill="x", padx=18, pady=(2, 4))
-        self.status_var = tk.StringVar(value="No image loaded.")
-        ctk.CTkLabel(bottom, textvariable=self.status_var, text_color=MUTED).pack(side="left")
-        self.progress = ctk.CTkProgressBar(bottom, width=180); self.progress.set(0)
+    def title(self) -> str:
+        return self._title
 
-        btns = ctk.CTkFrame(self, fg_color=BLACK); btns.pack(fill="x", padx=18, pady=(0, 14))
-        self.extract_sel_btn = ctk.CTkButton(btns, text="Extract selected…", fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                       text_color=ON_ACCENT, font=ctk.CTkFont(size=13),
-                       command=lambda: self._extract(False), state="disabled")
-        self.extract_sel_btn.pack(side="right", padx=(8, 0))
-        self.extract_all_btn = ctk.CTkButton(btns, text="Extract all…", fg_color=BTN, text_color=WHITE,
-                       hover_color=BTN_HOVER, command=lambda: self._extract(True), state="disabled", border_width=1, border_color=BTN_BORDER)
-        self.extract_all_btn.pack(side="right")
-        self.close_btn = ctk.CTkButton(btns, text="Close", fg_color=BTN, text_color=WHITE,
-                       hover_color=BTN_HOVER, command=self._cancel_or_close, border_width=1, border_color=BTN_BORDER)
-        self.close_btn.pack(side="left")
-
-        self.after(120, self._poll)
-        if image_path:
-            self.after(150, self._load)
+    def open(self, path) -> None:
+        """Show *path* (a .ffpfs, .ffpfsc or .pkg)."""
+        self.src_var.set(str(path))
+        self._load()
 
     def _pick(self):
-        p = filedialog.askopenfilename(parent=self, title="Select a .ffpfs / .ffpfsc image or a .pkg (fPKG)",
+        p = filedialog.askopenfilename(parent=self.app.root, title="Select a .ffpfs / .ffpfsc image or a .pkg (fPKG)",
                                        filetypes=[("PFS images / fPKG", "*.ffpfsc *.ffpfs *.pkg"),
                                                   ("PFS images", "*.ffpfsc *.ffpfs"),
                                                   ("PS5 packages", "*.pkg"), ("All files", "*.*")])
         if p:
-            self.src_var.set(p); self._load()
+            self.open(p)
 
     def _load(self):
         raw = (self.src_var.get() or "").strip()
         if not raw or not Path(raw).is_file():
-            messagebox.showerror("Not found", "Pick a .ffpfs / .ffpfsc / .pkg file first.", parent=self); return
+            messagebox.showerror("Not found", "Pick a .ffpfs / .ffpfsc / .pkg file first.", parent=self.app.root)
+            return
         self.image_path = Path(raw)
         kind = "  (fPKG)" if self.image_path.suffix.lower() == ".pkg" else ""
-        self.title(f"Look inside  ·  {self.image_path.name}{kind}")
-        self.status_var.set("Reading image…")
+        self._title = f"Look inside  ·  {self.image_path.name}{kind}"
+        self.status_var.set(f"Reading {self.image_path.name}…")
         self.extract_sel_btn.configure(state="disabled"); self.extract_all_btn.configure(state="disabled")
         cmd = self.app._backend_cmd("--list-image", str(self.image_path))
+
         def _worker():
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -5229,20 +5228,18 @@ class PfsBrowserDialog(EmbeddedDialog):
                     elif kind == "ext_done":
                         self._on_ext_done(payload)
                 except Exception as e:
-                    # A handler failure must not kill the poll loop — the dialog would
-                    # sit frozen mid-extraction. Show it in the status line and go on.
+                    # a handler failure must not stop the polling (the view would sit frozen)
                     try:
                         self.status_var.set(f"Error: {e}")
-                        self.app.log("ERROR", f"PFS browser: '{kind}' handler failed: {e}")
+                        self.app.log("ERROR", f"Look inside: '{kind}' handler failed: {e}")
                     except Exception:
                         pass
         except queue.Empty:
             pass
         finally:
-            # Re-arm no matter what happened above (the dialog may already be destroyed).
             try:
-                if self.winfo_exists():
-                    self.after(120, self._poll)
+                if self.frame.winfo_exists():
+                    self.frame.after(120, self._poll)
             except Exception:
                 pass
 
@@ -5260,7 +5257,8 @@ class PfsBrowserDialog(EmbeddedDialog):
         self._entries = data.get("entries", [])
         self._render()
         nf, nd = data.get("file_count", 0), data.get("dir_count", 0)
-        self.status_var.set(f"{nf} file{'' if nf == 1 else 's'}, {nd} folder{'' if nd == 1 else 's'}")
+        name = self.image_path.name if self.image_path else ""
+        self.status_var.set(f"{name}: {nf} file{'' if nf == 1 else 's'}, {nd} folder{'' if nd == 1 else 's'}")
         self.extract_sel_btn.configure(state="normal"); self.extract_all_btn.configure(state="normal")
 
     def _render(self):
@@ -5292,6 +5290,13 @@ class PfsBrowserDialog(EmbeddedDialog):
                                    values=(format_size(e.get("size", 0)), "file"))
             self._iid_path[iid] = path
         self.count_var.set(f"{len(self._iid_path)} shown")
+    def _on_ext_line(self, line):
+        m = re.search(r"\[#{2,}\]\s*(\d{1,3})%", line)
+        if m:
+            self.progress.set(min(1.0, int(m.group(1)) / 100.0))
+            self.status_var.set(f"Extracting… {m.group(1)}%")
+        elif line.startswith("[ERROR]"):
+            self.status_var.set(line)
 
     def _extract(self, extract_all):
         if not self.image_path:
@@ -5301,9 +5306,10 @@ class PfsBrowserDialog(EmbeddedDialog):
         else:
             members = [self._iid_path[i] for i in self.tree.selection() if i in self._iid_path]
             if not members:
-                messagebox.showinfo("Nothing selected", "Select files or folders in the tree first.", parent=self)
+                messagebox.showinfo("Nothing selected", "Select files or folders in the list first.",
+                                    parent=self.app.root)
                 return
-        dest = filedialog.askdirectory(parent=self, title="Extract to folder")
+        dest = filedialog.askdirectory(parent=self.app.root, title="Extract to folder")
         if not dest:
             return
         try:
@@ -5311,16 +5317,18 @@ class PfsBrowserDialog(EmbeddedDialog):
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write("\n".join(members))
         except Exception as e:
-            messagebox.showerror("Error", f"Could not stage the selection: {e}", parent=self); return
+            messagebox.showerror("Error", f"Could not stage the selection: {e}", parent=self.app.root); return
         cmd = self.app._backend_cmd("--extract-from", str(self.image_path), "--dest", dest, "--members-file", mfpath)
         self.status_var.set("Extracting…"); self.progress.set(0)
+        self.extract_sel_btn.pack_forget()
         self.progress.pack(side="right", padx=(8, 0))
-        self.extract_sel_btn.configure(state="disabled"); self.extract_all_btn.configure(state="disabled")
+        self.cancel_btn.pack(side="right", padx=(8, 0))
+        self.extract_all_btn.configure(state="disabled")
 
         def _worker():
             try:
                 self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                               text=True, bufsize=1)
+                                              text=True, bufsize=1)
                 for line in self._proc.stdout:
                     self._q.put(("ext_line", line.rstrip()))
                 rc = self._proc.wait()
@@ -5335,34 +5343,25 @@ class PfsBrowserDialog(EmbeddedDialog):
                     pass
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_ext_line(self, line):
-        m = re.search(r"\[#{2,}\]\s*(\d{1,3})%", line)
-        if m:
-            self.progress.set(min(1.0, int(m.group(1)) / 100.0))
-            self.status_var.set(f"Extracting… {m.group(1)}%")
-        elif line.startswith("[ERROR]"):
-            self.status_var.set(line)
-
     def _on_ext_done(self, rc):
-        try:
-            self.progress.pack_forget()
-        except Exception:
-            pass
+        for w in (self.progress, self.cancel_btn):
+            try:
+                w.pack_forget()
+            except Exception:
+                pass
+        self.extract_sel_btn.pack(side="right")
         self.extract_sel_btn.configure(state="normal"); self.extract_all_btn.configure(state="normal")
-        if rc == 0:
-            self.status_var.set("Extracted")
-        else:
-            self.status_var.set(f"Extraction failed ({rc}).")
+        self.status_var.set("Extracted." if rc == 0 else f"Extraction failed ({rc}).")
+        if rc == 0 and self.app._view != "look":
+            self.app.log("OK", f"Look inside: extracted from {self.image_path.name if self.image_path else 'the image'}.")
 
-    def _cancel_or_close(self):
+    def _cancel(self):
         if self._proc is not None and self._proc.poll() is None:
             try:
                 self._proc.terminate()
             except Exception:
                 pass
             self.status_var.set("Cancelled.")
-            return
-        self.destroy()
 
 
 # ─── Main Application ──────────────────────────────────────────────────────────
@@ -5775,8 +5774,8 @@ class App:
         }
         kit.rule(side, bg_token="border").pack(fill="x", padx=16, pady=(12, 10))
         kit.label(side, bg="sidebar", fg="faint", font=kit.fonts.caption, text="Tools").pack(anchor="w", padx=18, pady=(0, 3))
-        nav(side, "Look inside", "search", self.open_pfs_browser,
-            "Browse a .ffpfsc, .ffpfs or .pkg and pull single files out")
+        self._nav["look"] = nav(side, "Look inside", "search", lambda: self._show_view("look"),
+                                "Browse a .ffpfsc, .ffpfs or .pkg and pull single files out")
         self._nav["organize"] = nav(side, "Organize", "folders", lambda: self._show_view("organize"),
                                     "Name and sort everything in a folder in place")
         nav(side, "Clean temp", "broom", self.clear_temp_files, "Delete leftovers in the temp folder")
@@ -5785,9 +5784,13 @@ class App:
         self._nav["settings"] = nav(bottom, "Settings", "settings", self.open_settings, "⌘,")
 
     def _show_view(self, name):
+        self._panels.close_all()            # the sidebar always works: it leaves an open panel
         if name == "settings" and "settings" not in self._views:
             self._settings_view = SettingsView(self._views_parent, self)
             self._views["settings"] = self._settings_view.frame
+        if name == "look" and "look" not in self._views:
+            self._look_view = LookInsideView(self._views_parent, self)
+            self._views["look"] = self._look_view.frame
         if name == "organize" and "organize" not in self._views:
             self._organize_view = OrganizeView(self._views_parent, self)
             self._views["organize"] = self._organize_view.frame
@@ -5821,27 +5824,24 @@ class App:
         except Exception:
             pass
 
-    def _set_nav_enabled(self, enabled: bool):
-        """The sidebar is off while a panel is open: finish or close the panel first."""
-        for b in getattr(self, "_nav_all", []):
-            try:
-                b.configure(state="normal" if enabled else "disabled")
-            except Exception:
-                pass
-
     def _bind_shortcuts(self):
         # On macOS the menus' key equivalents answer these keys first; the bindings serve
         # the other platforms. Neither acts behind an open panel.
-        keys = {f"<{MOD}-n>": self.open_job_dialog, f"<{MOD}-o>": self.open_pfs_browser,
-                f"<{MOD}-comma>": self.open_settings, f"<{MOD}-r>": self.start,
-                f"<{MOD}-period>": self._stop_if_running,
-                f"<{MOD}-Key-1>": lambda: self._show_view("queue"),
-                f"<{MOD}-Key-2>": lambda: self._show_view("history"),
-                f"<{MOD}-Key-3>": lambda: self._show_view("log"),
-                DETAILS_SEQ: self.toggle_inspector}
+        keys = {f"<{MOD}-n>": self.open_job_dialog, f"<{MOD}-r>": self.start,
+                f"<{MOD}-period>": self._stop_if_running, DETAILS_SEQ: self.toggle_inspector}
+        # going to a view works from anywhere, an open panel closes (like the sidebar)
+        views = {f"<{MOD}-o>": self.open_pfs_browser, f"<{MOD}-comma>": self.open_settings,
+                 f"<{MOD}-Key-1>": lambda: self._show_view("queue"),
+                 f"<{MOD}-Key-2>": lambda: self._show_view("history"),
+                 f"<{MOD}-Key-3>": lambda: self._show_view("log")}
         for seq, fn in keys.items():
             try:
                 self.root.bind(seq, lambda e, f=fn: (None if self._panels.stack else f(), "break")[1])
+            except tk.TclError:
+                pass
+        for seq, fn in views.items():
+            try:
+                self.root.bind(seq, lambda e, f=fn: (f(), "break")[1])
             except tk.TclError:
                 pass
 
@@ -6656,12 +6656,12 @@ class App:
             appm.add_command(label=f"About {APP_NAME}", command=guard(lambda: self._open_settings_page("about")))
             appm.add_separator()
             mb.add_cascade(menu=appm)
-            root.createcommand("tk::mac::ShowPreferences", guard(self.open_settings))
+            root.createcommand("tk::mac::ShowPreferences", self.open_settings)
             root.createcommand("tk::mac::Quit", self._on_close)
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="Add Job…", accelerator=ACCEL["add"], command=guard(self.open_job_dialog))
-        fm.add_command(label="Look Inside…", accelerator=ACCEL["open"], command=guard(self.open_pfs_browser))
-        fm.add_command(label="Organize…", command=guard(lambda: self._show_view("organize")))
+        fm.add_command(label="Look Inside…", accelerator=ACCEL["open"], command=lambda: self.open_pfs_browser())
+        fm.add_command(label="Organize…", command=lambda: self._show_view("organize"))
         fm.add_separator()
         fm.add_command(label="Start Queue", accelerator=ACCEL["start"], command=guard(self.start))
         fm.add_command(label="Pause After This Job", command=self.toggle_pause)
@@ -6672,7 +6672,7 @@ class App:
         fm.add_command(label="Clean Temp Folder", command=guard(self.clear_temp_files))
         if not IS_MAC:
             fm.add_separator()
-            fm.add_command(label="Settings…", accelerator=ACCEL["settings"], command=guard(self.open_settings))
+            fm.add_command(label="Settings…", accelerator=ACCEL["settings"], command=self.open_settings)
             fm.add_separator()
             fm.add_command(label="Exit", command=self._on_close)
         mb.add_cascade(label="File", menu=fm)
@@ -6684,7 +6684,7 @@ class App:
         mb.add_cascade(label="Edit", menu=em)
         vm = self._view_menu = tk.Menu(mb, tearoff=0)
         for label, key in (("Queue", "queue"), ("History", "history"), ("Log", "log")):
-            vm.add_command(label=label, accelerator=ACCEL[key], command=guard(lambda k=key: self._show_view(k)))
+            vm.add_command(label=label, accelerator=ACCEL[key], command=lambda k=key: self._show_view(k))
         vm.add_separator()
         vm.add_command(label="Show Details", accelerator=ACCEL["details"], command=guard(self.toggle_inspector))
         self._details_menu_index = vm.index("end")
@@ -6945,8 +6945,11 @@ class App:
             return pycmd + list(args)
         return pycmd + ["-u", str(backend_base_dir() / "cli.py")] + list(args)
 
-    def open_pfs_browser(self):
-        PfsBrowserDialog(self)
+    def open_pfs_browser(self, image_path=None):
+        """The Look inside view, with *image_path* opened when given."""
+        self._show_view("look")
+        if image_path:
+            self._look_view.open(image_path)
 
     def open_job_dialog(self, init_src: str | None = None):
         """The one door for every job: source → change the content → output (JobDialog)."""
@@ -14037,7 +14040,7 @@ def _wire_open_document(root, app):
             pass
         for f in files:
             try:
-                PfsBrowserDialog(app, f)
+                app.open_pfs_browser(f)
             except Exception as e:
                 try:
                     app.log("ERROR", f"Could not open {f} in Look inside: {e}")

@@ -43,8 +43,13 @@ FIXES
     when first needed and again once a week; without a connection the
     last copy is used. Settings › General › Game names switches it off.
     The unpacked game's own name still names the output.
-  - Look inside uses the whole window beside the sidebar, as Organize
-    does, instead of a narrower panel in the middle.
+  - Look inside is a view of the main window, laid out like Organize:
+    the image's path with Choose and Open, the list, Extract all and
+    Extract selected. No Close button; any entry in the sidebar leaves
+    it, and an extraction keeps running when you do.
+  - The sidebar works at all times. With Add job (or another page) open,
+    a click in the sidebar, or a View menu entry or its shortcut, goes
+    there and closes the page.
   - The queue says what kind of archive a job starts from: '.rar',
     '.7z' or '.zip' instead of 'Archive', also for multi-part sets and
     once the archive is unpacked.
