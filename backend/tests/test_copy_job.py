@@ -38,6 +38,19 @@ class RunCopyTests(unittest.TestCase):
         p.write_bytes(b"X" * size)
         return p
 
+    def test_folder_copy_replaces_a_partial_one_left_behind(self):
+        src = self.tmp / "src" / "game"
+        (src / "sce_sys").mkdir(parents=True)
+        (src / "eboot.bin").write_bytes(b"E" * 100)
+        dst = self.tmp / "out" / "game"
+        stale = dst.with_name("game.copy-tmp")
+        stale.mkdir(parents=True)
+        (stale / "half.bin").write_bytes(b"h")          # an earlier run that was cut off
+        rc = copy_job.run_copy_tree(src, dst, mode=copy_job.KEEP, on_line=LineSink())
+        self.assertEqual(rc, 0)
+        self.assertEqual(sorted(p.name for p in dst.iterdir()), ["eboot.bin", "sce_sys"])
+        self.assertFalse(stale.exists())
+
     # ── same-drive fast path ─────────────────────────────────────────────────
 
     def test_same_drive_keep_leaves_the_source(self):

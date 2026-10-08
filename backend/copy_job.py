@@ -338,6 +338,8 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
     _print(on_line, f"[INFO] copy: folder copy — {src.name} → {dst}")
     written, last_pct, t0 = 0, -1, time.monotonic()
     try:
+        if tmp.is_dir() and not tmp.is_symlink():
+            shutil.rmtree(tmp)      # a copy of ours that was cut off (the name says so)
         tmp.mkdir()
         for d in dirs:
             (tmp / d).mkdir(parents=True, exist_ok=True)
