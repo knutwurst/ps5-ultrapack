@@ -1,10 +1,4 @@
-"""Game names by title id, for a job whose game cannot be read before it is unpacked (an
-image or a game folder inside a solid 7z or RAR): the public PlayStation title lists by
-andshrew (https://github.com/andshrew/PlayStation-Titles, MIT), one for PS5 (PPSA) and one
-for PS4 (CUSA). A list is downloaded when it is first needed, kept in the app folder and
-fetched again when it is a week old; without a connection the copy on disk is used, and
-without one nothing changes. The name only labels the job until the unpacked game's own
-param.json names it."""
+"""Game names by title id, for a job whose game cannot be read before it is unpacked (an image or a game folder inside a solid 7z or RAR): the public PlayStation title lists by andshrew (https://github.com/andshrew/PlayStation-Titles, MIT), one for PS5 (PPSA) and one for PS4 (CUSA)."""
 from __future__ import annotations
 
 import os

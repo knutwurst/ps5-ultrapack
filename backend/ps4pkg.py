@@ -1,11 +1,4 @@
-"""Read PS4 packages (.pkg, title ids CUSA…): identity from the header and param.sfo.
-
-Big-endian header: magic "\\x7FCNT" @0, entry_count @0x10, entry_table_offset @0x18,
-content_id @0x40 (36 chars), content_type @0x74 (0x1A GD, 0x1B AC, 0x1C AL, 0x1E DP),
-pfs_flags @0x408, pfs_image_offset @0x410, pfs_image_size @0x418. Entries are 32 bytes:
-id, filename_offset, flags1, flags2, offset, size, 8 pad; param.sfo is entry 0x1000 and is
-stored in the clear. The package content itself is read by the package tool (ps4-list,
-ps4-extract), not here."""
+"""Read PS4 packages (.pkg, title ids CUSA…): identity from the header and param.sfo."""
 from __future__ import annotations
 
 import re
@@ -192,11 +185,7 @@ def _named_versions(hints) -> set:
 
 
 def _identity(h: Ps4Header, sfo: dict, hints=()) -> Ps4Identity:
-    """APP_VER is the application's version. A game with its update merged into one package
-    keeps the game's APP_VER and carries the update's version in VERSION, which an ordinary
-    game uses for its master revision (a 01.00 game with VERSION 01.02). So VERSION counts for
-    a game only when it is the higher one and a name around the package (the file, its
-    folder, the archive it came in) states that same version."""
+    """APP_VER is the application's version."""
     app_ver = str(sfo.get("APP_VER") or "")
     master = str(sfo.get("VERSION") or "")
     kind = _kind(str(sfo.get("CATEGORY") or ""), h.content_type)

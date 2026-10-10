@@ -157,14 +157,7 @@ class MkPFSArgumentParser(argparse.ArgumentParser):
     """Argument parser that prepends the MkPFS version to help output."""
 
     def format_help(self) -> str:
-        """Return help text with a concise title and cleaned usage block.
-
-        We render a short title line that includes the package version and
-        project URL, followed by a labelled "Usage:" block (without the
-        leading argparse "usage:" token), and then the remainder of the
-        automatically-generated help text. This keeps the top-level and
-        subcommand help consistent and easier to scan.
-        """
+        """Return help text with a concise title and cleaned usage block."""
         # Build a clean usage line (drop the leading "usage:" label).
         raw_usage: str = self.format_usage().strip()
         usage_line: str = raw_usage

@@ -1,25 +1,4 @@
-"""
-End-to-end tests for fPKG build/extract and its interaction with the existing
-.ffpfsc pipeline. Prints a green/red report and exits non-zero on failure.
-
-  python3 backend/tests/test_fpkg_pipelines.py [--work DIR] [--keep] [--samples N]
-
-The tests use two kinds of source:
-  1. A pre-shipped HomebrewTest sample fetched from SvenGDK's LibProsperoPKG repo
-     (the same one drakmor builds against). Ships zero large binaries in-tree.
-  2. Synthesized fixtures for edge cases: minimal /app0 without icon0, folder with
-     unicode names, folder with a large-ish file, incompressible payload, and
-     the negative cases (missing param.json, missing eboot.bin) that mkpfs /
-     LibProsperoPkg should reject cleanly rather than crash.
-
-Every test:
- - prints its own PASS/FAIL line with a one-sentence reason
- - checks structural invariants (validate), not just byte identity, because
-    fake-signing rewrites eboot.bin and the builder canonicalises param.json.
-
-Failure is diagnostic: each chain reports which sub-step (extract-inner,
-CNT merge, mkpfs pack, mkpfs unpack, fpkg-build, fpkg-validate) went wrong.
-"""
+"""End-to-end tests for fPKG build/extract and its interaction with the existing .ffpfsc pipeline."""
 
 from __future__ import annotations
 
@@ -347,12 +326,7 @@ def test_chain3_pkg_folder_ffpfsc(r: Runner):
 
 
 def test_negative_missing_param_json(r: Runner):
-    """No sce_sys/param.json but --content-id/--title-id given: the tool generates a
-    minimal param.json from the supplied identity (LibProsperoPkg's
-    GenerateParamJsonIfMissing default) and the build succeeds with a green
-    auto-validate. Without identity flags it refuses instead (identity.none.reject).
-    The sample's eboot is used because the builder rejects the 64-byte ELF stub
-    ("Only 64-bit ELF modules are supported"), which would mask this behaviour."""
+    """No sce_sys/param.json but --content-id/--title-id given: the tool generates a minimal param.json from the supplied identity (LibProsperoPkg's GenerateParamJsonIfMissing default) and the build succeeds with a green auto-validate."""
     hbt = fetch_hbt(r.work / "hbt")
     src = make_synth_folder(r.work / "neg_no_param", with_param=False, with_eboot=False)
     shutil.copy2(hbt / "eboot.bin", src / "eboot.bin")
@@ -422,11 +396,7 @@ def test_negative_bad_content_id(r: Runner):
 
 
 def test_identity_from_param_json(r: Runner):
-    """sce_sys/param.json is the identity's source of truth. A --content-id /
-    --fpkg-version / --fpkg-title that disagree with it must NOT reach the package
-    header: the console checks header-vs-param.json coherence, and so does validate
-    ('param.contentId != CNT header' was a real FAIL before this rule). Omitting the ids
-    must work when param.json has them; with neither, the build must refuse clearly."""
+    """sce_sys/param.json is the identity's source of truth."""
     hbt = fetch_hbt(r.work / "hbt")
 
     # 1) disagreeing arguments → param.json wins, the log says so, validate is green
@@ -566,11 +536,7 @@ def test_no_eboot_caught_by_validate(r: Runner):
 
 
 def test_tool_path_resolution(r: Runner):
-    """backend/fpkg.py resolves the binary as: FFPFSC_PKG_TOOL override first, then
-    backend/native/, then the PyInstaller _MEIPASS copies (first existing executable
-    wins). An override that does not exist must fall through to backend/native/; an
-    existing one must win; with nothing found, tool_path() raises FileNotFoundError
-    naming the override variable and is_available() is False."""
+    """backend/fpkg.py resolves the binary as: FFPFSC_PKG_TOOL override first, then backend/native/, then the PyInstaller _MEIPASS copies (first existing executable wins)."""
     import importlib
     fpkg = importlib.import_module("fpkg")
     native = BACKEND / "native" / fpkg._TOOL_NAME
@@ -816,11 +782,7 @@ def test_ampr_index_rebuilt(r: Runner):
 
 
 def test_list_and_selective_extract(r: Runner):
-    """list-inner + extract-inner --members: the PFS-browser contract for fPKGs. The JSON
-    listing must describe exactly what a full extract-inner writes (same file set, same
-    sizes, every directory incl. empty ones, CNT-lifted sce_sys files tagged), and a
-    selective extract must reproduce the chosen files byte-for-byte and nothing else,
-    with progress lines the GUI regex accepts."""
+    """list-inner + extract-inner --members: the PFS-browser contract for fPKGs."""
     hbt = fetch_hbt(r.work / "hbt")
 
     # Fixture 2: a synthetic /app0 with a few 20-40 MB files. HomebrewTest's real eboot.bin

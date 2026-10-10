@@ -1,10 +1,4 @@
-"""Settings-folder migration after the rename to PS5 UltraPack.
-
-ultra_core moves an older settings folder (PS5_FFPFSC_ULTRA_BIZKUT, or the even older
-PS5_FFPFSC_PRO_BIZKUT) to PS5_UltraPack the first time it is imported. Each case imports
-it in a child Python with HOME pointed at a scratch folder, so the real profile is never
-touched.
-"""
+"""Settings-folder migration after the rename to PS5 UltraPack."""
 
 from __future__ import annotations
 

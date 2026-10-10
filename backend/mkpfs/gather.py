@@ -14,19 +14,7 @@ from .utils import is_ignored_name
 
 
 def gather_files_scandir(root: Path) -> list[Path]:
-    """Walk ``root`` using os.scandir and return a list of file Paths.
-
-    Rules:
- - Skip names where ``is_ignored_name(name)`` is True (applies to files and
-      directories).
- - Do NOT follow directory symlinks (to avoid loops). File symlinks are
-      included (entry.is_file() follows symlinks).
- - Return Path objects (not resolved); the caller is responsible for any
-      normalization or resolution.
-
-    The caller is responsible for any additional validation (non-ASCII names,
-    deterministic global sorting, etc.). This helper focuses on fast traversal.
-    """
+    """Walk ``root`` using os.scandir and return a list of file Paths."""
     root = Path(root)
     abs_files: list[Path] = []
     stack: list[Path] = [root]

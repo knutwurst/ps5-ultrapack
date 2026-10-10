@@ -1,21 +1,5 @@
 #!/usr/bin/env python3
-"""Rename each built .ffpfsc to match the name of the folder it sits in.
-
-The app derives the [v…] version in the .ffpfsc filename from the game's
-param.json. For patched games whose param uses the full PS5 form ("01.200.000")
-older builds fell back to masterVersion and wrote "[v01.00]". This one-off tool
-renames the output files to YOUR folder names instead (which you keep correct).
-
-It does NOT touch the image - only the filename. DRY-RUN by default.
-
-Usage:
-    python3 rename_ffpfsc_by_folder.py [ROOT]            # preview only
-    python3 rename_ffpfsc_by_folder.py [ROOT] --apply    # actually rename
-
-ROOT defaults to the output drive. Pass several roots if your games live in
-more than one place, e.g.:
-    python3 rename_ffpfsc_by_folder.py "/Volumes/Games/PS5" "/Volumes/Games2/PS5" --apply
-"""
+"""Rename each built .ffpfsc to match the name of the folder it sits in."""
 import sys
 from pathlib import Path
 

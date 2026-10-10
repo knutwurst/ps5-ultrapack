@@ -20,15 +20,7 @@ default_listener: ContextVar[Callable[..., Any] | None] = ContextVar("default_li
 
 
 class Progress:
-    """Simple terminal progress helper used by CLI build flows.
-
-    The Progress class writes progress updates to stderr. It is intentionally
-    lightweight and has no external dependencies to keep CLI startup fast.
-
-    Attributes:
-        enabled: Whether progress output is active.
-        width: Width of the visual progress bar in characters.
-    """
+    """Simple terminal progress helper used by CLI build flows."""
 
     def __init__(self, enabled: bool = True, width: int = 32, listener: Callable[..., Any] | None = None) -> None:
         self.enabled: bool = enabled
@@ -120,13 +112,7 @@ class Progress:
         self.last_phase = phase
 
     def status(self, message: str) -> None:
-        """Print a status message without progress bar.
-
-        This always writes to stderr so CLI output and progress remain separate
-        from normal stdout usage.  When a GUI listener is active the terminal
-        write is suppressed - the listener already routes the message to the
-        UI thread via ``_progress_queue``.
-        """
+        """Print a status message without progress bar."""
         # Fire structured listener (GUI).
         if self.listener:
             self.listener("status", message)

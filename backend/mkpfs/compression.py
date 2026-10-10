@@ -1,30 +1,4 @@
-"""Compression backend adapter for MkPFS.
-
-Provides a small, testable API to select a zlib-compatible compression backend
-(zlib-ng by default) and wrap the compress/decompress primitives used throughout
-pfs.py so callsites can stay simple.
-
-API::
-
-    set_backend(name: str) -> None   # pick "zlib-ng", "isal", or "zlib"
-    get_backend_name() -> str         # returns current backend name
-    init_worker(backend_name=None)    # per-process bootstrap for multiprocessing
-    compress_block(data, level=6)     # compress bytes (level 1-9, std zlib scale)
-    decompress_block(data)            # decompress any zlib-stream-compatible data
-
-Backends
---------
-* ``"zlib-ng"`` - uses ``zlib_ng.zlib_ng`` (default, already a hard dep).
-* ``"isal"`` - ISA-L via ``isal.isal_zlib``.  Level mapping: std 1-9 -> isal 0-3.
-* ``"zlib"`` - stdlib ``zlib`` as last-resort fallback when zlib-ng is missing.
-
-Notes:
------
-* Does not implement PFSC framing; only wraps the compression primitive used by
-  PFSC in mkpfs.pfs. The PFSC encoder/decoder lives entirely in pfs.py.
-* Decompression is backend-agnostic: any backend can decompress output from any
-  other because the zlib stream format is interoperable.
-"""
+"""Compression backend adapter for MkPFS."""
 
 from __future__ import annotations
 

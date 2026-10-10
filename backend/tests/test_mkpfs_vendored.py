@@ -1,12 +1,4 @@
-"""Guards for the vendored MkPFS copy under backend/mkpfs.
-
-The copy must stay byte-compatible with upstream where it parses on-disk formats.
-A history rewrite once turned the SFO index struct format into prose, which made
-every PS4-style source with a param.sfo crash the metadata reader; this test
-parses a synthetic SFO so that cannot come back unnoticed.
-
-    python3 -m unittest backend.tests.test_mkpfs_vendored
-"""
+"""Guards for the vendored MkPFS copy under backend/mkpfs."""
 from __future__ import annotations
 
 import struct

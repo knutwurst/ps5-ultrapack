@@ -1,11 +1,4 @@
-"""Sort PS4 packages into the library layout (ultra_core.ps4_layout) and copy or move them
-there with copy_job.
-
-A set joins its title folder when the output already has one (ultra_core.scan_ps4_library).
-The conflict rule applies per file: skip (default), overwrite (the new copy replaces the old
-one only once it is complete), keep (a ' (2)' suffix); 'ask' behaves like skip, since a
-running job cannot stop for every file. The copy lines of every package are folded into
-one rising progress bar for the set."""
+"""Sort PS4 packages into the library layout (ultra_core.ps4_layout) and copy or move them there with copy_job."""
 from __future__ import annotations
 
 import os

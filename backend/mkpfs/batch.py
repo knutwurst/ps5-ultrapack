@@ -90,20 +90,7 @@ class BatchSummary:
 
 
 def discover_batch_items(source_dir: Path) -> list[BatchItem]:
-    """Return the packable items found directly inside *source_dir*.
-
-    Iterates ``source_dir.iterdir()``. For each entry:
-
-    * Skip names starting with ``"."`` (covers dotfiles and hidden files).
-    * Skip entries matching :func:`is_ignored_name` (OS metadata like
-      ``.DS_Store``, ``Thumbs.db``, etc.).
-    * Directories -> ``BatchItem(kind="folder")``.
-    * Files with a supported image suffix (case-insensitive) ->
-      ``BatchItem(kind="file")``.
-    * All other files are silently ignored.
-
-    Returns items sorted by ``name.lower()`` for deterministic ordering.
-    """
+    """Return the packable items found directly inside *source_dir*."""
     items: list[BatchItem] = []
     try:
         entries = list(source_dir.iterdir())

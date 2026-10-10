@@ -1,14 +1,4 @@
-"""Unit tests for the bundled UnRAR module (backend/unrar: rarfile.py over the _unrar
-C++ extension).
-
-  /tmp/ps5venv/bin/python backend/tests/test_unrar.py -v
-
-The extension must be built first (cd backend/unrar && python3 setup.py build_ext
---inplace); otherwise every test is skipped with that reason. The archive tests need a
-fixture: backend/test_data/sample.rar (not in the repository) or, when the `rar` command
-line tool is on PATH, a small archive built on the fly in a temp dir. Without either
-they are skipped with a visible reason.
-"""
+"""Unit tests for the bundled UnRAR module (backend/unrar: rarfile.py over the _unrar C++ extension)."""
 
 from __future__ import annotations
 

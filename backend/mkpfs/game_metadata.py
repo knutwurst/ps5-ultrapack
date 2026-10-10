@@ -1,10 +1,4 @@
-"""Game metadata extraction helpers for GUI imports.
-
-The readers mirror the Spectrum client import flow: package/game files may
-carry a cover, title ID, content ID, version, region, size, and APR-EMU marker.
-Extraction is best-effort; malformed or unsupported files return fallbacks
-instead of raising into the GUI.
-"""
+"""Game metadata extraction helpers for GUI imports."""
 
 from __future__ import annotations
 

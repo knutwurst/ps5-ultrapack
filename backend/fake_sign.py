@@ -1,24 +1,5 @@
 #!/usr/bin/env python3
-"""Recursive fake-signing for decrypted PS5 game dumps.
-
-Walks a folder, finds every ``.bin`` / ``.elf`` / ``.prx`` / ``.sprx`` file and
-replaces each genuine ELF in place with its fake-signed SELF/SPRX, using the
-vendored :mod:`make_fself` (flatz / ps5-payload-dev, redistributed by
-alex-free/ps5-make-fself-recursive). This is a Python re-implementation of that
-project's ``ps5mfr`` bash wrapper, with three deliberate safety improvements:
-
-* **ELF-magic guard** - only files that actually start with ``\\x7fELF`` are
-  signed. Data ``.bin`` files (not executables) and files that are *already*
-  fake-signed (they start with the SELF magic ``\\x4F\\x15\\x3D\\x1D``, not the
-  ELF magic) are skipped. This makes the whole operation **idempotent**: running
-  it twice over the same dump is safe and a no-op on the second pass.
-* **Atomic in-place replace** - each file is signed to a temp file in the same
-  directory and then ``os.replace``-d over the original, so an interrupted run
-  (crash, kill, full disk) can never leave a half-written, corrupt executable.
-* **No subprocess per file** - the signer is imported and called directly.
-
-The original file's permission bits are preserved.
-"""
+"""Recursive fake-signing for decrypted PS5 game dumps."""
 import contextlib
 import io
 import os
@@ -43,11 +24,7 @@ _TMP_PREFIX = ".fself-"
 
 
 class NotSignable(Exception):
-    """Raised when a candidate file is not something we can/should fake-sign:
-    not an ELF at all, an already-signed SELF, or an ELF the signer can't parse
-    (wrong class/arch/type, truncated). These are SKIPPED, not failures - a real
-    PS5 dump's executables always parse, so this only fires on data blobs and
-    foreign/stray files."""
+    """Raised when a candidate file is not something we can/should fake-sign: not an ELF at all, an already-signed SELF, or an ELF the signer can't parse (wrong class/arch/type, truncated)."""
 
 
 def is_elf(path: str) -> bool:

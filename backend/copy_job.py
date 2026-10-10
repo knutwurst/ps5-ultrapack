@@ -1,28 +1,4 @@
-"""
-Same-format copy/move for the queue's ``copy`` operation.
-
-Used when the source format equals the target format (``.ffpfsc`` → ``.ffpfsc``,
-``.ffpfs`` → ``.ffpfs``, ``.pkg`` → ``.pkg``): re-encoding is pure waste, so the
-file is transported as-is.
-
-Three modes decide what happens to the source:
-  * ``keep`` - the source stays. Same drive: an APFS clone (instant, no extra
-                   space) or, where the filesystem cannot clone, a real copy.
-                   Across drives: a chunked copy.
-  * ``organize`` - same drive: ``os.rename`` (a library is sorted in place);
-                   across drives: a chunked copy, the source stays.
-  * ``move`` - same drive: ``os.rename``; across drives: a chunked copy, then
-                   the source is deleted once every byte is on the destination.
-
-Emits the same ``[PHASE]`` and ``[####] NN%`` markers ``CLIWorker`` already
-parses, so the queue's progress bar and stage indicators light up unchanged.
-
-Exit codes:
-  * ``0`` - success
-  * ``1`` - I/O or unexpected error
-  * ``2`` - source == destination (would rename onto itself) → skip
-  * ``3`` - a different file already occupies the destination name → skip
-"""
+"""Same-format copy/move for the queue's ``copy`` operation."""
 
 from __future__ import annotations
 

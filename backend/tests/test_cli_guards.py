@@ -1,17 +1,4 @@
-"""Guards in backend/cli.py and backend/copy_job.py that protect the user's files.
-
-Covers: refusing to build onto the source itself, a stale pass-1 image not
-blocking a rebuild, overwrite-by-swap (the previous file survives a failed
-build), --keep-pfs never clobbering an existing .ffpfs, the ZIP source context
-manager reporting only real extraction failures, the copy job detecting a short
-cross-drive write, fPKG validation running before the success line, and the
-mkpfs resolver using nothing but the bundled package.
-
-The pack tests drive the real cli.py + vendored mkpfs on a tiny synthetic game
-(well under a second each) exactly the way the GUI does: stdin closed.
-
-    /tmp/ps5venv/bin/python -m unittest backend.tests.test_cli_guards
-"""
+"""Guards in backend/cli.py and backend/copy_job.py that protect the user's files."""
 
 from __future__ import annotations
 

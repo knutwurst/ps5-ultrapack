@@ -1,15 +1,4 @@
-"""AMPR emulation index (``ampr_emu.index``) generation.
-
-This module builds the ``AMPRIDX3`` index consumed by the PS5 AMPR/APR resolver
-under emulation. The index maps each game file path (``/app0/<rel>``) to its
-size and modification time, with an FNV-1a-64 open-addressed hash table for fast
-path lookups. The binary layout is fixed and must stay byte-compatible with the
-resolver, so the structures here are intentionally not abstracted away.
-
-The index is written into the source tree before packing so it becomes part of
-the resulting PFS image. Generation is gated on the presence of
-``fakelib/libSceAmpr.sprx`` in the source root, which signals an emulation build.
-"""
+"""AMPR emulation index (``ampr_emu.index``) generation."""
 
 from __future__ import annotations
 

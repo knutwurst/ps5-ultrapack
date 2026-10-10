@@ -1,25 +1,4 @@
-"""Prepare a folder of backport libraries from the user's own firmware libraries.
-
-BestPig's BackPork ships public BPS patches - small binary diffs - that turn a PS5 10.01
-system library into the version an older firmware loads. They are the community's
-documented way to build fakelib content, and they can be redistributed under BackPork's
-own licence. The user still has to bring the 10.01 libraries themselves; those come from
-the user's firmware, are never bundled with this app and never leave their machine.
-
-This module downloads the current BackPork patches from GitHub (small files, cached), then
-walks the user's 10.01 library folder and, for every published patch, writes a patched
-copy into a target-firmware subfolder - the same folder the job dialog's "Patched
-libraries" field points at.
-
-    prepare_target("7.61", fw_libs_root, out_root)
-      → out_root/7.61/libSceAgc.sprx, libSceAgcDriver.sprx, libSceFiber.sprx,
-        libSceNpAuth.sprx, libSceNpAuthAuthorizedAppDialog.sprx, libScePsml.sprx,
-        libSceSaveData.native.sprx
-
-CLI: `python cli.py --prepare-backport-libs 7.61 --fw-libs-root DIR --backport-libs DIR`.
-
-The tests exercise the prepare step with a synthetic BPS + a synthetic 10.01 library.
-The downloader is tested against a local mock server, not GitHub."""
+"""Prepare a folder of backport libraries from the user's own firmware libraries."""
 from __future__ import annotations
 
 import io

@@ -201,12 +201,7 @@ _NESTED_IMAGE_SUFFIXES = (".ffpfs", ".exfat", ".ffpkg")
 
 
 def _open_inner_pfs(image_path, pfs, consts):
-    """Return a seek/read handle over the GAME PFS bytes.
-
-    A .ffpfs IS the game PFS directly. A .ffpfsc is an OUTER PFS holding one compressed
-    member (the inner .ffpfs); this descends into that member and presents its
-    decompressed bytes through a _PfscReader, so only touched blocks are decompressed - never the whole inner image. Raises ValueError for an unsupported nested format
-    (exFAT / UFS)."""
+    """Return a seek/read handle over the GAME PFS bytes."""
     image_path = Path(image_path)
     outer = open(image_path, "rb")
     try:
@@ -790,16 +785,7 @@ def _discard_stale_pass1_output(temp_pfs: Path) -> None:
 
 
 def _stage_build_output(final_path: Path, replace_existing: bool) -> Path:
-    """Where mkpfs should write an image whose final name is *final_path*.
-
-    When the destination already exists and the caller wants it replaced, mkpfs builds
-    into a sibling '<name>.partial' (leftovers of an earlier attempt removed first) and
-    `_commit_build_output` swaps it onto the final name only after mkpfs returned 0. A
-    failed build - ENOSPC, OOM kill, cancel, unplugged drive - therefore never costs
-    the user the previous file, which is exactly what unlinking the old image up front
-    used to do. (That unlink existed because `mkpfs pack` has no --overwrite and
-    prompts interactively when its output exists; the sibling name sidesteps the
-    prompt instead.) Returns *final_path* itself when nothing needs replacing."""
+    """Where mkpfs should write an image whose final name is *final_path*."""
     if replace_existing and final_path.exists():
         partial = final_path.with_name(final_path.name + ".partial")
         _unlink_quiet(partial)
@@ -881,24 +867,7 @@ def _assert_pass2_spool_space(image_path, temp_dir, block_size="65536") -> None:
 
 def _open_pass2_spool_dir(image_path, default_temp_dir, output_path, spill_base=None,
                           block_size="65536"):
-    """Pick where the pass-2 PFSC spool lives - the key to using a fast SSD temp even when
-    it can't hold image+spool together.
-
-    The inner image (pass 1) stays on *default_temp_dir* (the --temp-dir the GUI placed on
-    the SSD). The transient spool (~ the image size) goes there too WHEN it still fits
-    beside the image; otherwise it spills onto the OUTPUT drive (a different, usually much
-    larger volume). That keeps the image on the fast drive for the compression read instead
-    of forcing the whole build onto the slow drive. The spool is pure scratch - where it
-    lives does NOT change the resulting .ffpfsc bytes.
-
-    *spill_base* (the GUI's output-root, via --spool-fallback-dir) is the preferred spill
-    location (under <spill_base>/_ffpfsc_temp) so the GUI's startup sweep and failure
-    cleanup find it; it falls back to the output file's own folder.
-
-    Returns (spool_dir, cleanup_ctx): cleanup_ctx is a TemporaryDirectory to .cleanup()
-    (spool spilled to the output drive) or None (spool on default_temp_dir, reclaimed by the
-    caller's own temp dir). Never raises - on any doubt it returns default_temp_dir and the
-    pre-pass-2 assert remains the backstop."""
+    """Pick where the pass-2 PFSC spool lives - the key to using a fast SSD temp even when it can't hold image+spool together."""
     default_temp_dir = Path(default_temp_dir) if default_temp_dir else Path(tempfile.gettempdir())
     if not _pass2_needs_spool(block_size):
         return default_temp_dir, None          # streaming pass 2: no spool to place
@@ -934,12 +903,7 @@ def _open_pass2_spool_dir(image_path, default_temp_dir, output_path, spill_base=
 
 
 def _build_exfat_image(folder: Path, outdir: Path, title_id: str):
-    """Build a raw exFAT filesystem image of *folder* so it can be compressed straight into
-    a .ffpfsc - PSBrew's most-stable 'exfat -> ffpfsc' workflow, which wraps a real exFAT
-    volume (read natively by the PS5) instead of going through the folder PFS builder. Uses
-    MkPFS's native, CROSS-PLATFORM exFAT writer (no hdiutil) with 64 KiB clusters - the
-    SMP/LVD fast-path allocation unit the PS5 loader expects. Returns the .exfat path, or
-    None on failure - the caller then falls back to the two-pass folder image."""
+    """Build a raw exFAT filesystem image of *folder* so it can be compressed straight into a .ffpfsc - PSBrew's most-stable 'exfat -> ffpfsc' workflow, which wraps a real exFAT volume (read natively by the PS5) instead of going through the folder PFS builder."""
     # Strip any pre-existing OS junk from the source first (._*, .DS_Store, __MACOSX, …) so
     # none of it lands in the exFAT volume.
     _stripped = _strip_junk_files(folder)
@@ -1157,12 +1121,7 @@ def _meter_process(proc, total: int, label, interval: float = 1.0) -> None:
 
 def _run_with_folder_progress(work, folder: Path, total: int, label: str, interval: float = 1.0,
                               measure=None):
-    """Run *work()* (which fills *folder*) and print a progress bar line every *interval*
-    seconds, compared with the expected *total*. *measure()* returns the bytes done (the
-    writing tool's own write counter); without it, or when it cannot tell, the bytes
-    already on disk count. For steps whose tool prints nothing until it is done (a full
-    .pkg extract): without this the window sits at 0 % for minutes. Returns what *work*
-    returns."""
+    """Run *work()* (which fills *folder*) and print a progress bar line every *interval* seconds, compared with the expected *total*."""
     import threading
     import time as _time
     result, error = {}, {}
@@ -1446,12 +1405,7 @@ def _is_junk_name(name: str) -> bool:
     return name.startswith("._") or name.lower() in _JUNK_NAMES
 
 def _strip_junk_files(root: Path) -> int:
-    """Recursively remove macOS/Windows metadata junk from *root* so it never
-    lands in the PFS image: AppleDouble sidecars (``._*``), ``.DS_Store``,
-    Spotlight/Trash/fseventsd folders, ``Thumbs.db``/``desktop.ini``, etc. These
-    are OS-generated, never game files. Returns the number of entries removed.
-    (Also why a build can fail with structure-verify on: a stray .DS_Store.)
-    Third-party extras are handled separately by _evacuate_non_game_extras - they are MOVED out (preserved beside the output), not deleted."""
+    """Recursively remove macOS/Windows metadata junk from *root* so it never lands in the PFS image: AppleDouble sidecars (``._*``), ``.DS_Store``, Spotlight/Trash/fseventsd folders, ``Thumbs.db``/``desktop.ini``, etc."""
     root = Path(root)
     removed = 0
     # topdown=False so we can rmtree junk dirs after their contents are handled.
@@ -1519,17 +1473,7 @@ def _fpkg_param_title(d: dict) -> str:
 
 
 def _resolve_fpkg_identity(build_src: Path, args) -> dict:
-    """Decide the identity an fPKG build is stamped with.
-
-    sce_sys/param.json is the source of truth. The console checks that the package
-    header agrees with it, and so does the validate checklist - so a value the GUI
-    passed (a placeholder guessed from a file name, a stale field) must never win over
-    what the game itself declares. --content-id / --title-id / --fpkg-version /
-    --fpkg-title are fallbacks for fields param.json lacks, and the whole identity for a
-    source without a param.json (the builder then generates one from them).
-
-    Returns {"content_id", "title_id", "version", "title", "source"} where source names
-    where the content id came from ('param.json' or 'arguments'). Fields may be empty - the caller decides whether that is fatal."""
+    """Decide the identity an fPKG build is stamped with."""
     pj = Path(build_src) / "sce_sys" / "param.json"
     d: dict = {}
     if pj.is_file():
@@ -1583,21 +1527,7 @@ def _is_os_junk_name(name: str) -> bool:
 
 
 def _evacuate_non_game_extras(game_folder: Path, dest_dir: Path) -> int:
-    """Move NON-GAME extras OUT of *game_folder* (so they're never packed into the
-    image) and INTO *dest_dir* (next to the final .ffpfsc), preserving them for the
-    user instead of deleting them.
-
-    Non-game, at the TOP LEVEL of the dump only:
-      • any folder OR file whose name starts with '_' - the tooling convention
-        (``_bundle_``, ``_bundle_``, ``_update``, …). A real PS5 dump never uses a
-        leading underscore at the game root (its entries are sce_sys, sce_module,
-        eboot.bin, Data, …), and our own injected fakelib/ + ampr_emu.index don't
-        either, so they are safe.
-      • loose side-car metadata files (.nfo/.sfv/.diz/.par2).
-    OS metadata (.DS_Store, ._*, __MACOSX, …) is NOT moved - _strip_junk_files deletes
-    it. Only the top level is scanned, so a '_'-named folder DEEP inside real game data
-    is left alone. Moving (not deleting) makes even a wrong guess recoverable - it just
-    lands beside the .ffpfsc. Returns the number of entries moved."""
+    """Move NON-GAME extras OUT of *game_folder* (so they're never packed into the image) and INTO *dest_dir* (next to the final .ffpfsc), preserving them for the user instead of deleting them."""
     game_folder = Path(game_folder)
     try:
         entries = sorted(game_folder.iterdir(), key=lambda p: p.name.lower())
@@ -1876,12 +1806,7 @@ def _write_patch_backup_readme(backup_dir: Path, patch_name: str, game: dict, do
 
 
 def overlay_patch(game_root: Path, patch_dir: Path, backup_dir: Path | None = None, patch_name: str = "") -> int:
-    """Copy every file from the patch onto the game at matching relative paths,
-    overwriting existing files and adding new ones. Skips OS/archiver junk and the notes a
-    release puts beside the files. Refuses a patch for another game. When the patch brings
-    its own AMPR emulator, the game's old ampr_emu.index is removed (the emulator builds a
-    fresh one). With *backup_dir*, every file it replaces or removes is kept there first
-    (under app0/), with a README naming the patch. Returns the number of files applied."""
+    """Copy every file from the patch onto the game at matching relative paths, overwriting existing files and adding new ones."""
     src_root = _patch_descend_wrapper(patch_dir)
     if not (src_root / "sce_sys" / "param.json").is_file():
         # A game-shaped folder below the root means the wrapper was not resolved; copying it

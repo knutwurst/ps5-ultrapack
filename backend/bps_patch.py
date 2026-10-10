@@ -1,36 +1,4 @@
-"""BPS binary patch format (byuu, 2014) - apply a .bps to a source file.
-
-The format is a small delta encoding used by, among others, BestPig's BackPork patches
-that turn a PS5 10.01 system library into the version an older firmware loads. Layout,
-verbatim from the byuu specification:
-
-    "BPS1"
-    vli source_size
-    vli target_size
-    vli metadata_size
-    metadata_size bytes of UTF-8 metadata
-
-    while the target offset has not reached target_size:
-        vli action                     # mode = action & 3, length = (action >> 2) + 1
-        mode 0 SourceRead              # copy <length> bytes from source at the current
-                                       #   target offset
-        mode 1 TargetRead              # the next <length> bytes of the patch are the
-                                       #   bytes to append
-        mode 2 SourceCopy              # vli signed offset follows; move a source cursor
-                                       #   and copy <length> bytes from there
-        mode 3 TargetCopy              # vli signed offset follows; move a target cursor
-                                       #   and copy <length> bytes from the target so far
-
-    u32 le source_checksum             # CRC32 of the source
-    u32 le target_checksum             # CRC32 of the target the caller must obtain
-    u32 le patch_checksum              # CRC32 of everything above
-
-A "vli" is a little-endian variable-length integer: 7 payload bits per byte, high bit
-clear = "more follows"; each continuation adds an implicit 128**n offset so the encoding
-is uniquely reversible. A signed vli uses bit 0 as the sign (1 = negative).
-
-Public domain; the spec has no license.
-"""
+"""BPS binary patch format (byuu, 2014) - apply a .bps to a source file."""
 from __future__ import annotations
 
 import struct

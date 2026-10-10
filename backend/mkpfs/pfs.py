@@ -6189,20 +6189,7 @@ def read_pfs_info(image: Path) -> PFSImageInfo:
 
 
 def detect_image_format(image: Path, *, hint: ImageFormat = ImageFormat.AUTO) -> ImageFormat:
-    """Return the effective image format for verify/unpack workflows.
-
-    The helper keeps detection intentionally simple to preserve existing
-    behaviour for PFS images: we only special-case exFAT and treat
-    everything else as PFS.
-
-    Detection rules when ``hint`` is ``AUTO``:
-
-    * ``.exfat`` extension → :class:`ImageFormat.EXFAT`.
-    * exFAT boot signature at bytes 3..11 → ``EXFAT``.
-    * Otherwise → :class:`ImageFormat.PFS`.
-
-    When ``hint`` is ``PFS`` or ``EXFAT``, it is returned as-is.
-    """
+    """Return the effective image format for verify/unpack workflows."""
     if hint in (ImageFormat.PFS, ImageFormat.EXFAT):
         return hint
 
@@ -6854,13 +6841,7 @@ def _extract_inner_exfat(
     new_crypt: bool,
     selectors: list[str] | None = None,
 ) -> PFSExtractionResult | None:
-    """Extract the contents of an inner exFAT image, or None if there isn't one.
-
-    Returns ``None`` (so the caller can fall back to normal unpack) when the image
-    is not a single inner file or that file is not an exFAT volume. When
-    ``selectors`` is given, only files and directories matching one of the
-    selectors (by exact path or directory prefix) are written.
-    """
+    """Extract the contents of an inner exFAT image, or None if there isn't one."""
     opened: tuple[_LogicalFileView, BinaryIO, str] | None = open_inner_file_view(
         image, ekpfs=ekpfs, new_crypt=new_crypt
     )

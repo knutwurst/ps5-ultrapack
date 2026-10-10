@@ -1,21 +1,4 @@
-"""CHAIN MODE (--to): any source → [patch → backport → sign] → any output, in one call.
-
-Runs the real CLI on a tiny synthetic game (a raw ELF eboot with an SCE param
-segment, a param.json, one data file) through the vendored mkpfs, so the container
-paths are exercised for real:
-
-    folder → folder            no changes  → refused ("nothing to do")
-    folder → folder + backport → in place, SDK lowered
-    folder → .ffpfsc           pass-through to the pack path
-    .ffpfsc → folder + backport → unpacked into scratch, lowered, moved to the output
-    .ffpfsc → .ffpfsc + backport → the user's case: unpack, lower, repack; source untouched
-    .ffpfsc → .ffpfsc no changes → copy job
-
-Plus the backport rules on a folder: SDK words from a firmware folder, the function
-check that makes patched libraries mandatory, encrypted and fake-signed executables.
-
-    python3 -m unittest backend.tests.test_chain_mode
-"""
+"""CHAIN MODE (--to): any source → [patch → backport → sign] → any output, in one call."""
 from __future__ import annotations
 
 import json

@@ -1,34 +1,4 @@
-"""Backport engine - SDK version lowering, fakelib bundle assembly, NID
-compatibility analysis.
-
-Applied to the STAGING copy, never the source. Runs before fake_sign.
-
-SDK constants and layout follow idlesauce's ps5_elf_sdk_downgrade.py (referenced by
-BestPig/BackPork, Nazky/Auto-Backpork, PS5-BACKPORK-KITCHEN). Layout for both
-PT_SCE_PROCPARAM (executables) and PT_SCE_MODULE_PARAM (prx/sprx) is:
-    +0x00  Elf64_Xword  size
-    +0x08  Elf32_Word   magic          (ORBI=0x4942524F proc, 0x3C13F4BF module)
-    +0x0C  Elf32_Word   version
-    +0x10  Elf32_Word   sdk_version    (PS4 form, still written on PS5 modules)
-    +0x14  Elf32_Word   sdk_version    (PS5 form, 4-byte LE)
-Only these two words are changed; every other byte in the ELF stays the same.
-
-Public backport-target inventory as of 2026-09-28 (see scratchpad/backport-
-landscape-2026-09-28.md for citations):
-  7.61   sweet spot - SDK constants published, fakelib patches published
-  6.02   experimental - SDK constants published, small library set (marked
-         'not recommended' by rajeshca911/PS5-BACKPORK-KITCHEN fakelibs.json)
-  10.xx  no bundle - SDK constants published, the fakelib content IS the
-         10.01 originals; the console already carries them
-Nothing above id 10 is used from the table, because idlesauce's list stops there
-and any value would be invented. Other targets come from the user's own firmware
-files instead: each firmware's system libraries carry that firmware's SDK words in
-their module param, so `target_words` reads them from <fw root>/<firmware>/.
-
-Fake-signed executables (SELF, see self_file.py) are read through a rebuilt ELF
-image, and lowered in place: the same two words inside the stored segment, every
-other byte of the SELF kept.
-"""
+"""Backport engine - SDK version lowering, fakelib bundle assembly, NID compatibility analysis."""
 from __future__ import annotations
 
 import os
@@ -302,12 +272,7 @@ def derive_sdk_words(fw_dir: Path, sample: int = 80) -> tuple[int, int] | None:
 
 
 def firmware_problem(fw_dir: Path | None, name: str | None) -> str:
-    """Why the libraries in *fw_dir* cannot stand for firmware *name*; '' when they can.
-
-    Catches the folder without libraries, encrypted libraries (no SDK words, no
-    functions to read) and libraries from a newer firmware than the folder's name:
-    their SDK words would ask the older console for an update. *name* None skips
-    the version comparison (a folder not named after a firmware)."""
+    """Why the libraries in *fw_dir* cannot stand for firmware *name*; '' when they can."""
     label = name or "firmware"
     if fw_dir is None:
         return f"no {label} folder in the firmware libraries folder"
@@ -362,24 +327,7 @@ def encrypted_selfs(root: Path) -> list[Path]:
 # ── the writes ────────────────────────────────────────────────────────────
 def lower_sdk_version(elf: bytes, target: str,
                       words: tuple[int, int] | None = None) -> tuple[bytes, list[SdkChange]]:
-    """Return a copy of *elf* with its SDK words lowered to *target*, plus one
-    SdkChange per field considered (kept even when equal, so the caller can log
-    a no-op).
-
-    The rules match idlesauce's script:
-      • only touches PT_SCE_PROCPARAM / PT_SCE_MODULE_PARAM, and only when the
-        struct starts with the expected magic;
-      • writes BOTH the PS4 and PS5 fields, because a PS4-derived module (some
-        prx) still carries a PS4 SDK word the loader reads;
-      • only lowers - a value equal to or below the target is left alone.
-    A file without a param segment (not every prx has one) is returned as-is
-    with an empty change list; the caller then knows the module is neutral.
-
-    *words* (ps5, ps4) override the table, for a target read from the user's
-    firmware files (target_words). A fake-signed SELF is changed in place: the
-    param struct is found in its rebuilt ELF image and the two words are written
-    at the same spot of the stored segment; nothing else in the file changes.
-    ValueError for an unknown target or an encrypted SELF."""
+    """Return a copy of *elf* with its SDK words lowered to *target*, plus one SdkChange per field considered (kept even when equal, so the caller can log a no-op)."""
     if words is None:
         if target not in SDK_TARGETS:
             raise ValueError(f"unknown backport target {target!r}; expected one of {sorted(SDK_TARGETS)}")
@@ -614,13 +562,7 @@ def _cstr(buf: bytes, offset: int) -> str:
 
 
 def read_symbols(data: bytes) -> tuple[list[NidImport], list[NidImport]]:
-    """Return (imports, exports) as NidImport lists.
-
-    An Elf64_Sym is an IMPORT when its st_shndx is 0 (SHN_UNDEF: the loader
-    supplies the address at bind time). Otherwise the sym defines a symbol
-    that lives inside this module - an EXPORT. That is exactly the split the
-    firmware-NID database and the game-compatibility check need. A fake-signed
-    SELF is read through its rebuilt ELF image."""
+    """Return (imports, exports) as NidImport lists."""
     data = _as_elf(data)
     if data is None or not _is_ps5_elf64(data):
         return [], []
@@ -773,14 +715,7 @@ class BackportReport:
 
 
 def build_firmware_nid_db(fw_libs_root: Path) -> dict[str, set[str]]:
-    """Read every *.prx/*.sprx under *fw_libs_root* and return {library_name:
-    {NID, ...}}. The library name is the file stem, matching what a game
-    imports through DT_SCE_IMPORT_LIB.
-
-    This is the exported-symbols side. A user runs it once for each target
-    firmware, on a folder holding the ORIGINAL (unpatched) Sony libraries;
-    the resulting dict is what the analyser compares against. Nothing here
-    is redistributed with the app."""
+    """Read every *.prx/*.sprx under *fw_libs_root* and return {library_name: {NID, ...}}."""
     fw_libs_root = Path(fw_libs_root)
     db: dict[str, set[str]] = {}
     for path in sorted(fw_libs_root.rglob("*")):     # system/common/lib, system_ex/..., priv/lib
@@ -803,19 +738,7 @@ def build_firmware_nid_db(fw_libs_root: Path) -> dict[str, set[str]]:
 def analyse_backport(source_root: Path, target: str,
                      fw_libs_root: Path | None = None,
                      backport_libs_root: Path | None = None) -> BackportReport:
-    """Cross-check the ELFs under *source_root* against the target firmware.
-
-    * *fw_libs_root* - a folder of ORIGINAL target-firmware sprx (what the
-      console ships). Their exported NIDs count as "covered by firmware".
-      Optional; without it every import is treated as "missing from firmware"
-      and the report highlights what the fakelib must supply.
-    * *backport_libs_root* - the user's PATCHED library folder (also the
-      argument to --backport-libs). Its exported NIDs count as "covered by
-      fakelib" and the report gets more accurate.
-
-    *fw_libs_root* may also be a folder with one subfolder per firmware; the
-    target's own subfolder is used (firmware_folder). Functions the game's own
-    modules export count as covered, and fake-signed files are read too."""
+    """Cross-check the ELFs under *source_root* against the target firmware."""
     fw_dir = firmware_folder(fw_libs_root, target) if fw_libs_root else None
     fw_db = build_firmware_nid_db(fw_dir) if fw_dir else {}
     note = "no firmware libraries folder given"
@@ -873,16 +796,7 @@ def analyse_backport(source_root: Path, target: str,
 
 
 def lower_sdk_in_folder(root: Path, target: str, words: tuple[int, int] | None = None) -> LowerReport:
-    """Walk *root* and apply lower_sdk_version to every eboot/prx/sprx it holds,
-    in place. The caller is expected to point this at the staging mirror.
-
-    A raw ELF and a fake-signed SELF are both lowered (the SELF in place). A file
-    that is neither (an encrypted SELF, or not an executable at all) is left alone
-    and listed in skipped_not_elf. A file without a param segment is left alone
-    too - some helper prx have neither PT_SCE_PROCPARAM nor _MODULE_PARAM.
-
-    Writes go through a temp file + os.replace so a crash never leaves a
-    truncated ELF next to the source."""
+    """Walk *root* and apply lower_sdk_version to every eboot/prx/sprx it holds, in place."""
     report = LowerReport(written=[], skipped_no_param=[], skipped_not_elf=[])
     for path in iter_source_elfs(root):
         try:

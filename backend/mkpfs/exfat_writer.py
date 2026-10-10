@@ -1,15 +1,4 @@
-"""Forward-only exFAT image serializer.
-
-Builds a valid exFAT volume from a source directory by computing the entire
-layout up front (all file sizes are known after scanning), then emitting the
-image strictly in offset order: boot regions, FAT, then the cluster heap
-(allocation bitmap, up-case table, root directory, and each directory/file laid
-out contiguously). Because nothing is written out of order, the byte stream can
-be consumed straight into the compressor with no temporary image.
-
-Allocation is contiguous per node and the FAT carries an explicit chain for each
-run (the widely compatible form). OS-generated metadata is excluded at scan time.
-"""
+"""Forward-only exFAT image serializer."""
 
 from __future__ import annotations
 

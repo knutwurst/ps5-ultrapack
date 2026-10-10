@@ -1,32 +1,4 @@
-"""End-to-end test on a REAL game: every conversion path, compared file by file.
-
-    python3 backend/tests/test_e2e_corpus.py --source <game.ffpfsc | game folder> --work <scratch dir>
-                                             [--app "<PS5 UltraPack.app>"] [--keep]
-
-The source is the reference (a container known to run on the console, or its folder).
-Nothing is written next to it; everything happens in --work, which needs about four times
-the game size. Paths (each result is compared against the reference folder R):
-
-  R        the source itself (folder) or the source .ffpfsc unpacked
-  C1       .ffpfsc/folder → .pkg (one click) → validate → extract     == R  (expected changes only)
-  C2       R → .ffpfsc → unpack                                        == R  (byte for byte)
-  C3       R → .ffpfs (uncompressed) → unpack                          == R  (byte for byte)
-  C4       extract of C1 → .ffpfsc → unpack                            == extract of C1
-  C5       .pkg built from R vs .pkg built from the container, both --fpkg-deterministic: same bytes
-  C6       extract of a deterministic .pkg → deterministic .pkg        == that .pkg (byte for byte)
-
-"Expected changes" in a package are exactly what the builder does on purpose and nothing
-else: raw ELFs become fake-signed SELFs (and SELFs get the retail flag byte), sce_sys/
-param.json is canonicalised, placeholder license files and non-JSON *.json in sce_sys are
-dropped (a debug license is issued), a corrupt PlayGo set is regenerated, a presentation PNG
-that is not an 8-bit PNG in its required mode is rebuilt from its DDS, DDS icons are added,
-and ampr_emu.index is rebuilt when the AMPR emulator ships. Every other file must be
-byte-identical and present after extraction - including the sce_sys files the package keeps
-in its metadata table. sce_sys/keystone (the save-data key) must always be identical.
-
-The report is written to <work>/e2e-report.json and printed; exit code 0 = all passed.
-With --app the frozen app's backend (…/Contents/MacOS/…) is used instead of backend/cli.py.
-"""
+"""End-to-end test on a REAL game: every conversion path, compared file by file."""
 from __future__ import annotations
 
 import argparse

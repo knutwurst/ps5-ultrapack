@@ -1,12 +1,4 @@
-"""The pre-flight space gate and the Drive Space Diagnostics dialog must agree.
-
-Both read _space_requirements(); this test drives every placement shape with random free
-space on each drive and checks that the dialog's verdict (_space_report) always equals the
-gate's (_space_preflight_ok), and that a disk image never needs temp space. Headless: the
-Tk-free core is imported; nothing GUI is loaded.
-
-    python3 -m unittest backend.tests.test_space_gate
-"""
+"""The pre-flight space gate and the Drive Space Diagnostics dialog must agree."""
 from __future__ import annotations
 
 import os

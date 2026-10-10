@@ -1,11 +1,4 @@
-"""Read-only exFAT parser.
-
-Parses and extracts files from an exFAT image exposed as any seekable binary
-source. This is used to validate produced images and to peel the inner exFAT out
-of a packed container without mounting. It is deliberately read-only and covers
-the subset of exFAT that game images use (single FAT, standard directory entry
-sets, contiguous or FAT-chained allocation).
-"""
+"""Read-only exFAT parser."""
 
 from __future__ import annotations
 
@@ -35,17 +28,7 @@ class ExfatError(ValueError):
 
 @dataclass(frozen=True)
 class ExfatGeometry:
-    """Parsed exFAT volume geometry from the main boot sector.
-
-    Attributes:
-        bytes_per_sector: Sector size in bytes.
-        sectors_per_cluster: Cluster size in sectors.
-        fat_offset_sectors: First FAT offset in sectors.
-        cluster_heap_offset_sectors: Cluster heap offset in sectors.
-        cluster_count: Number of clusters in the heap.
-        root_dir_cluster: First cluster of the root directory.
-        volume_serial: Volume serial number.
-    """
+    """Parsed exFAT volume geometry from the main boot sector."""
 
     bytes_per_sector: int
     sectors_per_cluster: int
@@ -63,16 +46,7 @@ class ExfatGeometry:
 
 @dataclass
 class ExfatEntry:
-    """A file or directory entry parsed from an exFAT directory.
-
-    Attributes:
-        name: Entry base name.
-        rel_path: POSIX-style path relative to the volume root.
-        is_dir: Whether the entry is a directory.
-        first_cluster: First cluster of the entry's data (0 when empty).
-        length: Data length in bytes.
-        no_fat_chain: Whether the allocation is contiguous (no FAT chain).
-    """
+    """A file or directory entry parsed from an exFAT directory."""
 
     name: str
     rel_path: str

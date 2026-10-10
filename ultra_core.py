@@ -1,13 +1,4 @@
-"""Tk-free core of PS5 UltraPack.
-
-Settings and history files, naming rules (the ShadowMount byte budget, auto-organize),
-drive and space logic (placement needs, the pre-flight gate, drive probes), game-folder
-detection, archive extraction and the GameItem queue model. Nothing here imports Tk, so
-it can be tested and reused without a display. The GUI (PS5_UltraPack.py)
-re-exports every name, so code and tests that use them through the GUI module keep
-working; mutable module state (e.g. _SETTINGS_CORRUPT_COPY) must be read through this
-module.
-"""
+"""Tk-free core of PS5 UltraPack."""
 from __future__ import annotations
 
 import hashlib
@@ -420,11 +411,7 @@ def archive_label(path) -> str:
 
 
 def source_label(item) -> str:
-    """What the job's source was, for the queue row: the archive's kind ('.rar', '.7z',
-    '.zip'), 'Folder' or a container's suffix. Decided from what the job knows about itself,
-    not from whether the source is still on the disk: after Move to folder or Delete, or once
-    an extraction is gone, a folder name such as 'Example 1.000 ppsa00001' must not read as a
-    '.000 ppsa00001' file."""
+    """What the job's source was, for the queue row: the archive's kind ('.rar', '.7z', '.zip'), 'Folder' or a container's suffix."""
     arc = getattr(item, "archive_path", None) or getattr(item, "origin_archive", None)
     if arc or getattr(item, "source_kind", "") == "archive":
         return archive_label(arc)
@@ -718,12 +705,7 @@ KEEP_AWAKE_FILENAME = ".ffpfsc_keepalive"
 
 
 def poke_drive_keepalive(d: Path) -> bool:
-    """Force a tiny physical write to the drive holding *d* and flush it to the device,
-    so an idle external HDD doesn't park its heads / spin down. Bus-powered 2.5" USB
-    drives (e.g. WD Elements) park aggressively after a few seconds idle; that burns
-    through their limited load/unload cycle rating. A flushed write resets the drive's
-    idle timer. Reuses one hidden file (overwrite, not create/delete) to avoid directory
-    churn. Returns True on success. Safe to call only OFF the UI thread."""
+    """Force a tiny physical write to the drive holding *d* and flush it to the device, so an idle external HDD doesn't park its heads / spin down."""
     try:
         f = d / KEEP_AWAKE_FILENAME
         with open(f, "wb") as fh:
@@ -742,14 +724,7 @@ def _name_looks_ssd(name: str) -> bool:
 
 
 def _probe_drive_speed(path: Path, name_hint: str = "") -> str:
-    """Classify a drive whose OS flash flag is unavailable (USB-attached SSDs through a
-    bridge that masks it - diskutil prints 'Info not available'). Robust against a THROTTLED
-    bus (a passive hub): the PRIMARY signal is fsync WRITE-LATENCY, which is bandwidth-
-    independent - a spinning disk pays a ~5-15 ms seek+rotation on every flushed write while
-    an SSD (even over USB) stays ~sub-2 ms no matter how throttled the bus throughput is.
-    Sequential throughput (best of a few tries, so a transient dip can't demote a real SSD)
-    and an SSD name hint back it up. All temp files are deleted before returning. Returns
-    'SSD' / 'HDD' / 'Unknown'; never blocks on a non-writable or tight volume."""
+    """Classify a drive whose OS flash flag is unavailable (USB-attached SSDs through a bridge that masks it - diskutil prints 'Info not available')."""
     import time, tempfile, statistics
     hinted = _name_looks_ssd(name_hint)
     try:
@@ -1554,19 +1529,7 @@ def _dlc_name(dlc_title: str, *game_titles: str) -> str:
 
 
 def ps4_layout(items, known: dict | None = None):
-    """Library placement of PS4 packages, grouped by title id:
-         '<Title> [CUSA…] [vX]/<Title> [CUSA…] [v01.00].pkg'            game
-         '…/<Title> [CUSA…] UPDATE [v01.07].pkg'                         update
-         '…/<Title> DLC <name> [CUSA…] [v01.07].pkg'                     DLC (game/update version)
-         '…/DLC Pack/…'                                                   from PS4_DLC_PACK_FROM DLCs on
-    The folder carries the highest version of the set. A DLC carries the version of the
-    game or update it arrives with; alone, its own version, or none when it has none.
-    *items* is [(source path, identity)] with identity.kind/.title/.title_id/.version/.app_ver;
-    *known* ({CUSA id: Ps4Library}, see scan_ps4_library) names the title folders already in
-    the library: a set joins its folder and takes the title spelling before the id tag; the
-    folder's version tag is raised when the set brings a newer game or update (the caller
-    renames the folder), never lowered and never raised by a DLC; a DLC takes the folder's
-    version and its 'DLC Pack' when there is one. Returns [(source, folder, subdir, filename)]."""
+    """Library placement of PS4 packages, grouped by title id: '<Title> [CUSA…] [vX]/<Title> [CUSA…] [v01.00].pkg' game '…/<Title> [CUSA…] UPDATE [v01.07].pkg' update '…/<Title> DLC <name> [CUSA…] [v01.07].pkg' DLC (game/update version) '…/DLC Pack/…' from PS4_DLC_PACK_FROM DLCs on The folder carries the highest version of the set."""
     known = known or {}
     groups: dict[str, list] = {}
     for src, ident in items:
@@ -1959,12 +1922,7 @@ class ArchiveExtractor:
     def extract_with_passwords(archive: Path, dest_root: Path, passwords: list[str],
                                log_fn=None, progress_fn=None,
                                cancel_event: threading.Event | None = None) -> Path:
-        """Extract *archive*, trying each candidate password in order until one
-        works. Wrong passwords fail fast (at the header / first member), so no
-        full wasted extraction. A no-password attempt is always tried last so
-        unencrypted archives still extract. Raises a single clear error if none
-        of the passwords open the archive; non-password errors (corrupt archive,
-        missing RAR volume, no extractor) propagate immediately."""
+        """Extract *archive*, trying each candidate password in order until one works."""
         named = []
         for p in passwords:
             p = (p or "").strip()
@@ -2722,12 +2680,7 @@ class ArchiveExtractor:
 
     @staticmethod
     def _find_native_7z() -> str | None:
-        """Locate a native 7-Zip binary: PATH first, then well-known Homebrew install
-        paths (a .app bundled with PyInstaller doesn't inherit the user's shell PATH,
-        so /opt/homebrew/bin is invisible without explicit probing). Prefer '7zz' - Igor Pavlov's official 22.x+ binary that replaces the dormant p7zip fork - then fall back to '7z' / '7za'. Returns the absolute path or None.
-
-        Native 7-Zip is 3-10x faster than py7zr (pure-Python LZMA, single-threaded)
-        because LZMA decode is the bottleneck of any large solid 7z game archive."""
+        """Locate a native 7-Zip binary: PATH first, then well-known Homebrew install paths (a .app bundled with PyInstaller doesn't inherit the user's shell PATH, so /opt/homebrew/bin is invisible without explicit probing)."""
         names = ("7zz", "7z", "7za")
         for name in names:
             p = shutil.which(name)

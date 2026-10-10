@@ -1,18 +1,4 @@
-"""
-In-process GUI test for the fPKG integration. Drives the real App object (hidden root)
-and exercises what the CLI harness cannot: build_command() argv for fPKG jobs, the Pack
-dialog's '.pkg' format (identity pre-fill from param.json, optional identity for images
-and archives, validation, add via the shared classifier, edit, pack ↔ fPKG switch), the
-remembered-format behaviour of a browsed/dropped source, the Extract mini dialog, queue
-badges/details, double-click dispatch, dialog sizing, and queue persistence.
-
-  /tmp/ps5venv/bin/python backend/tests/test_fpkg_gui.py [--work DIR]
-
-Needs the GUI deps (customtkinter, tkinterdnd2, pillow, psutil) and a display. The driver
-points PS5_FFPFSC_APP_DIR at a folder inside its work dir before the GUI module loads, so
-the real profile is never touched; the settings.json snapshot/restore stays as a second
-safety net.
-"""
+"""In-process GUI test for the fPKG integration."""
 import sys, os, importlib.util, traceback, argparse, shutil, subprocess, tempfile, time, zipfile, json, re
 from pathlib import Path
 import tkinter as tk

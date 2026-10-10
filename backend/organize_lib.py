@@ -1,19 +1,4 @@
-"""Organize a library in place, and write one source into a library (the "Organize" output).
-
-scan()    finds what a folder holds: game folders, images, packages and archive sets (each read
-          for its game), and the other files beside them (companions). OS clutter is never
-          listed. Reading goes through an *identify(path, kind)* callable, so the rules can be
-          tested on synthetic folders; make_identify() builds the real one.
-plan()    decides where everything belongs: one title folder per game directly under the
-          root (ultra_core.library_layout names it and everything in it). A folder that holds
-          only one game is renamed to the title folder, so what sits beside the game travels
-          with it; a folder holding several games is split; archives whose game is unclear
-          and anything that would collide stay where they are, with the reason.
-apply()   carries a plan out with renames on the same drive only, removes folders it left
-          empty and the '._' sidecars of what it moved, and writes a journal.
-undo()    moves everything in a journal back.
-organize_into() copies or moves one source (file or folder tree) into a library under its
-          library name, joining a title folder that is already there."""
+"""Organize a library in place, and write one source into a library (the "Organize" output)."""
 from __future__ import annotations
 
 import json
@@ -649,11 +634,7 @@ _BAR = re.compile(r"^\[#+\]\s*(\d+)%")
 
 
 def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists: str = "skip", on_line=None) -> int:
-    """Copy (mode keep) or move (mode move) what *src* holds into the library *out*, in its own
-    format and under its library name. A title folder already in *out* is joined and its
-    version tag raised when the source is newer. The conflict rule per item: skip (default;
-    'ask' acts as skip), overwrite (the old one goes once the new one is complete), keep (a
-    ' (2)' suffix). 0 when everything readable is in the library."""
+    """Copy (mode keep) or move (mode move) what *src* holds into the library *out*, in its own format and under its library name."""
     import copy_job
     src, out = Path(src), Path(out)
     if src.is_dir() and (out == src or src in out.parents):

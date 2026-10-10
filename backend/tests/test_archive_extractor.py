@@ -1,15 +1,4 @@
-"""Unit tests for ArchiveExtractor - the saved-password loop (a wrong first password
-must not stop the right one from being tried), AES-encrypted zips (stdlib zipfile
-cannot read them; they go through the 7-Zip CLI), multi-root archives (a base game
-beside its patch) - and the settings redaction of the diagnostics export.
-
-Headless: the GUI module is loaded with exec_module (importing it creates no Tk
-window). Cases that need the native 7-Zip CLI are skipped when `7zz` is not on
-PATH; the others author their archives with py7zr / zipfile and drive the CLI
-code path with a fake tool script.
-
-  /tmp/ps5venv/bin/python -m unittest backend/tests/test_archive_extractor.py -v
-"""
+"""Unit tests for ArchiveExtractor - the saved-password loop (a wrong first password must not stop the right one from being tried), AES-encrypted zips (stdlib zipfile cannot read them; they go through the 7-Zip CLI), multi-root archives (a base game beside its patch) - and the settings redaction of the diagnostics export."""
 import contextlib
 import importlib.util
 import json

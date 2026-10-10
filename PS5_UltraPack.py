@@ -490,11 +490,7 @@ class PanelHost:
 
 
 class EmbeddedDialog(ctk.CTkFrame):
-    """A dialog shown as a panel of the main window instead of a separate window. It takes
-    the CTkToplevel calls the dialog classes make: title() is kept, geometry("WxH") sets the
-    panel's preferred size, the window-only calls (transient, grab_set, resizable, …) do
-    nothing, and Return/Escape bindings go through the panel host to the top panel.
-    Callers that wait for a result keep using root.wait_window(dialog)."""
+    """A dialog shown as a panel of the main window instead of a separate window."""
 
     LARGE = False          # large panels fill the content area; small ones keep their size
     host = None            # the App's PanelHost
@@ -8891,11 +8887,7 @@ class App:
 
     def _copy_item_for(self, src, *, output_path=None, mode="organize",
                        auto_organize=None, parent=None):
-        """A fresh COPY job for a source whose format already matches the target format
-        (`.ffpfsc` / `.ffpfs` / `.pkg`). *mode* is copy_job's: "organize" (the Organize
-        default) renames on the same drive and copies across drives, keeping the source
-        there; "keep" always copies; "move" also deletes after a cross-drive copy.
-        Returns None (after an error dialog) for anything else."""
+        """A fresh COPY job for a source whose format already matches the target format (`.ffpfsc` / `.ffpfs` / `.pkg`)."""
         src = Path(src)
         if not (src.is_file() and src.suffix.lower() in (".ffpfsc", ".ffpfs", ".pkg")):
             messagebox.showerror("Wrong type",
@@ -11271,11 +11263,7 @@ class App:
         self.log("INFO", f"AMPR: cleaned injected emu files from {Path(item.path).name}.")
 
     def _oom_retry(self, item) -> bool:
-        """Requeue *item* with one fewer mkpfs worker after an out-of-memory kill.
-        Returns True if a retry was scheduled (caller should NOT count this as a failure).
-        Step-down: an explicit N → N-1 → … → 1; AUTO (0) drops straight to 1 worker (the
-        backend already auto-capped it, so 1 is the only guaranteed reduction). Capped at
-        two retries; gives up at one worker."""
+        """Requeue *item* with one fewer mkpfs worker after an out-of-memory kill."""
         MAX_RETRIES = 2
         tries = getattr(item, "_oom_retries", 0)
         prev = getattr(item, "_cpu_retry_override", None)
@@ -11594,12 +11582,7 @@ class App:
         return Path(g) if g else None
 
     def _space_gate(self, item, out_dir):
-        """Place the run on a drive sized for its REAL footprint (sets item._build_root /
-        _build_temp via _resolve_extract_root), then decide go/skip/cancel against THAT
-        drive. Returns 'proceed', 'skip', or 'cancel' per free space, the low-space policy
-        (ask / auto / skip) and the diagnostics-dialog toggle. Honest extracted size +
-        per-kind factor + safety factor feed the check, so a game that fits a drive (the
-        big HDD) is routed there and proceeds; only a game that fits NO drive is skipped."""
+        """Place the run on a drive sized for its REAL footprint (sets item._build_root / _build_temp via _resolve_extract_root), then decide go/skip/cancel against THAT drive."""
         op = getattr(item, "operation", "pack")
         # Unpack and fPKG extract write to the output drive only; fake-sign rewrites in
         # place (no temp, no new output). None of them needs the pack space gate.

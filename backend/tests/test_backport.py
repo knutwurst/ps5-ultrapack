@@ -162,13 +162,7 @@ class EncodeId(unittest.TestCase):
 
 # ── NID reader synthetic fixture ──────────────────────────────────────────
 def _elf_with_imports(imports: list[tuple[str, int, str, int, str]]) -> bytes:
-    """A minimal PS5 ELF with PT_DYNAMIC + PT_SCE_DYNLIBDATA carrying a string
-    table, symbol table and DT_SCE_IMPORT_LIB / DT_SCE_NEEDED_MODULE entries
-    describing *imports*.
-
-    Each tuple is (nid_11char, library_id, library_name, module_id,
-    module_name). Duplicated library/module names use the first id seen; the
-    caller keeps them distinct in the tests below."""
+    """A minimal PS5 ELF with PT_DYNAMIC + PT_SCE_DYNLIBDATA carrying a string table, symbol table and DT_SCE_IMPORT_LIB / DT_SCE_NEEDED_MODULE entries describing *imports*."""
     ehdr = bytearray(64)
     ehdr[0:4] = b"\x7fELF"; ehdr[4] = 2; ehdr[5] = 1
 

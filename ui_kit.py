@@ -1,14 +1,4 @@
-"""Lightweight Tk widgets for the PS5 UltraPack main window.
-
-Everything here draws on plain tk.Canvas / tk.Frame / tk.Label. CustomTkinter widgets are
-one canvas each and redraw in Python on every resize, which made the 1.1.x window lag
-(280-420 ms per resize step with ~230 of them). Icons are vector strokes on a 24-unit grid,
-drawn as canvas lines, so they stay sharp on Retina screens and take any colour.
-
-Colour lives in PALETTE (one dict per appearance mode). Widgets never hold hex values:
-they ask Kit for a token ("surface", "accent", ...), and Kit.set_mode() recolours every
-registered widget in place.
-"""
+"""Lightweight Tk widgets for the PS5 UltraPack main window."""
 from __future__ import annotations
 
 import math
@@ -117,21 +107,7 @@ def apply_ctk_theme(ctk, body_px: int | None = None) -> None:
 
 
 class Fonts:
-    """The type scale, in logical pixels like every macOS app (Tk's POINTS are 1.33 px
-    here, so positive Tk sizes would render a third larger than native text). The dialogs
-    use the same numbers as CTkFont sizes, which are pixels too.
-
-      view       17 bold  the title of a view, a Settings page list, a panel
-      title      15 bold  the title of the selected thing (the job card)
-      app        14 bold  the app name in the sidebar
-      metric     15       a tile's number
-      heading    13 bold  a section heading, a running stage
-      body       13       labels, list rows, controls, navigation
-      small      12       a row's second line, descriptions, hints
-      caption    11       status bar, tile captions, stage names
-      mono       11       the Log view
-      mono_small 10       the log and command preview in the job card
-    """
+    """The type scale, in logical pixels like every macOS app (Tk's POINTS are 1.33 px here, so positive Tk sizes would render a third larger than native text)."""
 
     def __init__(self, root):
         base = tkfont.nametofont("TkDefaultFont").actual().get("family", "Helvetica")
@@ -255,16 +231,7 @@ def unpack_touchpad_delta(d) -> tuple[int, int]:
 
 
 def attach_wheel_scroll(widget, *, pixel_unit: int = 1, notch_px: int = 40) -> None:
-    """Scroll *widget* (a Canvas, or anything with yview/xview) with the mouse wheel and
-    with a trackpad swipe, on Tk 8.6 and Tk 9.
-
-    Tk 9 on macOS reports a trackpad swipe as <TouchpadScroll> with pixel deltas (TIP
-    684), never as <MouseWheel>; Tk binds that event for Text, Listbox and TCombobox
-    itself, a Canvas gets nothing. A wheel notch arrives as <MouseWheel> ±120 on Tk 9
-    (every platform) and on Windows, ±1 on Tk 8.6/macOS; Linux sends Button-4/5. Attach
-    this only to widgets WITHOUT a class binding (a Text scrolls itself, and would move
-    twice). *pixel_unit* is how many pixels one yview unit is (the canvas's
-    yscrollincrement); *notch_px* what one wheel notch moves."""
+    """Scroll *widget* (a Canvas, or anything with yview/xview) with the mouse wheel and with a trackpad swipe, on Tk 8.6 and Tk 9."""
     rem = {"x": 0.0, "y": 0.0}
 
     def _span_ok(axis: str) -> bool:
@@ -553,17 +520,7 @@ class Kit:
 
 # ── Widgets ──────────────────────────────────────────────────────────────────────────
 class IconButton(tk.Canvas):
-    """A button drawn on one canvas: optional icon + text, four variants.
-
-    primary   blue fill, the one main action of a view
-    secondary quiet fill with a hairline border
-    ghost     no fill until hovered (toolbars)
-    danger    secondary with red text
-    nav       full-width sidebar row with a selected state and an optional badge
-
-    configure()/cget() understand state, text, icon, command, selected and badge, so the
-    app can keep calling start_btn.configure(state="disabled") as it did on CTkButton.
-    """
+    """A button drawn on one canvas: optional icon + text, four variants."""
 
     def __init__(self, parent, kit: Kit, text="", icon=None, command=None, variant="secondary",
                  height=30, width=None, bg="surface", font=None, padx=12, icon_size=16, badge=None,
@@ -769,11 +726,7 @@ class _Segment:
 
 
 class TransportControl(tk.Canvas):
-    """Start, Pause and Stop in one place of fixed size. Idle it is one Start button; while
-    the queue runs it splits into Pause (orange) and Stop (red). The shape never changes
-    size, so nothing beside it moves, and the switch crossfades in DURATION ms (none with
-    Reduce motion). Pause is a latch: armed, its half is filled orange until released.
-    The three parts are .start, .pause and .stop (see _Segment)."""
+    """Start, Pause and Stop in one place of fixed size."""
 
     DURATION = 180
     GAP = 2
@@ -1131,17 +1084,7 @@ class StepStrip(FlowCanvas):
 
 
 class QueueList(tk.Frame):
-    """The job list, drawn on one canvas.
-
-    Rows are dicts: title, subtitle, state (running|queued|done|failed|skipped|waiting),
-    chip, progress (0..1 or None), text (the one-line summary returned by get()) and an
-    optional key (stable per job, so a selection follows its jobs across a refresh).
-    The methods curselection/selection_set/selection_clear/see/nearest/size/get mirror
-    tk.Listbox, so the app code that drove the old listbox keeps working; curselection
-    is the one row in focus. Several rows can be marked besides it: Command-click (Ctrl
-    on Windows and Linux) adds or drops one, Shift-click marks a range, Command-A all,
-    Escape keeps only the one in focus; marked_rows() returns them.
-    """
+    """The job list, drawn on one canvas."""
 
     ROW_H = 50
 

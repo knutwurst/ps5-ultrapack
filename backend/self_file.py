@@ -1,27 +1,4 @@
-"""Read and patch the SELF container that wraps a signed PS4/PS5 executable.
-
-A fake-signed SELF, as make_fself writes it (magic 4F 15 3D 1D) and in the PS5 flavour
-(magic 54 14 F5 EE, same layout), keeps the ELF header, the program headers and the
-stored segments as plain bytes, with zeroed block digests and an empty signature. That
-allows two things without any key: rebuilding an ELF image the NID and SDK readers
-understand, and changing a few bytes of a stored segment in place. A segment that is
-encrypted or compressed (a retail SELF) allows neither; `SelfImage.readable` says so.
-
-Layout (little-endian), from make_fself.py and confirmed on real PS5 files:
-    0x00  common header   magic[4], version, mode, endian, attribs
-    0x08  extended header key_type u32, header_size u16, meta_size u16, file_size u64,
-                          num_entries u16, flags u16, 4 bytes padding
-    0x20  entries         num_entries x (props u64, offset u64, filesz u64, memsz u64)
-    ....  ELF header and program headers, as in the ELF
-    ....  extended info, NPDRM block, meta blocks, meta footer, signature
-    ....  per stored segment: a meta entry (block digests) and a data entry (the bytes)
-    file_size..           the PT_SCE_VERSION segment, when the ELF has one
-
-A data entry has the has-blocks bit (11) set and names its program header in bits
-20..35; a meta entry has the has-digests bit (16) and names its data entry instead.
-Only PT_LOAD, PT_SCE_RELRO, PT_SCE_DYNLIBDATA and PT_SCE_COMMENT segments are stored;
-the others (the SCE param struct, PT_DYNAMIC) lie inside those byte ranges.
-"""
+"""Read and patch the SELF container that wraps a signed PS4/PS5 executable."""
 from __future__ import annotations
 
 import struct

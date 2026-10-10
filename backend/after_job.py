@@ -1,10 +1,4 @@
-"""What happens to a job's source once the job is done, and to the computer once the queue is.
-
-A source is kept, moved to the Trash, moved to a folder, or deleted for good. Every action
-first passes `refusal()`: the app never touches a path that is or holds the job's output,
-the temp folder, a drive, the home folder, or a source another waiting job still needs.
-Tk-free, so the tests drive it with scratch folders.
-"""
+"""What happens to a job's source once the job is done, and to the computer once the queue is."""
 from __future__ import annotations
 
 import os
@@ -69,12 +63,7 @@ def size_of(paths: Iterable[Path]) -> int:
 
 def refusal(sources: list, *, output=None, dest=None, protected: Iterable = (),
             others: Iterable = ()) -> Optional[str]:
-    """Why *sources* must stay where they are, or None when the action may run.
-
-    *output* is the file or folder the job wrote (a source in the same folder is a
-    library file and stays: a .ffpfsc next to the .pkg built from it), *dest* the folder a move goes to,
-    *protected* the app's own folders (temp, profile), *others* the sources of jobs that
-    have not run yet."""
+    """Why *sources* must stay where they are, or None when the action may run."""
     if not sources:
         return "the job has no source on disk"
     home = _real(Path.home())
@@ -170,12 +159,7 @@ def _is_protected_dir(folder: Path, protected: Iterable = ()) -> bool:
 
 def release_folder(sources: list, *, list_sources: Callable[[Path], list], title_id: str = "",
                    title: str = "", protected: Iterable = (), may_be=None) -> Optional[Path]:
-    """The folder that belongs to this game, so Move and Trash take it whole: the one
-    folder all *sources* sit in, named after the game (its title id, the archive set's name
-    or its title), holding no source of another game. Whatever else is in it goes along.
-    *may_be* is a protected folder that may still be the release folder itself (the folder
-    a single archive was picked from), though never one above it.
-    None when there is no such folder; then only the game's own files are acted on."""
+    """The folder that belongs to this game, so Move and Trash take it whole: the one folder all *sources* sit in, named after the game (its title id, the archive set's name or its title), holding no source of another game."""
     if not sources:
         return None
     if len({_real(s).parent for s in sources}) != 1:
