@@ -4,10 +4,10 @@
 # Source: https://github.com/alex-free/ps5-make-fself-recursive (BSD 3-Clause,
 # Copyright (c) 2026 Alex Free), which bundles make_fself.py from the
 # ps5-payload-dev SDK (https://github.com/ps5-payload-dev/sdk), originally by
-# flatz. Pure Python (stdlib only: struct, hashlib, hmac) — no keys, no native
+# flatz. Pure Python (stdlib only: struct, hashlib, hmac) - no keys, no native
 # deps; turns a decrypted ELF/PRX into a fake-signed SELF/SPRX (magic 4F153D1D).
 # Imported as a library by backend/fake_sign.py; the __main__ CLI below is kept
-# for standalone use. Do not edit the signing logic — keep it byte-faithful.
+# for standalone use. Do not edit the signing logic - keep it byte-faithful.
 #
 
 import sys, os, struct, traceback

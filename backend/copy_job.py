@@ -6,22 +6,22 @@ Used when the source format equals the target format (``.ffpfsc`` → ``.ffpfsc`
 file is transported as-is.
 
 Three modes decide what happens to the source:
-  * ``keep``     — the source stays. Same drive: an APFS clone (instant, no extra
+  * ``keep`` - the source stays. Same drive: an APFS clone (instant, no extra
                    space) or, where the filesystem cannot clone, a real copy.
                    Across drives: a chunked copy.
-  * ``organize`` — same drive: ``os.rename`` (a library is sorted in place);
+  * ``organize`` - same drive: ``os.rename`` (a library is sorted in place);
                    across drives: a chunked copy, the source stays.
-  * ``move``     — same drive: ``os.rename``; across drives: a chunked copy, then
+  * ``move`` - same drive: ``os.rename``; across drives: a chunked copy, then
                    the source is deleted once every byte is on the destination.
 
 Emits the same ``[PHASE]`` and ``[####] NN%`` markers ``CLIWorker`` already
 parses, so the queue's progress bar and stage indicators light up unchanged.
 
 Exit codes:
-  * ``0`` — success
-  * ``1`` — I/O or unexpected error
-  * ``2`` — source == destination (would rename onto itself) → skip
-  * ``3`` — a different file already occupies the destination name → skip
+  * ``0`` - success
+  * ``1`` - I/O or unexpected error
+  * ``2`` - source == destination (would rename onto itself) → skip
+  * ``3`` - a different file already occupies the destination name → skip
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-CHUNK = 4 * 1024 * 1024  # 4 MiB — same order as extract_members' write chunk
+CHUNK = 4 * 1024 * 1024  # 4 MiB - same order as extract_members' write chunk
 KEEP, ORGANIZE, MOVE = "keep", "organize", "move"
 MODES = (KEEP, ORGANIZE, MOVE)
 
@@ -50,7 +50,7 @@ def _print(on_line: Optional[Callable[[str], None]], msg: str) -> None:
 def _same_device(a: Path, b: Path) -> bool:
     """True when ``a`` and ``b`` live on the same filesystem, so ``os.rename``
     is a metadata-only operation instead of a copy. Compares the closest
-    EXISTING parent for each — a not-yet-created destination folder has no
+    EXISTING parent for each - a not-yet-created destination folder has no
     st_dev on its own."""
     def dev(p: Path) -> int:
         q = p
@@ -81,7 +81,7 @@ def _fsync_file(fd: int) -> None:
 
 def _fsync_dir(path: Path) -> None:
     """Flush the directory entry of a just-renamed file. Best effort: Windows cannot
-    open a directory for fsync and some filesystems refuse it — neither is an error
+    open a directory for fsync and some filesystems refuse it - neither is an error
     for the copy itself."""
     try:
         fd = os.open(str(path), os.O_RDONLY)
@@ -110,7 +110,7 @@ def _clone(src: Path, dst: Path) -> bool:
 
 
 def _resolves_same(src: Path, dst: Path) -> bool:
-    """True when ``src`` and ``dst`` resolve to the same file — including the
+    """True when ``src`` and ``dst`` resolve to the same file - including the
     macOS case-insensitive equality that ``resolve()`` normalizes. A missing
     ``dst`` cannot equal an existing ``src`` (nothing to resolve to)."""
     try:
@@ -188,7 +188,7 @@ def run_copy(src, dst_dir, *,
         return 0
 
     if same_drive and mode != KEEP:
-        # Metadata-only rename — no data movement. Feels instantaneous even on
+        # Metadata-only rename - no data movement. Feels instantaneous even on
         # a 100 GB game because we never touch the payload bytes.
         _print(on_line, f"[INFO] copy: same-drive move — {src.name} → {dst}")
         try:
@@ -197,7 +197,7 @@ def run_copy(src, dst_dir, *,
             _print(on_line, f"[ERROR] copy: rename failed: {e}")
             return 1
         _print(on_line, f"[####] 100% move")
-        # No "[PHASE] Complete" — the worker owns stage transitions; emitting our own
+        # No "[PHASE] Complete" - the worker owns stage transitions; emitting our own
         # would race the completion path and briefly show "Complete: 0%" in the log.
         _print(on_line, f"[SUCCESS] Moved {src.name} → {dst}")
         return 0
@@ -272,7 +272,7 @@ def run_copy(src, dst_dir, *,
             src.unlink()
             _print(on_line, f"[INFO] copy: source deleted after successful copy: {src}")
         except Exception as e:
-            # Copy succeeded — losing the source delete is a warning, not a fail:
+            # Copy succeeded - losing the source delete is a warning, not a fail:
             # the target is intact, the user can delete the source manually.
             _print(on_line, f"[WARN] copy: source could not be deleted: {e}")
 

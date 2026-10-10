@@ -14,9 +14,9 @@ API::
 
 Backends
 --------
-* ``"zlib-ng"`` — uses ``zlib_ng.zlib_ng`` (default, already a hard dep).
-* ``"isal"`` — ISA-L via ``isal.isal_zlib``.  Level mapping: std 1-9 -> isal 0-3.
-* ``"zlib"`` — stdlib ``zlib`` as last-resort fallback when zlib-ng is missing.
+* ``"zlib-ng"`` - uses ``zlib_ng.zlib_ng`` (default, already a hard dep).
+* ``"isal"`` - ISA-L via ``isal.isal_zlib``.  Level mapping: std 1-9 -> isal 0-3.
+* ``"zlib"`` - stdlib ``zlib`` as last-resort fallback when zlib-ng is missing.
 
 Notes:
 -----
@@ -29,7 +29,7 @@ Notes:
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Module-level state — set by ``set_backend`` / ``init_worker``.
+# Module-level state - set by ``set_backend`` / ``init_worker``.
 # ---------------------------------------------------------------------------
 
 _backend_name: str = "zlib-ng"
@@ -67,7 +67,7 @@ def _load_isal() -> object:
 
 
 # ---------------------------------------------------------------------------
-# Public API — set_backend / get_backend_name / init_worker.
+# Public API - set_backend / get_backend_name / init_worker.
 # ---------------------------------------------------------------------------
 
 
@@ -148,7 +148,7 @@ def init_worker(backend_name: str | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Compression helpers — level mapping for ISA-L backend.
+# Compression helpers - level mapping for ISA-L backend.
 # ---------------------------------------------------------------------------
 
 
@@ -181,7 +181,7 @@ def _isal_level_map(level: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Public API — compress_block / decompress_block.
+# Public API - compress_block / decompress_block.
 # ---------------------------------------------------------------------------
 
 
@@ -212,7 +212,7 @@ def compress_block(data: bytes, level: int = 6) -> bytes:
         if name == "isal":
             compressed_data = _compress_with_isal(data, level)
         else:
-            # zlib-ng or stdlib zlib — both accept ``(data, level)``.
+            # zlib-ng or stdlib zlib - both accept ``(data, level)``.
             func = _backend.compress  # type: ignore[union-attribute]
             compressed_data = func(data, level)
     except Exception as exc:
@@ -231,7 +231,7 @@ def _compress_with_isal(data: bytes, zlib_level: int = 6) -> bytes:
     Returns:
         Compressed bytes via ``isal_zlib``.
     """
-    module = _backend  # type: ignore[union-attribute] — already set in compress_block
+    module = _backend  # type: ignore[union-attribute] - already set in compress_block
     mapped_level = _isal_level_map(zlib_level)
     return module.compress(data, level=mapped_level)
 
@@ -264,7 +264,7 @@ def decompress_block(data: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Module-level bootstrap — try zlib-ng first, fall back to stdlib zlib.
+# Module-level bootstrap - try zlib-ng first, fall back to stdlib zlib.
 # ---------------------------------------------------------------------------
 
 try:

@@ -1,4 +1,4 @@
-"""BPS binary patch format (byuu, 2014) — apply a .bps to a source file.
+"""BPS binary patch format (byuu, 2014) - apply a .bps to a source file.
 
 The format is a small delta encoding used by, among others, BestPig's BackPork patches
 that turn a PS5 10.01 system library into the version an older firmware loads. Layout,

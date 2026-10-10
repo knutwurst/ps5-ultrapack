@@ -7,15 +7,15 @@ vendored :mod:`make_fself` (flatz / ps5-payload-dev, redistributed by
 alex-free/ps5-make-fself-recursive). This is a Python re-implementation of that
 project's ``ps5mfr`` bash wrapper, with three deliberate safety improvements:
 
-* **ELF-magic guard** — only files that actually start with ``\\x7fELF`` are
+* **ELF-magic guard** - only files that actually start with ``\\x7fELF`` are
   signed. Data ``.bin`` files (not executables) and files that are *already*
   fake-signed (they start with the SELF magic ``\\x4F\\x15\\x3D\\x1D``, not the
   ELF magic) are skipped. This makes the whole operation **idempotent**: running
   it twice over the same dump is safe and a no-op on the second pass.
-* **Atomic in-place replace** — each file is signed to a temp file in the same
+* **Atomic in-place replace** - each file is signed to a temp file in the same
   directory and then ``os.replace``-d over the original, so an interrupted run
   (crash, kill, full disk) can never leave a half-written, corrupt executable.
-* **No subprocess per file** — the signer is imported and called directly.
+* **No subprocess per file** - the signer is imported and called directly.
 
 The original file's permission bits are preserved.
 """
@@ -45,7 +45,7 @@ _TMP_PREFIX = ".fself-"
 class NotSignable(Exception):
     """Raised when a candidate file is not something we can/should fake-sign:
     not an ELF at all, an already-signed SELF, or an ELF the signer can't parse
-    (wrong class/arch/type, truncated). These are SKIPPED, not failures — a real
+    (wrong class/arch/type, truncated). These are SKIPPED, not failures - a real
     PS5 dump's executables always parse, so this only fires on data blobs and
     foreign/stray files."""
 
@@ -64,7 +64,7 @@ def fake_sign_file(path: str) -> None:
 
     Returns normally when the file was signed. Raises :class:`NotSignable` when
     the file should be skipped (not an ELF, already-signed SELF, or an ELF the
-    signer can't parse — wrong arch/class/type, truncated). Raises any other
+    signer can't parse - wrong arch/class/type, truncated). Raises any other
     exception only on a genuine I/O failure; the original is left untouched in
     that case (we only ``os.replace`` after a fully successful save).
     """
@@ -74,7 +74,7 @@ def fake_sign_file(path: str) -> None:
     # load() reads the whole file into memory (ehdr + phdrs + segment bytes),
     # so once it returns we can safely overwrite the source path. The vendored
     # signer prints internal progress ("meta block …", "processing segment …")
-    # to stdout — silence it so our own per-file log lines stay clean.
+    # to stdout - silence it so our own per-file log lines stay clean.
     with contextlib.redirect_stdout(io.StringIO()):
         try:
             with open(path, "rb") as f:
@@ -115,7 +115,7 @@ def find_targets(root: str):
             if name.lower() == "eboot.bin":
                 found_eboot = True
             if name.startswith(_TMP_PREFIX):
-                continue   # our own leftover temp (see _sweep_stale_temps) — never a target
+                continue   # our own leftover temp (see _sweep_stale_temps) - never a target
             if name.lower().endswith(SIGN_SUFFIXES):
                 targets.append(os.path.join(dirpath, name))
     targets.sort()
@@ -175,7 +175,7 @@ def fake_sign_tree(root: str, log=print) -> dict:
         except NotSignable as exc:
             counts["skipped"] += 1
             log(f"[SKIP] {rel} ({exc})")
-        except Exception as exc:  # noqa: BLE001 — a real I/O failure; report and keep going
+        except Exception as exc:  # noqa: BLE001 - a real I/O failure; report and keep going
             counts["failed"] += 1
             log(f"[FAIL] {rel} ({exc})")
 

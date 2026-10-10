@@ -200,7 +200,7 @@ class RunCopyTests(unittest.TestCase):
         dst_dir.mkdir()
 
         original_same = copy_job._same_device
-        original_open = open  # not used in copy_job — we monkey the module's open
+        original_open = open  # not used in copy_job - we monkey the module's open
         copy_job._same_device = lambda a, b: False
 
         # Replace copy_job's open with one that raises on the destination write

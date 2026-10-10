@@ -589,7 +589,7 @@ class IconButton(tk.Canvas):
         self._resize()
         self._draw()
 
-    # — API compatible with the CTkButton calls the app makes —
+    # - API compatible with the CTkButton calls the app makes - 
     def configure(self, cnf=None, **kw):
         mine = {k: kw.pop(k) for k in ("state", "text", "icon", "command", "selected", "badge", "variant")
                 if k in kw}
@@ -644,7 +644,7 @@ class IconButton(tk.Canvas):
         super().configure(bg=self.kit.c(self._bg_token))
         self._draw()
 
-    # — drawing —
+    # - drawing - 
     def _font_obj(self):
         # Regular weight like a macOS push button; the fill carries the emphasis, and the
         # 1 pt icon strokes match regular text better than bold.
@@ -804,7 +804,7 @@ class TransportControl(tk.Canvas):
         self._resize()
         self._draw()
 
-    # — state —
+    # - state - 
     def set_running(self, on: bool):
         on = bool(on)
         if on == self.running:
@@ -850,7 +850,7 @@ class TransportControl(tk.Canvas):
         else:
             self._ticking = False
 
-    # — geometry —
+    # - geometry - 
     def _content_w(self, part):
         w = 2 * self._padx + (self._icon_size if part._icon else 0)
         if part._text:
@@ -869,7 +869,7 @@ class TransportControl(tk.Canvas):
             return "start"
         return "pause" if x < self._width() / 2 else "stop"
 
-    # — pointer —
+    # - pointer - 
     def _on_motion(self, e):
         name = self._part_at(e.x)
         part = self._parts[name]
@@ -902,7 +902,7 @@ class TransportControl(tk.Canvas):
         super().configure(bg=self.kit.c(self._bg_token))
         self._draw()
 
-    # — drawing —
+    # - drawing - 
     def _draw(self):
         self.delete("all")
         c, W = self.kit.c, self._width()
@@ -1201,7 +1201,7 @@ class QueueList(tk.Frame):
         cv.bind("<BackSpace>", lambda e: self._key(self.on_delete))
         cv.bind("<Delete>", lambda e: self._key(self.on_delete))
 
-    # — Listbox-compatible API —
+    # - Listbox-compatible API - 
     def curselection(self):
         return (self.sel,) if self.sel is not None and 0 <= self.sel < len(self.rows) else ()
 
@@ -1266,7 +1266,7 @@ class QueueList(tk.Frame):
         elif bot > y0 + H:
             self.cv.yview_moveto(max(0.0, (bot + 6 - H) / total))
 
-    # — data —
+    # - data - 
     def set_rows(self, rows, selected=None, keep_marked=False):
         """New rows. *selected* is the row in focus; with *keep_marked* the other marked rows
         stay marked when their key is still in the list, otherwise only *selected* is."""
@@ -1294,7 +1294,7 @@ class QueueList(tk.Frame):
         self.cv.configure(bg=self.kit.c(self._bg))
         self._draw()
 
-    # — events —
+    # - events - 
     def _index_at(self, y):
         if not self.rows:
             return None
@@ -1464,7 +1464,7 @@ class QueueList(tk.Frame):
                 self.sb.grid_remove()
         self.sb.set(lo, hi)
 
-    # — drawing —
+    # - drawing - 
     def _schedule(self):
         if not self._redraw_pending:
             self._redraw_pending = True

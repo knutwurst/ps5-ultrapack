@@ -1,5 +1,5 @@
 """SDK-lowering unit tests. The ELF fixtures are hand-crafted so every byte we
-depend on is under test — the SDK constants at +0x10/+0x14, the two accepted
+depend on is under test - the SDK constants at +0x10/+0x14, the two accepted
 magics, and that everything outside the param struct comes through untouched.
 
     python3 -m unittest backend.tests.test_backport
@@ -16,7 +16,7 @@ from backend import backport as bp
 
 def _elf_with_param(param_type: int, magic: int, sdk_ps4: int, sdk_ps5: int) -> bytes:
     """A minimal 64-bit LE ELF64 with one PHDR pointing at a 40-byte param
-    struct laid out like Sony's — enough for the downgrader to recognise. The
+    struct laid out like Sony's - enough for the downgrader to recognise. The
     ELF header itself is otherwise zero, so a change outside the param struct
     is easy to spot."""
     ehdr = bytearray(64)
@@ -59,7 +59,7 @@ class LowerSdkVersion(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<I", out, 64 + 56 + 0x18)[0], 0xdeadbeef)
 
     def test_leaves_lower_source_alone(self):
-        """A 6.00 module targeted at 7.61 stays 6.00 — never raises the SDK."""
+        """A 6.00 module targeted at 7.61 stays 6.00 - never raises the SDK."""
         elf = _elf_with_param(bp.PT_SCE_MODULE_PARAM, 0x3C13F4BF, 0x10090001, 0x06000038)
         out, changes = bp.lower_sdk_version(elf, "7.61")
         self.assertEqual(out, elf)
@@ -84,7 +84,7 @@ class LowerSdkVersion(unittest.TestCase):
 
     def test_ignores_param_with_wrong_magic(self):
         """A dump where the segment type says PROC_PARAM but the magic is not
-        ORBI/0x3C13F4BF is treated as no param segment — silently untouched."""
+        ORBI/0x3C13F4BF is treated as no param segment - silently untouched."""
         elf = _elf_with_param(bp.PT_SCE_PROCPARAM, 0xDEADBEEF, 0x11090001, 0x08000041)
         out, changes = bp.lower_sdk_version(elf, "7.61")
         self.assertEqual(out, elf)
@@ -248,7 +248,7 @@ class ReadImportedNids(unittest.TestCase):
         elf = _elf_with_imports([
             ("AAAAAAAAAAA", 0x00, "libSceAgc",      0x00, "libSceAgc"),
             ("BBBBBBBBBBB", 0x01, "libSceGnmDriver",0x01, "libSceGnmDriver"),
-            # id ≥ 0x40 needs 2 chars — makes sure the encode_id/decode round-trip
+            # id ≥ 0x40 needs 2 chars - makes sure the encode_id/decode round-trip
             # works for the reader too.
             ("CCCCCCCCCCC", 0x40, "libSceRareLib",  0x02, "libSceGnmDriver"),
         ])
@@ -290,7 +290,7 @@ def _elf_with_exports(exports: list[tuple[str, int, str, int, str]]) -> bytes:
     # matches SHN_UNDEF != 0). Symbols sit at the end of the file, one after
     # the other, 24 bytes each.
     buf = bytearray(elf)
-    # Locate symtab: it starts at the file's tail — we know exactly len(syms)*24.
+    # Locate symtab: it starts at the file's tail - we know exactly len(syms)*24.
     n = len(exports)
     sym_start = len(buf) - n * 24
     for i in range(n):
@@ -328,9 +328,9 @@ class ReadExportsAndDb(unittest.TestCase):
 
 class AnalyseBackport(unittest.TestCase):
     def test_ok_partial_missing_categorisation(self):
-        """A game imports two NIDs from libSceX (both in firmware — ok), one
-        from libSceY (in firmware but only one NID exported — partial), and
-        one from libSceZ (not in firmware; not in fakelib — missing)."""
+        """A game imports two NIDs from libSceX (both in firmware - ok), one
+        from libSceY (in firmware but only one NID exported - partial), and
+        one from libSceZ (not in firmware; not in fakelib - missing)."""
         with tempfile.TemporaryDirectory() as td:
             src = Path(td) / "src"; src.mkdir()
             fw = Path(td) / "fw"; fw.mkdir()

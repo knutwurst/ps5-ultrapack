@@ -125,9 +125,9 @@ def validate_d32_ranges(inodes: list[Inode], final_ndblock: int) -> None:
     """Validate values that will be serialized into 32-bit inode structures.
 
     Matches legacy/ffpfs.py:validate_d32_ranges exactly:
-    - inode.number, .flags, .blocks must be in [0, UINT32_MAX]
-    - inode.mode, .nlink must be in [0, 0xFFFF]
-    - final_ndblock and all db/ib pointers must not exceed INT32_MAX
+ - inode.number, .flags, .blocks must be in [0, UINT32_MAX]
+ - inode.mode, .nlink must be in [0, 0xFFFF]
+ - final_ndblock and all db/ib pointers must not exceed INT32_MAX
       (they are stored as signed int32 on disk, -1 is the sentinel)
 
     Args:

@@ -126,7 +126,7 @@ try:
        if sys.platform == "darwin" else True, str([sorted(o) for o in _seen_opts]))
     # 0) the profile dir is the isolated one (needs the GUI's PS5_FFPFSC_APP_DIR support)
     ok("driver.app-dir-isolated", Path(m.APP_DIR).resolve() == (S / "app_dir").resolve(), f"APP_DIR={m.APP_DIR}")
-    # 1) build_command for an fpkg-build item (folder) — identity fields ride along as fallbacks
+    # 1) build_command for an fpkg-build item (folder) - identity fields ride along as fallbacks
     it = m.GameItem.from_fpkg_build(HBT, output_path=str(OUT), content_id="UP9000-PPSA99099_00-PROSPERO00000000",
                                     title_id="PPSA99099", title="HBT", inner_mode="kraken", kraken_backend="builtin", level=5)
     cmd, cwd, outdir, temp = app.build_command(it)
@@ -271,7 +271,7 @@ try:
     ok("archive.extra-game-same-job", extra.operation == "chain" and extra.chain_to == "pkg" and extra.output_path == arc.output_path
        and extra.fpkg_inner_mode == arc.fpkg_inner_mode and extra.fpkg_content_id == "" and extra.patch_source is None,
        f"{extra.operation}/{getattr(extra, 'chain_to', None)}/{getattr(extra, 'fpkg_content_id', None)!r}")
-    # 7b) sibling jobs from one archive share COMPRESSION only — never the first game's identity
+    # 7b) sibling jobs from one archive share COMPRESSION only - never the first game's identity
     tpl = app._fpkg_compression_of(arc)
     _build_opts = {"inner", "backend", "level", "dll", "retail_normalize", "hdr_flag", "regen_playgo", "fake_sign"}
     ok("compression-of.no-identity", set(tpl) == _build_opts and tpl["inner"] == arc.fpkg_inner_mode
@@ -379,7 +379,7 @@ try:
     shutil.rmtree(APR / "fakelib"); ai3 = m.GameItem(APR); app._prepare_ampr(ai3)
     ok("ampr.nothing-shipped.prompts", len(prompts) == 1, f"prompts={len(prompts)}")
     del app._ensure_ampr_folder; app.ampr_var.set(_prev_ampr); app.fake_sign_before_pack_var.set(_prev_sign)
-    # 14c) Auto-organize: names come from the game's own metadata — folder pack, image, fPKG
+    # 14c) Auto-organize: names come from the game's own metadata - folder pack, image, fPKG
     app.auto_organize_var.set(True)
     gi = m.GameItem(HBT); gi.output_compressed = True; gi.auto_organize = True; gi.output_path = OUT
     cmdg, _, outg, _ = app.build_command(gi)
@@ -395,7 +395,7 @@ try:
     renamed = app._finalize_pkg_name(fi2, dummy)
     ok("organize.fpkg.renamed", renamed.name == "LibProsperoPKG [PPSA99099] [v01.000] [fw2.00].pkg" and renamed.exists() and not dummy.exists(), str(renamed.name))
     # the real worker path: the backend's "[OK] fPKG complete: <path>" marker pre-sets output_path
-    # and _find_output returns from that branch — the rename must happen there (1.1.4 missed it)
+    # and _find_output returns from that branch - the rename must happen there (1.1.4 missed it)
     fi3 = app._fpkg_item_for(FF, dict(app.fpkg_defaults), output_path=str(OUT)); fi3.auto_organize = True
     cmd3w, cwd3, out3w, tmp3 = app.build_command(fi3)
     out3w.mkdir(parents=True, exist_ok=True); dummy2 = out3w / "UP9000-PPSA99099_00-PROSPERO00000000-A0100-V0100.pkg"; dummy2.write_bytes(b"pkg")

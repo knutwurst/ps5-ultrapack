@@ -1,4 +1,4 @@
-"""Backport engine — SDK version lowering, fakelib bundle assembly, NID
+"""Backport engine - SDK version lowering, fakelib bundle assembly, NID
 compatibility analysis.
 
 Applied to the STAGING copy, never the source. Runs before fake_sign.
@@ -15,10 +15,10 @@ Only these two words are changed; every other byte in the ELF stays the same.
 
 Public backport-target inventory as of 2026-09-28 (see scratchpad/backport-
 landscape-2026-09-28.md for citations):
-  7.61   sweet spot — SDK constants published, fakelib patches published
-  6.02   experimental — SDK constants published, small library set (marked
+  7.61   sweet spot - SDK constants published, fakelib patches published
+  6.02   experimental - SDK constants published, small library set (marked
          'not recommended' by rajeshca911/PS5-BACKPORK-KITCHEN fakelibs.json)
-  10.xx  no bundle — SDK constants published, the fakelib content IS the
+  10.xx  no bundle - SDK constants published, the fakelib content IS the
          10.01 originals; the console already carries them
 Nothing above id 10 is used from the table, because idlesauce's list stops there
 and any value would be invented. Other targets come from the user's own firmware
@@ -116,7 +116,7 @@ def _as_elf(data: bytes) -> bytes | None:
 
 def _iter_phdrs(data: bytes):
     """Yield (ptype, p_offset, p_filesz) for each program header. Silently
-    stops at the end of the file — a truncated ELF returns what it can."""
+    stops at the end of the file - a truncated ELF returns what it can."""
     if not _is_ps5_elf64(data):
         return
     e_phoff = struct.unpack_from("<Q", data, _EH_PHOFF)[0]
@@ -136,7 +136,7 @@ def _iter_phdrs(data: bytes):
 def _find_param_segment(data: bytes) -> tuple[str, int] | None:
     """Return ("proc"|"module", file offset of the param struct) or None.
     Prefers the first PT_SCE_PROCPARAM (eboot); a module has PT_SCE_MODULE_PARAM
-    instead. A binary with both is unusual — the caller sees the first hit."""
+    instead. A binary with both is unusual - the caller sees the first hit."""
     for p_type, p_offset, p_filesz in _iter_phdrs(data):
         if p_type not in (PT_SCE_PROCPARAM, PT_SCE_MODULE_PARAM):
             continue
@@ -371,7 +371,7 @@ def lower_sdk_version(elf: bytes, target: str,
         struct starts with the expected magic;
       • writes BOTH the PS4 and PS5 fields, because a PS4-derived module (some
         prx) still carries a PS4 SDK word the loader reads;
-      • only lowers — a value equal to or below the target is left alone.
+      • only lowers - a value equal to or below the target is left alone.
     A file without a param segment (not every prx has one) is returned as-is
     with an empty change list; the caller then knows the module is neutral.
 
@@ -437,7 +437,7 @@ def iter_source_elfs(root: Path):
 class LowerReport:
     """What the downgrade pass did to a folder. `written` lists the files that
     actually changed (source path, effective changes). `skipped` lists files
-    that carry no param segment or are not raw ELFs — the caller reports those
+    that carry no param segment or are not raw ELFs - the caller reports those
     but never treats them as an error."""
     written: list[tuple[Path, list[SdkChange]]]
     skipped_no_param: list[Path]
@@ -462,7 +462,7 @@ class LowerReport:
 
 # ── SCE dynamic tags (from pedrocluis/sce-elf + SocraticBliss PS4-SELF-Tools) ─
 # Every value is an Elf64_Xword d_tag as it appears in PT_DYNAMIC. The reader
-# only needs a handful of these — the rest are documented so a future user of
+# only needs a handful of these - the rest are documented so a future user of
 # this module knows which tag is which without another round of research.
 DT_NEEDED         = 0x00000001    # standard ELF, PS5 may still use it
 DT_STRTAB         = 0x00000005
@@ -558,7 +558,7 @@ def _load_segments(data: bytes):
         if p_type != PT_LOAD:
             continue
         # We need vaddr + memsz for a proper vaddr → file_offset walk; re-read.
-        # _iter_phdrs only exposes offset/filesz for the SDK-lowering job — a
+        # _iter_phdrs only exposes offset/filesz for the SDK-lowering job - a
         # second parse here keeps that helper focused.
         # (Not worth generalising; PT_LOAD count is tiny.)
     # Full re-parse: pull vaddr/memsz too.
@@ -618,7 +618,7 @@ def read_symbols(data: bytes) -> tuple[list[NidImport], list[NidImport]]:
 
     An Elf64_Sym is an IMPORT when its st_shndx is 0 (SHN_UNDEF: the loader
     supplies the address at bind time). Otherwise the sym defines a symbol
-    that lives inside this module — an EXPORT. That is exactly the split the
+    that lives inside this module - an EXPORT. That is exactly the split the
     firmware-NID database and the game-compatibility check need. A fake-signed
     SELF is read through its rebuilt ELF image."""
     data = _as_elf(data)
@@ -805,11 +805,11 @@ def analyse_backport(source_root: Path, target: str,
                      backport_libs_root: Path | None = None) -> BackportReport:
     """Cross-check the ELFs under *source_root* against the target firmware.
 
-    * *fw_libs_root* — a folder of ORIGINAL target-firmware sprx (what the
+    * *fw_libs_root* - a folder of ORIGINAL target-firmware sprx (what the
       console ships). Their exported NIDs count as "covered by firmware".
       Optional; without it every import is treated as "missing from firmware"
       and the report highlights what the fakelib must supply.
-    * *backport_libs_root* — the user's PATCHED library folder (also the
+    * *backport_libs_root* - the user's PATCHED library folder (also the
       argument to --backport-libs). Its exported NIDs count as "covered by
       fakelib" and the report gets more accurate.
 
@@ -879,7 +879,7 @@ def lower_sdk_in_folder(root: Path, target: str, words: tuple[int, int] | None =
     A raw ELF and a fake-signed SELF are both lowered (the SELF in place). A file
     that is neither (an encrypted SELF, or not an executable at all) is left alone
     and listed in skipped_not_elf. A file without a param segment is left alone
-    too — some helper prx have neither PT_SCE_PROCPARAM nor _MODULE_PARAM.
+    too - some helper prx have neither PT_SCE_PROCPARAM nor _MODULE_PARAM.
 
     Writes go through a temp file + os.replace so a crash never leaves a
     truncated ELF next to the source."""

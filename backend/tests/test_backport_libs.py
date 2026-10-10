@@ -1,4 +1,4 @@
-"""Downloader + prepare_target — Tk-free. The downloader is exercised against a local
+"""Downloader + prepare_target - Tk-free. The downloader is exercised against a local
 HTTP server (no live GitHub), so the tests run offline; prepare_target runs an actual
 BPS end-to-end using a synthetic 10.01-shaped source and a patch this test builds itself.
 
@@ -63,7 +63,7 @@ def _serve(repo: _LocalRepo):
 class DownloadPatches(unittest.TestCase):
     def setUp(self):
         self.repo = _LocalRepo()
-        # The bytes are just placeholders — the downloader only cares about size + SHA.
+        # The bytes are just placeholders - the downloader only cares about size + SHA.
         self.repo.add("7xx", "libSceX.bps", b"BPS1" + b"\x80" * 4 + struct.pack("<I", 0) * 3)
         self.repo.add("7xx", "libSceY.bps", b"BPS1" + b"\x80" * 6 + struct.pack("<I", 0) * 3)
         self.srv, self.th = _serve(self.repo)

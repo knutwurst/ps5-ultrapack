@@ -1,7 +1,7 @@
-"""Unit tests for ArchiveExtractor — the saved-password loop (a wrong first password
+"""Unit tests for ArchiveExtractor - the saved-password loop (a wrong first password
 must not stop the right one from being tried), AES-encrypted zips (stdlib zipfile
 cannot read them; they go through the 7-Zip CLI), multi-root archives (a base game
-beside its patch) — and the settings redaction of the diagnostics export.
+beside its patch) - and the settings redaction of the diagnostics export.
 
 Headless: the GUI module is loaded with exec_module (importing it creates no Tk
 window). Cases that need the native 7-Zip CLI are skipped when `7zz` is not on
@@ -36,7 +36,7 @@ _spec.loader.exec_module(m)
 SEVENZZ = shutil.which("7zz")
 try:
     import py7zr
-except ImportError:          # pragma: no cover — the venv has it
+except ImportError:          # pragma: no cover - the venv has it
     py7zr = None
 
 AE = m.ArchiveExtractor
@@ -197,7 +197,7 @@ class NativeCliPasswordLoop(_Base):
 
 
 class FakeCliClassification(_Base):
-    """_run_extract_process / _sevenz decisions, driven by a fake tool — no 7zz needed."""
+    """_run_extract_process / _sevenz decisions, driven by a fake tool - no 7zz needed."""
 
     def _run(self, mode):
         return AE._run_extract_process([sys.executable, str(self.fake), mode], "faketool", log_fn=self.log)

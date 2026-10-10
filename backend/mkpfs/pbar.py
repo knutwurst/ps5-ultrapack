@@ -124,7 +124,7 @@ class Progress:
 
         This always writes to stderr so CLI output and progress remain separate
         from normal stdout usage.  When a GUI listener is active the terminal
-        write is suppressed — the listener already routes the message to the
+        write is suppressed - the listener already routes the message to the
         UI thread via ``_progress_queue``.
         """
         # Fire structured listener (GUI).

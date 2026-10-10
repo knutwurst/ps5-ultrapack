@@ -13,8 +13,8 @@ The tests use two kinds of source:
      LibProsperoPkg should reject cleanly rather than crash.
 
 Every test:
-  - prints its own PASS/FAIL line with a one-sentence reason
-  - checks structural invariants (validate), not just byte identity, because
+ - prints its own PASS/FAIL line with a one-sentence reason
+ - checks structural invariants (validate), not just byte identity, because
     fake-signing rewrites eboot.bin and the builder canonicalises param.json.
 
 Failure is diagnostic: each chain reports which sub-step (extract-inner,
@@ -173,7 +173,7 @@ def make_synth_folder(dst: Path, *,
         (dst / "sce_sys").mkdir(exist_ok=True)
         (dst / "sce_sys" / "icon0.png").write_bytes(make_png_1x1_rgb())
     if with_eboot:
-        # Minimal ELF stub — 4 bytes of ELF magic + padding
+        # Minimal ELF stub - 4 bytes of ELF magic + padding
         (dst / "eboot.bin").write_bytes(b"\x7FELF" + b"\x00" * 60)
     for rel, blob in (data_files or []):
         p = dst / rel; p.parent.mkdir(parents=True, exist_ok=True)
@@ -201,7 +201,7 @@ def test_environment(r: Runner):
 
 
 def test_chain1_folder_pkg_folder(r: Runner):
-    """folder → fPKG → folder — round-trip via the CLI end-to-end."""
+    """folder → fPKG → folder - round-trip via the CLI end-to-end."""
     hbt = fetch_hbt(r.work / "hbt")
     out_pkg = r.work / "c1_pkg"; out_ext = r.work / "c1_ext"
     for d in (out_pkg, out_ext):
@@ -273,7 +273,7 @@ def png_colour(p: Path) -> int | None:
 
 
 def test_chain2_folder_ffpfsc_folder_pkg(r: Runner):
-    """folder → .ffpfsc → folder → fPKG — the mkpfs-then-fpkg chain."""
+    """folder → .ffpfsc → folder → fPKG - the mkpfs-then-fpkg chain."""
     hbt = fetch_hbt(r.work / "hbt")
     ff = r.work / "c2_ffpfsc"; up = r.work / "c2_unpack"; pkgd = r.work / "c2_pkg"
     for d in (ff, up, pkgd):
@@ -288,7 +288,7 @@ def test_chain2_folder_ffpfsc_folder_pkg(r: Runner):
 
     rc, log = r.run_cli([str(ffpath), str(up), "--unpack", "--overwrite"])
     r.check("chain2.unpack.rc", rc == 0, "mkpfs unpack ok", log[-400:])
-    # Find the unpacked /app0 folder — mkpfs writes to a subdir
+    # Find the unpacked /app0 folder - mkpfs writes to a subdir
     candidates = [p for p in up.rglob("sce_sys") if p.is_dir()]
     if not r.check("chain2.unpack.app0", candidates, "sce_sys/ present", "no sce_sys/ found"):
         return
@@ -311,7 +311,7 @@ def test_chain2_folder_ffpfsc_folder_pkg(r: Runner):
 
 
 def test_chain3_pkg_folder_ffpfsc(r: Runner):
-    """fPKG → folder → .ffpfsc — mkpfs must accept our extracted /app0 tree."""
+    """fPKG → folder → .ffpfsc - mkpfs must accept our extracted /app0 tree."""
     hbt = fetch_hbt(r.work / "hbt")
     seed_pkg = r.work / "c3_seed"; ext = r.work / "c3_ext"; ff = r.work / "c3_ffpfsc"
     for d in (seed_pkg, ext, ff):
@@ -508,7 +508,7 @@ def test_validate_catches_untouched_ffpfsc(r: Runner):
 
 
 def test_inner_modes(r: Runner):
-    """Build with each inner-codec mode — all must produce a valid, self-extracting pkg."""
+    """Build with each inner-codec mode - all must produce a valid, self-extracting pkg."""
     hbt = fetch_hbt(r.work / "hbt")
     for mode in ("none", "zlib", "kraken"):
         out = r.work / f"mode_{mode}"
@@ -553,7 +553,7 @@ def test_no_eboot_caught_by_validate(r: Runner):
                          "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
     pkg = next(out.glob("*.pkg"), None)
     if pkg is None:
-        # builder correctly rejected — perfect
+        # builder correctly rejected - perfect
         r.check("no-eboot.builder-rejected", rc != 0, "builder refused the folder",
                 f"rc={rc}; log: {log[-300:]}")
         return
@@ -578,7 +578,7 @@ def test_tool_path_resolution(r: Runner):
             fpkg.is_available() and TOOL.samefile(fpkg.tool_path()),
             f"{fpkg.tool_path()}",
             "backend/fpkg.py couldn't locate the native tool")
-    prev = os.environ.get("FFPFSC_PKG_TOOL")     # restore afterwards — a variant run relies on it
+    prev = os.environ.get("FFPFSC_PKG_TOOL")     # restore afterwards - a variant run relies on it
     bogus = str(r.work / "does-not-exist" / fpkg._TOOL_NAME)
     try:
         # 1) an override that does not exist is skipped; backend/native/ resolves the tool
@@ -824,7 +824,7 @@ def test_list_and_selective_extract(r: Runner):
     hbt = fetch_hbt(r.work / "hbt")
 
     # Fixture 2: a synthetic /app0 with a few 20-40 MB files. HomebrewTest's real eboot.bin
-    # and sce_sys are copied in — the synth ELF stub is not fake-signable, the build refuses it.
+    # and sce_sys are copied in - the synth ELF stub is not fake-signable, the build refuses it.
     synth = make_synth_folder(r.work / "lsx_src", with_param=False, with_icon=False, with_eboot=False,
                               data_files=[("data/blob1.bin", os.urandom(30_000_000)),
                                           ("data/sub/blob2.bin", os.urandom(20_000_000)),

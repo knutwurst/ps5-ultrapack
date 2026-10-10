@@ -124,7 +124,7 @@ class RealBackPorkPatch(unittest.TestCase):
         # (the older-firmware library). Both are non-empty and BPS's own footer verifies.
         self.assertGreater(hdr.source_size, 0)
         self.assertGreater(hdr.target_size, 0)
-        # The footer's own CRC32 must verify — apply() enforces this before touching
+        # The footer's own CRC32 must verify - apply() enforces this before touching
         # the source. Read the checksum directly to test it in isolation:
         footer_crc = struct.unpack_from("<I", patch, len(patch) - 4)[0]
         self.assertEqual(zlib.crc32(patch[:-4]), footer_crc)

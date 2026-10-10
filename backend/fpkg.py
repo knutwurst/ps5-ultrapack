@@ -150,12 +150,12 @@ def is_ps4(pkg: Path) -> bool:
 
 def list_inner(pkg: Path, *, passcode: str = "0" * 32) -> dict:
     """
-    Directory tree of a package's inner image — plus the sce_sys metadata the CNT
-    carries — WITHOUT decoding the whole image (the tool reads only the blocks it
+    Directory tree of a package's inner image - plus the sce_sys metadata the CNT
+    carries - WITHOUT decoding the whole image (the tool reads only the blocks it
     touches; a 240 MB package lists in ~0.1 s reading ~1.5 MiB).
 
     Returns the tool's JSON: {"root", "entries": [{"path", "type", "size", "source"}],
-    "file_count", "dir_count", "errors"} — the same shape the PFS browser uses for
+    "file_count", "dir_count", "errors"} - the same shape the PFS browser uses for
     .ffpfs/.ffpfsc listings. Raises RuntimeError with the tool's last message on failure.
     """
     argv = ([str(tool_path()), "ps4-list", str(pkg)] if is_ps4(pkg)
@@ -171,7 +171,7 @@ def extract_members(pkg: Path, out_dir: Path, members_file: Path,
                     *, passcode: str = "0" * 32, on_line=None) -> int:
     """
     Extract only the members listed in *members_file* (one inner path per line; a
-    directory means its whole subtree) — decoded block-wise, never the whole image.
+    directory means its whole subtree) - decoded block-wise, never the whole image.
     Progress lines '[####] NN% extract (path)' stream through *on_line*.
     """
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
@@ -208,43 +208,43 @@ def build(src_dir: Path, out_dir: Path,
     """
     Build a debug fPKG from a prepared /app0-style source folder.
 
-    - content_id must match XX0000-XXXX00000_00-XXXXXXXXXXXXXXXX (36 chars).
-    - title_id must be XXXX00000 (9 chars).
-    - Every build Kraken-packs each file individually (raw only when that would not
-      shrink it) — that is the native package layout and cannot be switched off.
+ - content_id must match XX0000-XXXX00000_00-XXXXXXXXXXXXXXXX (36 chars).
+ - title_id must be XXXX00000 (9 chars).
+ - Every build Kraken-packs each file individually (raw only when that would not
+      shrink it) - that is the native package layout and cannot be switched off.
       inner_mode adds a codec LAYER over the whole inner image on top of that:
       'kraken' = block-level Kraken layer (v1.2.0 path; the configuration verified to
       launch on a retail PS5, default), 'none' = no extra layer (console-untested),
       'zlib' = the legacy whole-inner PFSC layer. Measured on already Kraken-packed
       data the three produce the same size; they differ in structure.
-    - kraken_backend 'builtin' uses LibProsperoPkg's own managed encoder (no external DLL)
+ - kraken_backend 'builtin' uses LibProsperoPkg's own managed encoder (no external DLL)
       and is the only backend whose output launches on a console. 'uncompressed' and
       'automatic' (stored blocks) install but fail to launch with CE-100096-6 (verified).
       'publishingtools' requires Sony's libScePubTools.dll at the given path AND
       64-bit Windows: on any other OS LibProsperoPkg throws ("the Reduced Oodle backend
-      requires 64-bit Windows") and the build fails — there is no fallback. Verified
+      requires 64-bit Windows") and the build fails - there is no fallback. Verified
       with the real DLL on macOS.
-    - retail_normalize: for a "standard"-DRM source, inject valid license entries, set
+ - retail_normalize: for a "standard"-DRM source, inject valid license entries, set
       the retail SELF flavour on executables and add Sony-style param.json fields
       (drm_type=16 comes from the patched LibProsperoPkg). Default on.
-    - hdr_flag: param.json attribute bit 29 (HDR support). 'auto' (default) keeps what the
-      source declares — the publisher's intent; a console on "HDR when supported" switches
+ - hdr_flag: param.json attribute bit 29 (HDR support). 'auto' (default) keeps what the
+      source declares - the publisher's intent; a console on "HDR when supported" switches
       to HDR output for the title only when the bit is set. 'on' sets it, 'off' clears it.
-    - regen_playgo: discard the source's sce_sys/playgo-*.dat even when they look valid.
-      A CORRUPT set (wrong on-wire format — some containers ship these files with
+ - regen_playgo: discard the source's sce_sys/playgo-*.dat even when they look valid.
+      A CORRUPT set (wrong on-wire format - some containers ship these files with
       swapped contents) is always discarded and regenerated; that alone turned an
       "installs but will not start" package into a launching one.
-    - fake_sign: fake-sign raw ELFs found in the source (idempotent). Default on.
-    - ampr_index: rebuild ampr_emu.index over the packed files when the source ships the
+ - fake_sign: fake-sign raw ELFs found in the source (idempotent). Default on.
+ - ampr_index: rebuild ampr_emu.index over the packed files when the source ships the
       AMPR emulator (fakelib/libSceAmpr.sprx). Default on.
-    - temp_dir: where LibProsperoPkg stages the inner image / CNT / outer image
+ - temp_dir: where LibProsperoPkg stages the inner image / CNT / outer image
       (defaults to $TMPDIR). Pass the app's fast temp drive for big games.
-    - level: Kraken preset. Measured: 0..9 give byte-identical output (the encoder's
+ - level: Kraken preset. Measured: 0..9 give byte-identical output (the encoder's
       'normal' regime) was true of the 1.2.0 build; on d7090eb6 every level gives a
       different package. Measured on the retail sample, 8 workers: -4..-1 fastest and ~2 %
       larger than 7; 0..5 a tenth slower than -4 and 0.3 % larger than 7; 7 is 4.6x slower
       than 5; 8 and 9 are slower still for 0.1-0.2 MB. The GUI's slider defaults to 0.
-    - parallelism: Kraken (and outer-PFS) workers; 0 = the tool's default, one per core.
+ - parallelism: Kraken (and outer-PFS) workers; 0 = the tool's default, one per core.
       Deterministic: any worker count gives the same bytes (measured 4/8/12 vs 1).
     """
     src_dir = Path(src_dir); out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)

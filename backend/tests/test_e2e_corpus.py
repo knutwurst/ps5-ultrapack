@@ -21,7 +21,7 @@ param.json is canonicalised, placeholder license files and non-JSON *.json in sc
 dropped (a debug license is issued), a corrupt PlayGo set is regenerated, a presentation PNG
 that is not an 8-bit PNG in its required mode is rebuilt from its DDS, DDS icons are added,
 and ampr_emu.index is rebuilt when the AMPR emulator ships. Every other file must be
-byte-identical and present after extraction — including the sce_sys files the package keeps
+byte-identical and present after extraction - including the sce_sys files the package keeps
 in its metadata table. sce_sys/keystone (the save-data key) must always be identical.
 
 The report is written to <work>/e2e-report.json and printed; exit code 0 = all passed.
@@ -200,7 +200,7 @@ def main() -> int:
     tmp = work / "tmp"; tmp.mkdir()
     print(f"source: {src}\nwork:   {work}\nbackend: {'app ' + str(e.app) if e.app else 'source tree'}", flush=True)
 
-    # R — the reference folder
+    # R - the reference folder
     if src.is_dir():
         ref = src
     else:
@@ -211,7 +211,7 @@ def main() -> int:
     ampr = (ref / "fakelib" / "libSceAmpr.sprx").is_file()
     print(f"reference: {len(E2E.tree(ref))} files, AMPR emulator: {ampr}", flush=True)
 
-    # C1 — container/folder → .pkg → validate → extract
+    # C1 - container/folder → .pkg → validate → extract
     rc, log = e.backend([str(src), str(work / "C1"), "--fpkg-build", str(src), "--fpkg-inner", "kraken",
                          "--fpkg-kraken-backend", "builtin", "--compression-level", "7", "--temp-dir", str(tmp)], "C1-build")
     pkg = next((work / "C1").glob("*.pkg"), None)
@@ -223,7 +223,7 @@ def main() -> int:
         if e.check("C1.extract", x.returncode == 0, (x.stderr or "")[-300:]):
             e.expected_changes_only("C1", ref, work / "C1x", ampr)
 
-    # C2 — R → .ffpfsc → unpack
+    # C2 - R → .ffpfsc → unpack
     rc, log = e.backend([str(ref), str(work / "C2"), "--pack", "--overwrite", "--temp-dir", str(tmp)], "C2-pack")
     ff = next((work / "C2").glob("*.ffpfsc"), None)
     if e.check("C2.pack", rc == 0 and ff is not None, log[-300:]):
@@ -232,7 +232,7 @@ def main() -> int:
         if e.check("C2.unpack", rc == 0 and got is not None, log[-300:]):
             e.identical("C2", ref, got)
 
-    # C3 — R → .ffpfs (uncompressed) → unpack
+    # C3 - R → .ffpfs (uncompressed) → unpack
     rc, log = e.backend([str(ref), str(work / "C3"), "--pack", "--no-compress", "--overwrite", "--temp-dir", str(tmp)], "C3-pack")
     fs = next((work / "C3").glob("*.ffpfs"), None)
     if e.check("C3.pack", rc == 0 and fs is not None, log[-300:]):
@@ -241,7 +241,7 @@ def main() -> int:
         if e.check("C3.unpack", rc == 0 and got is not None, log[-300:]):
             e.identical("C3", ref, got)
 
-    # C4 — extract of C1 → .ffpfsc → unpack == extract of C1
+    # C4 - extract of C1 → .ffpfsc → unpack == extract of C1
     if (work / "C1x").is_dir():
         rc, log = e.backend([str(work / "C1x"), str(work / "C4"), "--pack", "--overwrite", "--temp-dir", str(tmp)], "C4-pack")
         ff4 = next((work / "C4").glob("*.ffpfsc"), None)
@@ -251,7 +251,7 @@ def main() -> int:
             if e.check("C4.unpack", rc == 0 and got is not None, log[-300:]):
                 e.identical("C4", work / "C1x", got)
 
-    # C5 — deterministic .pkg from the folder and from the container are the same bytes
+    # C5 - deterministic .pkg from the folder and from the container are the same bytes
     if not src.is_dir():
         shas = []
         c5a = None
@@ -265,11 +265,11 @@ def main() -> int:
                 c5a = p
         e.check("C5.folder-vs-container-identical", shas[0] == shas[1], f"{shas[0][:16]} vs {shas[1][:16]}")
 
-        # C6 — package → folder → package fixed-point check: extracting a deterministic package
+        # C6 - package → folder → package fixed-point check: extracting a deterministic package
         # and building it again (same options) should give the same bytes.  The first round-trip
         # from a raw source may legitimately differ (the lib normalises fSELF→SELF headers and
         # enriches PlayGo scenario metadata that a corrupt or absent source set lacked), so a
-        # mismatch is a warning, not a failure — the system reaches a fixed point on the NEXT
+        # mismatch is a warning, not a failure - the system reaches a fixed point on the NEXT
         # iteration once the normalisation has happened.
         if c5a is not None:
             x = subprocess.run([str(e.tool()), "extract-inner", str(c5a), str(work / "C6x")],

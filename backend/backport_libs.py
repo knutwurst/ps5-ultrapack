@@ -1,6 +1,6 @@
 """Prepare a folder of backport libraries from the user's own firmware libraries.
 
-BestPig's BackPork ships public BPS patches — small binary diffs — that turn a PS5 10.01
+BestPig's BackPork ships public BPS patches - small binary diffs - that turn a PS5 10.01
 system library into the version an older firmware loads. They are the community's
 documented way to build fakelib content, and they can be redistributed under BackPork's
 own licence. The user still has to bring the 10.01 libraries themselves; those come from
@@ -8,7 +8,7 @@ the user's firmware, are never bundled with this app and never leave their machi
 
 This module downloads the current BackPork patches from GitHub (small files, cached), then
 walks the user's 10.01 library folder and, for every published patch, writes a patched
-copy into a target-firmware subfolder — the same folder the job dialog's "Patched
+copy into a target-firmware subfolder - the same folder the job dialog's "Patched
 libraries" field points at.
 
     prepare_target("7.61", fw_libs_root, out_root)
@@ -149,7 +149,7 @@ _LIB_SUFFIXES = (".sprx", ".prx")
 
 def _find_source_library(patch_stem: str, fw_libs_root: Path) -> Path | None:
     """The patch is <libname>.bps; look for <libname>.sprx first, then .prx, in
-    *fw_libs_root* (root or one level deep) — Sony's library folder can have subdirs."""
+    *fw_libs_root* (root or one level deep) - Sony's library folder can have subdirs."""
     for suf in _LIB_SUFFIXES:
         p = fw_libs_root / (patch_stem + suf)
         if p.is_file():
@@ -182,7 +182,7 @@ def prepare_target(target: str, fw_libs_root: Path, out_root: Path,
                    log: Callable[[str], None] | None = None) -> PrepareResult:
     """Download the BackPork patches for *target* (using or refreshing *cache_dir*) and
     write the patched libraries into *out_root* / *target* /. *fw_libs_root* must hold
-    the user's 10.01 libraries — BackPork patches only accept a 10.01 source. Missing or
+    the user's 10.01 libraries - BackPork patches only accept a 10.01 source. Missing or
     mismatching sources are reported, never guessed at."""
     if target not in TARGETS:
         raise BackportLibsError(f"unknown backport target {target!r}; expected 7.61 or 6.02")
