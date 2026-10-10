@@ -164,11 +164,7 @@ LONG_STEPS = ("Extracting", "Creating Temp PFS", "Compressing", "Writing Final I
 
 
 def job_time_left(phases, stage, stage_left, stage_elapsed, size, rates, widths) -> float | None:
-    """Seconds a job still needs: *stage_left* for the running *stage*, then every later step
-    of *phases* at the speed this Mac showed for it before (*rates*: bytes of the game per
-    second), else in the proportion of the progress bands (*widths*) to the running step's
-    whole time (elapsed + left). None when the running step is not one of the job's long
-    steps or its time left is not known."""
+    """Seconds a job still needs: *stage_left* for the running *stage*, then every later step of *phases* at the speed this Mac showed for it before (*rates*: bytes of the game per second), else in the proportion of the progress bands (*widths*) to the running step's whole time (elapsed + left)."""
     if stage not in phases or stage_left is None:
         return None
     total = float(stage_left)
@@ -203,12 +199,7 @@ def get_total_space(path: Path) -> int:
 
 
 def same_drive(path_a: Path, path_b: Path) -> bool:
-    """True if both paths are on the same filesystem/volume.
-
-    Uses the device id (st_dev) - correct on macOS/Linux, where Path.drive is
-    always '' and the old comparison wrongly reported every pair as 'same drive'
-    (which over-estimated the temp space needed when temp and output were on
-    different volumes). Falls back to drive letters only if stat fails."""
+    """True if both paths are on the same filesystem/volume."""
     try:
         a = path_a if path_a.exists() else path_a.parent
         b = path_b if path_b.exists() else path_b.parent
@@ -337,11 +328,7 @@ def _item_is_single_pass(item) -> bool:
 
 
 def _build_size_of(item) -> int:
-    """The honest EXTRACTED size to base space decisions on: the header-read extracted
-    size when known, else item.size (already extracted for folders/disk images). For an
-    ARCHIVE whose header could not be read (extracted_size == 0), return 0 = UNKNOWN so
-    the gate/placement take the safe path (route to the larger drive / defer) instead of
-    silently using the much-smaller COMPRESSED size and false-passing onto a small SSD."""
+    """The honest EXTRACTED size to base space decisions on: the header-read extracted size when known, else item.size (already extracted for folders/disk images)."""
     es = getattr(item, "extracted_size", 0)
     if es:
         return int(es)
@@ -555,18 +542,7 @@ COMPRESSED_OUTPUT_RATIO = 0.75
 
 def estimate_output_space_needed(game_size: int, compressed: bool = True,
                                  known_packed: int = 0) -> int:
-    """Free space the OUTPUT drive must have for the final container.
-
-    UNCOMPRESSED (.ffpfs): the container IS the full inner image → 1.05x (block
-    alignment + headers).
-
-    COMPRESSED (.ffpfsc): reserving 1.05x the UNPACKED size ignores the whole point of
-    compression and skips titles that comfortably fit. Reserve a realistic fraction of
-    the unpacked size (COMPRESSED_OUTPUT_RATIO), floored by the known compressed source
-    set (*known_packed*, the .rar volume total) × 1.25 so a barely-compressible game
-    (large .rar) is still reserved near full size, and capped at the incompressible 1.05x
-    worst case so it never over-reserves. The backend's pre-pass-2 assert is the hard
-    backstop if a title compresses worse than estimated (a clean late skip, no corruption)."""
+    """Free space the OUTPUT drive must have for the final container."""
     worst = int(game_size * 1.05)
     if not compressed:
         return worst
@@ -577,19 +553,7 @@ def estimate_output_space_needed(game_size: int, compressed: bool = True,
 
 
 def _space_requirements(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, int]]:
-    """What the chosen placement needs, drive by drive: [(label, folder, bytes needed)].
-
-    The single source of truth for the pre-flight gate (_space_preflight_ok) and the
-    Drive Space Diagnostics dialog, so the dialog never warns about a run the gate lets
-    through or the other way round. Shapes, driven by how _resolve_extract_root placed
-    the run:
-      • copy - same drive is a rename (nothing); cross-drive needs the size.
-      • single-pass - a disk image compressed directly: only the output drive.
-      • pool split - inner image on one SSD, extracted source on another, final out.
-      • image on temp - inner image on the SSD; source (archives) + final on the output.
-      • one drive - the whole scratch on temp; the final on the output drive.
-    Pass 2 streams (MkPFS writes no spool for this app's options), so no spool term.
-    An unknown size returns [] - placement used the larger drive, the backend asserts."""
+    """What the chosen placement needs, drive by drive: [(label, folder, bytes needed)]."""
     temp_dir, out_dir = Path(temp_dir), Path(out_dir)
     size = _build_size_of(item)
     if size <= 0:
@@ -1281,11 +1245,7 @@ def guess_game_name(path: Path) -> str:
 
 
 def guess_game_version(path: Path) -> str:
-    """Best-effort game/content version, or '' if unknown. Prefers the dump's own
-    param.json (contentVersion = authoritative), falling back to the folder name.
-    Accepts both the short form '01.004' AND the full PS5 form '01.200.000' - the old
-    regex rejected the full form, so a patched game's real contentVersion was skipped and
-    it fell back to masterVersion ('01.00'), mislabelling patched games as v01.00."""
+    """Best-effort game/content version, or '' if unknown."""
     # X.YY / X.YYY with an optional third group (the full PS5 XX.YYY.ZZZ version).
     _VER = r"\d{1,2}\.\d{2,3}(?:\.\d{2,3})?"
     try:
@@ -1391,15 +1351,7 @@ def descriptive_ffpfsc_name(item, ext: str = ".ffpfsc", *,
                             ver_override: str | None = None,
                             v_prefix: bool = False,
                             fw_override: str | None = None) -> str:
-    """Build a findable output filename for *item*:
-    '<Game Name> [<TITLEID>] [v<version>]<ext>'  (version omitted if unknown).
-    Falls back to the title id alone if the name is missing. *ext* is '.ffpfsc'
-    (compressed) or '.ffpfs' (uncompressed).
-
-    The *_override* arguments feed the auto-organize layout: the title / id / version read
-    from the game's own metadata instead of the source name; *v_prefix* writes the short
-    version tag as '[v01.200]' (the library convention) instead of '[01.200]'; *fw_override*
-    adds the firmware the game needs as '[fw10.00]'."""
+    """Build a findable output filename for *item*: '<Game Name> [<TITLEID>] [v<version>]<ext>' (version omitted if unknown)."""
     if not ext.startswith("."):
         ext = "." + ext
     PLACEHOLDERS = {"Unknown", "📦", "💾", "📤", ""}
@@ -1527,13 +1479,7 @@ def canonical_game_title(title: str) -> str:
 
 
 def organized_names(ident: dict, ext: str, item=None) -> tuple[str, str]:
-    """The auto-organize layout for one game - (folder, file):
-         '<Title> [<TITLEID>] [vXX.YYY.ZZZ]'                the per-game folder (full version)
-         '<Title> [<TITLEID>] [vXX.YYY] [fwN.NN]<ext>'      the file inside it (short version,
-                                                            the firmware the game needs)
-    *ident* carries 'title', 'title_id', 'version' as read from param.json and 'fw' from
-    the executable's SDK version (any may be empty; missing tags are simply left out). The file name goes through the same
-    ShadowMount byte budget / edition-fluff trimming as every other output name."""
+    """The auto-organize layout for one game - (folder, file): '<Title> [<TITLEID>] [vXX.YYY.ZZZ]' the per-game folder (full version) '<Title> [<TITLEID>] [vXX.YYY] [fwN.NN]<ext>' the file inside it (short version, the firmware the game needs) *ident* carries 'title', 'title_id', 'version' as read from param.json and 'fw' from the executable's SDK version (any may be empty; missing tags are simply left out)."""
     title = canonical_game_title(ident.get("title") or "")
     tid = (ident.get("title_id") or "").strip().upper()
     ver = (ident.get("version") or "").strip().lstrip("vV")
@@ -1691,19 +1637,7 @@ def _lib_version_tag(folder: str) -> str:
 
 
 def library_layout(items, known: dict | None = None):
-    """Where each recognised item belongs in a library: [(key, title folder, subdir, name)].
-    One title folder per title id, named after the highest version among the title's game
-    and update items (a joined folder's tag is never lowered):
-      PS5 image / game package   organized_names (the name auto-organize gives a build)
-      PS5 game folder            '<Title> [ID] [vFULL]'
-      PS5 update package         '<Title> [ID] UPDATE [vSHORT].pkg'
-      PS5 DLC package            '<Title> DLC <name> [ID] [v<set>].pkg', 'DLC Pack/' from
-                                 PS4_DLC_PACK_FROM DLCs on
-      PS5 backport package       '<Title> BACKPORT [fwX] [ID].pkg'
-      PS4 packages               ps4_layout (a folder: the package name without '.pkg')
-      archives                   keep their own name
-    *known* is {title id: Ps4Library} for title folders already in the library: PS4 keeps the
-    folder's spelling (ps4_layout), PS5 takes the canonical title; both join its 'DLC Pack'."""
+    """Where each recognised item belongs in a library: [(key, title folder, subdir, name)]."""
     known = known or {}
     groups: dict[str, list] = {}
     for it in items:
@@ -1930,13 +1864,7 @@ class ArchiveToolError(RuntimeError):
 
 
 class ArchiveExtractor:
-    """Extract ZIP / RAR / 7z to a temp subfolder and return the game root Path.
-
-    Libraries used (all optional - falls back to CLI tools if missing):
-      • ZIP - zipfile (stdlib, always available); AES-encrypted zips need the 7-Zip CLI
-      • RAR - rarfile  (pip install rarfile)
-      • 7z - py7zr    (pip install py7zr)  or  7z / 7za CLI on PATH
-    """
+    """Extract ZIP / RAR / 7z to a temp subfolder and return the game root Path."""
 
     SUPPORTED = {".zip", ".rar", ".7z"}
 
@@ -2073,12 +2001,7 @@ class ArchiveExtractor:
 
     @staticmethod
     def read_game_param(archive: Path, passwords=None) -> bytes | None:
-        """The game's sce_sys/param.json read out of *archive* alone, the other members
-        skipped: so the job knows the game's name and its output before anything is
-        unpacked. The game's is the shallowest one in the archive (a patch or DLC folder
-        beside it sits deeper). ZIP always; RAR and 7z only when they are not solid,
-        because there one member costs decompressing everything before it. None when it
-        cannot be read that cheaply, or the archive holds no param.json (a .pkg inside)."""
+        """The game's sce_sys/param.json read out of *archive* alone, the other members skipped: so the job knows the game's name and its output before anything is unpacked."""
         return ArchiveExtractor.read_shallowest(archive, "sce_sys/param.json", passwords)
 
     @staticmethod
@@ -2269,14 +2192,7 @@ class ArchiveExtractor:
 
     @staticmethod
     def probe_header(archive: Path, passwords=None) -> tuple[bool, int]:
-        """(opened, size): whether the archive's header could be read with one of
-        *passwords* (or none), and the total UNCOMPRESSED size of its members, read from
-        the headers WITHOUT extracting (milliseconds). A multi-part set is read from its
-        FIRST volume, so a later part still reports the whole game. The two answers are
-        separate on purpose: a header that opens can still hold a size too odd to trust
-        (plausible_extracted_size decides that), and that is no reason to ask for a
-        password. The size is the honest input to the space pre-check - third-party
-        archives are often compressed ~2:1, so the on-disk size badly undershoots."""
+        """(opened, size): whether the archive's header could be read with one of *passwords* (or none), and the total UNCOMPRESSED size of its members, read from the headers WITHOUT extracting (milliseconds)."""
         state, size, _reason = ArchiveExtractor.probe_header_state(archive, passwords)
         return state == "open", size
 
@@ -2348,12 +2264,7 @@ class ArchiveExtractor:
 
     @staticmethod
     def probe_header_state(archive: Path, passwords=None) -> tuple[str, int, str]:
-        """("open" | "locked" | "damaged", size, reason). "locked": every candidate failed
-        with a password error, so asking for one makes sense. "damaged": the archive
-        failed for another reason (bad data, a missing or broken part), so no password
-        will help and *reason* says why in plain words. RAR 5 tells the two apart with
-        its password check; a damaged ZIP is plainly damaged. A .7z keeps the old
-        answer (any failure reads as locked): its errors do not say which it is."""
+        """("open" | "locked" | "damaged", size, reason)."""
         suffix = archive.suffix.lower()
         if re.match(r"^\.r\d{2,}$", suffix):
             archive = ArchiveExtractor._first_volume(archive)
@@ -2407,11 +2318,7 @@ class ArchiveExtractor:
 
     @staticmethod
     def plausible_extracted_size(size: int, ondisk: int) -> int:
-        """*size* when it is a sane reading of the whole set, else 0 (the gate then
-        estimates). A successful read is trusted even when it is NOT larger than the
-        on-disk set: a stored archive is ~1:1, and RAR container overhead can make the
-        volume set slightly LARGER than the game (measured: a 148.9 GiB game vs 150.2 GiB
-        on disk). Only a floor of half the on-disk size rejects a bogus partial read."""
+        """*size* when it is a sane reading of the whole set, else 0 (the gate then estimates)."""
         return size if (size and size >= ondisk * 0.5) else 0
 
     @staticmethod
@@ -2838,11 +2745,7 @@ class ArchiveExtractor:
     @staticmethod
     def _run_native_7z(exe: str, archive: Path, dest: Path, log_fn=None, progress_fn=None,
                        password: str = "", cancel_event: threading.Event | None = None) -> None:
-        """Extract *archive* (any format the binary reads: 7z, zip, …) with the native
-        7-Zip CLI. -p is passed even when there is no password: without the switch
-        7-Zip prompts for one on an encrypted archive and blocks (with a closed stdin it
-        dies with exit 255 'Break signaled'), whereas an empty -p fails cleanly with
-        'Wrong password?' - and is a no-op on an unencrypted archive."""
+        """Extract *archive* (any format the binary reads: 7z, zip, …) with the native 7-Zip CLI."""
         cmd = [exe, "x", str(archive), f"-o{dest}", "-y", "-bsp1", f"-p{password}",
                # OS and archiver clutter is not extracted at all (strip_fs_junk catches the rest).
                "-xr!._*", "-xr!.DS_Store", "-xr!__MACOSX", "-xr!Thumbs.db", "-xr!desktop.ini"]
@@ -2960,18 +2863,7 @@ class ArchiveExtractor:
 
     @staticmethod
     def _find_root(dest: Path, log_fn=None) -> Path:
-        """Walk the extraction tree and return the PS5 game root.
-
-        Priority order:
-          1. The shallowest folder(s) that directly contain sce_sys/param.json
-             (definitive). Several at the same depth - a base game beside its patch
-             (<TID>-app/ + <TID>-patch/) or a multi-game bundle - yield their common
-             parent, so the caller's classification sees every game instead of
-             whichever one the directory listing happened to return first.
-          2. Any folder whose name matches a PS5 title-ID pattern  (PPSA/CUSA + 5 digits)
-          3. Single top-level folder unwrap (one level, legacy behaviour)
-          4. The dest itself as fallback
-        """
+        """Walk the extraction tree and return the PS5 game root."""
         from collections import deque
         # Level-by-level BFS (bounded): every folder of one depth is checked before
         # descending, so side-by-side game roots are seen together.
@@ -3474,12 +3366,7 @@ class GameItem:
 
     @classmethod
     def from_bundle(cls, bundle_dir: Path, game_source: Path, siblings, patch_source=None) -> "GameItem":
-        """A source folder holding one game (archive / game folder / disk image)
-        plus extra files (DLCs etc.). The game is packed into a recreated
-        '<bundle_dir name>' folder at the destination; the extras are copied next
-        to the .ffpfsc. Reuses the archive/folder/image item, then tags it. When
-        *patch_source* is set (auto-patch), it is overlaid onto the game via --patch
-        before packing and is kept out of the copied siblings."""
+        """A source folder holding one game (archive / game folder / disk image) plus extra files (DLCs etc.)."""
         suffix = game_source.suffix.lower()
         if game_source.is_dir():
             obj = cls(game_source)
@@ -3604,11 +3491,7 @@ class GameItem:
     def from_chain(cls, source: Path, *, to: str, output_path=None,
                    sign: bool = False, patch_source=None,
                    backport_target=None, backport_libs_root=None) -> "GameItem":
-        """The one job the job dialog produces: source → [patch → backport → sign] → *to*.
-        The source may be a game folder, a parent folder, an archive (extracted when its
-        turn comes, like a pack), a disk image, a .ffpfs/.ffpfsc or a .pkg. The backend's
-        --to chain resolves it, applies the changes and produces *to*; the GUI only names
-        the output and picks the drives."""
+        """The one job the job dialog produces: source → [patch → backport → sign] → *to*."""
         src = Path(source)
         suf = src.suffix.lower() if src.is_file() else ""
         if src.is_dir():

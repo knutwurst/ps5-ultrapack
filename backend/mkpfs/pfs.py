@@ -417,14 +417,7 @@ def encrypt_image_filesystem(
 
 @dataclass(frozen=True)
 class SignedInodeLayout:
-    """Describe the signed inode layout currently being written or parsed.
-
-    Attributes:
-        inode_size: Total serialized inode size.
-        entry_size: Size of each signed block entry, including signature and pointer.
-        block_format: ``struct`` format string for the on-disk block pointer.
-        pointer_table_offset: Offset where the signed db/ib entry table begins.
-    """
+    """Describe the signed inode layout currently being written or parsed."""
 
     inode_size: int
     entry_size: int
@@ -6495,13 +6488,7 @@ def verify_pfs_image(
 
 
 class _LogicalFileView:
-    """Seekable, read-only view over one inode's logical payload.
-
-    Decodes PFSC blocks on demand (with a small LRU cache) so a consumer can
-    randomly seek into a compressed inner file without materializing it. Supports
-    the contiguous, unsigned layout produced by single-file packing; encryption is
-    handled transparently via :func:`read_image_bytes`.
-    """
+    """Seekable, read-only view over one inode's logical payload."""
 
     _CACHE_BLOCKS: int = 16
 

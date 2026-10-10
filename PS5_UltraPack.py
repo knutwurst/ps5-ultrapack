@@ -342,13 +342,7 @@ def set_window_appearance(win, mode: str) -> None:
 
 
 class ScrollFrame(ctk.CTkScrollableFrame):
-    """A CTkScrollableFrame whose scrollbar shows only while the content is taller than
-    the frame; CustomTkinter keeps it on screen even when there is nothing to scroll.
-
-    The decision compares the content's requested height with the canvas height, once the
-    layout has settled. Deciding from the canvas's scroll fractions instead made the bar
-    blink: they arrive re-entrantly while the frame re-lays out, from a scroll region that
-    is briefly far too large, and hiding the bar re-lays it out again."""
+    """A CTkScrollableFrame whose scrollbar shows only while the content is taller than the frame; CustomTkinter keeps it on screen even when there is nothing to scroll."""
 
     SETTLE_MS = 60
 
@@ -586,14 +580,7 @@ class EmbeddedDialog(ctk.CTkFrame):
 
 
 class MessageWindow(ctk.CTkToplevel):
-    """A message or a single question in a small window of its own: a job's result, an
-    error report, the space check before a start, a password or folder prompt. Work
-    surfaces (Add job, Look inside, Settings) are panels of the main window instead.
-
-    The window uses the main window's colours and opens centred over it, in the upper
-    third like a macOS alert. The heading inside the window names it, so the title bar
-    stays empty. Escape runs the close handler. It waits until the main window is on
-    screen, and a grab asked for before that is applied once it shows."""
+    """A message or a single question in a small window of its own: a job's result, an error report, the space check before a start, a password or folder prompt."""
 
     def __init__(self, parent=None, **kw):
         host = EmbeddedDialog.host
@@ -869,12 +856,7 @@ class FirstRunWizard(EmbeddedDialog):
 # ─── Detailed Error Dialog ─────────────────────────────────────────────────────
 
 class ErrorDialog(MessageWindow):
-    """One error window: the heading names the job kind, the body leads with
-    the short message the backend already wrote, an inline explanation says what that
-    means in plain words, and the log is one paragraph - not fifty repeated lines. The
-    generic 'possible causes' list is gone: whenever we can recognise the failure (a
-    disconnected drive, permission denied, low space, an unreadable archive password) the
-    explanation is specific; otherwise the log stays the primary source of truth."""
+    """One error window: the heading names the job kind, the body leads with the short message the backend already wrote, an inline explanation says what that means in plain words, and the log is one paragraph - not fifty repeated lines."""
 
     _TITLES = {
         "pack":         "Pack failed",
@@ -3229,15 +3211,7 @@ def _hdr_mode(v) -> str:
 
 
 class JobDialog(EmbeddedDialog):
-    """One job, three groups: 1. source → 2. change the content → 3. output.
-
-    Every job the app can run is a source (folder, parent folder, archive, disk image,
-    .ffpfs, .ffpfsc, .pkg), an optional set of content changes (patch → backport → sign)
-    and an output format (folder / .ffpfs / .ffpfsc / .pkg). The sentence above the Add
-    button says what the queue will do, and the queue row carries the same sentence. The
-    backend's --to chain does the work (see cli.py CHAIN MODE); GameItem.from_chain is the
-    item. Look inside (the PFS browser) is a peek, not a job - a link under the source.
-    Edit mode (item given) refills the dialog and swaps the item in place."""
+    """One job, three groups: 1."""
     LARGE = True
 
     _TARGET_LABEL = {"folder": "Folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "pkg": ".pkg", "organize": "Organize"}
@@ -5093,11 +5067,7 @@ class OrganizeView:
 
 
 class LookInsideView:
-    """Look inside as a view of the main window, laid out like Organize: open a .ffpfs,
-    .ffpfsc or .pkg (fPKG), see what is inside, and extract single files or folders without
-    unpacking the whole image. The backend reads only the blocks it needs (--list-image /
-    --extract-from). Read-only. Leaving the view (any sidebar entry) leaves an extraction
-    running; it reports here when it is done."""
+    """Look inside as a view of the main window, laid out like Organize: open a .ffpfs, .ffpfsc or .pkg (fPKG), see what is inside, and extract single files or folders without unpacking the whole image."""
 
     def __init__(self, parent, app):
         self.app = app
@@ -5630,12 +5600,7 @@ class App:
                               border_color=BTN_BORDER, **kw)
 
     def _build(self):
-        """The main window: sidebar (views + tools) | the active view | status bar.
-
-        Built from plain Tk widgets drawn by ui_kit, so it lays out and redraws fast. The
-        attribute names the rest of the app talks to (queue_listbox, start_btn, cancel_btn,
-        log_box, history_box, stats_box, command_label, overall_bar, stage_bar and every
-        *_var) keep their meaning."""
+        """The main window: sidebar (views + tools) | the active view | status bar."""
         kit = self.kit = Kit(self.root, self._theme)
         self.root.configure(fg_color=ctk_pair("bg"))
         self.root.grid_columnconfigure(0, weight=1)
@@ -7748,11 +7713,7 @@ class App:
                 return 0
 
     def _mark_no_spotlight(self, *dirs) -> None:
-        """macOS: drop a `.metadata_never_index` marker in each scratch dir so Spotlight
-        skips it. Without this, mdworker indexes every freshly-extracted game file (tens
-        of thousands of them) on the same drive we're reading from, stealing HDD I/O and
-        throttling the pack. Only our scratch dirs are touched - the user's finished
-        outputs stay indexable. Best-effort, idempotent, no-op off macOS."""
+        """macOS: drop a `.metadata_never_index` marker in each scratch dir so Spotlight skips it."""
         if sys.platform != "darwin":
             return
         for d in dirs:
@@ -7768,11 +7729,7 @@ class App:
                 pass
 
     def _warm_drive_types(self) -> None:
-        """Kick off background SSD/HDD probes for the source + temp + output drives so
-        temp_drive_label()/drive_type_cached() have honest data at pack time without ever
-        blocking the UI thread on diskutil/PowerShell. Cached per device, so this is a
-        no-op after the first probe of a given drive. (Source is included so the keep-awake
-        pinger correctly SKIPS a confirmed-SSD source instead of treating it as Unknown.)"""
+        """Kick off background SSD/HDD probes for the source + temp + output drives so temp_drive_label()/drive_type_cached() have honest data at pack time without ever blocking the UI thread on diskutil/PowerShell."""
         probes = [self.output_var.get().strip(), self.source_var.get().strip()]
         probes += [str(d) for d in self._temp_pool_dirs()]   # primary temp + extra pool drives
         for p in probes:
@@ -7803,11 +7760,7 @@ class App:
             return None
 
     def _temp_pool_dirs(self):
-        """Ordered, device-deduped list of fast-temp candidate directories: the primary
-        temp field first, then the extra pool dirs from Settings. The router spreads the
-        inner image / extracted source across these (and the keep-awake pinger covers
-        them). The primary is always included even if it doesn't exist yet (it's created on
-        demand); extra pool entries must exist."""
+        """Ordered, device-deduped list of fast-temp candidate directories: the primary temp field first, then the extra pool dirs from Settings."""
         out, seen = [], set()
         primary = self.temp_var.get().strip()
         cands = ([primary] if primary else []) + [str(p).strip() for p in getattr(self, "temp_pool", [])]
@@ -7945,11 +7898,7 @@ class App:
             self._keepawake_stop.wait(interval if active else 5)
 
     def _same_drive_rw_allowed(self, path) -> bool:
-        """Whether reading the source and writing the image/output on the SAME drive is OK
-        for *path* - costless on an SSD (no seek), painful on an HDD. Controlled by the
-        'same_drive_rw' setting: 'always' / 'never' / 'auto' (default → allow only when the
-        drive probes as an SSD). When allowed, the router keeps everything on this drive
-        instead of routing the source onto a slower output drive."""
+        """Whether reading the source and writing the image/output on the SAME drive is OK for *path* - costless on an SSD (no seek), painful on an HDD."""
         mode = (load_settings().get("same_drive_rw", "auto") or "auto").lower()
         if mode == "always":
             return True
@@ -8011,23 +7960,7 @@ class App:
         return probe
 
     def _resolve_extract_root(self, item, quiet: bool = False) -> Path:
-        """Place this run's artifacts across drives to maximise fast (SSD) temp use, and
-        record the choice on the item: _build_root (where an archive extracts) and
-        _build_temp (the backend --temp-dir = where the inner image goes). The pass-2 spool
-        is then placed ADAPTIVELY by the backend (SSD if it still fits beside the image,
-        else the output drive), so the SSD no longer has to hold image+spool together.
-
-        AUTO weighs three independent placements, each preferring the temp/SSD drive and
-        each falling back to the output drive - and never lets an HDD do a same-drive
-        read+write for the heavy steps:
-          1) Everything on the SSD (source + image + spool) when the full footprint fits.
-          2) SPLIT: inner image on the SSD, source extracted to the output drive (the spool
-             is auto-routed). Used when only the image - not image+spool - fits the SSD.
-          3) Everything on the output drive when the SSD can't even hold the image.
-          4) Nothing fits → leave temp; the space gate skips/aborts with real numbers.
-
-        Modes 'temp'/'spread' force the SSD / the output drive respectively; the backend's
-        adaptive spool still saves a too-tight 'temp' run from failing mid-pass-2."""
+        """Place this run's artifacts across drives to maximise fast (SSD) temp use, and record the choice on the item: _build_root (where an archive extracts) and _build_temp (the backend --temp-dir = where the inner image goes)."""
         archive = getattr(item, "archive_path", None)
         # Record the output format so the space gate sizes the OUTPUT-drive reservation
         # correctly (compressed .ffpfsc → realistic; uncompressed .ffpfs → full size).
@@ -8279,11 +8212,7 @@ class App:
         return roots
 
     def _extract_dir_for_item(self, item):
-        """The extract subdir THIS item was unpacked into (under a temp '_extracted' or
-        an output-drive '_ffpfsc_extract' folder the app created), or None for a plain
-        (non-extracted) source. Used so cleanup only ever removes this item's own data.
-        The scratch folder's parent must be one of the app's own roots - a library the
-        user named '_extracted' is never treated as throwaway."""
+        """The extract subdir THIS item was unpacked into (under a temp '_extracted' or an output-drive '_ffpfsc_extract' folder the app created), or None for a plain (non-extracted) source."""
         try:
             src = Path(getattr(item, "path", "") or "").resolve()
         except Exception:
@@ -8300,12 +8229,7 @@ class App:
         return None
 
     def _reclaim_temp_base_inline(self, tp: str) -> None:
-        """Remove our throwaway patch-extract dirs and, when the app-managed _ffpfsc_temp
-        folder is empty, the folder itself - so no empty temp folder lingers after a job.
-        Runs INLINE on the calling cleanup thread (after the heavy rmtree), so by the time
-        it checks 'empty' this item's own scratch is already gone. *tp* is the temp path
-        snapshotted on the MAIN thread (Tk vars aren't thread-safe). Only ever touches an
-        _ffpfsc_temp dir we manage; a user's custom-named temp folder is left alone."""
+        """Remove our throwaway patch-extract dirs and, when the app-managed _ffpfsc_temp folder is empty, the folder itself - so no empty temp folder lingers after a job."""
         tp = (tp or "").strip()
         if not tp:
             return
@@ -8357,11 +8281,7 @@ class App:
         self._run_cleanup(_work)
 
     def _free_source_after_pass1(self, item) -> None:
-        """Mid-build hook (on the backend's [PASS1-DONE] marker): pass 1 has produced the
-        inner image, so the extracted SOURCE is no longer needed (pass 2 reads only the inner
-        image, and an OOM retry resumes from it). Free it NOW to halve peak temp. Only ever
-        deletes a throwaway extract (under _extracted / _ffpfsc_extract); a user's own pack
-        folder yields None from _extract_dir_for_item and is never touched."""
+        """Mid-build hook (on the backend's [PASS1-DONE] marker): pass 1 has produced the inner image, so the extracted SOURCE is no longer needed (pass 2 reads only the inner image, and an OOM retry resumes from it)."""
         if item is None or getattr(item, "_source_freed", False):
             return
         own = self._extract_dir_for_item(item)
@@ -8386,11 +8306,7 @@ class App:
         self._run_cleanup(_work)
 
     def _cleanup_inner_image(self, item) -> None:
-        """Remove the persisted pass-1 inner image (kept on the build drive so an OOM retry
-        can resume pass-2 from it without rebuilding). Called on success and on terminal
-        failure/cancel - NEVER between OOM retries (those resume from it). The backend also
-        removes it on a clean pass-2 success; this is the GUI-side reaper for the failure /
-        give-up / cancel paths where the backend left it behind."""
+        """Remove the persisted pass-1 inner image (kept on the build drive so an OOM retry can resume pass-2 from it without rebuilding)."""
         if item is None:
             return
         inner = getattr(item, "_inner_image", None)
@@ -8422,11 +8338,7 @@ class App:
         self._run_cleanup(_work)
 
     def _candidate_passwords(self, item=None) -> list[str]:
-        """Ordered, de-duplicated password candidates for an extraction:
-        1) the explicit single-field password (left panel / settings),
-        2) a per-archive override on the queue item (if any),
-        3) every entry in the global auto-tried list.
-        Blank entries dropped; first occurrence wins."""
+        """Ordered, de-duplicated password candidates for an extraction: 1) the explicit single-field password (left panel / settings), 2) a per-archive override on the queue item (if any), 3) every entry in the global auto-tried list."""
         cands: list[str] = []
         explicit = self.password_var.get().strip()
         if explicit:
@@ -8682,12 +8594,7 @@ class App:
             self.update_game_details(self.queue[idx])
 
     def _resolve_archive_password(self, item) -> None:
-        """Prompt for an archive item's password when no saved candidate unlocks its
-        header (extracted_size is still 0 after from_archive's auto-probe). On success:
-        store the password ON the item (per-job override), persist it to settings (so
-        later archives unlock without asking again), AND fill in extracted_size - that
-        last bit is what the auto routing needs to place the build on the SSD instead
-        of falling back to the on-disk-size estimate. Skip leaves the item unchanged."""
+        """Prompt for an archive item's password when no saved candidate unlocks its header (extracted_size is still 0 after from_archive's auto-probe)."""
         if (getattr(item, "source_kind", "") != "archive"
                 or getattr(item, "extracted_size", 0) > 0
                 or not getattr(item, "archive_path", None)):
@@ -9090,12 +8997,7 @@ class App:
         return bool(self.auto_organize_var.get()) if v is None else bool(v)
 
     def _game_identity(self, item) -> dict | None:
-        """Title / title id / version of the GAME behind *item*, read from the source itself:
-        a folder's sce_sys/param.json, or the param.json inside a .ffpfs/.ffpfsc/.exfat/
-        .ffpkg image (MkPFS's game_metadata reads just that file - no unpacking). Cached on
-        the item (transient) so an OOM resume, whose source is gone by then, still names the
-        output identically. None when nothing usable is readable - an archive before its
-        extraction, or a source without param.json."""
+        """Title / title id / version of the GAME behind *item*, read from the source itself: a folder's sce_sys/param.json, or the param.json inside a .ffpfs/.ffpfsc/.exfat/ .ffpkg image (MkPFS's game_metadata reads just that file - no unpacking)."""
         cached = getattr(item, "_identity", None)
         if cached:
             return cached
@@ -9152,11 +9054,7 @@ class App:
         return ident
 
     def _archive_identity(self, item, passwords=None) -> dict | None:
-        """The game behind an archive job before it is extracted, from the param.json read
-        out of the archive alone (ZIP, RAR and 7z that are not solid). Kept on the job
-        (archive_title / _id / _version, saved with the queue); not the full identity: the
-        firmware tag needs the executable, so the extracted game is read again later and
-        this is never cached as _identity. *passwords* for a call off the main thread."""
+        """The game behind an archive job before it is extracted, from the param.json read out of the archive alone (ZIP, RAR and 7z that are not solid)."""
         if getattr(item, "archive_title", "") or getattr(item, "archive_title_id", ""):
             return {"title": item.archive_title, "title_id": item.archive_title_id,
                     "version": getattr(item, "archive_version", ""), "fw": ""}
@@ -9183,11 +9081,7 @@ class App:
         return dict(ident, fw="")
 
     def _name_jobs_from_games(self) -> None:
-        """Name every job after its game as soon as the game can be read: a folder's or an
-        image's param.json, a .pkg's, or the one inside a ZIP / RAR / 7z that is not solid.
-        A release name such as '[site]-PPSA12345.part01' says little. Runs off the main
-        thread (an image or a .pkg is read by a helper process); the passwords are
-        collected here first, because they come from a Tk field."""
+        """Name every job after its game as soon as the game can be read: a folder's or an image's param.json, a .pkg's, or the one inside a ZIP / RAR / 7z that is not solid."""
         todo = [it for it in self.queue if not getattr(it, "_name_probed", False)]
         if not todo:
             return
@@ -9378,14 +9272,7 @@ class App:
         return {"title": title.strip(), "title_id": tid, "version": ver}
 
     def _read_image_metadata(self, p: Path) -> dict | None:
-        """param.json-derived identity of a packed image, without unpacking it.
-
-        .ffpfs / .ffpfsc: our images nest an inner PFS inside an outer one, which MkPFS's
-        generic metadata reader does not follow (it reports 'missing exFAT signature') - so ask the backend's browse path for the single member sce_sys/param.json, exactly
-        like the PFS browser does (only the touched blocks are decompressed).
-        .pkg: read sce_sys/param.json out of the CNT via ffpfsc-pkg-tool's selective
-        extract (touches only the CNT entry - no full decompression).
-        .exfat / .ffpkg: the vendored MkPFS exFAT reader."""
+        """param.json-derived identity of a packed image, without unpacking it."""
         suf = p.suffix.lower()
         if suf in (".ffpfs", ".ffpfsc"):
             tmp = Path(tempfile.mkdtemp(prefix="ffpfsc_ident_"))
@@ -9647,11 +9534,7 @@ class App:
             return None
 
     def _existing_output(self, target: Path, item=None) -> Path | None:
-        """The file in the output folder that is this job's output already: same title,
-        version and format. When the job knows the firmware its output needs, the name says
-        so ([fwN.NN]) and only that file, or one from before firmware tags existed, counts.
-        When it does not know it yet (an archive before it is unpacked), the tag does not
-        count, except that a backport job wants a file at or below its target."""
+        """The file in the output folder that is this job's output already: same title, version and format."""
         try:
             if target.exists():
                 return target
@@ -10109,13 +9992,7 @@ class App:
             self.log("WARN", f"Saved queue: {skipped} item(s) skipped (source path missing/invalid).")
 
     def update_queue_box(self, select_item=None):
-        """Rebuild the listbox.
-
-        select_item: if given, that GameItem will be highlighted after the
-        rebuild (used by move-up/down so the correct item is tracked even
-        though the listbox selection is stale).  When omitted the previously
-        selected item is looked up by object identity; falls back to row 0.
-        """
+        """Rebuild the listbox."""
         # Per-job output: snapshot the current global Output onto any pack/convert item
         # that doesn't already carry one, so each queued job keeps the output it was added
         # with (patch/sign set their own; fake-sign has none). Runs right after an item is
@@ -10438,11 +10315,7 @@ class App:
         return info
 
     def _probe_pkg_content(self, item) -> int:
-        """Read the size of the game in a chain job's .pkg source from the package's own
-        directory (the tool's list-inner reads it, nothing is decoded). The package data is
-        compressed, so the game is larger than the file: the space check and the placement
-        need this number. Sets item.pkg_content_size and item.extracted_size; returns the
-        size, 0 when it cannot be read (the file size stays the floor)."""
+        """Read the size of the game in a chain job's .pkg source from the package's own directory (the tool's list-inner reads it, nothing is decoded)."""
         if getattr(item, "operation", "") != "chain" or chain_source_kind(item) != "pkg":
             return 0
         if getattr(item, "pkg_content_size", 0):
@@ -11446,16 +11319,7 @@ class App:
         return True
 
     def _cleanup_after_failure(self, item, keep_source: bool = False) -> None:
-        """Reclaim a failed/skipped/cancelled run's scratch: the mkpfs tmp* working dirs
-        (orphaned inner image + pass-2 spool) AND this item's own extracted-source subdir - scoped to the drive the run actually built on (item._build_temp), the user temp
-        folder, AND the output drive's _ffpfsc_temp (where a SPLIT run may have spilled its
-        pass-2 spool, ffpfsc_spool_*). Counted so the next batch gate waits for the reclaim.
-        Threaded (rmtree of a ~150 GB tree must not freeze the UI).
-
-        *keep_source* (set by an OOM retry): DON'T delete the extracted-source subdir - a
-        pass-1 retry rebuilds the inner image from it, and a pass-2 resume already freed it.
-        Only terminal failures/cancels delete the source. The persisted inner image
-        (_ffpfsc_inner) is never touched here; its lifecycle is _cleanup_inner_image."""
+        """Reclaim a failed/skipped/cancelled run's scratch: the mkpfs tmp* working dirs (orphaned inner image + pass-2 spool) AND this item's own extracted-source subdir - scoped to the drive the run actually built on (item._build_temp), the user temp folder, AND the output drive's _ffpfsc_temp (where a SPLIT run may have spilled its pass-2 spool, ffpfsc_spool_*)."""
         self._ampr_cleanup(item)   # restore a direct source folder we injected emu files into
         roots, seen = [], set()
         _jo = self._job_output_dir(item)
@@ -11547,16 +11411,7 @@ class App:
 
     # ── Feature 5: Auto-clear temp ────────────────────────────────────────────
     def _offer_startup_sweep(self):
-        """On launch, look for orphaned scratch from a crashed/cancelled run - tmp* and
-        _extracted on the temp drive, plus _ffpfsc_temp / _ffpfsc_extract on the output
-        drive - and offer to reclaim it. Sizing walks large trees, so it runs in a
-        background thread; the confirm prompt + delete are marshalled to the main thread.
-        Only this app's own working dirs are ever touched.
-
-        1.1.8: also scans every unique output folder recorded in the history so leftovers
-        on drives the user built to in past sessions (a spread run, an aborted job on an
-        external HDD) get surfaced instead of aging out silently. Threshold dropped from
-        1 GiB → 64 MiB so small-but-real orphans stop accumulating."""
+        """On launch, look for orphaned scratch from a crashed/cancelled run - tmp* and _extracted on the temp drive, plus _ffpfsc_temp / _ffpfsc_extract on the output drive - and offer to reclaim it."""
         if getattr(self, "_browser_only", False):
             return   # browser-only launch (double-clicked a .ffpfsc) - don't prompt on the hidden window
         NAMES = ("_extracted", "_ffpfsc_extract", "_ffpfsc_temp", "_ffpfsc_inner")
@@ -11891,11 +11746,7 @@ class App:
         return tid if tid.startswith(("PPSA", "CUSA")) else ""
 
     def _known_signatures(self, include_history: bool = True) -> tuple[set[str], set[str]]:
-        """What Rescan matches a new source against: (resolved source paths, title ids).
-        Each entry comes from the queue (any status) or from the history, so a job that
-        is already queued, is done, failed, was skipped or ran in an earlier session is
-        found again - the archive at the same path, the same release renamed, and the
-        folder output of an unpacked archive all match."""
+        """What Rescan matches a new source against: (resolved source paths, title ids)."""
         paths: set[str] = set()
         tids: set[str] = set()
         for it in self.queue:
@@ -12048,11 +11899,7 @@ class App:
         return make
 
     def _add_jobs_async(self, sources, make) -> None:
-        """Build the jobs for *sources* on a worker thread and hand them to the main loop one
-        at a time (_drain_add_q): each appears in the queue as soon as it is ready, a line
-        and a bar above the list count them, and Start waits until the last one is in. An
-        archive's headers are read here, which for a many-part set on a slow drive takes
-        seconds each; on the main thread the window froze for all of them."""
+        """Build the jobs for *sources* on a worker thread and hand them to the main loop one at a time (_drain_add_q): each appears in the queue as soon as it is ready, a line and a bar above the list count them, and Start waits until the last one is in."""
         if not sources:
             return
         st = self.__dict__.setdefault("_add_state", {"total": 0, "done": 0, "made": [], "errors": 0})
@@ -12075,12 +11922,7 @@ class App:
 
     def _estimate_left(self, left_bytes: int, cur_bytes: int, cur_pct: float, cur_item,
                        cur_left: float | None = None) -> float | None:
-        """Seconds the whole run still needs. With *cur_left* (the running job's own time
-        left, see _job_time_left): that, plus the waiting jobs' bytes at the pace of the
-        jobs this run finished, else at the running job's whole projected pace. Without
-        it, roughly: the bytes still to do times that pace, or, before the first job is
-        done, the running job's pace so far. None while there is too little to go on (the
-        first ninety seconds, or under two percent of the running job)."""
+        """Seconds the whole run still needs."""
         now = time.time()
         if cur_left is not None:
             fin_s, fin_b = getattr(self, "_batch_fin_secs", 0.0), getattr(self, "_batch_fin_bytes", 0)
@@ -12314,11 +12156,7 @@ class App:
         return True
 
     def _refresh_archive_set(self, item) -> bool:
-        """Right before an archive job runs: the parts of its set, their size on disk, and
-        the unpacked size from the headers, read again when the set changed since the job
-        was added or that size is still unknown. A set that cannot be read (a part missing,
-        damaged) fails the job with that reason instead of unpacking half of it. False when
-        the job was taken out of this run; the queue goes on with the next one."""
+        """Right before an archive job runs: the parts of its set, their size on disk, and the unpacked size from the headers, read again when the set changed since the job was added or that size is still unknown."""
         arc = getattr(item, "archive_path", None)
         if not arc or getattr(item, "kept_extract", False):
             return True
@@ -12925,13 +12763,7 @@ class App:
             messagebox.showinfo("Batch Complete", msg)
 
     def _ensure_batch_started(self):
-        """Establish batch state for a FRESH queue run (idempotent via the _batch_running
-        guard). MUST run before the first item is processed - including before an archive
-        extraction or patch-prepare, which return early from start() - so that a FIRST-item
-        failure advances the queue (the done/extract error handlers only continue while
-        _batch_running is True) instead of aborting the whole queue. Re-entry after a
-        successful archive extraction (the _extract_q 'ok' branch calls start() again) is a
-        no-op thanks to the guard, preserving running progress."""
+        """Establish batch state for a FRESH queue run (idempotent via the _batch_running guard)."""
         if not self._batch_running:
             cd = getattr(self, "_countdown", None)
             if cd is not None:               # a new run: no sleep or quit after the last one

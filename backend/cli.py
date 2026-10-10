@@ -39,11 +39,7 @@ from pathlib import Path
 
 
 def _exit_with_parent(poll: float = 2.0) -> None:
-    """End this backend, and everything it started, once the app that started it is gone.
-    A crashed app used to leave its job (and the job's MkPFS) running on the drive, writing
-    for nobody and in the way of the job the restarted app runs again. A job backend leads a
-    process group of its own and takes the whole group along; one in the app's group (a scan)
-    takes its children."""
+    """End this backend, and everything it started, once the app that started it is gone."""
     if os.name == "nt":
         return
     parent = os.getppid()
@@ -515,11 +511,7 @@ def param_report(root: Path) -> int:
 
 
 def extract_pfs_members(image_path, members, dest_dir) -> int:
-    """Extract the given files / directory subtrees from a .ffpfs/.ffpfsc into dest_dir,
-    decompressing only their blocks. A member naming a directory extracts every file
-    beneath it AND recreates the directory itself, including EMPTY subdirectories - so
-    the result is structure-identical to mkpfs's own extractor (extract_pfs_image, which
-    mkdirs every dir_inode). Prints '[####] N% extract (path)' progress the GUI parses."""
+    """Extract the given files / directory subtrees from a .ffpfs/.ffpfsc into dest_dir, decompressing only their blocks."""
     pfs, consts = _import_mkpfs()
     image_path = Path(image_path)
     dest_dir = Path(dest_dir)
@@ -792,12 +784,7 @@ def _unlink_quiet(path) -> None:
 
 
 def _discard_stale_pass1_output(temp_pfs: Path) -> None:
-    """Drop a leftover pass-1 image (plus mkpfs's '.tmp' for it) right before pass 1
-    regenerates it. mkpfs `pack folder` asks "Overwrite? [Y/n]" on stdin when its
-    output already exists; the GUI runs the backend with stdin closed, so an image a
-    crash left behind turned that prompt into an EOFError and made every retry of the
-    same title fail. This only ever touches the pass-1 OUTPUT we are about to write - never a user-supplied image (an OOM resume hands the inner .ffpfs in as the SOURCE
-    and takes the single-file route, which does not come through here)."""
+    """Drop a leftover pass-1 image (plus mkpfs's '.tmp' for it) right before pass 1 regenerates it."""
     _unlink_quiet(temp_pfs)
     _unlink_quiet(str(temp_pfs) + ".tmp")
 
@@ -865,14 +852,7 @@ def _is_same_file(a: Path, b: Path) -> bool:
 
 
 def _pass2_needs_spool(block_size) -> bool:
-    """Whether MkPFS's `pack file` will spool the image into its temp folder at all.
-
-    MkPFS streams single-file packs (no spool, only the output's own .tmp) unless the
-    image is signed, uses 64-bit inodes or asks for an auto-fit block size - its own
-    `_stream_fallback_reason` decides. This backend never signs, always passes
-    --inode-bits 32 and normalises the block size to 64 KiB, so pass 2 normally
-    streams. Asking MkPFS itself keeps this in step if that rule ever changes; any
-    doubt keeps the conservative answer (spool)."""
+    """Whether MkPFS's `pack file` will spool the image into its temp folder at all."""
     try:
         import argparse as _ap
         from mkpfs.cli import _stream_fallback_reason
@@ -883,12 +863,7 @@ def _pass2_needs_spool(block_size) -> bool:
 
 
 def _assert_pass2_spool_space(image_path, temp_dir, block_size="65536") -> None:
-    """Before pass-2 PFSC compression - when it spools roughly the image size into
-    *temp_dir* - make sure the temp drive can hold it. If not, exit non-zero with a
-    distinct, parseable message BEFORE mkpfs starts. Call this INSIDE the enclosing
-    TemporaryDirectory block so its unwind reclaims the inner image, instead of letting
-    mkpfs crash mid-write and strand a ~150 GB image. A streaming pass 2 needs no spool,
-    so there is nothing to check (see _pass2_needs_spool)."""
+    """Before pass-2 PFSC compression - when it spools roughly the image size into *temp_dir* - make sure the temp drive can hold it."""
     if not _pass2_needs_spool(block_size):
         return
     try:
@@ -1014,11 +989,7 @@ def _extract_exfat_to(exfat_path: Path, dest: Path) -> bool:
 
 
 def _unwrap_pfs_one_pass(image: Path, dest: Path) -> bool:
-    """Write the game files of a .ffpfs, or of the PFS nested in a .ffpfsc, straight into
-    *dest*, decoding every block once: no intermediate inner image on the disk (the two-pass
-    unpack wrote the whole inner .ffpfs first, one more copy of the game). False when the
-    container is not a plain or PFS-nested one (an exFAT wrapper): the caller then takes
-    the two-pass road. Prints the '[####] N% extract' bars the GUI reads."""
+    """Write the game files of a .ffpfs, or of the PFS nested in a .ffpfsc, straight into *dest*, decoding every block once: no intermediate inner image on the disk (the two-pass unpack wrote the whole inner .ffpfs first, one more copy of the game)."""
     image, dest = Path(image), Path(dest)
     try:
         listing = list_pfs_image(image)
@@ -1044,11 +1015,7 @@ def _unwrap_pfs_one_pass(image: Path, dest: Path) -> bool:
 
 
 def _fully_unwrap(out_dir: Path, mkpfs_cmd_base, mkpfs_cwd) -> None:
-    """Turn a freshly-unpacked image directory into the actual game FOLDER: keep
-    unwrapping a SINGLE nested image - .ffpfs/.ffpfsc via another PFS unpack, .exfat/
-    .ffpkg via a native exFAT read - until real files/folders remain. So 'unpack a
-    .ffpfsc' yields a folder in ONE action, whether it was packed folder->ffpfsc (the
-    nested inner .ffpfs) or via exFAT (the nested .exfat)."""
+    """Turn a freshly-unpacked image directory into the actual game FOLDER: keep unwrapping a SINGLE nested image - .ffpfs/.ffpfsc via another PFS unpack, .exfat/ .ffpkg via a native exFAT read - until real files/folders remain."""
     for _ in range(8):
         try:
             entries = [p for p in out_dir.iterdir()
@@ -1169,11 +1136,7 @@ def _proc_bytes_written(pid: int) -> int | None:
 
 
 def _meter_process(proc, total: int, label, interval: float = 1.0) -> None:
-    """Print progress bars for the running *proc* from its write counter until it exits.
-    For a tool whose own bar is too coarse: MkPFS pass 1 counts whole files, so a game
-    with one 57 GB file sits at "0 % write" for ten minutes while the data flows. Nothing
-    is printed before 1 % is written, so the tool's earlier steps (scan, read) keep their
-    own bars; nothing at all when the system does not tell."""
+    """Print progress bars for the running *proc* from its write counter until it exits."""
     import time as _time
     started = _time.monotonic()
     while True:
@@ -1241,12 +1204,7 @@ def _pkg_content_size(pkg: Path) -> int:
 
 
 def _pkg_extract_plan(pkg: Path, content: int) -> int:
-    """Bytes a full .pkg extract writes, all on the drive it unpacks to. The package tool
-    (LibProsperoPkg ExtractInnerFiles) works in three steps: it decrypts the outer image
-    into a temp file (about the package size), decodes the inner image from it into a
-    second temp file (about the size of the game files) and then writes the files. The
-    decoded image and the files sit side by side at the end, so the drive needs about
-    twice the game's size for a moment."""
+    """Bytes a full .pkg extract writes, all on the drive it unpacks to."""
     try:
         size = Path(pkg).stat().st_size
     except OSError:
@@ -1307,20 +1265,7 @@ def _phase(name: str) -> None:
 
 
 class FpkgProgress:
-    """Translate the package tool's log into the GUI's phase markers and progress bars.
-
-    The tool prints LibProsperoPkg's own log: "[stage 3/5] ... 59% (55.77 GiB / 94.25 GiB;
-    71.4 MiB/s)", "[inner] data 17% (25/265): /path -> N bytes (Kraken, ratio 68.4 %)",
-    "[inner] Kraken level -4: 70% of /path", "[finalize] ...: 60% (1,234 / 4,567 blocks)".
-    The GUI understands "[PHASE] <Stage>" markers and "[####----] NN% <label>" bars, and
-    reads speed and time left from a label of the form "... @ 71.4 MB/s ETA 1234s".
-
-    The Kraken pass is metered in bytes: the planning line gives the total, every large
-    file announces its size, and the per-file "NN% of" lines move inside it; smaller files
-    are sized from their output and ratio. The library's own percentage is the floor.
-    Phases only move forward: the tool's late "Source scan" (it scans after staging) is
-    not echoed as a bar once the job is past scanning, which used to pin "Temp PFS" at 99 %.
-    """
+    """Translate the package tool's log into the GUI's phase markers and progress bars."""
 
     _STAGE_PHASE = {1: "Creating Temp PFS", 2: "Compressing", 3: "Compressing",
                     4: "Writing Final Image", 5: "Writing Final Image"}
@@ -1776,16 +1721,7 @@ def pack_folder_uncompressed(
 
 def _looks_incompressible(path: Path, *, samples: int = 24, chunk: int = 1 << 20,
                           min_gain_pct: float = 2.0) -> bool:
-    """Cheap heuristic: sample ~`samples` x `chunk` bytes spread across `path`,
-    zlib-compress them, and return True if the aggregate gain is below
-    `min_gain_pct`%.
-
-    Used to skip the expensive deflate on already-compressed games: when the inner
-    image barely shrinks, the .ffpfsc would store every block raw anyway (the per-
-    block threshold rejects non-shrinking blocks), so a level-0 pass produces the
-    same container far faster. Conservative by design - on any error, a small file,
-    or genuine compressibility it returns False (i.e. compress normally), so the
-    worst case is a slightly-larger-but-correct file, never a broken one."""
+    """Cheap heuristic: sample ~`samples` x `chunk` bytes spread across `path`, zlib-compress them, and return True if the aggregate gain is below `min_gain_pct`%."""
     try:
         size = path.stat().st_size
     except OSError:
@@ -1826,11 +1762,7 @@ def _is_wrapper_noise(name: str) -> bool:
 
 
 def _patch_descend_wrapper(root: Path) -> Path:
-    """Descend folders that hold exactly one subdir and no content of their own, so a patch
-    or game wrapped in an extra folder (e.g. <CUSA...>/eboot.bin) resolves to its real root.
-    OS and archiver leftovers beside the wrapper (see _is_wrapper_noise, __MACOSX) do not
-    count: with them counted, a patch unpacked on an exFAT drive was copied into the game
-    as a whole folder, which then held a second eboot.bin and sce_sys."""
+    """Descend folders that hold exactly one subdir and no content of their own, so a patch or game wrapped in an extra folder (e.g."""
     cur = root
     for _ in range(8):
         try:
@@ -2145,11 +2077,7 @@ def resolve_unpack_output_dir(image_file: Path, requested_output: Path, *, batch
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _auto_cap_cpu(requested: int, source: Path) -> int:
-    """Effective mkpfs worker count. When the user left CPU cores on AUTO (0), cap the
-    worker count for large sources: mkpfs spawns one worker per core and each buffers
-    compressed blocks in RAM, so a big game can backlog memory and get OOM-killed
-    (a silent SIGKILL seen on a large title). >30 GB -> 2 workers, >10 GB -> 4; smaller -> mkpfs default.
-    An explicit non-zero count is always honoured untouched."""
+    """Effective mkpfs worker count."""
     requested = max(0, int(requested or 0))
     if requested:
         return requested
@@ -2271,22 +2199,7 @@ def _backport_precheck(folder, target: str, libs_root=None, fw_root=None):
 
 
 def _apply_backport(folder, target: str, libs_root=None, fw_root=None) -> None:
-    """Backport pass on *folder*, IN PLACE. Runs before fake-sign in the same
-    invocation. Everything that can stop the job is decided before a byte changes:
-
-    1. The target's SDK words: the public table for 7.61/6.02/10.xx, otherwise read
-       from that firmware's own libraries under *fw_root* (one subfolder per firmware).
-    2. Encrypted executables are refused: nothing in them can be read or changed.
-    3. With *fw_root*, the check: which functions does the game use that the target
-       firmware lacks? None: lowering the SDK is enough. Some: patched libraries for
-       the target (*libs_root*, or its <target> subfolder) are required.
-    4. Lower the SDK words in every eboot/prx/sprx, raw or fake-signed (in place).
-    5. Copy the patched libraries into <folder>/fakelib/ (never overwrites files
-       already there - the user's own copies win).
-
-    The staging mirror is expected to be a copy already; the caller decides whether
-    this modifies the user's own folder (fake-sign-first path) or the staging one
-    (queue path)."""
+    """Backport pass on *folder*, IN PLACE."""
     from pathlib import Path
     import backport as _bp
     folder = Path(folder)

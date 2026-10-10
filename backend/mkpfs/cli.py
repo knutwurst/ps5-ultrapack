@@ -894,24 +894,7 @@ def _stream_fallback_reason(*, args: argparse.Namespace) -> str | None:
 
 @dataclass(frozen=True)
 class PackBuildConfig:
-    """Validated, derived pack options shared by folder and single-file flows.
-
-    Attributes:
-        block_size: Resolved filesystem block size in bytes.
-        compress: Whether PFSC compression is enabled.
-        threshold_gain: Minimum per-block gain percent to keep PFSC blocks.
-        min_file_gain: Minimum whole-file gain percent required to store PFSC.
-        min_compress_size: Minimum raw size eligible for PFSC.
-        case_insensitive: Whether the case-insensitive mode bit is set.
-        pfs_version: PFS profile version number.
-        encrypted: Whether filesystem blocks are encrypted.
-        new_crypt: Whether the alternate EKPFS derivation is used.
-        ekpfs_key: Resolved EKPFS key material.
-        zlib_level: Zlib compression level.
-        cpu_count: Requested CPU worker count.
-        skip_executable_compression: Whether executable-like files stay raw.
-        inode_bits: Inode width in bits.
-    """
+    """Validated, derived pack options shared by folder and single-file flows."""
 
     block_size: int
     compress: bool
