@@ -2727,7 +2727,7 @@ class CLIWorker(threading.Thread):
                 "\n"
                 "  ╔═ Settings to check / change: ═══════════════════════════════╗\n"
                 "  ║  OUTPUT folder  →  move to an NTFS drive (e.g. C:\\  D:\\)   ║\n"
-                "  ║  CPU cores      →  set to 1 - 2 if RAM could also be the cause ║\n"
+                "  ║  CPU cores      →  set to 1-2 if RAM could also be the cause ║\n"
                 "  ╚══════════════════════════════════════════════════════════════╝"
             )
             return
@@ -5691,7 +5691,7 @@ class App:
 
         def _last(*_):
             parts = [v.get() for v in (self.saved_var, self.ratio_var, self.rating_var)]
-            if all(p.rstrip().endswith(" - ") for p in parts):
+            if all(p.rstrip().endswith(" -") for p in parts):
                 self.last_result_var.set("Totals and the last jobs, newest first.")
             else:
                 self.last_result_var.set("Last result:  " + "   ·   ".join(parts))
@@ -9456,7 +9456,7 @@ class App:
                     item._organize_warned = True
                 except Exception:
                     pass
-                self.log("WARN", f"Auto-organize: no param.json readable for {getattr(item, 'display_name', None) or item.name} "
+                self.log("WARN", f"Auto-organize: no param.json readable for {getattr(item, 'display_name', None) or item.name}"
                                  f" - naming from the source name instead.")
             return None, None
         ident = dict(ident, fw=self._job_fw(item, ident.get("fw", "")))
@@ -10295,7 +10295,7 @@ class App:
                 bits.append(f"writes to {_drive_name(out_dir)} ({out_dir})")
             info["Drives"] = ", ".join(bits)
         space = (self.temp_space_var.get() or "").strip()
-        if space and not space.endswith(" - "):
+        if space and not space.endswith(" -"):
             info["Space"] = space.replace("  |  ", " · ")
         aj = _after_job_module()
         act = getattr(item, "after_source", None) or aj.KEEP

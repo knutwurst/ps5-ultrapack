@@ -2257,6 +2257,16 @@ try:
        f"unpack={_pdrv.startswith('unpacks on')} builds={'builds on' in _pdrv} drive={' on the system drive: ~' in _pspace} "
        f"fits={_pspace.endswith('fits')} untouched={not hasattr(_pa, '_build_temp')} "
        f"quiet={not any(x.startswith('Auto:') for x in _plogs)} space={_pspace[-60:]!r}")
+    # Placeholder values hide the Space line and the last result
+    _keep = [(v, v.get()) for v in (app.temp_space_var, app.saved_var, app.ratio_var, app.rating_var)]
+    app.temp_space_var.set("Temp Needed: - ")
+    for _v, _was in _keep[1:]:
+        _v.set(_was.split(":", 1)[0] + ": - ")
+    _phinfo, _plast = app._card_info_text(_pa), app.last_result_var.get()
+    for _v, _was in _keep:
+        _v.set(_was)
+    ok("details.placeholders-hidden", "Space" not in _phinfo and _plast.startswith("Totals"),
+       f"space={_phinfo.get('Space')!r} last={_plast!r}")
     # Empty work folders on every drive the app used go once the queue stands still
     _pool = S / "pool_drive"; _hist = S / "old_library" / "Game [PPSA99095] [v01.000.000]"
     for _d in (_pool / "_ffpfsc_temp" / "_extracted", _hist.parent / "_ffpfsc_temp", _hist.parent / "_ffpfsc_extract" / "kept"):

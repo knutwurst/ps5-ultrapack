@@ -1299,9 +1299,9 @@ def sanitize_filename(s: str) -> str:
 
 # Redundant "edition" qualifiers dropped from an output filename ONLY when the full name
 # would otherwise exceed SHADOWMOUNT_NAME_LIMIT (so games that fit keep their full title).
-# Longest/most-specific phrases first; an optional leading separator (- - - :) is eaten too.
+# Longest phrases first; a separator in front (hyphen, en or em dash, colon) goes too.
 _EDITION_FLUFF_RE = re.compile(
-    r"\s*[- - - :]?\s*\b("
+    r"\s*[-\u2013\u2014:]?\s*\b("
     r"\d{1,3}(?:st|nd|rd|th)\s+anniversary\s+edition"
     r"|game\s+of\s+the\s+year\s+edition|goty\s+edition"
     r"|complete\s+edition|definitive\s+edition|enhanced\s+edition"
@@ -1316,7 +1316,7 @@ def _strip_edition_fluff(name: str) -> str:
     """Remove redundant 'edition'/'remastered' qualifiers and tidy leftover separators.
     Used only as a fallback when a name is over the ShadowMount length budget."""
     out = _EDITION_FLUFF_RE.sub("", name)
-    out = re.sub(r"\s{2,}", " ", out).strip(" - - - :")
+    out = re.sub(r"\s{2,}", " ", out).strip(" -\u2013\u2014:")
     return out
 
 
@@ -1525,7 +1525,7 @@ def _dlc_name(dlc_title: str, *game_titles: str) -> str:
         if t.lower().startswith(g.lower()):
             t = t[len(g):]
             break
-    return t.strip(" - - - :_.") or canonical_game_title(dlc_title)
+    return t.strip(" -\u2013\u2014:_.") or canonical_game_title(dlc_title)
 
 
 def ps4_layout(items, known: dict | None = None):
@@ -1542,7 +1542,7 @@ def ps4_layout(items, known: dict | None = None):
             title = canonical_game_title(game.title) or tid
         else:                                            # no game in the set: the title before " - "
             first = canonical_game_title(members[0][1].title or "")
-            title = re.split(r"\s+[- - - ]\s+", first, maxsplit=1)[0].strip() or tid
+            title = re.split(r"\s+[-\u2013\u2014]\s+", first, maxsplit=1)[0].strip() or tid
         set_ver = max((i.version for i in base_ids if i.version), key=_ver_key, default="")
         folder_ver = set_ver or max((i.version for _, i in members if i.version), key=_ver_key, default="")
         dlc_count = sum(1 for _, i in members if i.kind == "dlc")
@@ -2904,7 +2904,7 @@ def ident_from_folder_name(archive) -> dict | None:
         t = TITLE_RE.sub(" ", name)
         t = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", t)
         t = re.sub(r"\b(compressed|ffpfsc|ffpfs|pkg|backport|fw\s*\d[\d.]*|v\d[\d.]*|usa|eur|jpn|asia|app\d*)\b", " ", t, flags=re.I)
-        t = re.sub(r"[_.\- - - ]+", " ", t)
+        t = re.sub(r"[_.\-\u2013\u2014]+", " ", t)
         t = re.sub(r"\s{2,}", " ", t).strip()
         if re.search(r"[A-Za-z]{3,}", t):
             return {"title": t, "title_id": tid, "version": ""}

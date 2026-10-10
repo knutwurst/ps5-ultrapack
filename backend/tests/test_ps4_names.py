@@ -89,5 +89,26 @@ class Layout(unittest.TestCase):
         self.assertNotIn("CUSA00003", got)
 
 
+class DashSeparators(unittest.TestCase):
+    """Titles often separate parts with an en or em dash instead of a hyphen."""
+    EN, EM = "\u2013", "\u2014"
+
+    def test_lone_dlc_with_dash(self):
+        for d in (self.EN, self.EM):
+            (_, f, _, n), = uc.ps4_layout([(Path("d.pkg"), ident("dlc", "01.00", title=f"Sample Game {d} Skin"))])
+            self.assertEqual((f, n), ("Sample Game [CUSA00001] [v01.00]", "Sample Game DLC Skin [CUSA00001] [v01.00].pkg"))
+
+    def test_dlc_name(self):
+        self.assertEqual(uc._dlc_name(f"Sample Game {self.EM} Extra Pack", "Sample Game"), "Extra Pack")
+
+    def test_edition_fluff(self):
+        for d in ("-", self.EN, self.EM, ":"):
+            self.assertEqual(uc._strip_edition_fluff(f"Sample Game {d} Deluxe Edition"), "Sample Game")
+
+    def test_title_from_folder_name(self):
+        got = uc.ident_from_folder_name(Path(f"/x/PPSA99090 Sample{self.EM}Game{self.EN}Two/a.rar"))
+        self.assertEqual(got["title"], "Sample Game Two")
+
+
 if __name__ == "__main__":
     unittest.main()
