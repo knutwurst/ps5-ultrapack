@@ -176,7 +176,7 @@ def print_batch_pre_stats(
     info("╚═══════════════════════════════════════╝")
     info(f"  Source  : {source_dir}")
     info(f"  Output  : {output_dir}")
-    info(f"  Items   : {folders} folder(s), {files} file(s) — {len(items)} total")
+    info(f"  Items   : {folders} folder(s), {files} file(s) - {len(items)} total")
     version_label: str = "PS5" if pack_flags.get("pfs_version") == 0x5000000 else "PS4"
     cpu_val: int | None = pack_flags.get("cpu_count", 0)
     cpu_label: str = str(cpu_val) if cpu_val else "auto"
@@ -264,9 +264,9 @@ def print_batch_summary(summary: BatchSummary) -> None:
         else:
             status_text = "❌ Error"
 
-        raw_str: str = human_readable_size(r.raw_size) if r.raw_size > 0 else "—"
+        raw_str: str = human_readable_size(r.raw_size) if r.raw_size > 0 else " - "
         comp_str: str = human_readable_size(r.compressed_size) if r.compressed_size > 0 else ""
-        savings_str: str = f"{r.savings_pct:.1f}%" if r.status == "converted" and r.savings_pct > 0 else "—"
+        savings_str: str = f"{r.savings_pct:.1f}%" if r.status == "converted" and r.savings_pct > 0 else " - "
 
         info(
             f"│ {r.name[: name_w - 2].ljust(name_w - 2)}"
@@ -285,20 +285,20 @@ def print_batch_summary(summary: BatchSummary) -> None:
     if summary.errors:
         done_str += f", {summary.errors} error{'s' if summary.errors != 1 else ''}"
 
-    total_raw_str: str = human_readable_size(summary.total_raw_size) if summary.total_raw_size > 0 else "—"
+    total_raw_str: str = human_readable_size(summary.total_raw_size) if summary.total_raw_size > 0 else " - "
     total_comp_str: str = (
-        human_readable_size(summary.total_compressed_size) if summary.total_compressed_size > 0 else "—"
+        human_readable_size(summary.total_compressed_size) if summary.total_compressed_size > 0 else " - "
     )
     overall_savings: float = (
         ((summary.total_raw_size - summary.total_compressed_size) / summary.total_raw_size) * 100.0
         if summary.total_raw_size > 0 and summary.total_compressed_size > 0
         else 0.0
     )
-    overall_str: str = f"{overall_savings:.1f}%" if overall_savings > 0 else "—"
+    overall_str: str = f"{overall_savings:.1f}%" if overall_savings > 0 else " - "
 
     # The totals row spans the Name + Status columns to avoid column overflow.
     combined_w: int = name_w + 10  # name_w + status column width
-    totals_label: str = f"TOTALS ({total} items) — {done_str}"
+    totals_label: str = f"TOTALS ({total} items) - {done_str}"
     if len(totals_label) > combined_w - 2:
         # Truncate the combined label and print full counts on a line below the table.
         totals_label = f"TOTALS ({total} items)".ljust(combined_w - 2)

@@ -75,7 +75,7 @@ def main():
           f"Already correct: {tot_ok}   Skipped: {tot_s}")
     if not apply:
         print("\nDry-run only. Re-run with --apply once the preview looks right.")
-        print("Review the list first — where a file's [v…] differs from your folder,\n"
+        print("Review the list first - where a file's [v…] differs from your folder,\n"
               "the app may have read a MORE accurate version from param.json\n"
               "(e.g. a title whose param says v01.02 vs a folder labelled 1.00). Skip those\n"
               "manually if you'd rather keep the param version.")

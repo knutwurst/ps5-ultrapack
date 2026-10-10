@@ -19,7 +19,7 @@ class ParseEta(unittest.TestCase):
         self.assertEqual(uc.eta_seconds("1h 05m"), 3900)
         self.assertEqual(uc.eta_seconds("45s"), 45)
         self.assertEqual(uc.eta_seconds("ETA 2m 00s"), 120)
-        for none in ("—", "", None, "soon"):
+        for none in (" - ", "", None, "soon"):
             self.assertIsNone(uc.eta_seconds(none))
 
 

@@ -801,7 +801,7 @@ def cli_mkpfs_add_create_args(
         "--compression-backend",
         choices=("auto", "zlib-ng", "zlib", "isal"),
         default="auto",
-        help="Compression backend to use for PFSC block compression (default: auto — isal > zlib-ng > zlib)",
+        help="Compression backend to use for PFSC block compression (default: auto - isal > zlib-ng > zlib)",
     )
 
     parser.add_argument(

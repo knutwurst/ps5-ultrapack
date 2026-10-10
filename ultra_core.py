@@ -102,7 +102,7 @@ def format_size(num) -> str:
     try:
         num = float(num)
     except Exception:
-        return "—"
+        return " - "
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if num < 1024 or unit == "TB":
             return f"{num:.2f} {unit}" if unit != "B" else f"{num:.0f} {unit}"
@@ -122,10 +122,10 @@ def humanize_eta(raw) -> str:
     / '45s'. Accepts an optional unit (s/m/h); a bare number is treated as seconds.
     Returns the input unchanged if it can't be parsed, and ' - ' for the no-ETA marker."""
     if raw is None:
-        return "—"
+        return " - "
     s = str(raw).strip().lower()
-    if s in ("", "—", "-"):
-        return "—"
+    if s in ("", " - ", "-"):
+        return " - "
     m = re.match(r"^([0-9]+(?:\.[0-9]+)?)\s*(h|hr|hrs|hours?|m|min|mins|minutes?|s|sec|secs|seconds?)?$", s)
     if not m:
         return str(raw)
@@ -665,15 +665,15 @@ def _space_report(item, temp_dir, out_dir, temp_fs="", out_fs=""):
         rows.append((f"{label} needs", format_size(need), None))
         rows.append((f"{label} free", format_size(free), "ok" if ok else "warn"))
     if not reqs:
-        rows.append(("Space needed", "size unknown — checked during the run", None))
+        rows.append(("Space needed", "size unknown - checked during the run", None))
     bsize = _build_size_of(item)
     if bsize > 0:
-        rows.append(("Est. Final Output", f"~{format_size(int(bsize * 0.55))} – {format_size(bsize)}", None))
-    rows.append(("Temp Filesystem", temp_fs or "—", _fs_status(temp_fs)))
-    rows.append(("Output Filesystem", out_fs or "—", _fs_status(out_fs)))
+        rows.append(("Est. Final Output", f"~{format_size(int(bsize * 0.55))} - {format_size(bsize)}", None))
+    rows.append(("Temp Filesystem", temp_fs or " - ", _fs_status(temp_fs)))
+    rows.append(("Output Filesystem", out_fs or " - ", _fs_status(out_fs)))
     if short is None:
         return rows, True, "✓  Enough space to proceed."
-    return rows, False, f"⚠  {short}: not enough free space — the run would fail."
+    return rows, False, f"⚠  {short}: not enough free space - the run would fail."
 
 
 def get_folder_size(path: Path) -> int:
@@ -1087,11 +1087,11 @@ def validate_game_structure(path: Path) -> list[str]:
     param_json = sce_sys / "param.json"
     eboot     = path / "eboot.bin"
     if not sce_sys.is_dir():
-        warnings.append("sce_sys folder not found — this may not be a PS5 game dump.")
+        warnings.append("sce_sys folder not found - this may not be a PS5 game dump.")
     elif not param_json.is_file():
-        warnings.append("sce_sys/param.json missing — ShadowMount compatibility not guaranteed.")
+        warnings.append("sce_sys/param.json missing - ShadowMount compatibility not guaranteed.")
     if not eboot.is_file():
-        warnings.append("eboot.bin not found — the dump may be incomplete.")
+        warnings.append("eboot.bin not found - the dump may be incomplete.")
     return warnings
 
 
@@ -1123,12 +1123,12 @@ _ERROR_PATTERNS: list[tuple[str, str]] = [
      "Drive ran out of space mid-compression.\n"
      "Fix: free up space on the temp or output drive."),
     ("no such file or directory",
-     "A required file was not found — the game folder may be incomplete."),
+     "A required file was not found - the game folder may be incomplete."),
     ("could not find any valid game",
      "No valid PS5 game folders detected.\n"
      "Fix: select the folder that contains sce_sys and eboot.bin."),
     ("missing/invalid param.json",
-     "param.json is missing or corrupt — not a valid PS5 game dump."),
+     "param.json is missing or corrupt - not a valid PS5 game dump."),
     ("permission denied",
      "Access denied.\n"
      "Fix: run as administrator, or move files off a read-only drive."),
@@ -1139,7 +1139,7 @@ _ERROR_PATTERNS: list[tuple[str, str]] = [
      "Windows system error (WinError 1).\n"
      "Fix: run as administrator."),
     ("calledprocesserror",
-     "A backend subprocess failed — check the raw log for details."),
+     "A backend subprocess failed - check the raw log for details."),
 ]
 
 
@@ -1366,7 +1366,7 @@ def sanitize_filename(s: str) -> str:
 # would otherwise exceed SHADOWMOUNT_NAME_LIMIT (so games that fit keep their full title).
 # Longest/most-specific phrases first; an optional leading separator (- - - :) is eaten too.
 _EDITION_FLUFF_RE = re.compile(
-    r"\s*[-–—:]?\s*\b("
+    r"\s*[- - - :]?\s*\b("
     r"\d{1,3}(?:st|nd|rd|th)\s+anniversary\s+edition"
     r"|game\s+of\s+the\s+year\s+edition|goty\s+edition"
     r"|complete\s+edition|definitive\s+edition|enhanced\s+edition"
@@ -1381,7 +1381,7 @@ def _strip_edition_fluff(name: str) -> str:
     """Remove redundant 'edition'/'remastered' qualifiers and tidy leftover separators.
     Used only as a fallback when a name is over the ShadowMount length budget."""
     out = _EDITION_FLUFF_RE.sub("", name)
-    out = re.sub(r"\s{2,}", " ", out).strip(" -–—:")
+    out = re.sub(r"\s{2,}", " ", out).strip(" - - - :")
     return out
 
 
@@ -1604,7 +1604,7 @@ def _dlc_name(dlc_title: str, *game_titles: str) -> str:
         if t.lower().startswith(g.lower()):
             t = t[len(g):]
             break
-    return t.strip(" -–—:_.") or canonical_game_title(dlc_title)
+    return t.strip(" - - - :_.") or canonical_game_title(dlc_title)
 
 
 def ps4_layout(items, known: dict | None = None):
@@ -1633,7 +1633,7 @@ def ps4_layout(items, known: dict | None = None):
             title = canonical_game_title(game.title) or tid
         else:                                            # no game in the set: the title before " - "
             first = canonical_game_title(members[0][1].title or "")
-            title = re.split(r"\s+[-–—]\s+", first, maxsplit=1)[0].strip() or tid
+            title = re.split(r"\s+[- - - ]\s+", first, maxsplit=1)[0].strip() or tid
         set_ver = max((i.version for i in base_ids if i.version), key=_ver_key, default="")
         folder_ver = set_ver or max((i.version for _, i in members if i.version), key=_ver_key, default="")
         dlc_count = sum(1 for _, i in members if i.kind == "dlc")
@@ -2055,12 +2055,12 @@ class ArchiveExtractor:
             except Exception as e:
                 if ArchiveExtractor._is_password_error(e):
                     if log_fn and pwd and len(candidates) > 1:
-                        log_fn("INFO", f"  password {idx + 1}/{len(named)} did not match — trying next…")
+                        log_fn("INFO", f"  password {idx + 1}/{len(named)} did not match - trying next…")
                     continue
                 raise   # not a password problem - surface it
         if named:
             raise RuntimeError(
-                f"Could not open {archive.name}: wrong or missing password — none of the "
+                f"Could not open {archive.name}: wrong or missing password - none of the "
                 f"{len(named)} saved password(s) worked.\n\n"
                 "Add the correct password in Settings → Saved Archive Passwords "
                 "(or in the 'Archive Password' field) and try again."
@@ -2475,11 +2475,11 @@ class ArchiveExtractor:
         exe = ArchiveExtractor._find_native_7z()
         if not exe:
             raise RuntimeError(
-                f"{reason} — install 7-Zip (7zz) to extract it: {archive.name}\n"
+                f"{reason} - install 7-Zip (7zz) to extract it: {archive.name}\n"
                 "  macOS:    brew install sevenzip\n"
                 "  Windows:  https://www.7-zip.org/  (put 7z.exe on PATH)")
         if log_fn:
-            log_fn("INFO", f"  zip: {reason} — using native {os.path.basename(exe)}.")
+            log_fn("INFO", f"  zip: {reason} - using native {os.path.basename(exe)}.")
         ArchiveExtractor._run_native_7z(exe, archive, dest, log_fn=log_fn, progress_fn=progress_fn,
                                         password=password, cancel_event=cancel_event)
 
@@ -2632,7 +2632,7 @@ class ArchiveExtractor:
                 raise ArchivePasswordError(
                     f"{tool_name}: wrong or missing archive password (exit code {code}).{excerpt}")
             raise ArchiveToolError(
-                f"{tool_name} exited with code {code} — extraction failed.{excerpt}",
+                f"{tool_name} exited with code {code} - extraction failed.{excerpt}",
                 returncode=code)
 
     @staticmethod
@@ -2664,15 +2664,15 @@ class ArchiveExtractor:
         # matched before the multi-volume branch below.
         if ("password" in low or "error 22" in low or "error 24" in low
                 or type(e).__name__ == "RarWrongPassword"):
-            return ("this RAR is password-protected — enter the correct password in the "
+            return ("this RAR is password-protected - enter the correct password in the "
                     "'Archive Password' field and try again "
                     "(error 22 = no password given, 24 = wrong password)")
         damage = ArchiveExtractor.rar_damage_reason(msg, archive)
         if damage:
-            return f"{damage} — download the set again, or check that every part is complete"
+            return f"{damage} - download the set again, or check that every part is complete"
         if ("read header failed" in low or "failed to open" in low or "missing" in low or "volume" in low):
             return ("a volume of this multi-part RAR is missing, incomplete, or it was "
-                    "opened on the wrong part — make sure every .partN.rar (or .rNN) file "
+                    "opened on the wrong part - make sure every .partN.rar (or .rNN) file "
                     "is present in the same folder")
         return msg or e.__class__.__name__
 
@@ -2684,7 +2684,7 @@ class ArchiveExtractor:
         resolved = ArchiveExtractor._first_volume(archive)
         if resolved != archive:
             if log_fn:
-                log_fn("INFO", f"Multi-part RAR detected — using first volume: {resolved.name}")
+                log_fn("INFO", f"Multi-part RAR detected - using first volume: {resolved.name}")
             archive = resolved
 
         bundled_err: str | None = None   # the real reason the native module failed
@@ -2722,7 +2722,7 @@ class ArchiveExtractor:
         except ImportError as e:
             bundled_err = f"native UnRAR module unavailable ({e})"
             if log_fn:
-                log_fn("WARN", f"Bundled UnRAR unavailable ({e}) — trying fallback extractors…")
+                log_fn("WARN", f"Bundled UnRAR unavailable ({e}) - trying fallback extractors…")
         except Exception as e:
             bundled_err = ArchiveExtractor._rar_error_hint(e, archive)
             if log_fn:
@@ -2737,7 +2737,7 @@ class ArchiveExtractor:
             # Only add the multi-part hint when it isn't a password problem.
             extra = "" if "password" in (bundled_err or "").lower() else f"\n\n{multipart_hint}"
             raise RuntimeError(
-                f"RAR extraction failed — {bundled_err}.{extra}\n\n"
+                f"RAR extraction failed - {bundled_err}.{extra}\n\n"
                 "ZIP and .7z archives extract without external RAR tools."
             )
 
@@ -2757,7 +2757,7 @@ class ArchiveExtractor:
             pass
         except Exception as e:
             if log_fn:
-                log_fn("WARN", f"rarfile failed ({e}) — trying CLI tools…")
+                log_fn("WARN", f"rarfile failed ({e}) - trying CLI tools…")
 
         # ── Find any suitable CLI tool ─────────────────────────────────────────
         tool = ArchiveExtractor._find_rar_tool(log_fn=log_fn)
@@ -2797,7 +2797,7 @@ class ArchiveExtractor:
         reason = bundled_err or "no RAR extractor was available"
         if sys.platform == "darwin":
             raise RuntimeError(
-                f"RAR extraction failed — {reason}.\n\n"
+                f"RAR extraction failed - {reason}.\n\n"
                 f"{multipart_hint}\n\n"
                 "No 7z/unrar CLI was found either. Install one with:\n"
                 "  brew install sevenzip      (provides 7z)\n"
@@ -2805,9 +2805,9 @@ class ArchiveExtractor:
                 "ZIP and .7z archives extract without external RAR tools."
             )
         raise RuntimeError(
-            f"RAR extraction failed — {reason}.\n\n"
+            f"RAR extraction failed - {reason}.\n\n"
             f"{multipart_hint}\n\n"
-            "EASIEST FIX — install any ONE of these:\n"
+            "EASIEST FIX - install any ONE of these:\n"
             "  1. 7-Zip:  https://www.7-zip.org/\n"
             "  2. WinRAR: https://www.rarlab.com/download.htm\n\n"
             "ZIP and .7z archives extract without any extra tools."
@@ -2912,7 +2912,7 @@ class ArchiveExtractor:
                 except FileNotFoundError:
                     # Disappeared between probe and exec → the pure-Python route below.
                     if log_fn:
-                        log_fn("WARN", "  7z: native CLI not runnable — falling back to py7zr.")
+                        log_fn("WARN", "  7z: native CLI not runnable - falling back to py7zr.")
                 except ArchiveToolError as e:
                     # py7zr only stands in for a CLI that could not run at all (7-Zip exit
                     # 7 = command-line error, e.g. an old build rejecting a switch). After
@@ -2923,7 +2923,7 @@ class ArchiveExtractor:
                     if e.returncode != 7:
                         raise
                     if log_fn:
-                        log_fn("WARN", f"  7z: native CLI rejected the command line ({e}) — "
+                        log_fn("WARN", f"  7z: native CLI rejected the command line ({e}) - "
                                        "falling back to py7zr.")
             # Fallback: pure-Python py7zr (always available with our bundled deps).
             try:
@@ -2932,11 +2932,11 @@ class ArchiveExtractor:
                 py7zr = None
             if py7zr is None:
                 raise RuntimeError(
-                    "Cannot extract 7z — install py7zr:  pip install py7zr\n"
+                    "Cannot extract 7z - install py7zr:  pip install py7zr\n"
                     "or put 7z / 7zz / 7za on your PATH (Homebrew: brew install sevenzip)."
                 )
             if log_fn:
-                log_fn("INFO", "  7z: using py7zr (pure-Python — install 7-Zip (7zz) for ~5x speedup).")
+                log_fn("INFO", "  7z: using py7zr (pure-Python - install 7-Zip (7zz) for ~5x speedup).")
             kwargs = {"password": password} if password else {}
             try:
                 with py7zr.SevenZipFile(str(archive), mode="r", **kwargs) as sz:
@@ -2986,7 +2986,7 @@ class ArchiveExtractor:
                 common = Path(os.path.commonpath([str(h) for h in hits]))
                 if log_fn:
                     log_fn("WARN", f"{len(hits)} game roots side by side in the archive "
-                                   f"({', '.join(h.name for h in hits)}) — using their parent "
+                                   f"({', '.join(h.name for h in hits)}) - using their parent "
                                    f"'{common.name}' so every one gets classified.")
                 return common
             nxt: list[Path] = []
@@ -3059,7 +3059,7 @@ def ident_from_folder_name(archive) -> dict | None:
         t = TITLE_RE.sub(" ", name)
         t = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", t)
         t = re.sub(r"\b(compressed|ffpfsc|ffpfs|pkg|backport|fw\s*\d[\d.]*|v\d[\d.]*|usa|eur|jpn|asia|app\d*)\b", " ", t, flags=re.I)
-        t = re.sub(r"[_.\-–—]+", " ", t)
+        t = re.sub(r"[_.\- - - ]+", " ", t)
         t = re.sub(r"\s{2,}", " ", t).strip()
         if re.search(r"[A-Za-z]{3,}", t):
             return {"title": t, "title_id": tid, "version": ""}

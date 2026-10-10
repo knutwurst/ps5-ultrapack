@@ -166,7 +166,7 @@ def apply(patch: bytes, source: bytes, *, verify_source: bool = True) -> bytes:
     if len(out) != hdr.target_size:
         raise BpsError(f"actions produced {len(out)} bytes, target_size is {hdr.target_size}")
     if zlib.crc32(out) != tgt_crc:
-        raise BpsError("patch applied cleanly but the target CRC does not match — the "
+        raise BpsError("patch applied cleanly but the target CRC does not match - the "
                        "source may be an intermediate variant the patch was not built for")
     return bytes(out)
 

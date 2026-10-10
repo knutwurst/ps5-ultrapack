@@ -182,7 +182,7 @@ def run_copy(src, dst_dir, *,
     _print(on_line, "[PHASE] Writing Final Image")
 
     if same_drive and mode == KEEP and _clone(src, dst):
-        _print(on_line, f"[INFO] copy: same-drive clone — {src.name} → {dst} (no extra space until one changes)")
+        _print(on_line, f"[INFO] copy: same-drive clone - {src.name} → {dst} (no extra space until one changes)")
         _print(on_line, f"[####] 100% copy")
         _print(on_line, f"[SUCCESS] Copied {src.name} → {dst}")
         return 0
@@ -190,7 +190,7 @@ def run_copy(src, dst_dir, *,
     if same_drive and mode != KEEP:
         # Metadata-only rename - no data movement. Feels instantaneous even on
         # a 100 GB game because we never touch the payload bytes.
-        _print(on_line, f"[INFO] copy: same-drive move — {src.name} → {dst}")
+        _print(on_line, f"[INFO] copy: same-drive move - {src.name} → {dst}")
         try:
             os.rename(src, dst)
         except OSError as e:
@@ -214,7 +214,7 @@ def run_copy(src, dst_dir, *,
                         f"{free / 1e9:.2f} GB free")
         return 1
     tmp = dst.with_suffix(dst.suffix + ".copy-tmp")
-    _print(on_line, f"[INFO] copy: {'cross-drive' if not same_drive else 'same-drive'} copy — {src.name} → {dst}")
+    _print(on_line, f"[INFO] copy: {'cross-drive' if not same_drive else 'same-drive'} copy - {src.name} → {dst}")
     written = 0
     last_pct = -1
     t0 = time.monotonic()
@@ -335,7 +335,7 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
                         f"{free / 1e9:.2f} GB free")
         return 1
     tmp = dst.with_name(dst.name + ".copy-tmp")
-    _print(on_line, f"[INFO] copy: folder copy — {src.name} → {dst}")
+    _print(on_line, f"[INFO] copy: folder copy - {src.name} → {dst}")
     written, last_pct, t0 = 0, -1, time.monotonic()
     try:
         if tmp.is_dir() and not tmp.is_symlink():

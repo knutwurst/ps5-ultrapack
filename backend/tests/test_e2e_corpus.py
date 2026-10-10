@@ -288,7 +288,7 @@ def main() -> int:
     report = {"source": str(src), "passed": sum(r["ok"] for r in e.results),
               "failed": sum(not r["ok"] for r in e.results), "results": e.results}
     (work / "e2e-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(f"\n{report['passed']} passed, {report['failed']} failed — report: {work / 'e2e-report.json'}")
+    print(f"\n{report['passed']} passed, {report['failed']} failed - report: {work / 'e2e-report.json'}")
     if not a.keep:
         for d in ("C2", "C2u", "C3", "C3u", "C4", "C4u", "C5a", "C5b", "C6", "C6x", "tmp"):
             shutil.rmtree(work / d, ignore_errors=True)

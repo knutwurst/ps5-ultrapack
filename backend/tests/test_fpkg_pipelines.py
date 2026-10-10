@@ -194,7 +194,7 @@ def test_environment(r: Runner):
     r.check("tool.present", TOOL.exists(), f"{TOOL}", f"missing: {TOOL} (build it: ./BUILD_PKG_TOOL.sh)")
     magick = TOOL.parent / "Magick.Native-Q8-arm64.dll.dylib"
     r.check("tool.magick-native", magick.is_file(), f"{magick.name} next to the tool",
-            f"missing: {magick} — icon conversion would fail (build it: ./BUILD_PKG_TOOL.sh)")
+            f"missing: {magick} - icon conversion would fail (build it: ./BUILD_PKG_TOOL.sh)")
     if TOOL.exists():
         rc, out = r.run_tool(["version"])
         r.check("tool.runs", rc == 0, out.strip().splitlines()[0] if out else "", out)
@@ -261,7 +261,7 @@ def test_chain1_folder_pkg_folder(r: Runner):
         r.check("chain1.eboot.transformed",
                 got.get("eboot.bin") != src["eboot.bin"],
                 "eboot.bin fake-signed (magic transformed)",
-                "eboot.bin came through unchanged — fake-sign step missed")
+                "eboot.bin came through unchanged - fake-sign step missed")
 
 
 def png_colour(p: Path) -> int | None:
@@ -442,7 +442,7 @@ def test_identity_from_param_json(r: Runner):
     pkg = next(out.glob("*.pkg"), None)
     r.check("identity.mismatch.header-from-param",
             pkg is not None and "PROSPERO00000000" in pkg.name and "V0100" in pkg.name,
-            pkg.name if pkg else "", f"got {pkg.name if pkg else 'no .pkg'} — header did not follow param.json")
+            pkg.name if pkg else "", f"got {pkg.name if pkg else 'no .pkg'} - header did not follow param.json")
     r.check("identity.mismatch.warned",
             "differs from param.json" in log,
             "log warns about the disagreeing --content-id",

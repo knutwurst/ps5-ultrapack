@@ -741,7 +741,7 @@ try:
     ok("card.status-names-archive-damage", "cannot be read: the archive is damaged" in _dc.get("Status", ""),
        _dc.get("Status", ""))
     ok("error.diagnosis-damaged-archive", "broken" in (m.ErrorDialog._diagnose(
-        "RAR extraction failed — 1 part of the set is missing (X.part2.rar) — download the set again", "") or ""), "")
+        "RAR extraction failed - 1 part of the set is missing (X.part2.rar) - download the set again", "") or ""), "")
     # J6g) a silent step reports progress: the backend's bars move the stage, % and speed
     _pj = m.GameItem.from_chain(HBT, to="ffpfsc")
     _pc, _pcwd, _pout, _ptmp = app.build_command(_pj)
@@ -874,13 +874,13 @@ try:
     _qi = m.GameItem.from_chain(_cpk, to="ffpfsc"); _qi.status = "Running"
     app.queue.insert(0, _qi); app.update_queue_box(); app._batch_running = True
     app._begin_job_progress(_qi)
-    app.status_update("Extracting", "x", "Extracting", 50, 60, "—", "—", "—", job=_qi)
+    app.status_update("Extracting", "x", "Extracting", 50, 60, " - ", " - ", " - ", job=_qi)
     pump(lambda: app._cur_job_pct == 60, timeout=5.0)
-    app.status_update("Ready", "3 games added to queue.", "Ready", 0, 0, "00:00", "—", "—", side=True)
+    app.status_update("Ready", "3 games added to queue.", "Ready", 0, 0, "00:00", " - ", " - ", side=True)
     pump(lambda: "3 games added" in app.footer_var.get(), timeout=5.0)
     ok("queue-bar.side-message-in-footer", app._cur_job_pct == 60 and "3 games added" in app.footer_var.get()
        and app.big_status_var.get() != "Ready", f"{app._cur_job_pct} {app.big_status_var.get()}")
-    app.status_update("Still Working", "y", "Extracting", 50, 41, "—", "—", "—", job=_qi)
+    app.status_update("Still Working", "y", "Extracting", 50, 41, " - ", " - ", " - ", job=_qi)
     pump(lambda: "Still Working" in app.footer_var.get(), timeout=5.0)
     ok("queue-bar.never-backward", app._cur_job_pct == 60, f"{app._cur_job_pct}")
     app._batch_running = False; app.queue.remove(_qi); app.update_queue_box()
@@ -2303,7 +2303,7 @@ try:
         _l1 = app._job_time_left(_tj, "Compressing", 3, "38m 08s", 128 * _gb)
         _learned = app._stage_rates.get("Creating Temp PFS", 0)
         app._stage_clock = (_tj, "Compressing", time.time() - 2400)
-        app._job_time_left(_tj, "Cleaning Up", 0, "—", 128 * _gb)
+        app._job_time_left(_tj, "Cleaning Up", 0, " - ", 128 * _gb)
         _tj2 = m.GameItem.from_chain(ZP, to="ffpfsc")
         app._stage_clock = (_tj2, "Creating Temp PFS", time.time() - 60)
         _l2 = app._job_time_left(_tj2, "Creating Temp PFS", 50, "1m 00s", 64 * _gb)
@@ -2316,7 +2316,7 @@ try:
     # Speed and time left while an archive is unpacked
     ok("unpack.rate", m.unpack_rate(50, 100, 100 * 10**9) == ("500.0 MB/s", "1m 40s") and m.unpack_rate(50, 10, 100 * 10**9)[0] == "5.00 GB/s"
        and m.unpack_rate(25, 60, 12 * 10**9) == ("50.0 MB/s", "3m 00s")
-       and m.unpack_rate(1, 60, 10**9) == ("—", "—") and m.unpack_rate(40, 20, 0) == ("—", "30s"),
+       and m.unpack_rate(1, 60, 10**9) == (" - ", " - ") and m.unpack_rate(40, 20, 0) == (" - ", "30s"),
        str([m.unpack_rate(50, 100, 100 * 10**9), m.unpack_rate(25, 60, 12 * 10**9)]))
     # The details pane belongs to the selected job: the progress block shows only for the
     # running one, and a job you picked stays picked when the next job starts

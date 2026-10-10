@@ -156,7 +156,7 @@ def fake_sign_tree(root: str, log=print) -> dict:
     _sweep_stale_temps(root, log)
     targets, found_eboot = find_targets(root)
     if not found_eboot:
-        log(f"[WARN] No eboot.bin found under {root} — this may not be a PS5 "
+        log(f"[WARN] No eboot.bin found under {root} - this may not be a PS5 "
             f"game dump. Fake-signing every ELF found anyway; cancel now if this "
             f"is the wrong folder.")
     if not targets:

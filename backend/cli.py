@@ -227,7 +227,7 @@ def _open_inner_pfs(image_path, pfs, consts):
         if len(files) == 1 and not real_dirs and files[0][0].lower().endswith(_NESTED_IMAGE_SUFFIXES):
             rel, ino = files[0]
             if rel.lower().endswith((".exfat", ".ffpkg")):
-                raise ValueError(f"this image wraps a {Path(rel).suffix} volume, not a PFS — "
+                raise ValueError(f"this image wraps a {Path(rel).suffix} volume, not a PFS - "
                                  f"browsing that format is not supported")
             inode = inodes[ino]
             if not getattr(inode, "db", None):
@@ -667,7 +667,7 @@ def find_game_items(path: Path, batch: bool = False) -> list[Path]:
     if not batch and len(valid_items) > 1:
         print(f"[ERROR] Multiple game folders/files found in {path}:")
         for item in valid_items:
-            print(f"  - {item}")
+            print(f" - {item}")
         print("Use --batch to process all.")
         sys.exit(1)
 
@@ -702,7 +702,7 @@ def find_pfs_images(path: Path, batch: bool = False) -> list[Path]:
     if not batch and len(images) > 1:
         print(f"[ERROR] Multiple PFS images found in {path}:")
         for image in images:
-            print(f"  - {image}")
+            print(f" - {image}")
         print("Use --batch to process all.")
         sys.exit(1)
 
@@ -729,7 +729,7 @@ def _mkpfs_error_hint(exc: subprocess.CalledProcessError, output_path: Path) -> 
             pass
         if fs_label in ("exFAT", "FAT32", "FAT"):
             print(
-                f"[ERROR] OUTPUT DRIVE IS {fs_label} — 4 GB per-file limit exceeded.\n"
+                f"[ERROR] OUTPUT DRIVE IS {fs_label} - 4 GB per-file limit exceeded.\n"
                 f"[ERROR] PS5 .ffpfsc files are almost always larger than 4 GB.\n"
                 f"[ERROR]   OUTPUT folder  →  change to an NTFS drive (e.g. C:\\ or D:\\)\n"
                 f"[ERROR]   TEMP folder    →  also move to NTFS if it is on the same drive",
@@ -774,7 +774,7 @@ def _locate_mkpfs() -> tuple[list[str], str | None]:
         print(f"[INFO] Using bundled MkPFS package at {_CLI_DIR}")
         return [sys.executable, "-m", "mkpfs"], _CLI_DIR
 
-    print(f"[ERROR] Bundled MkPFS package not found at {_BUNDLED_MKPFS} — the installation is incomplete.",
+    print(f"[ERROR] Bundled MkPFS package not found at {_BUNDLED_MKPFS} - the installation is incomplete.",
           flush=True)
     sys.exit(1)
 
@@ -950,7 +950,7 @@ def _open_pass2_spool_dir(image_path, default_temp_dir, output_path, spill_base=
                 spill = base / "_ffpfsc_temp"
                 spill.mkdir(parents=True, exist_ok=True)
                 ctx = tempfile.TemporaryDirectory(prefix="ffpfsc_spool_", dir=str(spill))
-                print(f"[INFO] Pass-2 spool routed to the output drive ({spill}) — temp can't "
+                print(f"[INFO] Pass-2 spool routed to the output drive ({spill}) - temp can't "
                       f"hold image+spool; the inner image stays on temp for fast reads.", flush=True)
                 return Path(ctx.name), ctx
         except Exception as e:
@@ -1085,7 +1085,7 @@ def _fully_unwrap(out_dir: Path, mkpfs_cmd_base, mkpfs_cwd) -> None:
                 continue
             return   # couldn't extract (non-macOS) - leave the .exfat for the user
         if pfs or exf:
-            print(f"[WARN] Stopped unwrapping — nested image(s) left in place: "
+            print(f"[WARN] Stopped unwrapping - nested image(s) left in place: "
                   f"{[p.name for p in (pfs + exf)]}. The output is NOT a plain folder.", flush=True)
         return   # nothing single to unwrap (empty / multiple images)
 
@@ -1592,18 +1592,18 @@ def _resolve_fpkg_identity(build_src: Path, args) -> dict:
             loaded = json.loads(pj.read_text(encoding="utf-8-sig", errors="replace"))
             d = loaded if isinstance(loaded, dict) else {}
         except Exception as e:
-            print(f"[WARN] Could not read {pj}: {e} — using the passed identity.", flush=True)
+            print(f"[WARN] Could not read {pj}: {e} - using the passed identity.", flush=True)
 
     def _pick(label: str, passed: str | None, from_pj: str, valid) -> tuple[str, str]:
         passed = (passed or "").strip()
         from_pj = (from_pj or "").strip()
         if from_pj and valid(from_pj):
             if passed and passed != from_pj:
-                print(f"[WARN] {label} {passed!r} differs from param.json {from_pj!r} — using param.json "
+                print(f"[WARN] {label} {passed!r} differs from param.json {from_pj!r} - using param.json "
                       f"(the console checks that the header and param.json agree).", flush=True)
             return from_pj, "param.json"
         if from_pj:
-            print(f"[WARN] param.json {label} {from_pj!r} is malformed — using the passed value.", flush=True)
+            print(f"[WARN] param.json {label} {from_pj!r} is malformed - using the passed value.", flush=True)
         return passed, "arguments"
 
     cid, cid_src = _pick("content id", args.content_id,
@@ -1670,7 +1670,7 @@ def _evacuate_non_game_extras(game_folder: Path, dest_dir: Path) -> int:
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        print(f"[WARN] Could not create a place for non-game extras ({e}) — leaving "
+        print(f"[WARN] Could not create a place for non-game extras ({e}) - leaving "
               f"them in the game (they will be packed).", flush=True)
         return 0
     moved = 0
@@ -1691,7 +1691,7 @@ def _evacuate_non_game_extras(game_folder: Path, dest_dir: Path) -> int:
             print(f"[INFO] Non-game {kind} '{p.name}' moved next to the output "
                   f"(kept out of the image, preserved for you).", flush=True)
         except Exception as e:
-            print(f"[WARN] Could not move '{p.name}' out of the game ({e}) — it will be packed.", flush=True)
+            print(f"[WARN] Could not move '{p.name}' out of the game ({e}) - it will be packed.", flush=True)
     return moved
 
 
@@ -1738,7 +1738,7 @@ def pack_folder_uncompressed(
     if verbose:
         cmd.append("--verbose")
     if verify_enabled:
-        print("[INFO] Post-pack verify is ENABLED (full check against the source folder — slower, more RAM).", flush=True)
+        print("[INFO] Post-pack verify is ENABLED (full check against the source folder - slower, more RAM).", flush=True)
         cmd.append("--verify")
     else:
         # "Verify Output" off → skip the post-pack verify entirely. Without this,
@@ -2167,7 +2167,7 @@ def _auto_cap_cpu(requested: int, source: Path) -> int:
         else:
             return 0   # small source - let mkpfs use its default (all cores)
         cap = min(cap, max(1, os.cpu_count() or 4))
-        print(f"[INFO] Source is {size / GB:.1f} GB — auto-capping mkpfs workers to {cap} "
+        print(f"[INFO] Source is {size / GB:.1f} GB - auto-capping mkpfs workers to {cap} "
               f"to prevent out-of-memory (override with the CPU cores setting).", flush=True)
         return cap
     except Exception:
@@ -2432,7 +2432,7 @@ def _chain_materialize(src: Path, scratch_root: Path, args) -> tuple[Path, Path 
         elif kind in ("zip", "rar"):
             _extract_archive_into(src, scratch, args.password)
         else:
-            raise RuntimeError(f"unsupported source type '{src.suffix}' — expected a folder, "
+            raise RuntimeError(f"unsupported source type '{src.suffix}' - expected a folder, "
                                ".zip/.rar, .exfat/.ffpkg, .ffpfs, .ffpfsc or .pkg")
     except BaseException:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -2512,7 +2512,7 @@ def _extracted_zip_source(path: Path, *, temp_root=None, password: str | None = 
 def main() -> None:
     _exit_with_parent()
     parser = argparse.ArgumentParser(
-        description="PS5 UltraPack backend — create .ffpfsc containers or extract .ffpfs/.ffpfsc images."
+        description="PS5 UltraPack backend - create .ffpfsc containers or extract .ffpfs/.ffpfsc images."
     )
     parser.add_argument("game_folder", nargs='?', help="Source game folder, .exfat/.ffpkg file, or .ffpfs/.ffpfsc image")
     parser.add_argument("output", nargs='?', default=".", help="Output .ffpfsc file/directory, or extraction directory")
@@ -2556,7 +2556,7 @@ def main() -> None:
                         help="PATCH MODE: overlay the loose files in DIR onto the game "
                              "(a folder or an existing .ffpfsc), then (re)pack to OUTPUT.")
     parser.add_argument("--patch-inplace", action="store_true",
-                        help="The game folder is a throwaway temp extract — overlay in "
+                        help="The game folder is a throwaway temp extract - overlay in "
                              "place instead of copying it first.")
     parser.add_argument("--fake-sign", type=str, default=None, metavar="DIR",
                         help="FAKE-SIGN MODE: recursively fake-sign every executable "
@@ -2615,7 +2615,7 @@ def main() -> None:
     parser.add_argument("--fpkg-build", type=str, default=None, metavar="SRC",
                         help="fPKG MODE: build a debug PS5 fake package (.pkg) into OUTPUT "
                              "(a folder). SRC is a prepared /app0 folder OR a packed image "
-                             "(.ffpfsc/.ffpfs/.exfat/.ffpkg — unwrapped to --temp-dir first, "
+                             "(.ffpfsc/.ffpfs/.exfat/.ffpkg - unwrapped to --temp-dir first, "
                              "the one-click image→fPKG conversion). Uses drakmor's "
                              "LibProsperoPkg 1.2.0. The identity comes from the source's "
                              "sce_sys/param.json; --content-id/--title-id/--fpkg-version/"
@@ -2623,7 +2623,7 @@ def main() -> None:
                              "the Kraken/zlib level, --temp-dir the staging drive.")
     parser.add_argument("--content-id", type=str, default=None,
                         help="fPKG build: 36-char content id (e.g. UP9000-PPSA00000_00-...). "
-                             "Fallback only — sce_sys/param.json wins when it has one.")
+                             "Fallback only - sce_sys/param.json wins when it has one.")
     parser.add_argument("--title-id", type=str, default=None,
                         help="fPKG build: 9-char title id (e.g. PPSA00000). Fallback only.")
     parser.add_argument("--fpkg-title", type=str, default="",
@@ -2642,10 +2642,10 @@ def main() -> None:
     parser.add_argument("--fpkg-kraken-backend", type=str, default="builtin",
                         choices=("automatic", "builtin", "publishingtools", "uncompressed"),
                         help="fPKG build: Kraken encoder policy. Default 'builtin' (pure "
-                             "managed, no external DLL) — the only one whose output launches "
+                             "managed, no external DLL) - the only one whose output launches "
                              "on a console; 'uncompressed'/'automatic' fail with CE-100096-6. "
                              "'publishingtools' requires the Sony libScePubTools.dll AND "
-                             "64-bit Windows — on any other OS LibProsperoPkg throws and the "
+                             "64-bit Windows - on any other OS LibProsperoPkg throws and the "
                              "build fails (no fallback).")
     parser.add_argument("--fpkg-deterministic", action="store_true",
                         help="fPKG build: produce byte-reproducible output (fixed seeds "
@@ -2893,7 +2893,7 @@ def main() -> None:
             print(f"[ERROR] Fake-sign failed: {e}", flush=True)
             sys.exit(1)
         if counts.get("failed"):
-            print(f"\n[ERROR] Fake-sign finished with {counts['failed']} failure(s) — "
+            print(f"\n[ERROR] Fake-sign finished with {counts['failed']} failure(s) - "
                   f"see the lines above.", flush=True)
             sys.exit(1)
         print(f"\n[SUCCESS] Fake-signed {counts.get('signed', 0)} file(s); "
@@ -3160,7 +3160,7 @@ def main() -> None:
             _cid, _tid = ident["content_id"], ident["title_id"]
             _ident_err = None
             if not _cid or not _tid:
-                _ident_err = ("fPKG build needs a content id and a title id — none found in "
+                _ident_err = ("fPKG build needs a content id and a title id - none found in "
                               "sce_sys/param.json and none passed (--content-id / --title-id).")
             elif not _FPKG_CID_RE.match(_cid):
                 _ident_err = (f"Content ID {_cid!r} must look like UP9000-PPSA12345_00-GAMENAME00000000 "
@@ -3242,7 +3242,7 @@ def main() -> None:
             if built:
                 print(f"[OK] fPKG complete: {built[-1]}", flush=True)
             if validate_rc:
-                print("[WARN] Validation reported failures — check the checklist above before installing.",
+                print("[WARN] Validation reported failures - check the checklist above before installing.",
                       flush=True)
             return
 
@@ -3420,7 +3420,7 @@ def main() -> None:
                 sys.exit(1)
             print(f"[OK] Applied {applied} patch file(s) onto the game.", flush=True)
             if applied == 0:
-                print("[ERROR] The patch contained no files to overlay — nothing to do.")
+                print("[ERROR] The patch contained no files to overlay - nothing to do.")
                 sys.exit(1)
             title_id = _patch_dir_title_id(game_root) or "patched"
             with tempfile.TemporaryDirectory(dir=user_temp) as td2:
@@ -3440,7 +3440,7 @@ def main() -> None:
                     print("[INFO] Freed the extracted game folder (no longer needed for compression).", flush=True)
                 pass2_kwargs = dict(patch_pack_kwargs)
                 if pass2_kwargs.get("compression_level", 7) > 0 and _looks_incompressible(temp_pfs):
-                    print("[INFO] Patched image sampled as incompressible — storing without compression.", flush=True)
+                    print("[INFO] Patched image sampled as incompressible - storing without compression.", flush=True)
                     pass2_kwargs["compression_level"] = 0
                 # An existing output (--overwrite was verified above) is NOT removed here:
                 # pass 2 builds beside it and swaps the finished file in, so a failed
@@ -3583,7 +3583,7 @@ def main() -> None:
                         if sys.stdin.isatty():
                             response = input("Overwrite existing file? [y/N]: ").strip().lower()
                         else:
-                            print("[INFO] Non-interactive shell — skipping overwrite.")
+                            print("[INFO] Non-interactive shell - skipping overwrite.")
                             response = 'n'
                     except (KeyboardInterrupt, EOFError):
                         print("\n[INFO] Cancelled.")
@@ -3632,7 +3632,7 @@ def main() -> None:
                 # (Source == output was refused above.) Copy beside an existing output and
                 # swap on success - same rule as the mkpfs routes - so an interrupted copy
                 # never truncates the previous file.
-                print(f"[INFO] Uncompressed output — copying {item.name} -> {current_ffpfs_path.name}", flush=True)
+                print(f"[INFO] Uncompressed output - copying {item.name} -> {current_ffpfs_path.name}", flush=True)
                 build_path = _stage_build_output(current_ffpfs_path, replace_existing)
                 try:
                     current_ffpfs_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3670,7 +3670,7 @@ def main() -> None:
                     # Uncompressed deliverable: build the inner PFS image STRAIGHT to the
                     # output (.ffpfs) and stop - no pass 2, no compressed spool. Faster to
                     # build and (per ShadowMountPlus) far faster to mount; full size on disk.
-                    print("[INFO] Uncompressed output — building the PFS image directly to "
+                    print("[INFO] Uncompressed output - building the PFS image directly to "
                           f"{current_ffpfs_path.name} (skipping pass-2 compression).", flush=True)
                     current_ffpfs_path.parent.mkdir(parents=True, exist_ok=True)
                     pack_folder_uncompressed(
@@ -3716,7 +3716,7 @@ def main() -> None:
                 # attempts over a ~150 GB image.
                 pass2_kwargs = dict(pack_kwargs)
                 if pass2_kwargs.get("compression_level", 7) > 0 and _looks_incompressible(temp_pfs):
-                    print("[INFO] Inner image sampled as incompressible — storing without "
+                    print("[INFO] Inner image sampled as incompressible - storing without "
                           "compression (level 0) to skip wasted CPU; the .ffpfsc is the same "
                           "size either way.", flush=True)
                     pass2_kwargs["compression_level"] = 0
@@ -3742,7 +3742,7 @@ def main() -> None:
                         # Never clobber what is already there (an earlier kept image or a
                         # user's own .ffpfs) - take the next free name instead.
                         saved = _free_sibling_name(saved)
-                        print(f"[INFO] {title_id}.ffpfs already exists next to the output — "
+                        print(f"[INFO] {title_id}.ffpfs already exists next to the output - "
                               f"keeping the intermediate image as {saved.name} instead.", flush=True)
                     print(f"[INFO] Saving intermediate PFS image to {saved}...")
                     # move (not copy): pass 2 already consumed temp_pfs; relocating frees the

@@ -383,7 +383,7 @@ class PasswordErrorRecognition(unittest.TestCase):
     def test_new_types(self):
         self.assertTrue(AE._is_password_error(m.ArchivePasswordError("anything")))
         self.assertFalse(AE._is_password_error(
-            m.ArchiveToolError("7zz exited with code 2 — extraction failed.\n  ERROR: Data Error : passwords.txt",
+            m.ArchiveToolError("7zz exited with code 2 - extraction failed.\n  ERROR: Data Error : passwords.txt",
                                returncode=2)))
         self.assertFalse(AE._is_password_error(PermissionError("denied")))
 
