@@ -38,6 +38,13 @@ class RunCopyTests(unittest.TestCase):
         p.write_bytes(b"X" * size)
         return p
 
+    def test_progress_line(self):
+        with mock.patch("copy_job.time.monotonic", return_value=102.0):
+            line = copy_job.progress_line(8, 8 * 10**6, 100 * 10**6, 100.0, "copy X.pkg")
+        self.assertEqual(line, "[####] 8% copy X.pkg @ 4.00 MB/s ETA 23s")
+        with mock.patch("copy_job.time.monotonic", return_value=100.1):
+            self.assertEqual(copy_job.progress_line(1, 10, 1000, 100.0, "copy"), "[####] 1% copy")
+
     def test_folder_copy_replaces_a_partial_one_left_behind(self):
         src = self.tmp / "src" / "game"
         (src / "sce_sys").mkdir(parents=True)

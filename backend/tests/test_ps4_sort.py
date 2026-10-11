@@ -45,6 +45,9 @@ class Sort(unittest.TestCase):
         self.assertTrue((self.src / "base.pkg").is_file())             # keep mode keeps the source
         pcts = [int(m) for m in re.findall(r"^\[#+\] (\d+)% ", log, re.M)]
         self.assertEqual(pcts, sorted(pcts)); self.assertEqual(pcts[-1], 100)   # one rising bar for the set
+        import ultra_core as uc
+        bars = re.findall(r"^\[#+\] \d+% .*$", log, re.M)
+        self.assertTrue(min(pcts) < 20 and all(uc.PROGRESS_RE.search(b) for b in bars), bars[:3])
         self.assertEqual(log.count("[JOB] copy"), 1)
         self.assertIn(f"[OK] PS4 sorted: {self.top}", log)
 

@@ -23,6 +23,14 @@ def _print(on_line: Optional[Callable[[str], None]], msg: str) -> None:
         on_line(msg)
 
 
+def progress_line(pct: int, done: int, total: int, t0: float, what: str = "copy") -> str:
+    """The bar line the app reads, with speed and time left once a rate is known."""
+    secs = time.monotonic() - t0
+    rate = done / secs if secs > 0.5 else 0
+    tail = f" @ {rate / 1e6:.2f} MB/s ETA {int((total - done) / rate)}s" if rate > 0 else ""
+    return f"[####] {pct}% {what}{tail}"
+
+
 def _same_device(a: Path, b: Path) -> bool:
     """True when ``a`` and ``b`` live on the same filesystem, so ``os.rename``
     is a metadata-only operation instead of a copy. Compares the closest
@@ -212,11 +220,7 @@ def run_copy(src, dst_dir, *,
                 if total > 0:
                     pct = min(99, int(written * 100 / total))
                     if pct != last_pct:
-                        secs = time.monotonic() - t0
-                        rate = written / secs if secs > 0.5 else 0
-                        tail = (f" @ {rate / 1e6:.2f} MB/s ETA {int((total - written) / rate)}s"
-                                if rate > 0 else "")
-                        _print(on_line, f"[####] {pct}% copy{tail}")
+                        _print(on_line, progress_line(pct, written, total, t0))
                         last_pct = pct
             # Everything must be on the destination before the source may go: flush,
             # sync, then compare the byte count AND the on-disk size with the source
@@ -337,10 +341,7 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
                     if total:
                         pct = min(99, int(written * 100 / total))
                         if pct != last_pct:
-                            secs = time.monotonic() - t0
-                            rate = written / secs if secs > 0.5 else 0
-                            tail = (f" @ {rate / 1e6:.2f} MB/s ETA {int((total - written) / rate)}s" if rate else "")
-                            _print(on_line, f"[####] {pct}% copy{tail}")
+                            _print(on_line, progress_line(pct, written, total, t0))
                             last_pct = pct
                 _fsync_file(fout.fileno())
                 if os.fstat(fout.fileno()).st_size != os.lstat(s).st_size:

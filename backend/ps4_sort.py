@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import sys
 from pathlib import Path
 
@@ -83,12 +84,14 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
     total = sum(max(1, p.stat().st_size) for p, *_ in placements)
     done = 0
     last_pct = [-1]
+    t0 = time.monotonic()
 
     def bar(pct_of_file: int, size: int, name: str) -> None:
-        pct = int((done + size * pct_of_file / 100) * 100 / total)
+        moved = int(done + size * pct_of_file / 100)
+        pct = int(moved * 100 / total)
         if pct > last_pct[0]:
             last_pct[0] = pct
-            _say(on_line, f"[{'#' * max(1, pct // 5)}] {pct}% copy {name}")
+            _say(on_line, copy_job.progress_line(pct, moved, total, t0, f"copy {name}"))
 
     def relay(size: int, name: str):
         def sink(line: str) -> None:

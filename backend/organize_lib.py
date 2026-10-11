@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import shutil
 import sys
 import tempfile
@@ -691,12 +692,14 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
     total = sum(sizes.values())
     done = 0
     last = [-1]
+    t0 = time.monotonic()
 
     def bar(pct_of_item: int, size: int, name: str) -> None:
-        pct = int((done + size * pct_of_item / 100) * 100 / total)
+        moved = int(done + size * pct_of_item / 100)
+        pct = int(moved * 100 / total)
         if pct > last[0]:
             last[0] = pct
-            _say(on_line, f"[{'#' * max(1, pct // 5)}] {pct}% copy {name}")
+            _say(on_line, copy_job.progress_line(pct, moved, total, t0, f"copy {name}"))
 
     def relay(size: int, name: str):
         def sink(line: str) -> None:

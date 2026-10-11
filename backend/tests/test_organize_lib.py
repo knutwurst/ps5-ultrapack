@@ -283,6 +283,15 @@ class Into(Tree):
                          ["Alpha Game [PPSA00001] [v01.000].ffpfsc", "Alpha Game [PPSA00001] [v01.200].ffpfsc"])
         self.assertFalse(src.exists())
 
+    def test_progress_lines_are_read_by_the_app(self):
+        for i in range(6):
+            self.put(f"dl/g{i}.ffpfsc", dict(A, title=f"Game {i}", title_id=f"PPSA0000{i + 1}"))
+        lines = []
+        self.assertEqual(ol.organize_into(self.root / "dl", self.lib(), fake_identify, on_line=lines.append), 0)
+        bars = [l for l in lines if l.startswith("[#")]
+        pcts = [int(uc.PROGRESS_RE.search(b).group("pct")) for b in bars if uc.PROGRESS_RE.search(b)]
+        self.assertTrue(len(pcts) == len(bars) and min(pcts) < 20 and pcts[-1] == 100, bars)
+
     def test_library_inside_the_source_is_refused(self):
         self.put("dl/a.ffpfsc", A)
         self.assertEqual(ol.organize_into(self.root / "dl", self.root / "dl" / "lib", fake_identify,
