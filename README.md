@@ -132,7 +132,7 @@ The window is a sidebar, the queue and a details pane. The queue takes the full 
 - A decrypted PS5 game folder (`eboot.bin` plus `sce_sys/param.json`).
 - A disk image: `.exfat` or `.ffpkg`.
 - An existing `.ffpfs`, re-wrapped into its compressed `.ffpfsc`.
-- An archive: ZIP, RAR or 7z. The app extracts it, finds the game inside and packs that. Multi-part RAR sets collapse to one job. A 7z extracts through the native `7z` / `7zz` CLI when present (3 to 10 times faster) and falls back to pure-Python `py7zr` otherwise.
+- An archive: ZIP, RAR or 7z. The app extracts it, finds the game inside and packs that. Multi-part RAR sets collapse to one job. An archive with several games or apps (a game with its art book and soundtrack, a collection) is unpacked once and each becomes a job of its own; the queue marks them with a bracket, and with auto-organize they share the folder of the game the archive is named after. A 7z extracts through the native `7z` / `7zz` CLI when present (3 to 10 times faster) and falls back to pure-Python `py7zr` otherwise.
 - A finished PS5 fake package (`.pkg`): choose **Folder** as the output and the app extracts the whole `/app0` tree (the inner PFS plus `sce_sys/param.json`, `icon0.png` and the PlayGo files from the CNT container) into a folder you can pack, patch or turn back into a `.pkg`.
 
 Saved archive passwords are tried automatically. When none unlocks an archive's header, the app asks once when you add the job and remembers the answer, which also lets the router size the job correctly up front.
@@ -179,7 +179,7 @@ In Auto mode the router decides where each part of a build lives, then states it
 - Otherwise a split: the inner image on the SSD, the extracted source on the output drive, with the pass-2 spool routed wherever it fits.
 - The output drive alone when nothing fits the SSD, so the build still completes.
 
-It detects SSD versus HDD per drive, including USB SSDs that report no flash flag (it times a short write to tell them apart). A configurable temp folder and an optional extra scratch pool feed the router, and a free-space gate skips a job with real numbers rather than failing mid-build. You can force same-drive read-and-write on (for an SSD) or off in Settings.
+It detects SSD versus HDD per drive, including USB SSDs that report no flash flag (it times a short write to tell them apart). A configurable temp folder and an optional extra scratch pool feed the router, and a free-space gate skips a job with real numbers rather than failing mid-build. A skipped job opens a window that names the full drive, what the job needs there and what is free. You can force same-drive read-and-write on (for an SSD) or off in Settings.
 
 ## What it keeps out of the image, and what it keeps for you
 

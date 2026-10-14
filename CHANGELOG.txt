@@ -3,7 +3,46 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.2.2  (current)
+  v2.2.3  (current)
+────────────────────────────────────────────────────────────────────────
+
+ARCHIVES WITH SEVERAL GAMES
+
+  - An archive that holds several games or apps, such as a game with
+    its art book and soundtrack, or a collection, is unpacked once and
+    each of them becomes a job of its own. All of them are built now:
+    the first one to finish used to delete the unpacked copy the others
+    still read, so they failed with "Backend exited with code 1".
+  - With auto-organize they all go into one folder, the one of the game
+    the archive is named after (else the biggest).
+  - The queue marks them with a bracket on the left, also when one of
+    them is moved elsewhere in the list, and their details name the
+    archive and which of its games a job is.
+  - The archive's After-job rule (Move, Trash, Delete) waits for the
+    last of its games instead of running after the first.
+  - Retry on one of them unpacks the archive again for that game alone,
+    also after a restart, and adds no jobs.
+  - The run counts each game: "3 of 3 done", no longer "3 of 1".
+
+SPACE AND PROGRESS
+
+  - A job skipped because a drive is too full opens a window that says
+    which drive, how much the job needs there and how much is free
+    ("Output drive full"). Several such jobs in one run share the
+    window. The job's details and the log say the same; the log used to
+    say the job fit no drive even when only the output drive was short.
+  - Organize and the PS4 library sort show their progress from the
+    start, with speed and time left. Their bar stood at 0 % until a
+    fifth of the copy was done.
+
+FIXES
+
+  - Cleaning up no longer deletes an unpacked copy a queued job still
+    needs: after a job, at start, and with Clean temp. Clean temp waits
+    until the queue has stopped.
+
+────────────────────────────────────────────────────────────────────────
+  v2.2.2
 ────────────────────────────────────────────────────────────────────────
 
 GAME NAMES BEFORE THE UNPACK
