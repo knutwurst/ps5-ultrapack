@@ -189,6 +189,22 @@ def _after_job_module():
     return after_job
 
 
+def _remove_scratch(p: Path) -> int:
+    """Delete a folder or file of the app's own scratch; the bytes it held."""
+    try:
+        if p.is_dir() and not p.is_symlink():
+            size = get_folder_size(p)
+            shutil.rmtree(str(p), ignore_errors=True)
+            return size
+        if p.is_symlink() or p.exists():
+            size = p.stat().st_size if p.is_file() else 0
+            p.unlink()
+            return size
+    except OSError:
+        pass
+    return 0
+
+
 def _drive_name(path: Path) -> str:
     """The drive a path lives on, by its volume name: 'SAMSUNG', or 'the system drive'."""
     parts = Path(path).parts
@@ -4650,7 +4666,7 @@ class JobDialog(EmbeddedDialog):
             if _old_src is not None and str(_old_src) == str(p):
                 # Same source: keep where it came from, so a retry runs from the copy the job
                 # kept (and a removal deletes it) instead of a stranger's path in the scratch.
-                for attr in ("origin_archive", "origin_extracted_size", "kept_extract", "bundle_siblings",
+                for attr in ("origin_archive", "origin_extracted_size", "origin_payload", "kept_extract", "bundle_siblings",
                              "pkg_content_size", "extracted_size", "header_locked"):
                     if hasattr(old, attr):
                         setattr(new, attr, getattr(old, attr))
@@ -7336,6 +7352,14 @@ class App:
             "  • A package (.pkg)"
         )
 
+    @staticmethod
+    def _payload_key(root, path) -> str:
+        """Where one game sits inside an unpacked archive, the same on every unpack."""
+        try:
+            return Path(path).resolve().relative_to(Path(root).resolve()).as_posix()
+        except (OSError, ValueError):
+            return Path(path).name
+
     def _item_from_payload_path(self, kind: str, path: Path) -> GameItem:
         if kind == "ps4":
             return self._ps4_item_for(path)
@@ -8267,6 +8291,38 @@ class App:
                     return None
         return None
 
+    def _open_jobs(self, exclude=None):
+        """Jobs that still read their extracted copy: waiting or running, or failed and kept it."""
+        for j in self.queue:
+            if j is exclude or getattr(j, "archive_path", None):
+                continue
+            st = getattr(j, "status", "")
+            if st == "Done" or (st in self._RETRYABLE and not getattr(j, "kept_extract", False)):
+                continue
+            yield j
+
+    def _open_extracts(self, exclude=None) -> set:
+        """Extracted copies (their top folders) a queued job still reads from. Several games of
+        one archive share one."""
+        return {r for r in (self._extract_dir_for_item(j) for j in self._open_jobs(exclude)) if r is not None}
+
+    def _extract_cleanup_parts(self, item) -> list:
+        """What cleaning up *item*'s extracted copy deletes: all of it, or, while other jobs
+        still read from the same copy, all of it but what they read."""
+        root = self._extract_dir_for_item(item)
+        if root is None:
+            return []
+        keep = set()
+        for j in self._open_jobs(exclude=item):
+            for src in [getattr(j, "path", None)] + list(getattr(j, "bundle_siblings", None) or []):
+                try:
+                    rp = Path(str(src)).resolve() if src else None
+                except OSError:
+                    rp = None
+                if rp is not None and (rp == root or root in rp.parents):
+                    keep.add(rp)
+        return removable_parts(root, keep) if keep else [root]
+
     def _reclaim_temp_base_inline(self, tp: str) -> None:
         """Remove our throwaway patch-extract dirs and, when the app-managed _ffpfsc_temp folder is empty, the folder itself - so no empty temp folder lingers after a job."""
         tp = (tp or "").strip()
@@ -8295,17 +8351,16 @@ class App:
             pass
 
     def _cleanup_item_extract(self, item) -> None:
-        """After an item finishes, remove ITS OWN extracted-source subdir (temp or output
-        drive), then reclaim the temp base if it's now empty. Threaded (rmtree large)."""
-        own = self._extract_dir_for_item(item)
+        """After an item finishes, remove its extracted copy (all but what other jobs still read),
+        then reclaim the temp base if it's now empty. Threaded (rmtree large)."""
+        d = self._extract_dir_for_item(item)
+        parts = self._extract_cleanup_parts(item)
         _tp = (self.temp_var.get() or "").strip()   # snapshot on the main thread
-        def _work(d=own, tp=_tp):
+        def _work(d=d, tp=_tp):
             try:
-                if d is not None and d.exists():
-                    sz = get_folder_size(d)
-                    shutil.rmtree(str(d), ignore_errors=True)
-                    if sz:
-                        self.log("INFO", f"Cleaned {format_size(sz)} extracted source from {d.parent.name}.")
+                sz = sum(_remove_scratch(p) for p in parts)
+                if sz:
+                    self.log("INFO", f"Cleaned {format_size(sz)} extracted source from {d.parent.name}.")
                 if d is not None and d.parent.name == "_ffpfsc_extract":
                     try:
                         if not any(d.parent.iterdir()):
@@ -8327,11 +8382,11 @@ class App:
         if own is None:
             return   # user's own folder - never delete
         item._source_freed = True
+        parts = self._extract_cleanup_parts(item)   # not what other jobs still read
         def _work(d=own):
             try:
-                if d.exists():
-                    sz = get_folder_size(d)
-                    shutil.rmtree(str(d), ignore_errors=True)
+                if parts:
+                    sz = sum(_remove_scratch(p) for p in parts)
                     self.log("INFO", f"Freed {format_size(sz)} extracted source after pass 1 "
                                      f"(no longer needed for compression).")
                     if d.parent.name == "_ffpfsc_extract":
@@ -8475,8 +8530,20 @@ class App:
                                      "ffpfs" if getattr(item, "output_compressed", True) is False else "ffpfsc")
                     item.operation = "chain"
                 payload_items = [self._item_from_payload_path(kind, path) for path in paths]
+                for pi, path in zip(payload_items, paths):
+                    pi.origin_payload = self._payload_key(extracted_root, path)
+                # Unpacked again for one game of the archive (a retry): that game is this job.
+                want = getattr(item, "origin_payload", None)
+                item._unpacked_again = bool(want)
+                if want:
+                    hit = next((i for i, pi in enumerate(payload_items) if pi.origin_payload == want), None)
+                    if hit is None:
+                        raise RuntimeError(f"{archive.name} no longer holds {want}.")
+                    payload_items.insert(0, payload_items.pop(hit))
+                    paths = [paths[hit]] + [x for i, x in enumerate(paths) if i != hit]
                 primary = payload_items[0]
                 item.origin_archive = str(archive)
+                item.origin_payload = primary.origin_payload
                 item.origin_extracted_size = int(getattr(item, "extracted_size", 0) or 0)
                 self._copy_item_payload(item, primary)
                 if kind == "ps4":
@@ -8782,6 +8849,21 @@ class App:
             "backport_target":  getattr(item, "backport_target", None),
             "backport_libs":    getattr(item, "backport_libs_root", None) or "",
         }
+
+    def _adopt_games_of_archive(self, item, extras) -> None:
+        """An archive unpacked again for one of its games (a retry): another game of it that
+        waits for the same archive runs from this copy. No game gets a second job."""
+        origin = getattr(item, "origin_archive", None)
+        jobs = {getattr(j, "origin_payload", None): j for j in self.queue
+                if j is not item and origin and getattr(j, "origin_archive", None) == origin
+                and getattr(j, "origin_payload", None)}
+        for extra in extras:
+            job = jobs.get(getattr(extra, "origin_payload", None))
+            if (job is not None and getattr(job, "archive_path", None) and job is not self._active_item
+                    and getattr(job, "status", "") not in self._TERMINAL_STATUSES):
+                self._copy_item_payload(job, extra)
+                job.kept_extract = False
+                self.log("INFO", f"{getattr(job, 'display_name', None) or job.name}: runs from the same unpack.")
 
     def _as_chain_job(self, extra, tpl) -> None:
         """Give another game from a multi-game archive the job of the first one: output
@@ -11384,6 +11466,8 @@ class App:
             return
 
         _tp = (self.temp_var.get() or "").strip()   # snapshot on the main thread
+        _own = self._extract_dir_for_item(item)
+        _own_parts = [] if keep_source else self._extract_cleanup_parts(item)
         def _work(tp=_tp):
             freed = 0
             for root in roots:
@@ -11420,11 +11504,9 @@ class App:
                     pass
             if not keep_source:
                 try:
-                    own = self._extract_dir_for_item(item)   # temp/_extracted OR output/_ffpfsc_extract
-                    if own is not None and own.exists():
-                        sz = get_folder_size(own)
-                        shutil.rmtree(str(own), ignore_errors=True)
-                        freed += sz
+                    own = _own   # temp/_extracted OR output/_ffpfsc_extract
+                    if own is not None and _own_parts:
+                        freed += sum(_remove_scratch(p) for p in _own_parts)
                         if own.parent.name == "_ffpfsc_extract":
                             try:
                                 if not any(own.parent.iterdir()):
@@ -11446,14 +11528,7 @@ class App:
         if getattr(self, "_browser_only", False):
             return   # browser-only launch (double-clicked a .ffpfsc) - don't prompt on the hidden window
         NAMES = ("_extracted", "_ffpfsc_extract", "_ffpfsc_temp", "_ffpfsc_inner")
-        kept: set[str] = set()                 # copies that queued jobs kept after a cancel
-        for it in self.queue:
-            own = self._extract_dir_for_item(it) if getattr(it, "kept_extract", False) else None
-            if own is not None:
-                try:
-                    kept.add(str(own.resolve()))
-                except OSError:
-                    kept.add(str(own))
+        keep = self._open_extracts()          # copies queued jobs still read
         # Tk variables are read on the main thread only; the scan thread gets a snapshot.
         bases0 = [self.temp_var.get().strip(), self.output_var.get().strip()]
         try:
@@ -11502,24 +11577,14 @@ class App:
                 try:
                     for p in base.iterdir():
                         if p.is_dir() and (_is_app_tmp_dir(p.name) or p.name in NAMES):
-                            try:
-                                key = str(p.resolve())
-                            except Exception:
-                                key = str(p)
-                            if any(k == key or k.startswith(key + os.sep) for k in kept):
-                                # holds a kept copy: offer only its other contents
+                            for q in removable_parts(p, keep):
                                 try:
-                                    for c in p.iterdir():
-                                        ck = str(c.resolve())
-                                        if ck not in kept and ck not in seen:
-                                            seen.add(ck)
-                                            targets.append(c)
+                                    key = str(q.resolve())
                                 except Exception:
-                                    pass
-                                continue
-                            if key not in seen:
-                                seen.add(key)
-                                targets.append(p)
+                                    key = str(q)
+                                if key not in seen:
+                                    seen.add(key)
+                                    targets.append(q)
                 except Exception:
                     continue
             total = 0
@@ -11563,8 +11628,9 @@ class App:
         except Exception:
             pass
 
-    def _auto_clear_temp(self):
-        """Silently clear temp folder contents after a successful compression."""
+    def _auto_clear_temp(self, done_item=None):
+        """Silently clear temp folder contents after a successful compression, but not what a
+        queued job still reads."""
         tp = self.temp_var.get().strip()
         if not tp:
             return
@@ -11573,7 +11639,8 @@ class App:
             return
         freed = 0
         errors = 0
-        for p in list(temp_dir.iterdir()):
+        keep = self._open_extracts(exclude=done_item)
+        for p in [q for c in list(temp_dir.iterdir()) for q in removable_parts(c, keep)]:
             # Only remove THIS app's working data (mkpfs tmp* dirs, the _extracted tree,
             # and the patch-prepare extract dirs); never wipe unrelated files a user may
             # keep in their temp folder.
@@ -12594,6 +12661,11 @@ class App:
         if act == aj.KEEP:
             then(); return
         name = getattr(item, "display_name", None) or item.name
+        origin = getattr(item, "origin_archive", None)
+        if why and origin and any(j is not item and getattr(j, "origin_archive", None) == origin
+                                  and getattr(j, "status", "") != "Done" for j in self.queue):
+            self.log("INFO", f"After the job: the archive of {name} stays until the other games from it are done.")
+            then(); return
         if why:
             item._after_result = ("refused", why)
             self.log("WARN", f"After the job: the source of {name} stays where it is: {why}.")
@@ -13125,8 +13197,12 @@ class App:
             return p.is_dir() and (p.name in ("_extracted", "_ffpfsc_extract", "_ffpfsc_inner",
                                               "_patch_game", "_patch_files")
                                    or _is_app_tmp_dir(p.name) or p.name.startswith("ffpfsc_spool_"))
+        if self._job_active():
+            messagebox.showinfo("Clear Temp", "A job is working in the temp folder. Clear it once the queue has stopped.")
+            return
+        keep = self._open_extracts()
         try:
-            targets = [p for p in temp_dir.iterdir() if _ours(p)]
+            targets = [q for p in temp_dir.iterdir() if _ours(p) for q in removable_parts(p, keep)]
         except Exception as e:
             messagebox.showerror("Error", f"Cannot read the temp folder:\n{e}")
             return
@@ -13723,6 +13799,9 @@ class App:
                     item, extra_items = payload
                 else:
                     item, extra_items = payload, []
+                if extra_items and getattr(item, "_unpacked_again", False):
+                    self._adopt_games_of_archive(item, extra_items)
+                    extra_items = []
                 if extra_items and getattr(item, "operation", "pack") == "chain":
                     for extra in extra_items:
                         self._as_chain_job(extra, item)
@@ -13735,6 +13814,14 @@ class App:
                         self._as_fpkg_job(extra, _tpl)
                         extra.output_path = getattr(item, "output_path", None)
                 if extra_items:
+                    for extra in extra_items:
+                        # one archive: every game knows it, so its After-job rule waits for the
+                        # last of them and a retry can unpack the archive again
+                        extra.origin_archive = getattr(item, "origin_archive", None)
+                        extra.origin_extracted_size = getattr(item, "origin_extracted_size", 0)
+                        for attr in ("after_source", "after_move_to", "source_root"):
+                            if getattr(extra, attr, None) is None and getattr(item, attr, None) is not None:
+                                setattr(extra, attr, getattr(item, attr))
                     try:
                         idx = self.queue.index(item)
                     except ValueError:
@@ -13835,7 +13922,7 @@ class App:
 
                 # Feature 5: auto-clear temp after success
                 if self.auto_clear_temp_var.get():
-                    self._auto_clear_temp()
+                    self._auto_clear_temp(completed_item)
                 # Always reclaim THIS item's extracted source - covers the spread-mode
                 # extract on the OUTPUT drive, which _auto_clear_temp (temp only) misses.
                 _done_worker = self.worker

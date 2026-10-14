@@ -2920,6 +2920,25 @@ def ident_from_folder_name(archive) -> dict | None:
     return None
 
 
+def removable_parts(path, keep) -> list:
+    """*path* when it holds none of the folders in *keep*, else the parts of it that hold none."""
+    p = Path(path)
+    try:
+        rp = p.resolve()
+    except OSError:
+        rp = p
+    keep = {Path(k) for k in keep}
+    if rp in keep:
+        return []
+    if not any(rp in k.parents for k in keep):
+        return [p]
+    try:
+        children = sorted(p.iterdir())
+    except OSError:
+        return []
+    return [q for c in children for q in removable_parts(c, keep)]
+
+
 def strip_written_clutter(path) -> int:
     """Remove the macOS clutter a job's own output carries: the '._' sidecar beside *path*
     and beside the folder holding it, and, when *path* is a folder the job wrote, every
@@ -3578,6 +3597,7 @@ __all__ = [
     "_space_requirements",
     "_space_preflight_ok",
     "space_shortfall",
+    "removable_parts",
     "_fs_status",
     "_space_report",
     "get_folder_size",

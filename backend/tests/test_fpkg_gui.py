@@ -1019,7 +1019,8 @@ try:
     _rel = _kt / "_extracted" / "Rel__5"; _rel.mkdir(parents=True, exist_ok=True); (_rel / "Title.pkg").write_bytes(b"x")
     _rf = m.GameItem.from_chain(_rel / "Title.pkg", to="ffpfsc", output_path=str(OUT / "job"))
     _rf.status, _rf.kept_extract, _rf.origin_archive = "Failed", True, str(_korg)
-    _rc = m.GameItem.from_chain(_rel / "Title.pkg", to="ffpfsc", output_path=str(OUT / "job"))
+    _rel2 = _kt / "_extracted" / "Rel__6"; _rel2.mkdir(parents=True, exist_ok=True); (_rel2 / "Title.pkg").write_bytes(b"x")
+    _rc = m.GameItem.from_chain(_rel2 / "Title.pkg", to="ffpfsc", output_path=str(OUT / "job"))
     _rc.status, _rc.kept_extract = "Cancelled", True
     _nx = m.GameItem.from_chain(HBT, to="ffpfsc", output_path=str(OUT / "job"))
     app.queue[:] = [_nx, _rf, _rc]
@@ -1032,8 +1033,21 @@ try:
     m._space_preflight_ok, app._resolve_extract_root = _real_pf, _real_rer
     pump(lambda: not _rel.exists(), timeout=10.0)
     ok("batch.frees-failed-copy-only-when-needed", _fits is False and _tight is True and not _rf.kept_extract
-       and _rc.kept_extract and "make room" in _rf.status_note and not _rel.exists(),
+       and _rc.kept_extract and "make room" in _rf.status_note and not _rel.exists() and _rel2.exists(),
        f"fits={_fits} tight={_tight} rf={_rf.kept_extract} rc={_rc.kept_extract}")
+    # two packages unpacked from one archive: cleaning up after one keeps the other's file
+    _two = _kt / "_extracted" / "Two__7"; _two.mkdir(parents=True, exist_ok=True)
+    for _n in ("A.pkg", "B.pkg", "notes.txt"):
+        (_two / _n).write_bytes(b"x")
+    _ja = m.GameItem.from_chain(_two / "A.pkg", to="ffpfsc", output_path=str(OUT / "job")); _ja.status = "Done"
+    _jb = m.GameItem.from_chain(_two / "B.pkg", to="ffpfsc", output_path=str(OUT / "job"))
+    _q2 = list(app.queue); app.queue[:] = [_ja, _jb]
+    _parts_open = sorted(p.name for p in app._extract_cleanup_parts(_ja))
+    _jb.status = "Done"
+    _parts_done = [p.name for p in app._extract_cleanup_parts(_ja)]
+    app.queue[:] = _q2
+    ok("cleanup.keeps-what-another-job-reads", _parts_open == ["A.pkg", "notes.txt"] and _parts_done == ["Two__7"],
+       f"open={_parts_open} done={_parts_done}")
     # J6j) a finished job stays in the queue, marked Done, until it is cleared
     _real_sum, _real_open = app.summary_popup_var.get(), app.open_output_var.get()
     app.summary_popup_var.set(False); app.open_output_var.set(False)
@@ -2167,6 +2181,86 @@ try:
         app.status_update = _su_saved
         app._batch_running = False; app._cleanup_inflight = _inflight1
         app.queue[:] = _q0; app._active_item = _act0; app.update_queue_box()
+    # An archive with two games: one unpack, one job per game. The first job's cleanup leaves
+    # the other game alone, the archive moves after the last one, and a retry unpacks it again
+    # for that game alone, with no second set of jobs.
+    _mg = S / "multi"; shutil.rmtree(_mg, ignore_errors=True); (_mg / "src").mkdir(parents=True)
+    for _tid, _nm in (("PPSA99091", "Game One"), ("PPSA99092", "Game Two")):
+        _gd = _mg / "src" / "Set" / f"{_tid}-app0"
+        shutil.copytree(HBT, _gd)
+        _pjp = _gd / "sce_sys" / "param.json"; _pjd = json.loads(_pjp.read_text(encoding="utf-8"))
+        _pjd["titleId"] = _tid
+        _pjd["contentId"] = re.sub(r"PPSA\d{5}", _tid, str(_pjd.get("contentId", "")))
+        for _lp in (_pjd.get("localizedParameters") or {}).values():
+            if isinstance(_lp, dict) and "titleName" in _lp:
+                _lp["titleName"] = _nm
+        _pjp.write_text(json.dumps(_pjd), encoding="utf-8")
+
+    def _multi_zip(d):
+        d.mkdir(parents=True, exist_ok=True)
+        z = d / "Multi.Set.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            for f in sorted((_mg / "src").rglob("*")):
+                if f.is_file():
+                    zf.write(f, f.relative_to(_mg / "src").as_posix())
+        return z
+
+    _TERM = ("Done", "Failed", "Skipped", "Cancelled")
+    _mq0, _mact0, _mard = list(app.queue), app._active_item, app.auto_remove_done_var.get()
+    _msum, _mopen = app.summary_popup_var.get(), app.open_output_var.get()
+    app.auto_remove_done_var.set(False); app.summary_popup_var.set(False); app.open_output_var.set(False)
+
+    _mlog, _mlog_saved = [], app.log
+
+    def _multi_run(first):
+        app._cleanup_inflight = 0; app.cancel_requested = False; app.extract_cancel_event.clear()
+        app.queue[:] = [first]; app._active_item = None
+        app.start()
+        pump(lambda: not app._batch_running and len(app.queue) >= 2
+             and all(j.status in _TERM for j in app.queue), timeout=240.0)
+        return list(app.queue)
+
+    try:
+        _mz = _multi_zip(_mg / "dl")
+        _mout, _mdone = _mg / "out", _mg / "done"; _mout.mkdir(); _mdone.mkdir()
+        _mj = m.GameItem.from_chain(_mz, to="ffpfsc", output_path=str(_mout))
+        _mj.after_source, _mj.after_move_to = "move", str(_mdone)
+        app.log = lambda lvl, msg, *a, **k: (_mlog.append(msg), _mlog_saved(lvl, msg, *a, **k))
+        _mjobs = _multi_run(_mj)
+        app.log = _mlog_saved
+        _mffs = sorted(x.name for x in _mout.rglob("*.ffpfsc"))
+        _mleft = [x for b in (Path(app.temp_var.get()), _mout) for x in b.rglob("Multi.Set*") if x.is_dir()]
+        ok("multi.both-games-built", len(_mjobs) == 2 and all(j.status == "Done" for j in _mjobs)
+           and len(_mffs) == 2 and any("PPSA99091" in x for x in _mffs) and any("PPSA99092" in x for x in _mffs),
+           f"{[(j.display_name, j.status, j.status_note) for j in _mjobs]} {_mffs}")
+        _mwait = any("stays until the other games from it are done" in x for x in _mlog)
+        ok("multi.archive-moves-after-the-last", _mwait and not _mz.exists() and any(_mdone.rglob("Multi.Set.zip"))
+           and not _mleft, f"waited={_mwait} src={_mz.exists()} done={[x.name for x in _mdone.rglob('*')]} left={_mleft}")
+        # a retry of the second game alone: unpacked again, the right game, no new jobs
+        _mz2 = _multi_zip(_mg / "dl2")
+        _mout2 = _mg / "out2"; _mout2.mkdir()
+        _mj2 = m.GameItem.from_chain(_mz2, to="ffpfsc", output_path=str(_mout2))
+        _mj2.after_source = "keep"
+        _mjobs2 = _multi_run(_mj2)
+        _two = next((j for j in _mjobs2 if "PPSA99092" in str(getattr(j, "path", "") or j.display_name)), None)
+        for _f in _mout2.rglob("*PPSA99092*.ffpfsc"):
+            _f.unlink()
+        if _two is not None:
+            _two.status = "Failed"
+            app._retry_job(_two)
+            pump(lambda: not app._batch_running and _two.status in _TERM, timeout=240.0)
+        _mffs2 = sorted(x.name for x in _mout2.rglob("*.ffpfsc"))
+        _mn2 = sum(1 for j in app.queue if getattr(j, "origin_archive", None) == str(_mz2))
+        ok("multi.retry-unpacks-for-that-game", _two is not None and _two.status == "Done" and _mn2 == 2
+           and len(_mffs2) == 2 and any("PPSA99092" in x for x in _mffs2),
+           f"{getattr(_two, 'status', None)} {getattr(_two, 'status_note', None)} jobs={_mn2} {_mffs2}")
+    finally:
+        app.log = _mlog_saved
+        app._batch_running = False
+        # the run's own cleanup and its later prune of empty folders end before the next checks
+        pump(lambda: getattr(app, "_cleanup_inflight", 0) == 0 and not getattr(app, "_prune_pending", False), timeout=60.0)
+        app.auto_remove_done_var.set(_mard); app.summary_popup_var.set(_msum); app.open_output_var.set(_mopen)
+        app.queue[:] = _mq0; app._active_item = _mact0; app.update_queue_box(); root.update()
     # an archive whose game cannot be read before unpacking is named from its folder
     _gdir = S / "PPSA99097 Example Game"; _gdir.mkdir(exist_ok=True)
     _g7 = _gdir / "PPSA99097-Compressed.7z"; _g7.write_bytes(b"7z\xbc\xaf\x27\x1c" + b"\0" * 64)
@@ -2315,6 +2409,7 @@ try:
     for _d in [x for x in S.rglob("*") if x.is_dir() and ("pool_drive" in x.parts or "old_library" in x.parts)]:
         os.utime(_d, (_old, _old))
     _pool0, _hist0 = list(getattr(app, "temp_pool", []) or []), m.load_history()
+    pump(lambda: not getattr(app, "_prune_pending", False), timeout=60.0)   # one scheduled by an earlier run
     app.temp_pool = [str(_pool)]
     m.save_history(_hist0 + [{"output": str(_hist / "Game.ffpfsc"), "name": "x"}])
     try:

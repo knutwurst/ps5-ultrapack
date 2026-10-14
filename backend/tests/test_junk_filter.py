@@ -222,5 +222,34 @@ class EmptyScratch(unittest.TestCase):
         gone = self.uc.prune_empty_scratch([b], min_age=60)            # a nested pair, both settled
         self.assertEqual(gone, [b / "_ffpfsc_temp" / "_extracted", b / "_ffpfsc_temp"])
 
+class RemovableParts(unittest.TestCase):
+    """What a cleanup may delete under a scratch folder while queued jobs still read parts of it."""
+
+    def setUp(self):
+        import ultra_core
+        self.uc = ultra_core
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        for rel in ("_extracted/a__1/Set/A-app0/eboot.bin", "_extracted/a__1/Set/B-app0/eboot.bin",
+                    "_extracted/b__2/G/eboot.bin", "_extracted/c__3/G/eboot.bin"):
+            (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / rel).write_bytes(b"x")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def names(self, keep):
+        ex = self.root / "_extracted"
+        return sorted(p.relative_to(ex).as_posix() for p in self.uc.removable_parts(ex, keep))
+
+    def test_nothing_in_use_takes_the_whole_folder(self):
+        self.assertEqual(self.uc.removable_parts(self.root / "_extracted", set()), [self.root / "_extracted"])
+
+    def test_a_folder_in_use_and_what_holds_it_stay(self):
+        ex = self.root / "_extracted"
+        self.assertEqual(self.names({ex / "a__1"}), ["b__2", "c__3"])
+        self.assertEqual(self.names({ex / "a__1" / "Set" / "B-app0"}), ["a__1/Set/A-app0", "b__2", "c__3"])
+        self.assertEqual(self.uc.removable_parts(ex, {ex}), [])
+
+
 if __name__ == "__main__":
     unittest.main()
