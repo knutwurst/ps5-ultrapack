@@ -587,9 +587,18 @@ def _space_requirements(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, 
     return needs
 
 
+def space_shortfall(item, temp_dir: Path, out_dir: Path):
+    """The first drive without the room it needs, as (label, folder, need, free); None when all fit."""
+    for label, d, need in _space_requirements(item, temp_dir, out_dir):
+        free = get_free_space(d)
+        if free < need:
+            return label, Path(d), need, free
+    return None
+
+
 def _space_preflight_ok(item, temp_dir: Path, out_dir: Path) -> bool:
     """True only if every drive the chosen placement uses has the room it needs."""
-    return all(get_free_space(d) >= need for _label, d, need in _space_requirements(item, temp_dir, out_dir))
+    return space_shortfall(item, temp_dir, out_dir) is None
 
 
 def _fs_status(fs):
@@ -3568,6 +3577,7 @@ __all__ = [
     "estimate_output_space_needed",
     "_space_requirements",
     "_space_preflight_ok",
+    "space_shortfall",
     "_fs_status",
     "_space_report",
     "get_folder_size",

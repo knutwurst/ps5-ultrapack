@@ -1052,6 +1052,49 @@ class SummaryDialog(MessageWindow):
             self.bind(seq, lambda e: self.destroy())
 
 
+class SpaceSkipWindow(MessageWindow):
+    """Jobs the space check skipped in this run, one paragraph each; the queue goes on."""
+
+    _HINTS = {"output": "Free up space there, or pick another output with Edit, then Retry.",
+              "temp": "Free up space there, or add a temp drive in Settings, then Retry."}
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.configure(fg_color=BLACK)
+        self.resizable(True, False)
+        self._lines, self._kinds = [], []
+        self._head = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=15, weight="bold"), text_color=YELLOW)
+        self._head.pack(anchor="w", padx=20, pady=(16, 6))
+        btns = ctk.CTkFrame(self, fg_color=BLACK)
+        btns.pack(side="bottom", fill="x", padx=20, pady=(0, 14))
+        ctk.CTkButton(btns, text="Close", width=100, fg_color=ACCENT, text_color=ON_ACCENT,
+                      hover_color=ACCENT_HOVER, command=self.destroy).pack(side="right")
+        self._body = ctk.CTkLabel(self, text="", text_color=WHITE, wraplength=500, justify="left",
+                                  font=ctk.CTkFont(size=13))
+        self._body.pack(anchor="w", padx=20, pady=(0, 8))
+        self._hint = ctk.CTkLabel(self, text="", text_color=MUTED, wraplength=500, justify="left",
+                                  font=ctk.CTkFont(size=12))
+        self._hint.pack(anchor="w", padx=20, pady=(0, 12))
+        for seq in ("<Return>", "<KP_Enter>"):
+            self.bind(seq, lambda e: self.destroy())
+
+    def add(self, line: str, kind: str) -> None:
+        self._lines.append(line)
+        self._kinds.append(kind)
+        kinds = set(self._kinds)
+        head = ("Output drive full" if kinds == {"output"} else
+                "Temp drive full" if kinds == {"temp"} else "Not enough space")
+        self.title(head)
+        self._head.configure(text=head)
+        self._body.configure(text="\n\n".join(self._lines))
+        self._hint.configure(text=" ".join(self._HINTS[k] for k in ("output", "temp") if k in kinds))
+        self.update_idletasks()
+        self.geometry(f"540x{max(180, self.winfo_reqheight())}")
+
+    def text(self) -> str:
+        return "\n\n".join(self._lines)
+
+
 # ─── Space Diagnostics Dialog ──────────────────────────────────────────────────
 
 class SpaceDiagnosticsDialog(MessageWindow):
@@ -11581,6 +11624,33 @@ class App:
         g = (self.output_var.get() or "").strip()
         return Path(g) if g else None
 
+    def _note_space_skip(self, item, short) -> None:
+        """Say which drive is full: in the log, the job's details and the run's skip window."""
+        name = getattr(item, "display_name", None) or item.name
+        if short is None:
+            item._skip_reason = "not enough free space"
+            self.log("WARN", f"Low space: {name} skipped (policy: skip).")
+            return
+        label, folder, need, free = short
+        kind = "output" if label.startswith("Output") else "temp"
+        drive = _drive_name(folder)
+        item._skip_reason = f"{kind} drive full: {drive} needs ~{format_size(need)}, {format_size(free)} free"
+        self.log("WARN", f"{kind.capitalize()} drive full: {name} skipped, {drive} needs ~{format_size(need)} "
+                         f"and has {format_size(free)} free (policy: skip).")
+        to = getattr(item, "chain_to", None) or {"fpkg-build": "pkg", "copy": "copy"}.get(
+            getattr(item, "operation", "pack")) or ("ffpfsc" if getattr(item, "output_compressed", True) else "ffpfs")
+        what = (" for the copy" if to in ("copy", "organize") else " for the folder" if to == "folder"
+                else f" for the .{to}") if kind == "output" else ""
+        line = (f"{name} was skipped. {drive[:1].upper() + drive[1:]} needs about {format_size(need)}{what} "
+                f"and has {format_size(free)} free.")
+        win = getattr(self, "_space_skip_win", None)
+        try:
+            if win is None or not win.winfo_exists():
+                win = self._space_skip_win = SpaceSkipWindow(self.root)
+            win.add(line, kind)
+        except tk.TclError:
+            pass
+
     def _space_gate(self, item, out_dir):
         """Place the run on a drive sized for its REAL footprint (sets item._build_root / _build_temp via _resolve_extract_root), then decide go/skip/cancel against THAT drive."""
         op = getattr(item, "operation", "pack")
@@ -11593,6 +11663,7 @@ class App:
         if op == "chain" and getattr(item, "chain_to", None) == "folder":
             return "proceed"
         out_dir = Path(out_dir)
+        item._skip_reason = ""
         self._probe_pkg_content(item)          # a .pkg holds more than its file size
         try:
             self._resolve_extract_root(item)   # the single place that picks the build drive
@@ -11618,8 +11689,7 @@ class App:
             self.log("WARN", f"Low space - proceeding anyway (policy: auto): {item.name}")
             return "proceed"
         if policy == "skip":
-            self.log("WARN", f"Low space - {item.name} fits no available drive; "
-                             f"skipping (policy: skip).")
+            self._note_space_skip(item, space_shortfall(item, temp_dir, out_dir))
             return "skip"
         return _ask()   # 'ask' - show the dialog and let the user decide
 
@@ -12327,7 +12397,7 @@ class App:
                     return
                 if gate == "skip":
                     self._cleanup_after_failure(item)   # reclaim any partial scratch
-                    self._retire_failed(item, "Skipped")   # keep it in the queue, marked
+                    self._retire_failed(item, "Skipped", getattr(item, "_skip_reason", ""))
                     self._batch_failed += 1
                     self._update_batch_counter()
                     self.update_queue_box()
@@ -12865,7 +12935,7 @@ class App:
             # before the post-extraction re-gate), then skip.
             self._cleanup_after_failure(item)
             if self._batch_running:
-                self._retire_failed(item, "Skipped")   # keep it in the queue, marked
+                self._retire_failed(item, "Skipped", getattr(item, "_skip_reason", ""))
                 self._batch_failed += 1
                 self._update_batch_counter()
                 self.update_queue_box()
@@ -12874,10 +12944,12 @@ class App:
                 # Single run: reset to idle (Start was disabled / Cancel enabled by the
                 # extraction step) and mark the item, so the UI isn't left frozen.
                 item.status = "Skipped"
+                item.status_note = getattr(item, "_skip_reason", "")
                 self.start_btn.configure(state="normal")
                 self.cancel_btn.configure(state="disabled")
                 self.update_queue_box()
-                self.status_update("Ready", f"Skipped - low space: {item.name}", "Ready", 0, 0, "00:00", " - ", " - ")
+                self.status_update("Ready", f"Skipped: {item.status_note or 'not enough free space'}", "Ready",
+                                   0, 0, "00:00", " - ", " - ")
             return
 
         # ── Patch job with an archive game / .7z patch - resolve to folders first ────

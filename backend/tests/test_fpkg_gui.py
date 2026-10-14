@@ -1364,6 +1364,45 @@ try:
         app.notify_var.set(_notify0); app._cleanup_inflight = _inflight0
         app._batch_running = False; app._pause_requested = False
         app.queue[:] = []; app._active_item = None
+    # A job skipped for space names the full drive in its details, the log and one window
+    _uc = m.ultra_core
+    _real_sk = (_uc.get_free_space, _uc.same_drive, app._resolve_extract_root, m.load_settings, app._due_checks,
+                app._release_failed_copies, app._queue_finished, app._extract_queued_item)
+    _sk = [m.GameItem.from_chain(ZP, to="ffpfsc", output_path=str(OUT / "full")) for _ in range(2)]
+    for _j in _sk:
+        _j.extracted_size = 50 * 10 ** 9
+    _sklog, _sklog_saved = [], app.log
+    try:
+        _uc.get_free_space = lambda d: 0 if str(d).startswith(str(OUT)) else 10 ** 15
+        _uc.same_drive = lambda a, b: False
+        app._resolve_extract_root = lambda _it, quiet=False: None
+        m.load_settings = lambda: dict(_real_sk[3](), low_space_policy="skip")
+        app._due_checks = lambda it: True
+        app._release_failed_copies = lambda it: False
+        app._queue_finished = lambda: None
+        app._extract_queued_item = lambda it: None
+        app.log = lambda lvl, msg, *a, **k: (_sklog.append(msg), _sklog_saved(lvl, msg, *a, **k))
+        app._cleanup_inflight = 0; app.cancel_requested = False; app.extract_cancel_event.clear()
+        app.queue[:] = _sk; app._active_item = None; app._batch_total = 1
+        app._batch_running = True
+        app._batch_auto_start()
+        pump(lambda: not app._batch_running, timeout=10.0)
+    finally:
+        (_uc.get_free_space, _uc.same_drive, app._resolve_extract_root, m.load_settings, app._due_checks,
+         app._release_failed_copies, app._queue_finished, app._extract_queued_item) = _real_sk
+        app.log = _sklog_saved; app._batch_running = False
+    _skw = getattr(app, "_space_skip_win", None)
+    _skt = _skw.text() if _skw is not None and _skw.winfo_exists() else ""
+    _skinfo = app._card_info_text(_sk[0]).get("Status", "")
+    ok("space-skip.names-the-drive", all(j.status == "Skipped" for j in _sk)
+       and _skinfo.startswith("Skipped: output drive full") and _skw is not None
+       and _skw.title() == "Output drive full" and _skt.count("was skipped") == 2
+       and any("output drive full" in x.lower() and "free" in x for x in _sklog),
+       f"status={[j.status for j in _sk]} info={_skinfo!r} title={_skw.title() if _skw else None} "
+       f"text={_skt[:160]!r} log={[x for x in _sklog if 'pace' in x][:2]}")
+    if _skw is not None:
+        _skw.destroy()
+    app.queue[:] = []; app._active_item = None
     # clear all keeps the running job
     _r1 = m.GameItem.from_chain(HBT, to="ffpfsc"); _r2 = m.GameItem.from_chain(HBT, to="ffpfsc"); _r2.status = "Done"
     app.queue[:] = [_r1, _r2]; app._batch_running = True; app._active_item = _r1

@@ -53,6 +53,16 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
                 _rows, dialog_ok, banner = m._space_report(item, TEMP, OUT)
                 self.assertEqual(gate, dialog_ok, f"{name}: gate={gate} dialog={dialog_ok} free={self.free}")
                 self.assertEqual(dialog_ok, banner.startswith("✓"), banner)
+                self.assertEqual(gate, m.space_shortfall(item, TEMP, OUT) is None, name)
+
+    def test_shortfall_names_the_drive(self):
+        item = dict(self._items())["folder, one drive"]
+        self.free = {TEMP: 600 * GB, OUT: 10 * GB}
+        label, folder, need, free = m.space_shortfall(item, TEMP, OUT)
+        self.assertEqual((label, folder, free), ("Output drive", OUT, 10 * GB))
+        self.assertGreater(need, free)
+        self.free = {TEMP: 600 * GB, OUT: 600 * GB}
+        self.assertIsNone(m.space_shortfall(item, TEMP, OUT))
 
     def test_disk_image_needs_no_temp_space(self):
         item = dict(self._items())["disk image"]
