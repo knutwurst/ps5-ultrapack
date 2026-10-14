@@ -1468,6 +1468,17 @@ class QueueList(tk.Frame):
                                fill=k.c("accent_fill"), outline="")
             if i not in chosen and i + 1 not in chosen and i < len(self.rows) - 1:
                 cv.create_line(tx, y0 + self.ROW_H, x1 - 8, y0 + self.ROW_H, fill=k.c("border"))
+        # the games of one archive: a bracket on the left over each run of their rows
+        i = 0
+        while i < len(self.rows):
+            g = self.rows[i].get("group")
+            j = i
+            while g and j + 1 < len(self.rows) and self.rows[j + 1].get("group") == g:
+                j += 1
+            if g:
+                cv.create_line(3, 6 + i * self.ROW_H + 8, 3, 6 + (j + 1) * self.ROW_H - 8, fill=k.c("accent"),
+                               width=3, capstyle="round", tags=("group",))
+            i = j + 1
         if self._drop is not None and self._press is not None:
             # where the dragged row lands: an accent line between two rows
             ly = 6 + self._drop * self.ROW_H

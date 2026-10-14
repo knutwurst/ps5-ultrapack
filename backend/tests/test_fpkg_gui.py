@@ -2198,7 +2198,7 @@ try:
 
     def _multi_zip(d):
         d.mkdir(parents=True, exist_ok=True)
-        z = d / "Multi.Set.zip"
+        z = d / "Multi.Set-PPSA99092.zip"   # the archive names its main game
         with zipfile.ZipFile(z, "w") as zf:
             for f in sorted((_mg / "src").rglob("*")):
                 if f.is_file():
@@ -2236,26 +2236,47 @@ try:
            f"{[(j.display_name, j.status, j.status_note) for j in _mjobs]} {_mffs}")
         _mwait = any("stays until the other games from it are done" in x for x in _mlog)
         ok("multi.counts-every-game", _mcounts[:1] == [(2, 2)], str(_mcounts))
-        ok("multi.archive-moves-after-the-last", _mwait and not _mz.exists() and any(_mdone.rglob("Multi.Set.zip"))
+        ok("multi.archive-moves-after-the-last", _mwait and not _mz.exists() and any(_mdone.rglob("Multi.Set-PPSA99092.zip"))
            and not _mleft, f"waited={_mwait} src={_mz.exists()} done={[x.name for x in _mdone.rglob('*')]} left={_mleft}")
-        # a retry of the second game alone: unpacked again, the right game, no new jobs
+        # one folder for the archive, named after the game its name carries; the queue marks
+        # its games as one group wherever they stand, and the details name the archive
+        _mdirs = sorted({x.parent.name for x in _mout.rglob("*.ffpfsc")})
+        ok("multi.one-folder-named-after-the-game", len(_mdirs) == 1 and _mdirs[0].startswith("Game Two [PPSA99092]"),
+           str(_mdirs))
+        _other = m.GameItem.from_chain(HBT, to="ffpfsc")
+        _lbm = app.queue_listbox
+        app.queue[:] = [_mjobs[0], _mjobs[-1], _other]; app.update_queue_box(); _lbm._draw()
+        _groups, _brackets1 = [r.get("group") for r in _lbm.rows], len(_lbm.cv.find_withtag("group"))
+        app.queue[:] = [_mjobs[0], _other, _mjobs[-1]]; app.update_queue_box(); _lbm._draw()
+        _brackets2 = len(_lbm.cv.find_withtag("group"))
+        _arch = app._card_info_text(_mjobs[-1]).get("Archive", "")
+        ok("multi.marked-as-one-archive", bool(_groups[0]) and _groups[0] == _groups[1] and _groups[2] is None
+           and _brackets1 == 1 and _brackets2 == 2 and _arch.startswith("Multi.Set-PPSA99092.zip, game ")
+           and _arch.endswith(" of 2"), f"{_groups} {_brackets1} {_brackets2} {_arch!r}")
+        # a retry of one game alone, as after a restart (no identity remembered): unpacked
+        # again, that game and not the one the archive name carries, no new jobs, same folder
         _mz2 = _multi_zip(_mg / "dl2")
         _mout2 = _mg / "out2"; _mout2.mkdir()
         _mj2 = m.GameItem.from_chain(_mz2, to="ffpfsc", output_path=str(_mout2))
         _mj2.after_source = "keep"
+        _mj2.archive_title, _mj2.archive_title_id = "Game Two", "PPSA99092"   # read from the archive before unpacking
+        _mj2.archive_version = "01.000.000"
         _mjobs2 = _multi_run(_mj2)
-        _two = next((j for j in _mjobs2 if "PPSA99092" in str(getattr(j, "path", "") or j.display_name)), None)
-        for _f in _mout2.rglob("*PPSA99092*.ffpfsc"):
+        _one = next((j for j in _mjobs2 if "PPSA99091" in str(j.display_name or "")), None)
+        for _f in _mout2.rglob("*PPSA99091*.ffpfsc"):
             _f.unlink()
-        if _two is not None:
-            _two.status = "Failed"
-            app._retry_job(_two)
-            pump(lambda: not app._batch_running and _two.status in _TERM, timeout=240.0)
+        if _one is not None:
+            for _k in [k for k in vars(_one) if k.startswith("_")]:   # a restored job keeps none of these
+                delattr(_one, _k)
+            _one.status = "Failed"
+            app._retry_job(_one)
+            pump(lambda: not app._batch_running and _one.status in _TERM, timeout=240.0)
         _mffs2 = sorted(x.name for x in _mout2.rglob("*.ffpfsc"))
         _mn2 = sum(1 for j in app.queue if getattr(j, "origin_archive", None) == str(_mz2))
-        ok("multi.retry-unpacks-for-that-game", _two is not None and _two.status == "Done" and _mn2 == 2
-           and len(_mffs2) == 2 and any("PPSA99092" in x for x in _mffs2),
-           f"{getattr(_two, 'status', None)} {getattr(_two, 'status_note', None)} jobs={_mn2} {_mffs2}")
+        ok("multi.retry-unpacks-for-that-game", _one is not None and _one.status == "Done" and _mn2 == 2
+           and len(_mffs2) == 2 and any("PPSA99091" in x for x in _mffs2)
+           and len({x.parent for x in _mout2.rglob("*.ffpfsc")}) == 1,
+           f"{getattr(_one, 'status', None)} {str(getattr(_one, 'status_note', ''))[-90:]} jobs={_mn2} {_mffs2}")
     finally:
         app.log = _mlog_saved
         app._batch_running = False

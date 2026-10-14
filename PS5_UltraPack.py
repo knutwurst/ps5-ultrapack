@@ -4666,7 +4666,8 @@ class JobDialog(EmbeddedDialog):
             if _old_src is not None and str(_old_src) == str(p):
                 # Same source: keep where it came from, so a retry runs from the copy the job
                 # kept (and a removal deletes it) instead of a stranger's path in the scratch.
-                for attr in ("origin_archive", "origin_extracted_size", "origin_payload", "kept_extract", "bundle_siblings",
+                for attr in ("origin_archive", "origin_extracted_size", "origin_payload", "organize_folder",
+                             "archive_games", "archive_index", "kept_extract", "bundle_siblings",
                              "pkg_content_size", "extracted_size", "header_locked"):
                     if hasattr(old, attr):
                         setattr(new, attr, getattr(old, attr))
@@ -8566,6 +8567,8 @@ class App:
                 # overall progress into the tail after the extraction slice (monotonic
                 # whole-game %). Underscore attr → not persisted in the saved queue.
                 item._from_archive = True
+                if len(payload_items) > 1 and not want:
+                    self._group_games_of_archive(item, payload_items[1:])
                 # Carry extra subfolders/files that sit BESIDE the game in the archive
                 # (e.g. an '[ ALL DLC ]' wrapper) so they're copied next to the .ffpfsc.
                 # Skipped when the archive root IS the game (no wrapper → no siblings).
@@ -8850,6 +8853,29 @@ class App:
             "backport_libs":    getattr(item, "backport_libs_root", None) or "",
         }
 
+    # a title id in a release name, also right before '_' ('…-PPSA99999_v01.020')
+    _ARCHIVE_TID = re.compile(r"(?<![A-Za-z0-9])(PPSA\d{5}|CUSA\d{5})(?!\d)", re.I)
+
+    def _group_games_of_archive(self, item, extras) -> None:
+        """The games of one archive: their place in it, and one output folder, the one of the
+        game the archive names (else the biggest)."""
+        games = [item] + list(extras)
+        for k, g in enumerate(games, start=1):
+            g.archive_games, g.archive_index = len(games), k
+        arc = Path(str(getattr(item, "origin_archive", "") or ""))
+        m = next((x for x in (self._ARCHIVE_TID.search(n) for n in (arc.name, arc.parent.name)) if x), None)
+        tid = (m.group(1) if m else str(getattr(item, "archive_title_id", "") or "")).upper()
+        idents = [(g, self._game_identity(g) or {}) for g in games]
+        named = [(g, i) for g, i in idents if tid and str(i.get("title_id") or "").upper() == tid]
+        if len(named) != 1:
+            named = [max(idents, key=lambda gi: int(getattr(gi[0], "extracted_size", 0)
+                                                    or getattr(gi[0], "size", 0) or 0))]
+        main_ident = named[0][1]
+        if main_ident.get("title") or main_ident.get("title_id"):
+            folder = organized_names(main_ident, "")[0]
+            for g in games:
+                g.organize_folder = folder
+
     def _adopt_games_of_archive(self, item, extras) -> None:
         """An archive unpacked again for one of its games (a retry): another game of it that
         waits for the same archive runs from this copy. No game gets a second job."""
@@ -9119,6 +9145,8 @@ class App:
         if cached:
             return cached
         if getattr(item, "archive_path", None) and not getattr(item, "path", None):
+            if int(getattr(item, "archive_games", 0) or 0) > 1:
+                return None     # one game of several: known once the archive is unpacked again
             return self._archive_identity(item)
         p = getattr(item, "path", None)
         if not p:
@@ -9586,7 +9614,7 @@ class App:
             return None, None
         ident = dict(ident, fw=self._job_fw(item, ident.get("fw", "")))
         folder, fname = organized_names(ident, ext, item)
-        return out / folder, fname
+        return out / (getattr(item, "organize_folder", None) or folder), fname
 
     _FW_TAG = re.compile(r"\s*\[fw[\d.x]+\]$", re.I)
     # Settings › Interface: skip (default, no question) | ask | overwrite | keep (both)
@@ -10236,6 +10264,8 @@ class App:
             chip = (f"{int(self._cur_job_pct)}%" if running else
                     {"Pending": "Queued", "Pending Extract": "Queued"}.get(st, st or "Queued"))
             rows.append({"key": id(item), "text": line, "title": str(disp), "subtitle": sub, "state": state, "chip": chip,
+                         "group": (str(item.origin_archive) if int(getattr(item, "archive_games", 0) or 0) > 1
+                                   and getattr(item, "origin_archive", None) else None),
                          "progress": (max(0.0, min(1.0, self._cur_job_pct / 100.0)) if running else None)})
 
         n = len(self.queue)
@@ -10354,6 +10384,9 @@ class App:
         src = getattr(item, "archive_path", None) or getattr(item, "path", None)
         if src:
             info["Source"] = str(src)
+        if int(getattr(item, "archive_games", 0) or 0) > 1 and getattr(item, "origin_archive", None):
+            info["Archive"] = (f"{Path(str(item.origin_archive)).name}, game "
+                               f"{getattr(item, 'archive_index', '?')} of {item.archive_games}")
         changes = []
         patch = getattr(item, "patch_source", None)
         if patch:
