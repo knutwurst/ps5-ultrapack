@@ -2210,7 +2210,7 @@ try:
     _msum, _mopen = app.summary_popup_var.get(), app.open_output_var.get()
     app.auto_remove_done_var.set(False); app.summary_popup_var.set(False); app.open_output_var.set(False)
 
-    _mlog, _mlog_saved = [], app.log
+    _mlog, _mlog_saved, _mcounts = [], app.log, []
 
     def _multi_run(first):
         app._cleanup_inflight = 0; app.cancel_requested = False; app.extract_cancel_event.clear()
@@ -2218,6 +2218,7 @@ try:
         app.start()
         pump(lambda: not app._batch_running and len(app.queue) >= 2
              and all(j.status in _TERM for j in app.queue), timeout=240.0)
+        _mcounts.append((app._batch_done, app._batch_total))
         return list(app.queue)
 
     try:
@@ -2234,6 +2235,7 @@ try:
            and len(_mffs) == 2 and any("PPSA99091" in x for x in _mffs) and any("PPSA99092" in x for x in _mffs),
            f"{[(j.display_name, j.status, j.status_note) for j in _mjobs]} {_mffs}")
         _mwait = any("stays until the other games from it are done" in x for x in _mlog)
+        ok("multi.counts-every-game", _mcounts[:1] == [(2, 2)], str(_mcounts))
         ok("multi.archive-moves-after-the-last", _mwait and not _mz.exists() and any(_mdone.rglob("Multi.Set.zip"))
            and not _mleft, f"waited={_mwait} src={_mz.exists()} done={[x.name for x in _mdone.rglob('*')]} left={_mleft}")
         # a retry of the second game alone: unpacked again, the right game, no new jobs

@@ -13828,6 +13828,10 @@ class App:
                         idx = 0
                     for offset, extra in enumerate(extra_items, start=1):
                         self.queue.insert(idx + offset, extra)
+                        if self._batch_running:        # each game of the archive counts in this run
+                            self.__dict__.setdefault("_batch_items", []).append(extra)
+                            self._batch_total += 1
+                    self._update_batch_counter()
                     self.log("OK", f"Queued {len(extra_items)} additional payload item(s) from the archive")
                 # Item was updated in-place - clear cache so details panel refreshes fully
                 self._details_item   = None
