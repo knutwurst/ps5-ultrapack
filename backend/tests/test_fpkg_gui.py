@@ -1475,6 +1475,9 @@ try:
        and [id(x) for x in _moved] == [id(_ms[1]), id(_ms[3])] and _ql.marked_rows() == [2, 4],
        f"{_ql.marked_rows()}")
     root.update()
+    # late names (a background lookup sets _names_dirty) keep several marked jobs marked
+    app._names_dirty = True; app._poll_inner(); root.update()
+    ok("multi.kept-when-names-come-in", _ql.marked_rows() == [2, 4], f"{_ql.marked_rows()}")
     _card_multi_shown = bool(app._card_multi.winfo_manager())
     ok("multi.summary-card", _card_multi_shown and app._multi_title_var.get() == "2 jobs selected",
        f"{_card_multi_shown} {app._multi_title_var.get()!r}")
@@ -2505,6 +2508,11 @@ try:
         app.update_game_details(_ja); root.update()
         ok("details.progress-only-for-the-running-job", _hidden and bool(app._progress_box.winfo_manager()),
            f"hidden for a waiting job={_hidden}")
+        # late names do not take the details away from the job they show (one job selected)
+        app.update_queue_box(select_item=_jc); app.update_game_details(_jb); root.update()
+        app._names_dirty = True; app._poll_inner(); root.update()
+        ok("details.kept-when-names-come-in", app._details_item is _jb,
+           f"details on {app.queue.index(app._details_item) if app._details_item in app.queue else None}")
         app.update_queue_box(select_item=_jb); app.update_game_details(_jb); root.update()
         app._follow_next_job(_ja, _jc); root.update()
         _kept = app._details_item is _jb and app.queue_listbox.curselection() == (1,)

@@ -13601,7 +13601,10 @@ class App:
             if getattr(self, "_names_dirty", False):
                 self._names_dirty = False
                 _sel = getattr(self, "_details_item", None)
-                self.update_queue_box()         # new names only: the jobs marked stay marked
+                if len(self.queue_listbox.marked_rows()) > 1:
+                    self.update_queue_box()     # several jobs marked: new names keep them marked
+                else:
+                    self.update_queue_box(select_item=_sel)     # the job in the details stays
                 if _sel is not None and _sel in self.queue:
                     self._fill_job_card(_sel)
                     self.load_art(self._job_art(_sel))
