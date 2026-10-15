@@ -194,10 +194,11 @@ It detects SSD versus HDD per drive, including USB SSDs that report no flash fla
 
 ## Requirements
 
-- macOS on Apple Silicon. Builds and releases exist for nothing else; the Python sources are portable in principle but untested on other systems.
+- macOS on Apple Silicon for the app and the releases.
+- Windows x64 runs from source, and `BUILD_WINDOWS_APP.ps1` builds a standalone app (see below). There is no Windows release yet.
 - Python 3.10 or newer, to run from source or to build.
 - A C++ compiler for the bundled UnRAR module (Xcode Command Line Tools), needed only when building.
-- Optional but recommended for fast 7z: a native 7-Zip CLI on `PATH` (`brew install sevenzip`, or `p7zip`). Without it, `.7z` extraction falls back to the slower pure-Python path.
+- 7-Zip ships with the app: `FETCH_7ZIP.sh` downloads the pinned 7-Zip console tools from 7-zip.org for the build. Run from source without them, the app uses an installed 7-Zip, else a slower pure-Python path for `.7z`. AES-encrypted and Deflate64 zips need 7-Zip either way.
 
 ## Run from source
 
@@ -206,6 +207,12 @@ python3 -m pip install customtkinter pillow tkinterdnd2 py7zr rarfile psutil cry
 python3 -m pip install ./backend/unrar
 python3 PS5_UltraPack.py
 ```
+
+On Windows x64, with Python 3.10 or newer on `PATH`, `run.bat` installs the Python packages from `requirements-build.txt` and starts the app. The `.pkg` features need the fPKG helper: build it once with `BUILD_PKG_TOOL.ps1` (needs the [.NET SDK](https://dotnet.microsoft.com/download) 9 or newer), which writes `ffpfsc-pkg-tool.exe` and its ImageMagick library into `backend\native\`. `run.bat` does not build the built-in RAR module, so RAR archives need 7-Zip or WinRAR, installed in its usual folder.
+
+To build the standalone Windows app, first build its native parts on a Mac: `WIN_PYTHON=<copy of the Windows Python folder> ./BUILD_WINDOWS_PARTS.sh` cross-builds the fPKG helper and the UnRAR module (needs the .NET SDK and `mingw-w64`) and fetches 7-Zip. Then, on Windows with the packages from `requirements-build.txt`, `BUILD_WINDOWS_APP.ps1` writes `dist\windows\PS5 UltraPack\PS5 UltraPack.exe`, the zip `dist\PS5-UltraPack-<version>-windows-x64.zip` and its `.sha256`. The exe is not signed, so SmartScreen warns on the first start.
+
+Windows refuses paths longer than 260 characters unless long paths are turned on (an administrator sets `LongPathsEnabled` to 1 under `HKLM\SYSTEM\CurrentControlSet\Control\FileSystem`). With deep game folders, keep the temp and output folders short, e.g. `D:\ps5`.
 
 ## Build a standalone app
 
@@ -233,6 +240,7 @@ This is not a fork. It bundles and builds on the work below, with thanks to the 
 - UnRAR by RARLAB ([rarlab.com](https://www.rarlab.com/)), vendored as C++ source for the built-in RAR module under the UnRAR license (free for extraction; it may not be used to build a RAR-compatible compressor).
 - ShadowMountPlus and MicroMount, the loaders the `.ffpfsc` containers target.
 - kstuff-lite by EchoStretch and the fpkg-launch fixes by Drakmor + ArkSama (2026-09), the console-side pieces without which fPKG on 11.60 wouldn't launch at all.
+- titoum-be, who ran it on Windows and sent the launcher, the PowerShell build script and the tool lookup that Windows support is based on ([#1](https://github.com/knutwurst/ps5-ultrapack/issues/1)).
 
 Python libraries used: customtkinter, py7zr, rarfile, tkinterdnd2, Pillow, psutil, cryptography.
 

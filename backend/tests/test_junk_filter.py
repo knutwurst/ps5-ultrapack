@@ -46,7 +46,7 @@ def plant(root: Path) -> None:
 
 
 def tree(root: Path) -> list[str]:
-    return sorted(str(p.relative_to(root)) for p in Path(root).rglob("*"))
+    return sorted(p.relative_to(root).as_posix() for p in Path(root).rglob("*"))
 
 
 class OneList(unittest.TestCase):
@@ -205,7 +205,7 @@ class EmptyScratch(unittest.TestCase):
         (b / "_mine").mkdir()                                            # not ours
         (b / "Library" / "_extracted").mkdir(parents=True)               # deeper: not where we work
         gone = self.uc.prune_empty_scratch([b, b / "missing"])
-        left = sorted(str(p.relative_to(b)) for p in b.rglob("*"))
+        left = sorted(p.relative_to(b).as_posix() for p in b.rglob("*"))
         self.assertEqual(left, ["Library", "Library/_extracted", "_ffpfsc_extract", "_ffpfsc_extract/kept-job",
                                 "_ffpfsc_extract/kept-job/eboot.bin", "_ffpfsc_extract/kept-job/sce_sys", "_mine"])
         self.assertIn(b / "_ffpfsc_temp", gone)

@@ -171,20 +171,50 @@ def job_time_left(phases, stage, stage_left, stage_elapsed, size, rates, widths)
     return total
 
 
+def drive_display_name(path, system: str = "the system drive") -> str:
+    """The drive a path lives on, as people know it: the volume name on macOS ('SAMSUNG', or
+    *system* for the startup disk), the letter and label on Windows ('D: (Games)'), or the share
+    for a network path."""
+    p = Path(path)
+    if os.name == "nt":
+        anchor = p.anchor or str(p)
+        if anchor.startswith("\\\\"):
+            return anchor.rstrip("\\")
+        letter = anchor[:2]
+        label = ""
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(261)
+            if ctypes.windll.kernel32.GetVolumeInformationW(letter + "\\", buf, 261, None, None, None, None, 0):
+                label = buf.value.strip()
+        except Exception:
+            pass
+        return f"{letter} ({label})" if label else letter
+    parts = p.parts
+    return parts[2] if len(parts) > 2 and parts[1] == "Volumes" else system
+
+
+def _existing_ancestor(path: Path) -> Path:
+    """*path* or the nearest folder above it that exists: a work folder the app has not made
+    yet still sits on its drive."""
+    target = Path(path)
+    while not target.exists() and target != target.parent:
+        if target.parent == Path("/Volumes"):
+            break                   # a drive that is not attached: not the startup disk's space
+        target = target.parent
+    return target
+
+
 def get_free_space(path: Path) -> int:
     try:
-        target = path if path.exists() else path.parent
-        usage = shutil.disk_usage(str(target))
-        return usage.free
+        return shutil.disk_usage(str(_existing_ancestor(path))).free
     except Exception:
         return 0
 
 
 def get_total_space(path: Path) -> int:
     try:
-        target = path if path.exists() else path.parent
-        usage = shutil.disk_usage(str(target))
-        return usage.total
+        return shutil.disk_usage(str(_existing_ancestor(path))).total
     except Exception:
         return 0
 
@@ -717,10 +747,17 @@ def poke_drive_keepalive(d: Path) -> bool:
     """Force a tiny physical write to the drive holding *d* and flush it to the device, so an idle external HDD doesn't park its heads / spin down."""
     try:
         f = d / KEEP_AWAKE_FILENAME
-        with open(f, "wb") as fh:
+        new = not f.exists()
+        if os.name == "nt" and not new:
+            os.chmod(f, stat.S_IWRITE | stat.S_IREAD)
+        with open(f, "r+b" if os.name == "nt" and not new else "wb") as fh:
             fh.write(b"ffpfsc keep-alive\n")
+            fh.truncate()
             fh.flush()
             os.fsync(fh.fileno())
+        if os.name == "nt" and new:
+            import ctypes                       # a dot does not hide a file on Windows
+            ctypes.windll.kernel32.SetFileAttributesW(str(f), 0x2)
         return True
     except Exception:
         return False
@@ -788,55 +825,96 @@ def _probe_drive_speed(path: Path, name_hint: str = "") -> str:
         return "SSD" if hinted else "Unknown"
 
 
+_BUS_USB, _BUS_NVME, _BUS_SCM = 7, 17, 18      # STORAGE_BUS_TYPE values
+
+
+def _windows_disk_info(path: Path):
+    """(incurs seek penalty, bus type, vendor + product) of the disk behind the volume holding
+    *path*, each None or "" when Windows does not say; (None, None, "") for a network share."""
+    import ctypes
+    import struct
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    k32.DeviceIoControl.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                    ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    root = ctypes.create_unicode_buffer(1024)
+    if not k32.GetVolumePathNameW(str(path), root, 1024):
+        return None, None, ""
+    if k32.GetDriveTypeW(root.value) == 4:          # DRIVE_REMOTE
+        return None, None, ""
+    guid = ctypes.create_unicode_buffer(1024)
+    dev = (guid.value.rstrip("\\") if k32.GetVolumeNameForVolumeMountPointW(root.value, guid, 1024)
+           else "\\\\.\\" + root.value.rstrip("\\"))
+    # no access rights are needed for these queries, so no admin either
+    h = k32.CreateFileW(dev, 0, 3, None, 3, 0, None)
+    if h is None or h == ctypes.c_void_p(-1).value:
+        return None, None, ""
+    try:
+        def query(prop_id):
+            q = struct.pack("<II4x", prop_id, 0)    # STORAGE_PROPERTY_QUERY, standard query
+            out = ctypes.create_string_buffer(1024)
+            n = wintypes.DWORD()
+            ok = k32.DeviceIoControl(h, 0x2D1400, q, len(q), out, len(out), ctypes.byref(n), None)
+            return out.raw[:n.value] if ok else b""
+
+        seek = query(7)                             # StorageDeviceSeekPenaltyProperty
+        penalty = bool(seek[8]) if len(seek) >= 9 else None
+        desc = query(0)                             # StorageDeviceProperty
+        bus, name = None, ""
+        if len(desc) >= 32:
+            bus = struct.unpack_from("<I", desc, 28)[0]
+
+            def text(off):
+                end = desc.find(b"\0", off) if 0 < off < len(desc) else -1
+                return desc[off:end].decode("ascii", "replace").strip() if end > 0 else ""
+            name = " ".join(t for t in (text(struct.unpack_from("<I", desc, 12)[0]),
+                                        text(struct.unpack_from("<I", desc, 16)[0])) if t)
+        return penalty, bus, name
+    finally:
+        k32.CloseHandle(h)
+
+
 def _probe_drive_type(path: Path) -> str:
     """Actually probe the drive type (may block ~1-2 s). See get_drive_type."""
     try:
         target = path if path.exists() else path.parent
     except Exception:
         target = path
-    # ── Windows: PowerShell MediaType / BusType ──────────────────────────────
+    # ── Windows: the disk's seek penalty, as Windows' own optimizer reads it ───
     if os.name == "nt":
         try:
-            drive_letter = path.resolve().drive.rstrip(":\\")
-            if not drive_letter:
-                return "Unknown"
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 f"Get-Partition -DriveLetter '{drive_letter}' | Get-Disk | Select-Object -ExpandProperty MediaType"],
-                capture_output=True, text=True, timeout=6,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            media = result.stdout.strip().upper()
-            if "SSD" in media or "NVM" in media:
-                return "SSD"
-            if "HDD" in media or "UNSPECIFIED" in media:
-                if "UNSPECIFIED" in media:
-                    result2 = subprocess.run(
-                        ["powershell", "-NoProfile", "-Command",
-                         f"Get-Partition -DriveLetter '{drive_letter}' | Get-Disk | Select-Object -ExpandProperty BusType"],
-                        capture_output=True, text=True, timeout=6,
-                        creationflags=subprocess.CREATE_NO_WINDOW
-                    )
-                    bus = result2.stdout.strip().upper()
-                    if "NVME" in bus or "SATA" in bus:
-                        return "SSD"
-                    if "ATA" in bus:
-                        return "HDD"
-                return "HDD"
+            penalty, bus, name = _windows_disk_info(target)
         except Exception:
-            pass
-        return "Unknown"
+            penalty, bus, name = None, None, ""
+        if penalty is False:
+            return "SSD"
+        if penalty is True:
+            return "HDD"
+        if bus in (_BUS_NVME, _BUS_SCM):
+            return "SSD"
+        if bus is None:
+            return "Unknown"            # a network share, or Windows does not say
+        # The disk does not report a seek penalty (common behind USB bridges): measure it,
+        # leaning like the macOS branch when the probe is ambiguous.
+        speed = _probe_drive_speed(target, name_hint=name)
+        if speed != "Unknown":
+            return speed
+        return "SSD" if bus == _BUS_USB else "HDD"
     # ── macOS: diskutil 'Solid State: Yes/No' on the backing device ──────────
     if sys.platform == "darwin":
         try:
-            df = subprocess.run(["df", str(target)], capture_output=True, text=True, timeout=6)
+            df = subprocess.run(["df", str(target)], capture_output=True, text=True, errors="replace", timeout=6)
             dev = df.stdout.strip().splitlines()[-1].split()[0]   # /dev/diskXsY
             whole = re.sub(r"(s\d+)+$", "", dev)                  # /dev/diskX physical disk (strip APFS synth too)
             saw_info_unavailable = False
             name_hint = ""
             is_usb_external = False
             for d in ([dev, whole] if whole != dev else [dev]):
-                info = subprocess.run(["diskutil", "info", d], capture_output=True, text=True, timeout=8)
+                info = subprocess.run(["diskutil", "info", d], capture_output=True, text=True, errors="replace", timeout=8)
                 for line in info.stdout.splitlines():
                     parts = line.split(":", 1)
                     if len(parts) != 2:
@@ -901,12 +979,15 @@ def get_filesystem_type(path: Path) -> str:
         return "Unknown"
     try:
         import ctypes
-        target = path if path.exists() else path.parent
-        drive = str(target.resolve()).split("\\")[0] + "\\"  # e.g. "C:\\"
+        target = Path(path)
+        while not target.exists() and target != target.parent:
+            target = target.parent
+        # the volume itself: also right for a drive mounted in a folder and for a network share
+        root = ctypes.create_unicode_buffer(1024)
+        if not ctypes.windll.kernel32.GetVolumePathNameW(str(target), root, len(root)):
+            return "Unknown"
         buf = ctypes.create_unicode_buffer(64)
-        ctypes.windll.kernel32.GetVolumeInformationW(
-            drive, None, 0, None, None, None, buf, ctypes.sizeof(buf)
-        )
+        ctypes.windll.kernel32.GetVolumeInformationW(root.value, None, 0, None, None, None, buf, len(buf))
         return buf.value.strip() or "Unknown"
     except Exception:
         return "Unknown"
@@ -1077,15 +1158,29 @@ _ERROR_PATTERNS: list[tuple[str, str]] = [
      "Fix: select the folder that contains sce_sys and eboot.bin."),
     ("missing/invalid param.json",
      "param.json is missing or corrupt - not a valid PS5 game dump."),
+    ("[winerror 206]",
+     "A path is longer than Windows allows (260 characters).\n"
+     "Fix: pick a shorter temp or output folder, or turn on long paths in Windows (an administrator "
+     "sets LongPathsEnabled to 1 under HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem)."),
+    ("[winerror 112]",
+     "Drive ran out of space.\n"
+     "Fix: free up space on the temp or output drive."),
+    ("there is not enough space on the disk",
+     "Drive ran out of space.\n"
+     "Fix: free up space on the temp or output drive."),
+    ("[winerror 32]",
+     "Another program has a file open (antivirus, Explorer's preview, a player).\n"
+     "Fix: close it, or wait for the antivirus scan, then retry the job."),
+    ("[winerror 3]",
+     "A folder on the way was not found. Windows also says this for a path longer than "
+     "260 characters.\n"
+     "Fix: check the drive is still there; for a long path pick a shorter temp or output folder."),
     ("permission denied",
      "Access denied.\n"
      "Fix: run as administrator, or move files off a read-only drive."),
-    ("winerror 5",
+    ("[winerror 5]",
      "Access denied (WinError 5).\n"
-     "Fix: run as administrator."),
-    ("winerror 1",
-     "Windows system error (WinError 1).\n"
-     "Fix: run as administrator."),
+     "Fix: check the file is not read-only or in use, or run as administrator."),
     ("calledprocesserror",
      "A backend subprocess failed - check the raw log for details."),
 ]
@@ -1315,7 +1410,14 @@ def sanitize_filename(s: str) -> str:
     s = re.sub(r"[™®©℠℗]", "", s)   # ™ ® © ℠ ℗ - waste bytes, no value on a console drive
     s = re.sub(r'[*?"<>|\x00-\x1f]', "", s)
     s = re.sub(r"\s+", " ", s).strip().strip(".")
-    return _truncate_to_bytes(s, MAX_FILENAME_BYTES).strip()
+    # Windows: no trailing dot or space (also after the cut), and no device names
+    s = _truncate_to_bytes(s, MAX_FILENAME_BYTES).strip().rstrip(". ")
+    if _WIN_RESERVED_NAME.match(s):
+        s = "_" + s
+    return s
+
+
+_WIN_RESERVED_NAME = re.compile(r"^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)", re.I)
 
 
 # Redundant "edition" qualifiers dropped from an output filename ONLY when the full name
@@ -1762,20 +1864,47 @@ _SETTINGS_UNREADABLE = False      # settings.json exists but does not parse
 _SETTINGS_CORRUPT_COPY: Path | None = None   # where the unreadable file was moved
 
 
+_SETTINGS_LOCK = threading.RLock()
+
+
+def _retry_io(fn, tries: int = 8):
+    """Windows refuses to open or replace a file another thread or process has open for a
+    moment; try again briefly before giving up."""
+    for i in range(tries):
+        try:
+            return fn()
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.05 * (i + 1))
+
+
+def _read_settings() -> tuple[dict, bool]:
+    """(settings, read): read is False while the file exists but cannot be opened, which is
+    not the same as corrupt."""
+    global _SETTINGS_UNREADABLE
+    ensure_app_dir()
+    with _SETTINGS_LOCK:
+        if not SETTINGS_FILE.exists():
+            return {}, True
+        try:
+            text = _retry_io(lambda: SETTINGS_FILE.read_text(encoding="utf-8"))
+        except OSError:
+            return {}, False
+        try:
+            data = json.loads(text)
+            _SETTINGS_UNREADABLE = False
+            return (data if isinstance(data, dict) else {}), True
+        except ValueError:
+            _SETTINGS_UNREADABLE = True
+        return {}, True
+
+
 def load_settings() -> dict:
     """Parsed settings.json, or {} when it does not exist. A file that exists but does
     not parse is flagged so save_settings() keeps it aside instead of overwriting the
     whole profile (queue, passwords, drives) with the single key being saved."""
-    global _SETTINGS_UNREADABLE
-    ensure_app_dir()
-    if SETTINGS_FILE.exists():
-        try:
-            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            _SETTINGS_UNREADABLE = False
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            _SETTINGS_UNREADABLE = True
-    return {}
+    return _read_settings()[0]
 
 
 def save_settings(data: dict) -> None:
@@ -1783,18 +1912,30 @@ def save_settings(data: dict) -> None:
     os.replace, so a crash or power loss mid-write never leaves a torn file."""
     global _SETTINGS_CORRUPT_COPY
     ensure_app_dir()
-    existing = load_settings()
-    if _SETTINGS_UNREADABLE:
+    with _SETTINGS_LOCK:
+        existing, read = _read_settings()
+        if not read:
+            # saving only *data* now would drop the rest of the profile
+            raise OSError(f"{SETTINGS_FILE} is in use and cannot be read; not saved")
+        if _SETTINGS_UNREADABLE:
+            try:
+                keep = SETTINGS_FILE.with_name(f"settings.json.corrupt-{int(time.time())}")
+                SETTINGS_FILE.replace(keep)
+                _SETTINGS_CORRUPT_COPY = keep
+            except Exception:
+                pass
+        existing.update(data)
+        fd, tmp = tempfile.mkstemp(prefix="settings.json.", suffix=".tmp", dir=str(SETTINGS_FILE.parent))
         try:
-            keep = SETTINGS_FILE.with_name(f"settings.json.corrupt-{int(time.time())}")
-            SETTINGS_FILE.replace(keep)
-            _SETTINGS_CORRUPT_COPY = keep
-        except Exception:
-            pass
-    existing.update(data)
-    tmp = SETTINGS_FILE.with_name("settings.json.tmp")
-    tmp.write_text(json.dumps(existing, indent=2), encoding="utf-8")
-    os.replace(tmp, SETTINGS_FILE)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(existing, indent=2))
+            _retry_io(lambda: os.replace(tmp, SETTINGS_FILE))
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
 
 def is_first_run() -> bool:
@@ -1860,7 +2001,9 @@ class ArchiveExtractor:
         # the absolute path keeps it stable, so re-extracting the same archive
         # reuses (and refreshes) its own folder.
         digest = hashlib.sha1(str(archive.resolve()).encode("utf-8", "replace")).hexdigest()[:8]
-        dest = dest_root / f"{archive.stem}__{digest}"
+        # Windows refuses paths beyond 260 characters unless long paths are on: a short folder
+        stem = archive.stem[:40].rstrip(" .") if os.name == "nt" else archive.stem
+        dest = dest_root / f"{stem}__{digest}"
         if dest.exists():
             shutil.rmtree(dest, ignore_errors=True)
         dest.mkdir(parents=True, exist_ok=True)
@@ -1890,10 +2033,19 @@ class ArchiveExtractor:
         junk = strip_fs_junk(dest)
         if junk and log_fn:
             log_fn("INFO", f"Removed {junk} OS clutter file(s)/folder(s) from the extracted archive.")
+        if os.name == "nt":
+            # Archives keep Windows' read-only flag, and Windows will not delete such a file:
+            # the copy is the app's own, so cleaning it up later must work
+            for f in dest.rglob("*"):
+                try:
+                    if f.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+                        os.chmod(f, stat.S_IWRITE | stat.S_IREAD)
+                except OSError:
+                    pass
         if not has_any_files(dest):
             raise RuntimeError(
                 f"Archive extraction produced no files: {archive.name}\n\n"
-                "The archive may be empty, encrypted with a wrong password, or the required macOS extractor failed."
+                "The archive may be empty, encrypted with a wrong password, or its extractor failed."
             )
         game_root = ArchiveExtractor._find_root(dest, log_fn=log_fn)
         if log_fn:
@@ -2371,14 +2523,10 @@ class ArchiveExtractor:
             _script_dir / "unrar.exe",
             _script_dir / "tools" / "unrar.exe",
             APP_DIR / "unrar.exe",
-            # 7-Zip standard install locations
-            Path(r"C:\Program Files\7-Zip\7z.exe"),
-            Path(r"C:\Program Files (x86)\7-Zip\7z.exe"),
-            # WinRAR standard install locations
-            Path(r"C:\Program Files\WinRAR\UnRAR.exe"),
-            Path(r"C:\Program Files\WinRAR\Rar.exe"),
-            Path(r"C:\Program Files (x86)\WinRAR\UnRAR.exe"),
-            Path(r"C:\Program Files (x86)\WinRAR\Rar.exe"),
+            # 7-Zip and WinRAR in their install folders (Program Files is not always on C:)
+            *[Path(os.environ[v]) / sub for v in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)")
+              if os.name == "nt" and os.environ.get(v)
+              for sub in (r"7-Zip\7z.exe", r"WinRAR\UnRAR.exe", r"WinRAR\Rar.exe")],
             # macOS / Linux: Homebrew (Apple Silicon + Intel), MacPorts, system.
             # GUI apps don't inherit the shell PATH, so check these directly.
             Path("/opt/homebrew/bin/unrar"), Path("/opt/homebrew/bin/7z"),
@@ -2427,7 +2575,7 @@ class ArchiveExtractor:
 
     @staticmethod
     def _run_extract_process(cmd: list[str], tool_name: str, log_fn=None, progress_fn=None,
-                             cancel_event: threading.Event | None = None) -> None:
+                             cancel_event: threading.Event | None = None, encoding: str | None = None) -> None:
         """Run a CLI extractor, streaming its progress; raise on a non-zero exit.
         The last lines of its output are kept so the failure names the reason: a
         wrong/missing password raises ArchivePasswordError, anything else
@@ -2441,6 +2589,8 @@ class ArchiveExtractor:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding=encoding,
+            errors="replace",
             bufsize=1,
             universal_newlines=True,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
@@ -2689,7 +2839,13 @@ class ArchiveExtractor:
 
     @staticmethod
     def _find_native_7z() -> str | None:
-        """Locate a native 7-Zip binary: PATH first, then well-known Homebrew install paths (a .app bundled with PyInstaller doesn't inherit the user's shell PATH, so /opt/homebrew/bin is invisible without explicit probing)."""
+        """Locate a native 7-Zip binary: the one bundled in backend/native (FETCH_7ZIP.sh), then PATH, then the usual install folders (a bundled app does not inherit the shell's PATH, and the Windows installer leaves PATH alone)."""
+        bundled = "7za.exe" if os.name == "nt" else "7zz"
+        for base in (getattr(sys, "_MEIPASS", None), os.path.dirname(os.path.abspath(__file__))):
+            if base:
+                cand = os.path.join(base, "backend", "native", bundled)
+                if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                    return cand
         names = ("7zz", "7z", "7za")
         for name in names:
             p = shutil.which(name)
@@ -2702,18 +2858,38 @@ class ArchiveExtractor:
                     cand = f"{prefix}/{name}"
                     if os.path.isfile(cand) and os.access(cand, os.X_OK):
                         return cand
+        # Windows: the 7-Zip installer does not touch PATH
+        if os.name == "nt":
+            dirs = []
+            try:
+                import winreg
+                for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+                    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                        try:
+                            with winreg.OpenKey(hive, r"SOFTWARE\7-Zip", 0, winreg.KEY_READ | view) as k:
+                                dirs.append(winreg.QueryValueEx(k, "Path")[0])
+                        except OSError:
+                            pass
+            except ImportError:
+                pass
+            dirs += [os.path.join(os.environ.get(v, ""), "7-Zip")
+                     for v in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)") if os.environ.get(v)]
+            for d in dirs:
+                cand = os.path.join(d, "7z.exe")
+                if os.path.isfile(cand):
+                    return cand
         return None
 
     @staticmethod
     def _run_native_7z(exe: str, archive: Path, dest: Path, log_fn=None, progress_fn=None,
                        password: str = "", cancel_event: threading.Event | None = None) -> None:
         """Extract *archive* (any format the binary reads: 7z, zip, …) with the native 7-Zip CLI."""
-        cmd = [exe, "x", str(archive), f"-o{dest}", "-y", "-bsp1", f"-p{password}",
+        cmd = [exe, "x", str(archive), f"-o{dest}", "-y", "-bsp1", "-sccUTF-8", f"-p{password}",
                # OS and archiver clutter is not extracted at all (strip_fs_junk catches the rest).
                "-xr!._*", "-xr!.DS_Store", "-xr!__MACOSX", "-xr!Thumbs.db", "-xr!desktop.ini"]
         ArchiveExtractor._run_extract_process(
             cmd, os.path.basename(exe), log_fn=log_fn,
-            progress_fn=progress_fn, cancel_event=cancel_event)
+            progress_fn=progress_fn, cancel_event=cancel_event, encoding="utf-8")
 
     @staticmethod
     def _py7zr_password_failure(e: Exception) -> bool:

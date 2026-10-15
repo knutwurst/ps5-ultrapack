@@ -488,6 +488,16 @@ void PASCAL RARSetPassword(HANDLE hArcData,char *Password)
 }
 
 
+// Added for PS5 UltraPack: RARSetPassword converts with the ANSI code page on Windows.
+void PASCAL RARSetPasswordW(HANDLE hArcData,wchar_t *Password)
+{
+#ifndef RAR_NOCRYPT
+  DataSet *Data=(DataSet *)hArcData;
+  Data->Cmd.Password.Set(Password);
+#endif
+}
+
+
 int PASCAL RARGetDllVersion()
 {
   return RAR_DLL_VERSION;

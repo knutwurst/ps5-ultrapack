@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 # Located in backend/native/ next to this module.
-_TOOL_NAME = "ffpfsc-pkg-tool"
+_TOOL_NAME = "ffpfsc-pkg-tool.exe" if os.name == "nt" else "ffpfsc-pkg-tool"
+# A console program: started from the windowless app it would open a console of its own
+_NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
 def _tool_search_paths() -> list[Path]:
@@ -40,7 +42,8 @@ def tool_path() -> Path:
     tried = "\n  ".join(str(p) for p in _tool_search_paths())
     raise FileNotFoundError(
         f"ffpfsc-pkg-tool not found. Tried:\n  {tried}\n"
-        "In a source checkout, build it with ./BUILD_PKG_TOOL.sh (needs the .NET SDK 9+); "
+        "In a source checkout, build it with ./BUILD_PKG_TOOL.sh (BUILD_PKG_TOOL.ps1 on Windows; "
+        "needs the .NET SDK 9+); "
         "set FFPFSC_PKG_TOOL to override, or rebuild the app."
     )
 
@@ -66,6 +69,7 @@ def _run(argv: list[str], *, on_line=None, on_start=None) -> int:
         # must not turn into a UnicodeDecodeError after the build has already run.
         encoding="utf-8",
         errors="replace",
+        **_NO_WINDOW,
     )
     assert proc.stdout is not None
     if on_start is not None:
@@ -87,7 +91,8 @@ def version() -> str:
     """Return the CLI version banner, or an error string."""
     argv = [str(tool_path()), "version"]
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=10).stdout
+        return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                              **_NO_WINDOW).stdout
     except Exception as e:
         return f"[fpkg tool unavailable: {e}]"
 
@@ -103,7 +108,7 @@ def inspect_json(pkg: Path) -> dict:
     """The tool's header summary of a PS5 package (content_id, content_type: 32 game, 33/34
     additional content, entries ...). Reads the header and the entry table only."""
     r = subprocess.run([str(tool_path()), "inspect", str(pkg), "--json"], capture_output=True, text=True,
-                       timeout=120, encoding="utf-8", errors="replace")
+                       timeout=120, encoding="utf-8", errors="replace", **_NO_WINDOW)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout or "").strip().splitlines()
         raise RuntimeError(msg[-1] if msg else f"inspect failed (rc={r.returncode})")
@@ -139,7 +144,8 @@ def list_inner(pkg: Path, *, passcode: str = "0" * 32) -> dict:
     """Directory tree of a package's inner image - plus the sce_sys metadata the CNT carries - WITHOUT decoding the whole image (the tool reads only the blocks it touches; a 240 MB package lists in ~0.1 s reading ~1.5 MiB)."""
     argv = ([str(tool_path()), "ps4-list", str(pkg)] if is_ps4(pkg)
             else [str(tool_path()), "list-inner", str(pkg), "--passcode", passcode])
-    r = subprocess.run(argv, capture_output=True, text=True, timeout=600)
+    r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+                       **_NO_WINDOW)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout or "").strip().splitlines()
         raise RuntimeError(msg[-1] if msg else f"list-inner failed (rc={r.returncode})")

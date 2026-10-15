@@ -24,6 +24,8 @@ internal static partial class Program
 
     static int Main(string[] args)
     {
+        // UTF-8 on every system: a Windows console or pipe defaults to the OEM code page
+        Console.OutputEncoding = new System.Text.UTF8Encoding(false);
         try
         {
             RedirectMagickNative();                    // must run before ANY Magick.NET call

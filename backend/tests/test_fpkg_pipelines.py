@@ -14,6 +14,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 import zlib
@@ -28,7 +29,8 @@ CLI = BACKEND / "cli.py"
 # FFPFSC_PKG_TOOL lets the whole harness run against a candidate build of the tool
 # (backend/fpkg.py honours the same variable, so the CLI subprocesses follow suit).
 TOOL = (Path(os.environ["FFPFSC_PKG_TOOL"]) if os.environ.get("FFPFSC_PKG_TOOL")
-        else BACKEND / "native" / "ffpfsc-pkg-tool")
+        else BACKEND / "native" / ("ffpfsc-pkg-tool.exe" if os.name == "nt" else "ffpfsc-pkg-tool"))
+MAGICK = "Magick.Native-Q8-x64.dll" if os.name == "nt" else "Magick.Native-Q8-arm64.dll.dylib"
 
 # Backend cli.py wants to import fpkg / mkpfs as if run from backend/
 sys.path.insert(0, str(BACKEND))
@@ -171,7 +173,7 @@ def sha(p: Path) -> str:
 # ── individual tests ────────────────────────────────────────────────────────
 def test_environment(r: Runner):
     r.check("tool.present", TOOL.exists(), f"{TOOL}", f"missing: {TOOL} (build it: ./BUILD_PKG_TOOL.sh)")
-    magick = TOOL.parent / "Magick.Native-Q8-arm64.dll.dylib"
+    magick = TOOL.parent / MAGICK
     r.check("tool.magick-native", magick.is_file(), f"{magick.name} next to the tool",
             f"missing: {magick} - icon conversion would fail (build it: ./BUILD_PKG_TOOL.sh)")
     if TOOL.exists():
@@ -211,10 +213,10 @@ def test_chain1_folder_pkg_folder(r: Runner):
     # extract
     rc, log = r.run_cli(["placeholder", str(out_ext), "--fpkg-extract", str(pkg)])
     r.check("chain1.extract.rc", rc == 0, f"exit {rc}", log[-400:])
-    got = {str(p.relative_to(out_ext)): sha(p) for p in out_ext.rglob("*") if p.is_file()}
+    got = {p.relative_to(out_ext).as_posix(): sha(p) for p in out_ext.rglob("*") if p.is_file()}
 
     # verify every source file survived (byte-identical except eboot/param.json)
-    src = {str(p.relative_to(hbt)): sha(p) for p in hbt.rglob("*") if p.is_file()}
+    src = {p.relative_to(hbt).as_posix(): sha(p) for p in hbt.rglob("*") if p.is_file()}
     missing = [k for k in src if k not in got]
     r.check("chain1.roundtrip.no-missing", not missing,
             "all source files present in extract",
@@ -612,7 +614,9 @@ def test_chain4_image_to_fpkg_oneclick(r: Runner):
             "\n".join(x for x in log.splitlines() if "Unpacking" in x or "Unwrapping" in x or "[stage]" in x))
     r.check("chain4.level-passthrough", "level=5" in log, "--compression-level reached the builder (level=5)",
             "level not visible in builder banner")
-    r.check("chain4.temp-passthrough", str(tmp) in log, "--temp-dir reached the builder", "temp dir not in banner")
+    # the backend hands the builder the resolved path (Windows: the long name of a PARALL~1 short one)
+    r.check("chain4.temp-passthrough", str(tmp) in log or str(tmp.resolve()) in log, "--temp-dir reached the builder",
+            "temp dir not in banner")
     r.check("chain4.scratch-cleaned", not any(tmp.iterdir()), "unwrap scratch removed after build",
             f"leftovers: {[x.name for x in tmp.iterdir()]}")
     r.check("chain4.complete-marker", "[OK] fPKG complete:" in log, "output marker for the GUI emitted",
@@ -660,7 +664,12 @@ def test_build_temp_is_contained(r: Runner):
     argv = [sys.executable, "-u", str(CLI), str(hbt), str(out), "--fpkg-build", str(hbt),
             "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
             "--fpkg-inner", "kraken", "--fpkg-kraken-backend", "builtin", "--temp-dir", str(temp)]
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            encoding="utf-8", errors="replace")
+    # drained while polling: a full pipe (4 KB on Windows) would stop the build
+    chunks: list[str] = []
+    reader = threading.Thread(target=lambda: chunks.extend(proc.stdout), daemon=True)
+    reader.start()
     loose, inside = set(), set()
     while proc.poll() is None:
         try:
@@ -675,7 +684,8 @@ def test_build_temp_is_contained(r: Runner):
         except OSError:
             pass
         time.sleep(0.02)
-    log = proc.stdout.read() if proc.stdout else ""
+    reader.join(timeout=10)
+    log = "".join(chunks)
     r.check("temp.build.rc", proc.returncode == 0, "exit 0", log[-400:])
     r.check("temp.no-loose-intermediates", not loose,
             "nothing loose in the temp root while building" + (f" (seen inside a tmp folder: {len(inside)})" if inside else ""),
@@ -815,7 +825,7 @@ def test_list_and_selective_extract(r: Runner):
         rc, log = r.run_tool(["extract-inner", str(pkg), str(full)])
         if not r.check(f"lsx.{tag}.full-extract", rc == 0, "extract-inner ok", log[-300:]):
             continue
-        full_files = {str(p.relative_to(full)): p for p in full.rglob("*") if p.is_file()}
+        full_files = {p.relative_to(full).as_posix(): p for p in full.rglob("*") if p.is_file()}
 
         # list-inner: one JSON object on stdout (run_tool merges stderr, so pick the JSON line).
         rc, log = r.run_tool(["list-inner", str(pkg)])
@@ -859,7 +869,7 @@ def test_list_and_selective_extract(r: Runner):
         rc, log = r.run_tool(["extract-inner", str(pkg), str(sel), "--members", str(mf)])
         r.check(f"lsx.{tag}.sel.rc", rc == 0, f"exit {rc}", log[-300:])
         expected = {p for p in full_files if any(p == m or p.startswith(m + "/") for m in members)}
-        got = {str(p.relative_to(sel)): p for p in sel.rglob("*") if p.is_file()}
+        got = {p.relative_to(sel).as_posix(): p for p in sel.rglob("*") if p.is_file()}
         r.check(f"lsx.{tag}.sel.exact-set", set(got) == expected, f"{len(expected)} file(s), nothing else",
                 f"extra={sorted(set(got) - expected)[:5]} missing={sorted(expected - set(got))[:5]}")
         diff = [p for p in expected if p in got and sha(got[p]) != sha(full_files[p])]
@@ -900,7 +910,7 @@ def test_list_and_selective_extract(r: Runner):
                 err = ""
             except Exception as e:
                 pulled, err = False, str(e)
-            got = sorted(str(q.relative_to(exd)) for q in exd.rglob("*") if q.is_file()) if exd.exists() else []
+            got = sorted(q.relative_to(exd).as_posix() for q in exd.rglob("*") if q.is_file()) if exd.exists() else []
             r.check("lsx.hbt.executables-only",
                     pulled and "eboot.bin" in got and all(_cli._is_executable_name(g) for g in got)
                     and sha(exd / "eboot.bin") == sha(full / "eboot.bin"),

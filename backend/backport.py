@@ -826,6 +826,8 @@ def lower_sdk_in_folder(root: Path, target: str, words: tuple[int, int] | None =
         tmp = path.with_suffix(path.suffix + ".backport-tmp")
         try:
             tmp.write_bytes(new_data)
+            if os.name == "nt":
+                os.chmod(path, 0o666)       # Windows will not replace a read-only file
             os.replace(tmp, path)
         finally:
             if tmp.exists():

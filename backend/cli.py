@@ -3,6 +3,12 @@
 import sys
 import os
 
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ── Bundled mkpfs detection ───────────────────────────────────────────────────
 # When this script lives inside a 'backend/' folder, look for 'backend/mkpfs/'
 # and add 'backend/' to sys.path so 'import mkpfs' resolves to the bundled copy.
@@ -42,9 +48,22 @@ import zlib
 from pathlib import Path
 
 
+def _child_output() -> dict:
+    """Popen arguments that let a child print into this backend's output. Windows hands a
+    child the parent's streams only when they are named."""
+    if os.name != "nt":
+        return {}
+    try:
+        sys.stdout.flush()
+        return {"stdout": sys.stdout.fileno(), "stderr": sys.stderr.fileno()}
+    except (AttributeError, OSError, ValueError):
+        return {}
+
+
 def _exit_with_parent(poll: float = 2.0) -> None:
     """End this backend, and everything it started, once the app that started it is gone."""
     if os.name == "nt":
+        _exit_with_parent_windows(poll)
         return
     parent = os.getppid()
     if parent <= 1:
@@ -62,6 +81,36 @@ def _exit_with_parent(poll: float = 2.0) -> None:
                     for c in psutil.Process().children(recursive=True):
                         c.kill()
                 except Exception:
+                    pass
+        finally:
+            os._exit(1)
+    threading.Thread(target=watch, name="parent-watch", daemon=True).start()
+
+
+def _exit_with_parent_windows(poll: float) -> None:
+    """Windows keeps an orphan's parent id, so watch the parent process itself (psutil also
+    compares its start time, a reused id does not count)."""
+    try:
+        import psutil
+        me = psutil.Process()
+        parent = me.parent()
+        # a venv's python.exe is a launcher that runs the real one with the same arguments and
+        # outlives the app: the app is the launcher's parent
+        if parent is not None and parent.cmdline()[1:] == me.cmdline()[1:]:
+            parent = parent.parent()
+    except Exception:
+        return
+    if parent is None:
+        return
+
+    def watch():
+        while parent.is_running():
+            time.sleep(poll)
+        try:
+            for c in me.children(recursive=True):
+                try:
+                    c.kill()
+                except psutil.Error:
                     pass
         finally:
             os._exit(1)
@@ -709,11 +758,8 @@ def _mkpfs_error_hint(exc: subprocess.CalledProcessError, output_path: Path) -> 
     if os.name == "nt":
         fs_label = ""
         try:
-            import ctypes as _ct
-            drive = str(output_path.resolve())[:3]
-            buf = _ct.create_unicode_buffer(64)
-            _ct.windll.kernel32.GetVolumeInformationW(drive, None, 0, None, None, None, buf, _ct.sizeof(buf))
-            fs_label = buf.value.strip()
+            from ultra_core import get_filesystem_type
+            fs_label = get_filesystem_type(Path(output_path))
         except Exception:
             pass
         if fs_label in ("exFAT", "FAT32", "FAT"):
@@ -1096,7 +1142,9 @@ def _proc_bytes_written(pid: int) -> int | None:
         return None
     try:
         import psutil
-        return int(psutil.Process(int(pid)).io_counters().write_bytes)
+        proc = psutil.Process(int(pid))
+        # a venv's python.exe on Windows only starts the real interpreter as its child
+        return sum(int(q.io_counters().write_bytes) for q in [proc] + proc.children(recursive=True))
     except Exception:
         return None
 
@@ -1201,9 +1249,9 @@ def _pkg_extract_label(folder: Path) -> str:
 
 
 def _drive_label(path: Path) -> str:
-    """The drive's volume name ('SAMSUNG'), or 'the system drive'."""
-    parts = Path(path).resolve().parts
-    return parts[2] if len(parts) > 2 and parts[1] == "Volumes" else "the system drive"
+    """The drive's name: 'SAMSUNG', 'D: (Games)', or 'the system drive'."""
+    from ultra_core import drive_display_name
+    return drive_display_name(Path(path).resolve())
 
 
 def _describe_drive(path: Path) -> str:
@@ -1212,9 +1260,7 @@ def _describe_drive(path: Path) -> str:
         free = shutil.disk_usage(path).free
     except OSError:
         return str(path)
-    parts = Path(path).resolve().parts
-    name = parts[2] if len(parts) > 2 and parts[1] == "Volumes" else "the system drive"
-    return f"{name}, {free / 1024 ** 3:.2f} GB free"
+    return f"{_drive_label(path)}, {free / 1024 ** 3:.2f} GB free"
 
 
 def _phase(name: str) -> None:
@@ -1618,7 +1664,7 @@ def pack_folder_uncompressed(
     print(f"[INFO] Running: {shlex.join(cmd)}", flush=True)
     total = _tree_bytes(game_folder)
     try:
-        proc = subprocess.Popen(cmd, cwd=mkpfs_cwd)
+        proc = subprocess.Popen(cmd, cwd=mkpfs_cwd, **_child_output())
         try:
             _meter_process(proc, total, f"write the PFS image on {_drive_label(build_path.parent)}: "
                                         f"{{done}} of {{total}} GB")
@@ -1769,7 +1815,7 @@ def new_patch_backup(scratch_root: Path, patch_name: str) -> Path:
     stage = Path(tempfile.mkdtemp(prefix="patch-backup-", dir=str(scratch_root)))
     stem = re.sub(r"\.(zip|rar|7z)$", "", Path(patch_name).name, flags=re.I)
     name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", f"Original files - {stem}").strip(" .") or "Original files"
-    return stage / name[:200]
+    return stage / name[:60 if os.name == "nt" else 200].rstrip(" .")
 
 
 def _write_patch_backup_readme(backup_dir: Path, patch_name: str, game: dict, done: dict) -> None:
@@ -1808,7 +1854,7 @@ def overlay_patch(game_root: Path, patch_dir: Path, backup_dir: Path | None = No
     check_patch_fits(game_root, src_root)
     game_param = _param_json_of(game_root)
     done = {"replaced": [], "removed": [], "added": []}
-    count = 0
+    count, failed = 0, []
     for src in sorted(src_root.rglob("*")):
         if not src.is_file():
             continue
@@ -1832,7 +1878,11 @@ def overlay_patch(game_root: Path, patch_dir: Path, backup_dir: Path | None = No
             shutil.copy2(src, dst)
             count += 1
         except Exception as e:
-            print(f"[WARN] Could not apply patch file {rel}: {e}", flush=True)
+            print(f"[ERROR] Could not apply patch file {rel}: {e}", flush=True)
+            failed.append(f"{rel.as_posix()}: {e}")
+    if failed:
+        # a half-patched game must not be packed as if the patch were in it
+        raise RuntimeError(f"{len(failed)} patch file(s) could not be applied, first {failed[0]}")
     if patch_brings_ampr(patch_dir):
         for name in ("ampr_emu.index", "ampr_emu.index.tmp"):
             stale = game_root / name
@@ -1899,7 +1949,7 @@ def compress_file_to_ffpfsc(
     cmd += [str(source_file), str(build_path)]
     print(f"[INFO] Running: {shlex.join(cmd)}", flush=True)
     try:
-        subprocess.run(cmd, cwd=mkpfs_cwd, check=True)
+        subprocess.run(cmd, cwd=mkpfs_cwd, check=True, **_child_output())
     except subprocess.CalledProcessError as e:
         _discard_build_output(build_path, ffpfsc_path)
         _mkpfs_error_hint(e, ffpfsc_path)
@@ -1952,7 +2002,7 @@ def unpack_pfs_image(
     except OSError:
         expected = 0
     try:
-        proc = subprocess.Popen(cmd, cwd=mkpfs_cwd)
+        proc = subprocess.Popen(cmd, cwd=mkpfs_cwd, **_child_output())
     except Exception as e:
         print(f"[ERROR] Could not start mkpfs unpack: {e}", flush=True)
         sys.exit(1)
@@ -2586,9 +2636,8 @@ def main() -> None:
             sys.exit(1)
         fw = fw10
         # Same profile folder as the GUI (tests point PS5_FFPFSC_APP_DIR at a scratch one).
-        _profile = os.environ.get("PS5_FFPFSC_APP_DIR", "").strip()
-        cache = (Path(_profile) if _profile else
-                 Path.home() / "Library" / "Application Support" / "PS5_UltraPack") / "backport-patches"
+        from ultra_core import APP_DIR
+        cache = Path(APP_DIR) / "backport-patches"
         try:
             r = _bpl.prepare_target(target, fw, out, cache_dir=cache,
                                     log=lambda m: print(m, flush=True))
@@ -2836,7 +2885,13 @@ def main() -> None:
                 if not args.overwrite:
                     shutil.rmtree(owned, ignore_errors=True)
                     print(f"[ERROR] Output folder already exists: {dest}  (use --overwrite)", flush=True); sys.exit(1)
-                shutil.rmtree(dest, ignore_errors=True)
+                import copy_job as _copy_job
+                try:
+                    _copy_job.rmtree_writable(dest)
+                except OSError as e:
+                    # a leftover would make the move put the game inside it
+                    shutil.rmtree(owned, ignore_errors=True)
+                    print(f"[ERROR] Could not replace {dest}: {e}", flush=True); sys.exit(1)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(root), str(dest))
             shutil.rmtree(owned, ignore_errors=True)
@@ -3169,7 +3224,7 @@ def main() -> None:
     try:
         ver = subprocess.run(
             mkpfs_cmd_base + ["-V"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=mkpfs_cwd,
         )
         print(f"[INFO] MkPFS: {ver.stdout.strip() or ver.stderr.strip()}", flush=True)
@@ -3434,7 +3489,7 @@ def main() -> None:
             # OPT-IN exFAT path (--via-exfat): build an exFAT image of the game folder and
             # compress THAT into the .ffpfsc - PSBrew's most-stable workflow, wrapping a
             # real exFAT volume the PS5 reads natively instead of the folder PFS builder.
-            # On non-macOS / hdiutil failure it returns None and we fall through to two-pass.
+            # When the writer fails it returns None and we fall through to two-pass.
             if getattr(args, "via_exfat", False) and item.is_dir():
                 with tempfile.TemporaryDirectory(dir=user_temp) as exdir:
                     exfat_img = _build_exfat_image(item, Path(exdir), title_id)

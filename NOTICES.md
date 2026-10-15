@@ -42,6 +42,7 @@ Their upstream authors and licenses:
 | **Magick.NET** 14.15.0 (Q8-AnyCPU + Core, with the native ImageMagick library) | [dlemstra/Magick.NET](https://github.com/dlemstra/Magick.NET) (NuGet, pinned; PNG→DDS for the package icon) | **Apache-2.0** (native ImageMagick: ImageMagick License) | managed part embedded into `backend/native/ffpfsc-pkg-tool`; the native library ships beside it as `backend/native/Magick.Native-Q8-arm64.dll.dylib` |
 | **.NET 9 runtime** | [dotnet/runtime](https://github.com/dotnet/runtime) | **MIT** | self-contained inside `backend/native/ffpfsc-pkg-tool` |
 | **UnRAR** sources | [rarlab.com](https://www.rarlab.com/) by Alexander Roshal / RARLAB | **UnRAR license** (free for extraction; **may not** be used to reverse-engineer the RAR compression algorithm or to build a RAR-compatible compressor) | `backend/unrar/src/` (LICENSE: `backend/unrar/license.txt`) |
+| **7-Zip** 26.04 | [7-zip.org](https://www.7-zip.org/) by Igor Pavlov; `7zz` from the macOS package (arm64 slice), `7za.exe` from 7-Zip Extra (x64), both unmodified otherwise | **GNU LGPL-2.1-or-later**, parts **BSD-3-Clause** and **BSD-2-Clause**; `7zz` also has code under the LGPL with the **unRAR license restriction** | fetched by `FETCH_7ZIP.sh` (pinned SHA-256) into `backend/native/7zz` and `backend/native/7za.exe`, not tracked in git; license texts ship beside them as `backend/native/LICENSE.7-Zip.macos` and `backend/native/LICENSE.7-Zip.windows` |
 | **make_fself** | Alex Free's [ps5-make-fself-recursive](https://github.com/alex-free/ps5-make-fself-recursive), which redistributes `make_fself.py` from the [ps5-payload-dev SDK](https://github.com/ps5-payload-dev/sdk), originally by flatz | **BSD-3-Clause** | `backend/make_fself.py` (attribution in the file header) |
 | **BackPork BPS patches** | [BestPig/BackPork](https://github.com/BestPig/BackPork) — small BPS deltas that turn a PS5 10.01 system library into the version an older firmware loads | **GPL-3.0-or-later** (same as BackPork) | **Downloaded on demand** from the upstream repo by Settings → "Prepare 7.61 / 6.02 libraries"; cached under `~/Library/Application Support/PS5_UltraPack/backport-patches/`. The patches are applied to the user's own 10.01 libraries, which are never bundled with this app. |
 | **BPS format** (byuu, 2014) | [byuu.org — BPS specification](https://www.romhacking.net/utilities/1040/) | Public domain | `backend/bps_patch.py` — an independent Python implementation of the format; no external code copied. |
@@ -50,8 +51,7 @@ Their upstream authors and licenses:
 ## Bundled runtime libraries (inside the .app)
 
 The compiled `.app` carries its own Python runtime and every Python library
-the program imports (macOS system frameworks and optional command-line tools
-such as `7z` are used from the system). Licenses are as declared by each
+the program imports (macOS system frameworks are used from the system). Licenses are as declared by each
 project in its package metadata or license file, checked 2026-09-27 against
 the build environment and the contents of the built bundle. The LGPL
 components are used unmodified; their compiled extension modules ship as

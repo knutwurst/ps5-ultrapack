@@ -249,7 +249,8 @@ def plan(root, entries: list[Entry], companions: list[Path]) -> Plan:
                                                                    {tid: known} if known else None)}
         title_dir = title_dirs[tid] = root / next(iter(placed.values()))[0]
         label = labels[tid] = next((e.title for e in group if e.role == "game" and e.title), group[0].title) or tid
-        if home is not None and home != title_dir:
+        # str(): Windows compares paths without case, and a new spelling is a rename
+        if home is not None and str(home) != str(title_dir):
             if title_dir.exists() and not _same_entry(home, title_dir):
                 home = None                                   # the name is taken: no rename, single moves
             else:
@@ -275,7 +276,7 @@ def plan(root, entries: list[Entry], companions: list[Path]) -> Plan:
                     moves.append(Move(p, title_dir / p.name, tid, label))
                 continue
             dst = dst_dir / name
-            if now(e.path) == dst:
+            if str(now(e.path)) == str(dst):
                 in_place += 1
                 continue
             moves.append(Move(e.path, dst, tid, label, is_dir=e.kind == "folder"))
@@ -396,7 +397,7 @@ def _drop_sidecars_of(ops: list) -> None:
 
 def _rename(src: Path, dst: Path) -> None:
     """os.rename, also for a change of case alone on a drive that ignores case."""
-    if src != dst and str(src).lower() == str(dst).lower():
+    if str(src) != str(dst) and str(src).lower() == str(dst).lower():
         tmp = src.with_name(src.name + ".organize-case")
         os.rename(src, tmp)
         os.rename(tmp, dst)
@@ -727,7 +728,10 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             if if_exists == "keep":
                 name = _free_name(dst_dir, name)
             elif if_exists == "overwrite":
+                # a free name: a leftover of an interrupted run may be the only intact copy
                 part = name + ".copy-old"
+                if os.path.lexists(dst_dir / part):
+                    part = _free_name(dst_dir, part)
                 try:
                     os.rename(target, dst_dir / part)
                 except OSError as ex:
@@ -738,7 +742,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
                 rc = run(name)
                 if rc == 0:
                     old = dst_dir / part
-                    shutil.rmtree(old) if old.is_dir() else old.unlink()
+                    copy_job.rmtree_writable(old) if old.is_dir() else old.unlink()
                     _say(on_line, f"[OK] Organized: {target} (replaced)")
                 else:
                     os.rename(dst_dir / part, target)

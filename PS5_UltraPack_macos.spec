@@ -19,11 +19,14 @@ _BACKEND_SKIP_DIRS = {
     "tests",                           # test suites
     _os.path.join("unrar", "src"),     # UnRAR C++ sources (compiled into unrar/_unrar*.so)
     _os.path.join("unrar", "build"),   # setuptools build tree of that extension
+    _os.path.join("unrar", "build-win"),
     ".github",
 }
 # Build inputs, packaging metadata and documentation, not runtime files:
-_BACKEND_SKIP_FILES = {".gitignore", ".DS_Store", "setup.py", "pyproject.toml", "_unrar.cpp"}
-_BACKEND_SKIP_SUFFIXES = (".pyc", ".pyo", ".md")
+_BACKEND_SKIP_FILES = {".gitignore", ".DS_Store", "setup.py", "pyproject.toml", "_unrar.cpp",
+                       "LICENSE.7-Zip.windows"}
+# .exe / .dll / .pyd are the Windows build's parts, which share backend/ with these.
+_BACKEND_SKIP_SUFFIXES = (".pyc", ".pyo", ".md", ".exe", ".dll", ".pyd")
 # Files every bundle must contain; a missing one is a broken build, so fail early.
 _BACKEND_REQUIRED = [
     "cli.py", "fpkg.py", "copy_job.py", "fake_sign.py", "make_fself.py",
@@ -33,6 +36,7 @@ _BACKEND_REQUIRED = [
     _os.path.join("unrar", "__init__.py"), _os.path.join("unrar", "rarfile.py"),
     _os.path.join("native", "ffpfsc-pkg-tool"),
     _os.path.join("native", "Magick.Native-Q8-arm64.dll.dylib"),   # loaded from the tool's folder
+    _os.path.join("native", "7zz"), _os.path.join("native", "LICENSE.7-Zip.macos"),   # FETCH_7ZIP.sh
     _os.path.join("native", "LICENSE.LibProsperoPkg"),
     _os.path.join("native", "LICENSE.LibOrbisPkg"),
 ]

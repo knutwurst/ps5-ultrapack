@@ -110,6 +110,18 @@ class ArchiveSetTests(Base):
         self.assertEqual(sorted(ultra_core.archive_set_parts(parts[0])), sorted(parts))
 
 
+def _can_symlink() -> bool:
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            (Path(td) / "l").symlink_to("t")
+            return True
+        except OSError:
+            return False
+
+
+SYMLINKS = _can_symlink()
+
+
 class ActionTests(Base):
     def test_keep_does_nothing(self):
         g = self.game()
@@ -121,6 +133,7 @@ class ActionTests(Base):
         aj.apply(aj.DELETE, [g, f])
         self.assertFalse(g.exists() or f.exists())
 
+    @unittest.skipUnless(SYMLINKS, "this system does not allow symlinks")
     def test_delete_a_link_keeps_its_target(self):
         g = self.game()
         link = self.tmp / "link"
@@ -153,6 +166,7 @@ class ActionTests(Base):
         self.assertEqual(sorted(Path(p).name for p in out), ["Game (2).part1.rar", "Game (2).part2.rar"])
         self.assertEqual((dest / "Game.part1.rar").read_bytes(), b"old")
 
+    @unittest.skipUnless(SYMLINKS, "this system does not allow symlinks")
     def test_move_to_another_drive_copies_checks_then_removes(self):
         g = self.game()
         (g / "link").symlink_to("eboot.bin")
@@ -192,7 +206,7 @@ class ActionTests(Base):
         out = aj.apply(aj.MOVE, [g], dest=dest, same_device=lambda a, b: False)
         moved = Path(out[0])
         self.assertFalse(g.exists())
-        self.assertEqual(sorted(str(p.relative_to(moved)) for p in moved.rglob("*")),
+        self.assertEqual(sorted(p.relative_to(moved).as_posix() for p in moved.rglob("*")),
                          ["data", "data/a.bin", "eboot.bin"])
 
     def test_move_on_the_same_drive_arrives_without_clutter(self):
@@ -200,7 +214,7 @@ class ActionTests(Base):
         self.clutter(g)
         out = aj.apply(aj.MOVE, [g], dest=self.tmp / "done")
         moved = Path(out[0])
-        self.assertEqual(sorted(str(p.relative_to(moved)) for p in moved.rglob("*")),
+        self.assertEqual(sorted(p.relative_to(moved).as_posix() for p in moved.rglob("*")),
                          ["data", "data/a.bin", "eboot.bin"])
 
     def test_size_counts_no_clutter(self):
@@ -268,7 +282,29 @@ class ReleaseFolderTests(Base):
         self.assertTrue((rel2 / "mine.docx").is_file())
 
 
-@unittest.skipUnless(sys.platform == "darwin" and os.environ.get("PS5_TEST_REAL_TRASH") == "1",
+@unittest.skipUnless(sys.platform == "win32", "the Windows Recycle Bin")
+class RecycleBinGuardTest(Base):
+    def test_too_big_for_the_bin_is_not_deleted(self):
+        f = self.file("big.bin", 10)
+        with mock.patch.object(aj, "_recycle_bin_limit", return_value=("X:\\", 5)):
+            with self.assertRaises(OSError) as cm:
+                aj.move_to_trash(f)
+        self.assertTrue(f.exists())
+        self.assertIn("not deleted", str(cm.exception))
+
+    def test_no_bin_on_the_drive_is_not_deleted(self):
+        f = self.file("any.bin", 10)
+        with mock.patch.object(aj, "_recycle_bin_limit", return_value=("X:\\", 0)):
+            with self.assertRaises(OSError):
+                aj.move_to_trash(f)
+        self.assertTrue(f.exists())
+
+    def test_the_local_drive_has_a_bin(self):
+        root, limit = aj._recycle_bin_limit(_SCRATCH)
+        self.assertGreater(limit, 0, root)
+
+
+@unittest.skipUnless(sys.platform in ("darwin", "win32") and os.environ.get("PS5_TEST_REAL_TRASH") == "1",
                      "puts a scratch file into the real Trash; set PS5_TEST_REAL_TRASH=1 to run")
 class RealTrashTest(Base):
     def test_scratch_file_goes_to_the_trash(self):

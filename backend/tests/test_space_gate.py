@@ -24,7 +24,9 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
         self._orig = (m.get_free_space, m.same_drive)
         m.get_free_space = lambda d: self.free.get(Path(d), 0)
         m.same_drive = lambda a, b: Path(a) == Path(b)
-        self.img = Path(tempfile.mkstemp(suffix=".exfat")[1])
+        fd, name = tempfile.mkstemp(suffix=".exfat")
+        os.close(fd)
+        self.img = Path(name)
 
     def tearDown(self):
         m.get_free_space, m.same_drive = self._orig

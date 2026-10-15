@@ -45,9 +45,16 @@ backend/native/src/ffpfsc-pkg-tool/publish.log
 # backend/native/src/ffpfsc-pkg-tool; they are release artefacts, not sources.
 /backend/native/ffpfsc-pkg-tool
 /backend/native/*.dylib
+/backend/native/ffpfsc-pkg-tool.exe
+/backend/native/*.dll
 
 # BPS patch fetched by the BPS reference test; regenerated on demand
 backend/tests/_backpork_*.bps
 
 # Firmware system libraries the user keeps locally for backports: never publish
 /backports/
+
+# 7-Zip console tools, fetched by FETCH_7ZIP.sh from 7-zip.org
+/backend/native/7zz
+/backend/native/7za.exe
+/backend/native/LICENSE.7-Zip.*

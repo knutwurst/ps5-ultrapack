@@ -8,6 +8,24 @@
 
 static PyObject* UnrarError;
 
+// UnRAR converts char strings with the ANSI code page on Windows; pass every name and
+// password as the wide string Python decodes from UTF-8 instead.
+static bool to_wide(const char* s, std::wstring& out) {
+    out.clear();
+    if (!s)
+        return true;
+    PyObject* u = PyUnicode_DecodeUTF8(s, (Py_ssize_t)strlen(s), "strict");
+    if (!u)
+        return false;
+    wchar_t* w = PyUnicode_AsWideCharString(u, NULL);
+    Py_DECREF(u);
+    if (!w)
+        return false;
+    out = w;
+    PyMem_Free(w);
+    return true;
+}
+
 static int is_safe_filename(const wchar_t* name) {
     if (!name || !name[0]) return 0;
     if (name[0] == L'/' || name[0] == L'\\') return 0;
@@ -93,7 +111,10 @@ static PyObject* py_list_files(PyObject* self, PyObject* args, PyObject* kwargs)
         return NULL;
 
     RAROpenArchiveDataEx arcData = {};
-    arcData.ArcName = const_cast<char*>(archive_path);
+    std::wstring arcW, pwdW;
+    if (!to_wide(archive_path, arcW) || !to_wide(password, pwdW))
+        return NULL;
+    arcData.ArcNameW = const_cast<wchar_t*>(arcW.c_str());
     arcData.OpenMode = RAR_OM_LIST;
 
     HANDLE hArc; int openRes;
@@ -106,9 +127,8 @@ static PyObject* py_list_files(PyObject* self, PyObject* args, PyObject* kwargs)
         return NULL;
     }
 
-    if (password && password[0]) {
-        RARSetPassword(hArc, const_cast<char*>(password));
-    }
+    if (!pwdW.empty())
+        RARSetPasswordW(hArc, const_cast<wchar_t*>(pwdW.c_str()));
 
     PyObject* result = PyList_New(0);
     if (!result) { RARCloseArchive(hArc); return NULL; }
@@ -171,6 +191,9 @@ static PyObject* py_extract_all(PyObject* self, PyObject* args, PyObject* kwargs
                                      &archive_path, &dest_path, &password,
                                      &progress_cb, &cancel_cb))
         return NULL;
+    std::wstring destW;
+    if (!to_wide(dest_path, destW))
+        return NULL;
     if (progress_cb == Py_None) progress_cb = NULL;
     if (cancel_cb == Py_None) cancel_cb = NULL;
     if (progress_cb && !PyCallable_Check(progress_cb)) {
@@ -183,7 +206,10 @@ static PyObject* py_extract_all(PyObject* self, PyObject* args, PyObject* kwargs
     }
 
     RAROpenArchiveDataEx arcData = {};
-    arcData.ArcName = const_cast<char*>(archive_path);
+    std::wstring arcW, pwdW;
+    if (!to_wide(archive_path, arcW) || !to_wide(password, pwdW))
+        return NULL;
+    arcData.ArcNameW = const_cast<wchar_t*>(arcW.c_str());
     arcData.OpenMode = RAR_OM_EXTRACT;
 
     HANDLE hArc; int openRes;
@@ -196,9 +222,8 @@ static PyObject* py_extract_all(PyObject* self, PyObject* args, PyObject* kwargs
         return NULL;
     }
 
-    if (password && password[0]) {
-        RARSetPassword(hArc, const_cast<char*>(password));
-    }
+    if (!pwdW.empty())
+        RARSetPasswordW(hArc, const_cast<wchar_t*>(pwdW.c_str()));
 
     // Report progress / poll for cancel every ~4 MB to keep the GIL-take rate low.
     ProgressCtx ctx = { progress_cb, cancel_cb, 0, 0, 4LL * 1024 * 1024, 0 };
@@ -225,7 +250,7 @@ static PyObject* py_extract_all(PyObject* self, PyObject* args, PyObject* kwargs
 
         int pres;
         Py_BEGIN_ALLOW_THREADS
-        pres = RARProcessFile(hArc, RAR_EXTRACT, const_cast<char*>(dest_path), NULL);
+        pres = RARProcessFileW(hArc, RAR_EXTRACT, const_cast<wchar_t*>(destW.c_str()), NULL);
         Py_END_ALLOW_THREADS
 
         if (pres != ERAR_SUCCESS) {
@@ -294,7 +319,10 @@ static PyObject* py_extract_names(PyObject* self, PyObject* args, PyObject* kwar
     Py_DECREF(names_seq); Py_DECREF(dests_seq);
 
     RAROpenArchiveDataEx arcData = {};
-    arcData.ArcName = const_cast<char*>(archive_path);
+    std::wstring arcW, pwdW;
+    if (!to_wide(archive_path, arcW) || !to_wide(password, pwdW))
+        return NULL;
+    arcData.ArcNameW = const_cast<wchar_t*>(arcW.c_str());
     arcData.OpenMode = RAR_OM_EXTRACT;
     HANDLE hArc; int openRes;
     Py_BEGIN_ALLOW_THREADS
@@ -310,8 +338,8 @@ static PyObject* py_extract_names(PyObject* self, PyObject* args, PyObject* kwar
         PyErr_SetString(UnrarError, "solid archive: a member cannot be read without decompressing what precedes it");
         return NULL;
     }
-    if (password && password[0])
-        RARSetPassword(hArc, const_cast<char*>(password));
+    if (!pwdW.empty())
+        RARSetPasswordW(hArc, const_cast<wchar_t*>(pwdW.c_str()));
     ProgressCtx ctx = { NULL, NULL, 0, 0, 4LL * 1024 * 1024, 0 };   // for the volume answers only
     RARSetCallback(hArc, ExtractCallback, reinterpret_cast<LPARAM>(&ctx));
 
@@ -400,7 +428,10 @@ static PyObject* py_read_prefix(PyObject* self, PyObject* args, PyObject* kwargs
     for (auto& ch : want_name) if (ch == L'\\') ch = L'/';
 
     RAROpenArchiveDataEx arcData = {};
-    arcData.ArcName = const_cast<char*>(archive_path);
+    std::wstring arcW, pwdW;
+    if (!to_wide(archive_path, arcW) || !to_wide(password, pwdW))
+        return NULL;
+    arcData.ArcNameW = const_cast<wchar_t*>(arcW.c_str());
     arcData.OpenMode = RAR_OM_EXTRACT;
     HANDLE hArc; int openRes;
     Py_BEGIN_ALLOW_THREADS
@@ -412,8 +443,8 @@ static PyObject* py_read_prefix(PyObject* self, PyObject* args, PyObject* kwargs
         return NULL;
     }
     bool solid = (arcData.Flags & ROADF_SOLID) != 0;
-    if (password && password[0])
-        RARSetPassword(hArc, const_cast<char*>(password));
+    if (!pwdW.empty())
+        RARSetPasswordW(hArc, const_cast<wchar_t*>(pwdW.c_str()));
     PrefixCtx ctx;
     ctx.want = (size_t)nbytes;
     RARSetCallback(hArc, PrefixCallback, reinterpret_cast<LPARAM>(&ctx));

@@ -7,6 +7,7 @@ import sys
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+from collections import OrderedDict
 from types import SimpleNamespace
 
 # ── Palette ──────────────────────────────────────────────────────────────────────────
@@ -106,6 +107,174 @@ def apply_ctk_theme(ctk, body_px: int | None = None) -> None:
         theme["CTkCheckBox"]["corner_radius"] = 5
 
 
+# Logical pixels to device pixels. macOS scales a window itself, so 1 there; on Windows the
+# process is DPI-aware and draws at the display's resolution, so the display's factor.
+SCALE = 1.0
+
+
+def set_scale(factor: float) -> None:
+    global SCALE
+    SCALE = max(1.0, float(factor or 1.0))
+    if SCALE != 1:
+        _scale_paddings()
+
+
+_PADS = ("padx", "pady", "ipadx", "ipady")
+
+
+def _scaled_pads(kw: dict) -> dict:
+    out = dict(kw)
+    for k in _PADS:
+        v = out.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = round(v * SCALE)
+        elif isinstance(v, (tuple, list)):
+            out[k] = tuple(round(x * SCALE) for x in v)
+    return out
+
+
+def _scale_paddings() -> None:
+    """Pack and grid paddings of Tk widgets in logical pixels; CustomTkinter scales its own."""
+    if getattr(tk.Pack, "_ps5u_scaled", False):
+        return
+    from customtkinter.windows.widgets.core_widget_classes import CTkBaseClass
+
+    def wrap(orig):
+        def f(self, cnf={}, **kw):
+            if not isinstance(self, CTkBaseClass):
+                cnf, kw = _scaled_pads(cnf) if cnf else cnf, _scaled_pads(kw)
+            return orig(self, cnf, **kw)
+        return f
+    for cls, names in ((tk.Pack, ("pack", "pack_configure")), (tk.Grid, ("grid", "grid_configure"))):
+        orig = cls.pack_configure if cls is tk.Pack else cls.grid_configure
+        for n in names:
+            setattr(cls, n, wrap(orig))
+    tk.Pack._ps5u_scaled = True
+
+
+class _Font(tkfont.Font):
+    """A font sized in device pixels that measures in logical ones, like the canvases."""
+
+    def measure(self, text, displayof=None):
+        w = super().measure(text, displayof)
+        return w if SCALE == 1 else round(w / SCALE)
+
+    def metrics(self, *options, **kw):
+        m = super().metrics(*options, **kw)
+        if SCALE == 1:
+            return m
+        if isinstance(m, dict):
+            return {k: (v if k == "fixed" else round(v / SCALE)) for k, v in m.items()}
+        return m if options and options[0] == "fixed" else round(m / SCALE)
+
+
+def _scaled_opts(kw: dict) -> dict:
+    if SCALE == 1:
+        return kw
+    out = dict(kw)
+    for k in ("width", "height"):
+        if isinstance(out.get(k), (int, float)) and not isinstance(out.get(k), bool):
+            out[k] = out[k] * SCALE
+    if isinstance(out.get("scrollregion"), (tuple, list)):
+        out["scrollregion"] = tuple(v * SCALE for v in out["scrollregion"])
+    return out
+
+
+class Canvas(tk.Canvas):
+    """A canvas sized, drawn and clicked in logical pixels; Tk gets device pixels (SCALE)."""
+
+    def __init__(self, master=None, cnf=None, **kw):
+        super().__init__(master, cnf or {}, **_scaled_opts(kw))
+
+    def configure(self, cnf=None, **kw):
+        return super().configure(cnf, **_scaled_opts(kw))
+
+    config = configure
+
+    def cget(self, key):
+        v = super().cget(key)
+        if SCALE != 1 and key in ("width", "height"):
+            return str(self.winfo_fpixels(v) / SCALE)
+        return v
+
+    def winfo_width(self):
+        w = super().winfo_width()
+        return w if SCALE == 1 else round(w / SCALE)
+
+    def winfo_height(self):
+        h = super().winfo_height()
+        return h if SCALE == 1 else round(h / SCALE)
+
+    def canvasx(self, screenx, gridspacing=None):
+        return super().canvasx(screenx, gridspacing) if SCALE == 1 else \
+            super().canvasx(screenx * SCALE, gridspacing) / SCALE
+
+    def canvasy(self, screeny, gridspacing=None):
+        return super().canvasy(screeny, gridspacing) if SCALE == 1 else \
+            super().canvasy(screeny * SCALE, gridspacing) / SCALE
+
+    def bind(self, sequence=None, func=None, add=None):
+        if func is not None and SCALE != 1:
+            inner = func
+
+            def func(e, inner=inner):
+                try:
+                    e.x, e.y = e.x / SCALE, e.y / SCALE
+                except (TypeError, AttributeError):
+                    pass
+                return inner(e)
+        return super().bind(sequence, func, add)
+
+    def itemconfigure(self, tagOrId, cnf=None, **kw):
+        return super().itemconfigure(tagOrId, cnf, **_scaled_opts(kw))
+
+    itemconfig = itemconfigure
+
+    @staticmethod
+    def _xy(args):
+        if SCALE == 1:
+            return args
+        flat = []
+        for a in args:
+            flat.extend(a) if isinstance(a, (tuple, list)) else flat.append(a)
+        return [v * SCALE for v in flat]
+
+    def create_line(self, *args, **kw):
+        return super().create_line(*self._xy(args), **_scaled_opts(kw))
+
+    def create_polygon(self, *args, **kw):
+        return super().create_polygon(*self._xy(args), **_scaled_opts(kw))
+
+    def create_rectangle(self, *args, **kw):
+        return super().create_rectangle(*self._xy(args), **_scaled_opts(kw))
+
+    def create_oval(self, *args, **kw):
+        return super().create_oval(*self._xy(args), **_scaled_opts(kw))
+
+    def create_arc(self, *args, **kw):
+        return super().create_arc(*self._xy(args), **_scaled_opts(kw))
+
+    def create_text(self, *args, **kw):
+        return super().create_text(*self._xy(args), **_scaled_opts(kw))
+
+    def create_image(self, *args, **kw):
+        return super().create_image(*self._xy(args), **kw)
+
+    def delete(self, *args):
+        refs = getattr(self, "_aa_refs", None)
+        if refs:
+            if "all" in args:
+                refs.clear()
+            else:
+                for a in args:
+                    for i in self.find_withtag(a):
+                        refs.pop(i, None)
+        return super().delete(*args)
+
+    def create_window(self, *args, **kw):
+        return super().create_window(*self._xy(args), **_scaled_opts(kw))
+
+
 class Fonts:
     """The type scale, in logical pixels like every macOS app (Tk's POINTS are 1.33 px here, so positive Tk sizes would render a third larger than native text)."""
 
@@ -113,10 +282,11 @@ class Fonts:
         base = tkfont.nametofont("TkDefaultFont").actual().get("family", "Helvetica")
         # Menlo ships with every macOS, so it is looked up first: listing all families costs
         # ~350 ms, and so does asking for one that is missing (Tk searches for a fallback).
-        mono = next((fam for fam in ("Menlo", "Monaco", "Courier New")
+        mono = next((fam for fam in (("Consolas", "Courier New") if sys.platform == "win32"
+                                     else ("Menlo", "Monaco", "Courier New"))
                      if tkfont.Font(root=root, family=fam, size=-11).actual("family") == fam), "Courier")
         # Negative Tk sizes are pixels.
-        f = lambda px, weight="normal", fam=base: tkfont.Font(root=root, family=fam, size=-px, weight=weight)
+        f = lambda px, weight="normal", fam=base: _Font(root=root, family=fam, size=-round(px * SCALE), weight=weight)
         self.view = f(17, "bold")
         self.title = f(15, "bold")
         self.app = f(14, "bold")
@@ -247,6 +417,8 @@ def attach_wheel_scroll(widget, *, pixel_unit: int = 1, notch_px: int = 40) -> N
         swipe still adds up, and a tick never rounds away to nothing."""
         if not px or not _span_ok(axis):
             return False
+        if isinstance(widget, Canvas):
+            px *= SCALE                 # a canvas scrolls in device pixels
         rem[axis] += px / float(pixel_unit)
         units = int(rem[axis])
         if units == 0:
@@ -309,12 +481,112 @@ def _solid_round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, color, kw):
                              fill=color, outline=color, width=d, joinstyle="round", **kw)
 
 
+# Tk on Windows draws canvas shapes through GDI without antialiasing, so rounded corners
+# and icons come out jagged. There they are painted with Pillow at 4x and scaled down.
+_AA = sys.platform == "win32"
+_SS = 4
+_aa_cache: OrderedDict = OrderedDict()
+
+
+def _rgba(color: str, cv) -> tuple:
+    r, g, b = (v // 257 for v in cv.winfo_rgb(color))
+    return r, g, b, 255
+
+
+def _aa_photo(cv, key, w: int, h: int, paint):
+    """A w x h device-pixel image, painted by paint(draw, k) on a canvas k times as big."""
+    photo = _aa_cache.get(key)
+    if photo is None:
+        from PIL import Image, ImageDraw, ImageTk
+        big = Image.new("RGBA", (w * _SS, h * _SS), (0, 0, 0, 0))
+        paint(ImageDraw.Draw(big), _SS)
+        photo = ImageTk.PhotoImage(big.resize((w, h), Image.LANCZOS), master=cv)
+        _aa_cache[key] = photo
+        if len(_aa_cache) > 1500:
+            _aa_cache.popitem(last=False)
+    else:
+        _aa_cache.move_to_end(key)
+    return photo
+
+
+def _aa_place(cv, X: int, Y: int, photo, kw) -> int:
+    """Put a device-pixel image at device (X, Y); the canvas keeps it while the item lives."""
+    iid = cv.create_image(X / SCALE, Y / SCALE, image=photo, anchor="nw", **kw)
+    if not hasattr(cv, "_aa_refs"):
+        cv._aa_refs = {}
+    cv._aa_refs[iid] = photo
+    return iid
+
+
+class _Shifted:
+    """An ImageDraw that moves every rounded rectangle by (dx, dy): one corner of a shape."""
+
+    def __init__(self, d, dx, dy):
+        self.d, self.dx, self.dy = d, dx, dy
+
+    def rounded_rectangle(self, box, **kw):
+        x0, y0, x1, y1 = box
+        self.d.rounded_rectangle((x0 + self.dx, y0 + self.dy, x1 + self.dx, y1 + self.dy), **kw)
+
+
+def _aa_rrect_paint(w, h, R, fill, outline, bw):
+    def paint(d, k):
+        def rr(inset, color, r):
+            box = (inset * k, inset * k, (w - inset) * k - 1, (h - inset) * k - 1)
+            d.rounded_rectangle(box, radius=max(0, r) * k, fill=color)
+        if outline and bw:
+            rr(0, outline, R)
+            if fill:
+                rr(bw, fill, R - bw)
+            else:
+                d.rounded_rectangle((bw * k, bw * k, (w - bw) * k - 1, (h - bw) * k - 1),
+                                    radius=max(0, R - bw) * k, fill=(0, 0, 0, 0))
+        elif fill:
+            rr(0, fill, R)
+    return paint
+
+
+def _aa_round_rect(cv, x1, y1, x2, y2, r, fill, outline, bw, kw) -> int:
+    """round_rect on Windows: a small shape is one image; a large one gets image corners
+    and plain rectangles in between, which need no smoothing."""
+    S = SCALE
+    X1, Y1, X2, Y2 = round(x1 * S), round(y1 * S), round(x2 * S), round(y2 * S)
+    w, h = X2 - X1, Y2 - Y1
+    if w < 1 or h < 1:
+        return 0
+    R = min(r * S, w / 2, h / 2)
+    B = max(1, round(bw * S)) if (outline and bw) else 0
+    f = _rgba(fill, cv) if fill else None
+    o = _rgba(outline, cv) if B else None
+    c = math.ceil(R) + 1
+    if w * h <= 120_000 or 2 * c >= w or 2 * c >= h or (B and not f):
+        photo = _aa_photo(cv, ("rr", w, h, R, f, o, B), w, h, _aa_rrect_paint(w, h, R, f, o, B))
+        return _aa_place(cv, X1, Y1, photo, kw)
+    paint = _aa_rrect_paint(2 * c, 2 * c, R, f, o, B)
+    last = 0
+    for qx, qy, X, Y in ((0, 0, X1, Y1), (c, 0, X2 - c, Y1), (0, c, X1, Y2 - c), (c, c, X2 - c, Y2 - c)):
+        def quadrant(d, k, qx=qx, qy=qy):
+            paint(_Shifted(d, -qx * k, -qy * k), k)
+        last = _aa_place(cv, X, Y, _aa_photo(cv, ("rrq", c, R, f, o, B, qx, qy), c, c, quadrant), kw)
+    rect = lambda a, b, c_, d_, col: tk.Canvas.create_rectangle(cv, a, b, c_, d_, fill=col, outline="", **kw)
+    hexf, hexo = (fill if f else None), (outline if o else None)
+    edge, inner = (hexo, hexf) if B else (hexf, hexf)
+    rect(X1 + c, Y1, X2 - c, Y2, edge)                 # middle column, full height
+    rect(X1, Y1 + c, X2, Y2 - c, edge)                 # middle row, full width
+    if B:
+        rect(X1 + c, Y1 + B, X2 - c, Y2 - B, inner)
+        rect(X1 + B, Y1 + c, X2 - B, Y2 - c, inner)
+    return last
+
+
 def round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, fill="", outline="", width=None, **kw):
     """A rounded rectangle; returns the id of its top shape. A border is drawn as the
     same shape in the border colour with the fill inset on top, so both edges stay
     antialiased. An outline without fill (icons) is a stroked polygon with sampled corners."""
     r = max(0.0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
     bw = (1 if width is None else width) if outline else 0
+    if _AA and (fill or bw):
+        return _aa_round_rect(cv, x1, y1, x2, y2, r, fill, outline, bw, kw)
     if fill:
         if bw:
             _solid_round_rect(cv, x1, y1, x2, y2, r, outline, kw)
@@ -338,6 +610,8 @@ def draw_icon(cv: tk.Canvas, name: str, x: float, y: float, size: float, color: 
     """Draw icon *name* with its top-left corner at (x, y), *size* points square."""
     s = size / 24.0
     w = width if width is not None else max(1.2, 1.9 * s)
+    if _AA:
+        return _aa_icon(cv, name, x, y, size, color, bg, w, tags)
     common = dict(tags=tags)
     for op in ICONS.get(name, ()):
         kind, args = op[0], op[1:]
@@ -368,6 +642,69 @@ def draw_icon(cv: tk.Canvas, name: str, x: float, y: float, size: float, color: 
             cx, cy, r = x + args[0] * s, y + args[1] * s, args[2] * s
             cv.create_arc(cx - r, cy - r, cx + r, cy + r, start=args[3], extent=args[4],
                           style="pieslice", outline=color, fill=color, width=1, **common)
+
+
+def _aa_icon(cv, name, x, y, size, color, bg, w, tags):
+    """draw_icon on Windows: the whole icon as one image, strokes centred like Tk's."""
+    S = SCALE
+    pad = math.ceil(w * S / 2) + 1
+    X, Y = round(x * S) - pad, round(y * S) - pad
+    n = math.ceil(size * S) + 2 * pad
+    col = _rgba(color, cv)
+    back = _rgba(bg, cv) if bg else None
+
+    def paint(d, k):
+        u = size * S / 24 * k                       # one icon unit in big pixels
+        o = pad * k
+        lw = max(1, round(w * S * k))
+        pt = lambda vx, vy: (o + vx * u, o + vy * u)
+
+        def caps(pts):
+            for px, py in pts:
+                d.ellipse((px - lw / 2, py - lw / 2, px + lw / 2, py + lw / 2), fill=col)
+
+        def ring(cx, cy, r, fill=None):
+            e = r * u + lw / 2
+            px, py = pt(cx, cy)
+            if fill is not None:
+                d.ellipse((px - e, py - e, px + e, py + e), fill=fill)
+            d.ellipse((px - e, py - e, px + e, py + e), outline=col, width=lw)
+        for op in ICONS.get(name, ()):
+            kind, a = op[0], op[1:]
+            if kind in ("l", "p", "pf"):
+                pts = [pt(a[i], a[i + 1]) for i in range(0, len(a), 2)]
+                if kind == "pf":
+                    d.polygon(pts, fill=col)
+                    d.line(pts + pts[:1], fill=col, width=max(1, round(2 * S * k)), joint="curve")
+                    continue
+                if kind == "p":
+                    pts = pts + pts[:1]
+                d.line(pts, fill=col, width=lw, joint="curve")
+                caps(pts if kind == "l" else pts[:1])
+                if kind == "l" and len(pts) > 2:
+                    caps(pts[1:-1])
+            elif kind == "c":
+                ring(*a)
+            elif kind == "cf":
+                px, py = pt(a[0], a[1])
+                e = a[2] * u
+                d.ellipse((px - e, py - e, px + e, py + e), fill=col)
+            elif kind == "ck":
+                ring(*a, fill=back)
+            elif kind in ("r", "rf"):
+                (x0, y0), (x1, y1) = pt(a[0], a[1]), pt(a[2], a[3])
+                rad = a[4] * u
+                if kind == "rf":
+                    d.rounded_rectangle((x0, y0, x1, y1), radius=rad, fill=col)
+                else:
+                    e = lw / 2
+                    d.rounded_rectangle((x0 - e, y0 - e, x1 + e, y1 + e), radius=rad + e, outline=col, width=lw)
+            elif kind == "pie":
+                px, py = pt(a[0], a[1])
+                e = a[2] * u
+                d.pieslice((px - e, py - e, px + e, py + e), -(a[3] + a[4]), -a[3], fill=col)
+    photo = _aa_photo(cv, ("icon", name, n, pad, col, back, w, size, S), n, n, paint)
+    return _aa_place(cv, X, Y, photo, {"tags": tags} if tags else {})
 
 
 def truncate(font: tkfont.Font, text: str, max_w: int) -> str:
@@ -465,13 +802,17 @@ class Kit:
         return Kit._reduce_motion
 
     def frame(self, parent, bg="surface", **kw) -> tk.Frame:
-        return self.style(tk.Frame(parent, bd=0, highlightthickness=0, **kw), bg=bg)
+        return self.style(tk.Frame(parent, bd=0, highlightthickness=0, **_scaled_opts(kw)), bg=bg)
 
     def label(self, parent, bg="surface", fg="text", font=None, **kw) -> tk.Label:
         kw.setdefault("anchor", "w")
         kw.setdefault("justify", "left")
         lb = tk.Label(parent, bd=0, padx=0, pady=0, font=font or self.fonts.body, **kw)
         return self.style(lb, bg=bg, fg=fg)
+
+    def fit_width(self, frame, min_w, *widths) -> None:
+        """A fixed-width column as wide as its widest entry (logical pixels), never below min_w."""
+        frame.configure(width=round(max(min_w, *widths) * SCALE))
 
     def rule(self, parent, bg_token="border", horizontal=True) -> tk.Frame:
         f = tk.Frame(parent, bd=0, highlightthickness=0, height=1 if horizontal else 0, width=0 if horizontal else 1)
@@ -519,7 +860,7 @@ class Kit:
 
 
 # ── Widgets ──────────────────────────────────────────────────────────────────────────
-class IconButton(tk.Canvas):
+class IconButton(Canvas):
     """A button drawn on one canvas: optional icon + text, four variants."""
 
     def __init__(self, parent, kit: Kit, text="", icon=None, command=None, variant="secondary",
@@ -607,17 +948,21 @@ class IconButton(tk.Canvas):
         # 1 pt icon strokes match regular text better than bold.
         return self._font or self.kit.fonts.body
 
+    def natural_width(self) -> int:
+        """Width the icon and text need, padding included."""
+        w = 2 * self._padx
+        if self._icon:
+            w += self._icon_size + ((8 if self.variant == "nav" else 6) if self._text else 0)
+        if self._text:
+            w += self._font_obj().measure(self._text)
+        return w
+
     def _resize(self):
         if self._fixed_w or self.variant == "nav":
             if self._fixed_w:
                 super().configure(width=self._fixed_w)
             return
-        w = 2 * self._padx
-        if self._icon:
-            w += self._icon_size + (6 if self._text else 0)
-        if self._text:
-            w += self._font_obj().measure(self._text)
-        super().configure(width=max(w, int(self.winfo_fpixels(self.cget("height")))))
+        super().configure(width=max(self.natural_width(), int(self.winfo_fpixels(self.cget("height")))))
 
     def _set(self, **kw):
         changed = False
@@ -725,7 +1070,7 @@ class _Segment:
             self._command()
 
 
-class TransportControl(tk.Canvas):
+class TransportControl(Canvas):
     """Start, Pause and Stop in one place of fixed size."""
 
     DURATION = 180
@@ -904,7 +1249,7 @@ class TransportControl(tk.Canvas):
             self.create_text(x, H / 2, text=part._text, anchor="w", fill=color, font=self._font)
 
 
-class ProgressBar(tk.Canvas):
+class ProgressBar(Canvas):
     """A thin rounded progress bar; set(fraction) like CTkProgressBar."""
 
     def __init__(self, parent, kit: Kit, height=6, bg="surface", fill="accent_fill"):
@@ -962,11 +1307,11 @@ class Tooltip:
         if self._tip or not self.text:
             return
         if self.side == "right":
-            x = self.w.winfo_rootx() + self.w.winfo_width() + 8
+            x = self.w.winfo_rootx() + tk.Misc.winfo_width(self.w) + 8
             y = self.w.winfo_rooty() + 4
         else:
             x = self.w.winfo_rootx() + 8
-            y = self.w.winfo_rooty() + self.w.winfo_height() + 6
+            y = self.w.winfo_rooty() + tk.Misc.winfo_height(self.w) + 6
         self._tip = tk.Toplevel(self.w)
         self._tip.wm_overrideredirect(True)
         self._tip.wm_geometry(f"+{x}+{y}")
@@ -989,7 +1334,7 @@ class Tooltip:
             self._tip = None
 
 
-class FlowCanvas(tk.Canvas):
+class FlowCanvas(Canvas):
     """A canvas that lays out a row of items, wraps them, and sets its own height."""
 
     def __init__(self, parent, kit: Kit, bg="surface", min_height=22):
@@ -1106,7 +1451,7 @@ class QueueList(tk.Frame):
         self.marked: set[int] = set()        # every selected row, the one in focus included
         self._anchor: int | None = None      # where a Shift-click range starts
         self.hover: int | None = None
-        self.cv = tk.Canvas(self, highlightthickness=0, bd=0, bg=kit.c(bg), yscrollincrement=1,
+        self.cv = Canvas(self, highlightthickness=0, bd=0, bg=kit.c(bg), yscrollincrement=1,
                             takefocus=1)
         self.sb = tk.Scrollbar(self, orient="vertical", command=self.cv.yview)
         self.cv.configure(yscrollcommand=self._on_yscroll)
@@ -1126,8 +1471,8 @@ class QueueList(tk.Frame):
         cv.bind("<Double-Button-1>", self._double)
         cv.bind(f"<{mod}-Button-1>", self._toggle_click)
         cv.bind("<Shift-Button-1>", self._range_click)
-        cv.bind("<Button-2>", self._context)          # right click on macOS
         if aqua:
+            cv.bind("<Button-2>", self._context)          # right click on macOS (middle elsewhere)
             cv.bind("<Control-Button-1>", self._context)   # Ctrl-click is a right click there
         cv.bind("<Button-3>", self._context)
         cv.bind(f"<{mod}-a>", lambda e: self._select_all())
@@ -1567,7 +1912,7 @@ class LogText(tk.Text):
             self.mirror.configure(state="disabled")
 
 
-class IconView(tk.Canvas):
+class IconView(Canvas):
     """One icon on its own small canvas, in a palette colour."""
 
     def __init__(self, parent, kit: Kit, icon: str, size=16, color="muted", bg="surface"):
@@ -1587,7 +1932,7 @@ class IconView(tk.Canvas):
         draw_icon(self, self.icon, 0, 0, self.size_, self.kit.c(self.color), bg=self.kit.c(self._bg))
 
 
-class ArtView(tk.Canvas):
+class ArtView(Canvas):
     """The cover art square: a photo when there is one, else a placeholder icon."""
 
     def __init__(self, parent, kit: Kit, size=72, bg="surface"):
@@ -1611,7 +1956,7 @@ class ArtView(tk.Canvas):
         draw_icon(self, "photo", s / 2 - 12, s / 2 - 12, 24, k.c("faint"))
 
 
-class Tile(tk.Canvas):
+class Tile(Canvas):
     """A rounded metric tile: a caption over a value (both follow StringVars)."""
 
     def __init__(self, parent, kit: Kit, caption: str, var: tk.StringVar, bg="surface", fill="surface2", height=46):
@@ -1649,7 +1994,7 @@ class RoundBox(tk.Frame):
     def __init__(self, parent, kit: Kit, bg="surface", fill="surface2", radius=9, pad=8, height=100):
         super().__init__(parent, bd=0, highlightthickness=0, bg=kit.c(bg))
         self.kit, self._bg, self._fill, self.r, self.pad = kit, bg, fill, radius, pad
-        self.cv = tk.Canvas(self, height=height, highlightthickness=0, bd=0, bg=kit.c(bg))
+        self.cv = Canvas(self, height=height, highlightthickness=0, bd=0, bg=kit.c(bg))
         self.cv.pack(fill="both", expand=True)
         self.inner = self.cv
         self._child = None
