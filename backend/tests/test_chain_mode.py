@@ -6,6 +6,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -283,6 +284,38 @@ class BackportRules(unittest.TestCase):
         rc, log = run("--backport-analyze", str(g), "--backport-target", "9.60", "--fw-libs-root", str(self.fw))
         self.assertEqual(rc, 0, log)
         self.assertIn("[verdict] Firmware 9.60 has every function", log)
+
+
+class ExfatSource(unittest.TestCase):
+    """An exFAT image the user hands in stays; one the app unwraps from its own copy goes."""
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / "backend"))
+        import cli
+        from mkpfs.exfat_writer import write_exfat_image
+        self.cli, self.write = cli, write_exfat_image
+        self.tmp = Path(tempfile.mkdtemp())
+        self.game = self.tmp / "game"
+        (self.game / "sce_sys").mkdir(parents=True)
+        (self.game / "sce_sys" / "param.json").write_text('{"titleId": "PPSA99090"}', encoding="utf-8")
+        (self.game / "eboot.bin").write_bytes(b"\0" * 4096)
+
+    def test_source_image_is_kept(self):
+        img = self.write(self.game, self.tmp / "Game.exfat")
+        src, _owned = self.cli._chain_materialize(img, self.tmp, types.SimpleNamespace(password=None,
+                                                                                      fpkg_passcode="0" * 32))
+        self.assertTrue(img.is_file())
+        self.assertTrue((src / "eboot.bin").is_file())
+        dest = self.tmp / "direct"
+        self.assertTrue(self.cli._extract_exfat_to(img, dest))
+        self.assertTrue(img.is_file())
+
+    def test_nested_image_is_unwrapped_and_removed(self):
+        out = self.tmp / "out"; out.mkdir()
+        inner = self.write(self.game, out / "inner.exfat")
+        self.cli._fully_unwrap(out, None, None)
+        self.assertFalse(inner.exists())
+        self.assertTrue((out / "eboot.bin").is_file())
 
 
 if __name__ == "__main__":

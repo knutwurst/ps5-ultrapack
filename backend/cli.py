@@ -925,10 +925,9 @@ def _build_exfat_image(folder: Path, outdir: Path, title_id: str):
     return written
 
 
-def _extract_exfat_to(exfat_path: Path, dest: Path) -> bool:
-    """Extract a RAW exFAT image's contents into *dest* using MkPFS's native, CROSS-PLATFORM
-    exFAT reader (no hdiutil/mount). Skips OS junk; deletes the .exfat on success. Returns
-    True on success. Used to turn a nested exFAT (from a --via-exfat .ffpfsc) into a folder."""
+def _extract_exfat_to(exfat_path: Path, dest: Path, remove_image: bool = False) -> bool:
+    """Extract a raw exFAT image into *dest* with MkPFS's own reader, without OS junk. True on
+    success. *remove_image* only for an image the app unwrapped itself, never a user's source."""
     try:
         dest.mkdir(parents=True, exist_ok=True)
         from mkpfs.pfs import extract_exfat_image
@@ -940,15 +939,16 @@ def _extract_exfat_to(exfat_path: Path, dest: Path) -> bool:
     if errs:
         print(f"[WARN] exFAT extraction reported errors: {'; '.join(str(x) for x in errs[:3])}", flush=True)
         return False
-    # Drop any OS junk a legacy (hdiutil-built) exFAT may still carry, then remove the .exfat.
+    # OS junk a legacy (hdiutil-built) exFAT may still carry
     try:
         _strip_junk_files(dest)
     except Exception:
         pass
-    try:
-        exfat_path.unlink()
-    except Exception:
-        pass
+    if remove_image:
+        try:
+            exfat_path.unlink()
+        except Exception:
+            pass
     return True
 
 
@@ -1012,7 +1012,7 @@ def _fully_unwrap(out_dir: Path, mkpfs_cmd_base, mkpfs_cwd) -> None:
             continue
         if len(exf) == 1 and not pfs:
             print(f"[INFO] Unwrapping nested exFAT {exf[0].name} -> folder...", flush=True)
-            if _extract_exfat_to(exf[0], out_dir):
+            if _extract_exfat_to(exf[0], out_dir, remove_image=True):
                 continue
             return   # couldn't extract (non-macOS) - leave the .exfat for the user
         if pfs or exf:
