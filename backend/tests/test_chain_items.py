@@ -151,7 +151,7 @@ class FindJobSources(unittest.TestCase):
     def test_one_entry_per_source_and_nothing_else(self):
         with tempfile.TemporaryDirectory() as td:
             conv = make_source_tree(Path(td))
-            found = [str(s.relative_to(conv)) for s in uc.find_job_sources(conv)]
+            found = [s.relative_to(conv).as_posix() for s in uc.find_job_sources(conv)]
             self.assertEqual(found, [
                 "Game [PPSA00003]",
                 "Misc/PPSA00002-Compressed.7z",

@@ -19,11 +19,13 @@ _BACKEND_SKIP_DIRS = {
     "tests",                           # test suites
     _os.path.join("unrar", "src"),     # UnRAR C++ sources (compiled into unrar/_unrar*.so)
     _os.path.join("unrar", "build"),   # setuptools build tree of that extension
+    _os.path.join("unrar", "build-win"),
     ".github",
 }
 # Build inputs, packaging metadata and documentation, not runtime files:
 _BACKEND_SKIP_FILES = {".gitignore", ".DS_Store", "setup.py", "pyproject.toml", "_unrar.cpp"}
-_BACKEND_SKIP_SUFFIXES = (".pyc", ".pyo", ".md")
+# .exe / .dll / .pyd are the Windows build's parts, which share backend/ with these.
+_BACKEND_SKIP_SUFFIXES = (".pyc", ".pyo", ".md", ".exe", ".dll", ".pyd")
 # Files every bundle must contain; a missing one is a broken build, so fail early.
 _BACKEND_REQUIRED = [
     "cli.py", "fpkg.py", "copy_job.py", "fake_sign.py", "make_fself.py",

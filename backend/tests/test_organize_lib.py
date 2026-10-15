@@ -113,7 +113,7 @@ class Tree(unittest.TestCase):
         self.put(f"{rel}/eboot.bin", text="elf")
 
     def snapshot(self):
-        return sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
+        return sorted(p.relative_to(self.root).as_posix() for p in self.root.rglob("*"))
 
     def run_plan(self):
         entries, comps = ol.scan(self.root, fake_identify)
@@ -125,7 +125,7 @@ class Tree(unittest.TestCase):
         return p, res
 
     def tree(self):
-        return sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*") if p.is_file())
+        return sorted(p.relative_to(self.root).as_posix() for p in self.root.rglob("*") if p.is_file())
 
 
 class Scan(Tree):
@@ -269,7 +269,7 @@ class Into(Tree):
         self.game_folder("src/unpacked", A); self.put("src/unpacked/._eboot.bin", text="\0")
         rc = ol.organize_into(self.root / "src" / "unpacked", self.lib(), fake_identify, mode="keep", on_line=lambda _l: None)
         self.assertEqual(rc, 0)
-        got = sorted(str(p.relative_to(self.lib())) for p in self.lib().rglob("*") if p.is_file())
+        got = sorted(p.relative_to(self.lib()).as_posix() for p in self.lib().rglob("*") if p.is_file())
         self.assertEqual(got, [f"{FA}/{FA}/eboot.bin", f"{FA}/{FA}/sce_sys/param.json"])
         self.assertTrue((self.root / "src" / "unpacked" / "eboot.bin").exists())
 

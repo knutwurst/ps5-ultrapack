@@ -28,7 +28,8 @@ CLI = BACKEND / "cli.py"
 # FFPFSC_PKG_TOOL lets the whole harness run against a candidate build of the tool
 # (backend/fpkg.py honours the same variable, so the CLI subprocesses follow suit).
 TOOL = (Path(os.environ["FFPFSC_PKG_TOOL"]) if os.environ.get("FFPFSC_PKG_TOOL")
-        else BACKEND / "native" / "ffpfsc-pkg-tool")
+        else BACKEND / "native" / ("ffpfsc-pkg-tool.exe" if os.name == "nt" else "ffpfsc-pkg-tool"))
+MAGICK = "Magick.Native-Q8-x64.dll" if os.name == "nt" else "Magick.Native-Q8-arm64.dll.dylib"
 
 # Backend cli.py wants to import fpkg / mkpfs as if run from backend/
 sys.path.insert(0, str(BACKEND))
@@ -171,7 +172,7 @@ def sha(p: Path) -> str:
 # ── individual tests ────────────────────────────────────────────────────────
 def test_environment(r: Runner):
     r.check("tool.present", TOOL.exists(), f"{TOOL}", f"missing: {TOOL} (build it: ./BUILD_PKG_TOOL.sh)")
-    magick = TOOL.parent / "Magick.Native-Q8-arm64.dll.dylib"
+    magick = TOOL.parent / MAGICK
     r.check("tool.magick-native", magick.is_file(), f"{magick.name} next to the tool",
             f"missing: {magick} - icon conversion would fail (build it: ./BUILD_PKG_TOOL.sh)")
     if TOOL.exists():

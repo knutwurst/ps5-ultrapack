@@ -21,6 +21,14 @@ import multiprocessing
 from pathlib import Path
 
 
+def _ensure_std_streams() -> None:
+    """A Windows build without a console starts with no stdout/stderr in some processes;
+    writing to them must not end the job."""
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+
+
 def _prepare_multiprocessing_runtime() -> None:
     """Keep frozen multiprocessing children from starting the GUI."""
     multiprocessing.freeze_support()
@@ -66,6 +74,7 @@ def _run_packaged_cli_mode() -> None:
     sys.exit(0)
 
 
+_ensure_std_streams()
 _prepare_multiprocessing_runtime()
 _run_packaged_cli_mode()
 
@@ -4424,7 +4433,7 @@ class JobDialog(EmbeddedDialog):
 
         def work():                      # no Tk calls here: the main thread polls for the result
             try:
-                r = subprocess.run(argv, capture_output=True, text=True, errors="replace", timeout=600)
+                r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
                 out = (r.stdout or "").splitlines()
                 verdict = next((l[len("[verdict] "):] for l in out if l.startswith("[verdict] ")), "")
                 result["msg"] = verdict or (r.stderr or "").strip()[-300:] or "no result"
@@ -5224,7 +5233,8 @@ class LookInsideView:
 
         def _worker():
             try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                   timeout=600)
                 self._q.put(("list_out", (r.stdout or "") + "\n" + (r.stderr or "")))
             except Exception as e:
                 self._q.put(("list_err", str(e)))
@@ -5344,7 +5354,7 @@ class LookInsideView:
         def _worker():
             try:
                 self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                              text=True, bufsize=1)
+                                              text=True, encoding="utf-8", errors="replace", bufsize=1)
                 for line in self._proc.stdout:
                     self._q.put(("ext_line", line.rstrip()))
                 rc = self._proc.wait()
@@ -7048,7 +7058,7 @@ class App:
         def work():
             try:
                 proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                        text=True, errors="replace")
+                                        text=True, encoding="utf-8", errors="replace")
                 for line in proc.stdout or ():
                     self.root.after(0, self.log, "INFO", line.rstrip())
                 proc.wait()
@@ -9332,7 +9342,7 @@ class App:
             else:
                 subprocess.run(self._backend_cmd("--extract-from", str(p), "--dest", str(dest),
                                                  "--members-file", str(mfile)),
-                               capture_output=True, text=True, timeout=300)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
             f = dest / "sce_sys" / "icon0.png"
             return f.read_bytes() if f.is_file() else None
         except Exception:
@@ -9393,7 +9403,7 @@ class App:
                 mfile.write_text("sce_sys/param.json\n", encoding="utf-8")
                 dest = tmp / "out"
                 cmd = self._backend_cmd("--extract-from", str(p), "--dest", str(dest), "--members-file", str(mfile))
-                subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
                 pj = dest / "sce_sys" / "param.json"
                 return self._ident_from_param_json(pj) if pj.is_file() else None
             finally:
@@ -9455,7 +9465,7 @@ class App:
                 return bp.sdk_firmware(words[0]) if words else ""
             if p.suffix.lower() in (".ffpfs", ".ffpfsc", ".pkg"):
                 r = subprocess.run(self._backend_cmd("--sdk-of", str(p)), capture_output=True, text=True,
-                                   errors="replace", timeout=120)
+                                   encoding="utf-8", errors="replace", timeout=120)
                 for line in (r.stdout or "").splitlines():
                     if line.startswith("SDK_JSON: "):
                         return str(json.loads(line[len("SDK_JSON: "):]).get("fw") or "")

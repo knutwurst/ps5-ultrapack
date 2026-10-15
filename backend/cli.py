@@ -3,6 +3,12 @@
 import sys
 import os
 
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ── Bundled mkpfs detection ───────────────────────────────────────────────────
 # When this script lives inside a 'backend/' folder, look for 'backend/mkpfs/'
 # and add 'backend/' to sys.path so 'import mkpfs' resolves to the bundled copy.
@@ -1092,7 +1098,9 @@ def _proc_bytes_written(pid: int) -> int | None:
         return None
     try:
         import psutil
-        return int(psutil.Process(int(pid)).io_counters().write_bytes)
+        proc = psutil.Process(int(pid))
+        # a venv's python.exe on Windows only starts the real interpreter as its child
+        return sum(int(q.io_counters().write_bytes) for q in [proc] + proc.children(recursive=True))
     except Exception:
         return None
 
@@ -3165,7 +3173,7 @@ def main() -> None:
     try:
         ver = subprocess.run(
             mkpfs_cmd_base + ["-V"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=mkpfs_cwd,
         )
         print(f"[INFO] MkPFS: {ver.stdout.strip() or ver.stderr.strip()}", flush=True)

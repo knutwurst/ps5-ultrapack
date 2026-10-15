@@ -803,7 +803,7 @@ def _probe_drive_type(path: Path) -> str:
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-Command",
                  f"Get-Partition -DriveLetter '{drive_letter}' | Get-Disk | Select-Object -ExpandProperty MediaType"],
-                capture_output=True, text=True, timeout=6,
+                capture_output=True, text=True, errors="replace", timeout=6,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
             media = result.stdout.strip().upper()
@@ -814,7 +814,7 @@ def _probe_drive_type(path: Path) -> str:
                     result2 = subprocess.run(
                         ["powershell", "-NoProfile", "-Command",
                          f"Get-Partition -DriveLetter '{drive_letter}' | Get-Disk | Select-Object -ExpandProperty BusType"],
-                        capture_output=True, text=True, timeout=6,
+                        capture_output=True, text=True, errors="replace", timeout=6,
                         creationflags=subprocess.CREATE_NO_WINDOW
                     )
                     bus = result2.stdout.strip().upper()
@@ -829,14 +829,14 @@ def _probe_drive_type(path: Path) -> str:
     # ── macOS: diskutil 'Solid State: Yes/No' on the backing device ──────────
     if sys.platform == "darwin":
         try:
-            df = subprocess.run(["df", str(target)], capture_output=True, text=True, timeout=6)
+            df = subprocess.run(["df", str(target)], capture_output=True, text=True, errors="replace", timeout=6)
             dev = df.stdout.strip().splitlines()[-1].split()[0]   # /dev/diskXsY
             whole = re.sub(r"(s\d+)+$", "", dev)                  # /dev/diskX physical disk (strip APFS synth too)
             saw_info_unavailable = False
             name_hint = ""
             is_usb_external = False
             for d in ([dev, whole] if whole != dev else [dev]):
-                info = subprocess.run(["diskutil", "info", d], capture_output=True, text=True, timeout=8)
+                info = subprocess.run(["diskutil", "info", d], capture_output=True, text=True, errors="replace", timeout=8)
                 for line in info.stdout.splitlines():
                     parts = line.split(":", 1)
                     if len(parts) != 2:
@@ -2441,6 +2441,7 @@ class ArchiveExtractor:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            errors="replace",
             bufsize=1,
             universal_newlines=True,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
