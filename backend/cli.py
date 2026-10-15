@@ -10,6 +10,10 @@ _CLI_DIR = os.path.dirname(os.path.abspath(__file__))
 _BUNDLED_MKPFS = os.path.join(_CLI_DIR, "mkpfs", "__main__.py")
 if os.path.isfile(_BUNDLED_MKPFS) and _CLI_DIR not in sys.path:
     sys.path.insert(0, _CLI_DIR)
+# ultra_core sits one folder up in a source checkout
+_REPO_DIR = os.path.dirname(_CLI_DIR)
+if os.path.isfile(os.path.join(_REPO_DIR, "ultra_core.py")) and _REPO_DIR not in sys.path:
+    sys.path.append(_REPO_DIR)
 
 # ── Frozen-mode internal mkpfs intercept ─────────────────────────────────────
 if len(sys.argv) > 1 and sys.argv[1] == "--mkpfs-internal":
