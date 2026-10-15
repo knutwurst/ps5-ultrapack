@@ -86,11 +86,6 @@ try:
 except ImportError:
     raise SystemExit("Missing customtkinter. Run: py -m pip install customtkinter")
 
-# The window is laid out in logical pixels, which macOS scales and a DPI-aware Windows
-# process does not: let Windows scale it as a whole instead of drawing it at half size.
-if sys.platform == "win32":
-    ctk.deactivate_automatic_dpi_awareness()
-
 try:
     from PIL import Image, ImageTk
 except Exception:
@@ -1412,6 +1407,8 @@ class SettingsView:
                            height=28, bg="inspector", icon_size=15, padx=10)
             b.pack(fill="x", padx=8, pady=1)
             self._nav[key] = b
+        kit.fit_width(nav, 208, *(b.natural_width() + 16 for b in self._nav.values()),
+                      kit.fonts.view.measure("Settings") + 36)
         kit.rule(self.frame, bg_token="border_strong", horizontal=False).grid(row=0, column=1, sticky="ns")
         self._body = kit.frame(self.frame)
         self._body.grid(row=0, column=2, sticky="nsew")
@@ -1478,7 +1475,7 @@ class SettingsView:
         jd.pack(fill="x", pady=(4, 12))
         self._after_seg = seg_row(jd, "Source", self.app.after_source_var, aj.ACTIONS, aj.LABELS,
                                   command=self._on_after_source, pady=(10, 2))
-        self._after_extra = ctk.CTkFrame(jd, fg_color=PANEL)
+        self._after_extra = ctk.CTkFrame(jd, fg_color=PANEL, height=1)
         self._after_extra.pack(fill="x", padx=14)
         self._after_dir_row = ctk.CTkFrame(self._after_extra, fg_color=PANEL)
         ctk.CTkLabel(self._after_dir_row, text="Folder", text_color=MUTED, width=70, anchor="w").pack(
@@ -5458,6 +5455,23 @@ class App:
         # Offer to reclaim leftover scratch from a crashed/cancelled previous run.
         self.root.after(1500, self._offer_startup_sweep)
 
+    def _center_on_work_area(self, w, h):
+        """First start on Windows: the window centered above the taskbar, smaller if the screen is."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            r = wintypes.RECT()
+            ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(r), 0)   # SPI_GETWORKAREA
+            s = ctk.ScalingTracker.get_window_scaling(self.root)
+            title = 32 * s
+            w = min(w, int((r.right - r.left) / s) - 40)
+            h = min(h, int((r.bottom - r.top - title) / s) - 40)
+            x = r.left + max(0, int((r.right - r.left - w * s) / 2))
+            y = r.top + max(0, int((r.bottom - r.top - title - h * s) / 2))
+            self.root.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+
     def _restore_window_geometry(self):
         """Reapply the last saved window position/size, if valid. Vertically clamp so
         the title bar can never restore above the screen (e.g. hidden under the macOS
@@ -5616,6 +5630,8 @@ class App:
         # Remember the window position/size across launches.
         self._saved_window_geometry = settings.get("window_geometry", "")
         self._geo_save_after = None
+        if not self._saved_window_geometry and sys.platform == "win32":
+            self._center_on_work_area(1280, 820)
         self._restore_window_geometry()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.bind("<Configure>", self._on_window_configure, add="+")
@@ -5663,6 +5679,9 @@ class App:
 
     def _build(self):
         """The main window: sidebar (views + tools) | the active view | status bar."""
+        if sys.platform == "win32":     # macOS scales the window itself
+            import ui_kit
+            ui_kit.set_scale(ctk.ScalingTracker.get_window_dpi_scaling(self.root))
         kit = self.kit = Kit(self.root, self._theme)
         self.root.configure(fg_color=ctk_pair("bg"))
         self.root.grid_columnconfigure(0, weight=1)
@@ -5794,9 +5813,9 @@ class App:
             self._nav_all.append(b)
             return b
         self._nav = {
-            "queue": nav(side, "Queue", "queue", lambda: self._show_view("queue"), "⌘1"),
-            "history": nav(side, "History", "history", lambda: self._show_view("history"), "⌘2"),
-            "log": nav(side, "Log", "terminal", lambda: self._show_view("log"), "⌘3"),
+            "queue": nav(side, "Queue", "queue", lambda: self._show_view("queue"), SHORTCUT["queue"]),
+            "history": nav(side, "History", "history", lambda: self._show_view("history"), SHORTCUT["history"]),
+            "log": nav(side, "Log", "terminal", lambda: self._show_view("log"), SHORTCUT["log"]),
         }
         kit.rule(side, bg_token="border").pack(fill="x", padx=16, pady=(12, 10))
         kit.label(side, bg="sidebar", fg="faint", font=kit.fonts.caption, text="Tools").pack(anchor="w", padx=18, pady=(0, 3))
@@ -5807,7 +5826,9 @@ class App:
         nav(side, "Clean temp", "broom", self.clear_temp_files, "Delete leftovers in the temp folder")
         bottom = kit.frame(side, bg="sidebar")
         bottom.pack(side="bottom", fill="x", pady=(0, 10))
-        self._nav["settings"] = nav(bottom, "Settings", "settings", self.open_settings, "⌘,")
+        self._nav["settings"] = nav(bottom, "Settings", "settings", self.open_settings, SHORTCUT["settings"])
+        kit.fit_width(side, 188, *(b.natural_width() + 16 for b in self._nav_all),
+                      kit.fonts.app.measure(APP_NAME) + 36)
 
     def _show_view(self, name):
         self._panels.close_all()            # the sidebar always works: it leaves an open panel
@@ -6213,7 +6234,7 @@ class App:
         acts.grid(row=6, column=0, sticky="ew", pady=(10, 0))
         acts.grid_columnconfigure(5, weight=1)
         for col, (text, icon, cmd, tip) in enumerate((
-                ("Full log", "terminal", lambda: self._show_view("log"), "The whole log  ⌘3"),
+                ("Full log", "terminal", lambda: self._show_view("log"), f"The whole log  {SHORTCUT['log']}"),
                 ("Command", "code", self._toggle_command, "Show the backend command for this job"),
                 ("Edit", "edit", lambda: self._on_queue_double_click(None), "Change this job (or double-click it)"),
                 ("Retry", "retry", self._retry_selected, "Run this job again"),
@@ -7283,12 +7304,14 @@ class App:
         if Image and ImageTk and art_key:
             try:
                 img = Image.open(art).convert("RGBA")
-                img.thumbnail((self.ART_PX, self.ART_PX), Image.LANCZOS)
+                import ui_kit
+                art_px = round(self.ART_PX * ui_kit.SCALE)     # device pixels
+                img.thumbnail((art_px, art_px), Image.LANCZOS)
                 try:
                     from PIL import ImageChops, ImageDraw
                     mask = Image.new("L", img.size, 0)
                     ImageDraw.Draw(mask).rounded_rectangle(
-                        [0, 0, img.size[0] - 1, img.size[1] - 1], radius=max(10, self.ART_PX // 7), fill=255)
+                        [0, 0, img.size[0] - 1, img.size[1] - 1], radius=max(10, art_px // 7), fill=255)
                     img.putalpha(ImageChops.multiply(img.getchannel("A"), mask))
                 except Exception:
                     pass

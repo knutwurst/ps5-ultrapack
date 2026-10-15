@@ -106,6 +106,163 @@ def apply_ctk_theme(ctk, body_px: int | None = None) -> None:
         theme["CTkCheckBox"]["corner_radius"] = 5
 
 
+# Logical pixels to device pixels. macOS scales a window itself, so 1 there; on Windows the
+# process is DPI-aware and draws at the display's resolution, so the display's factor.
+SCALE = 1.0
+
+
+def set_scale(factor: float) -> None:
+    global SCALE
+    SCALE = max(1.0, float(factor or 1.0))
+    if SCALE != 1:
+        _scale_paddings()
+
+
+_PADS = ("padx", "pady", "ipadx", "ipady")
+
+
+def _scaled_pads(kw: dict) -> dict:
+    out = dict(kw)
+    for k in _PADS:
+        v = out.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = round(v * SCALE)
+        elif isinstance(v, (tuple, list)):
+            out[k] = tuple(round(x * SCALE) for x in v)
+    return out
+
+
+def _scale_paddings() -> None:
+    """Pack and grid paddings of Tk widgets in logical pixels; CustomTkinter scales its own."""
+    if getattr(tk.Pack, "_ps5u_scaled", False):
+        return
+    from customtkinter.windows.widgets.core_widget_classes import CTkBaseClass
+
+    def wrap(orig):
+        def f(self, cnf={}, **kw):
+            if not isinstance(self, CTkBaseClass):
+                cnf, kw = _scaled_pads(cnf) if cnf else cnf, _scaled_pads(kw)
+            return orig(self, cnf, **kw)
+        return f
+    for cls, names in ((tk.Pack, ("pack", "pack_configure")), (tk.Grid, ("grid", "grid_configure"))):
+        orig = cls.pack_configure if cls is tk.Pack else cls.grid_configure
+        for n in names:
+            setattr(cls, n, wrap(orig))
+    tk.Pack._ps5u_scaled = True
+
+
+class _Font(tkfont.Font):
+    """A font sized in device pixels that measures in logical ones, like the canvases."""
+
+    def measure(self, text, displayof=None):
+        w = super().measure(text, displayof)
+        return w if SCALE == 1 else round(w / SCALE)
+
+    def metrics(self, *options, **kw):
+        m = super().metrics(*options, **kw)
+        if SCALE == 1:
+            return m
+        if isinstance(m, dict):
+            return {k: (v if k == "fixed" else round(v / SCALE)) for k, v in m.items()}
+        return m if options and options[0] == "fixed" else round(m / SCALE)
+
+
+def _scaled_opts(kw: dict) -> dict:
+    if SCALE == 1:
+        return kw
+    out = dict(kw)
+    for k in ("width", "height"):
+        if isinstance(out.get(k), (int, float)) and not isinstance(out.get(k), bool):
+            out[k] = out[k] * SCALE
+    if isinstance(out.get("scrollregion"), (tuple, list)):
+        out["scrollregion"] = tuple(v * SCALE for v in out["scrollregion"])
+    return out
+
+
+class Canvas(tk.Canvas):
+    """A canvas sized, drawn and clicked in logical pixels; Tk gets device pixels (SCALE)."""
+
+    def __init__(self, master=None, cnf=None, **kw):
+        super().__init__(master, cnf or {}, **_scaled_opts(kw))
+
+    def configure(self, cnf=None, **kw):
+        return super().configure(cnf, **_scaled_opts(kw))
+
+    config = configure
+
+    def cget(self, key):
+        v = super().cget(key)
+        if SCALE != 1 and key in ("width", "height"):
+            return str(self.winfo_fpixels(v) / SCALE)
+        return v
+
+    def winfo_width(self):
+        w = super().winfo_width()
+        return w if SCALE == 1 else round(w / SCALE)
+
+    def winfo_height(self):
+        h = super().winfo_height()
+        return h if SCALE == 1 else round(h / SCALE)
+
+    def canvasx(self, screenx, gridspacing=None):
+        return super().canvasx(screenx, gridspacing) if SCALE == 1 else \
+            super().canvasx(screenx * SCALE, gridspacing) / SCALE
+
+    def canvasy(self, screeny, gridspacing=None):
+        return super().canvasy(screeny, gridspacing) if SCALE == 1 else \
+            super().canvasy(screeny * SCALE, gridspacing) / SCALE
+
+    def bind(self, sequence=None, func=None, add=None):
+        if func is not None and SCALE != 1:
+            inner = func
+
+            def func(e, inner=inner):
+                try:
+                    e.x, e.y = e.x / SCALE, e.y / SCALE
+                except (TypeError, AttributeError):
+                    pass
+                return inner(e)
+        return super().bind(sequence, func, add)
+
+    def itemconfigure(self, tagOrId, cnf=None, **kw):
+        return super().itemconfigure(tagOrId, cnf, **_scaled_opts(kw))
+
+    itemconfig = itemconfigure
+
+    @staticmethod
+    def _xy(args):
+        if SCALE == 1:
+            return args
+        flat = []
+        for a in args:
+            flat.extend(a) if isinstance(a, (tuple, list)) else flat.append(a)
+        return [v * SCALE for v in flat]
+
+    def create_line(self, *args, **kw):
+        return super().create_line(*self._xy(args), **_scaled_opts(kw))
+
+    def create_polygon(self, *args, **kw):
+        return super().create_polygon(*self._xy(args), **_scaled_opts(kw))
+
+    def create_rectangle(self, *args, **kw):
+        return super().create_rectangle(*self._xy(args), **_scaled_opts(kw))
+
+    def create_oval(self, *args, **kw):
+        return super().create_oval(*self._xy(args), **_scaled_opts(kw))
+
+    def create_arc(self, *args, **kw):
+        return super().create_arc(*self._xy(args), **_scaled_opts(kw))
+
+    def create_text(self, *args, **kw):
+        return super().create_text(*self._xy(args), **_scaled_opts(kw))
+
+    def create_image(self, *args, **kw):
+        return super().create_image(*self._xy(args), **kw)
+
+    def create_window(self, *args, **kw):
+        return super().create_window(*self._xy(args), **_scaled_opts(kw))
+
+
 class Fonts:
     """The type scale, in logical pixels like every macOS app (Tk's POINTS are 1.33 px here, so positive Tk sizes would render a third larger than native text)."""
 
@@ -116,7 +273,7 @@ class Fonts:
         mono = next((fam for fam in ("Menlo", "Monaco", "Courier New")
                      if tkfont.Font(root=root, family=fam, size=-11).actual("family") == fam), "Courier")
         # Negative Tk sizes are pixels.
-        f = lambda px, weight="normal", fam=base: tkfont.Font(root=root, family=fam, size=-px, weight=weight)
+        f = lambda px, weight="normal", fam=base: _Font(root=root, family=fam, size=-round(px * SCALE), weight=weight)
         self.view = f(17, "bold")
         self.title = f(15, "bold")
         self.app = f(14, "bold")
@@ -465,13 +622,17 @@ class Kit:
         return Kit._reduce_motion
 
     def frame(self, parent, bg="surface", **kw) -> tk.Frame:
-        return self.style(tk.Frame(parent, bd=0, highlightthickness=0, **kw), bg=bg)
+        return self.style(tk.Frame(parent, bd=0, highlightthickness=0, **_scaled_opts(kw)), bg=bg)
 
     def label(self, parent, bg="surface", fg="text", font=None, **kw) -> tk.Label:
         kw.setdefault("anchor", "w")
         kw.setdefault("justify", "left")
         lb = tk.Label(parent, bd=0, padx=0, pady=0, font=font or self.fonts.body, **kw)
         return self.style(lb, bg=bg, fg=fg)
+
+    def fit_width(self, frame, min_w, *widths) -> None:
+        """A fixed-width column as wide as its widest entry (logical pixels), never below min_w."""
+        frame.configure(width=round(max(min_w, *widths) * SCALE))
 
     def rule(self, parent, bg_token="border", horizontal=True) -> tk.Frame:
         f = tk.Frame(parent, bd=0, highlightthickness=0, height=1 if horizontal else 0, width=0 if horizontal else 1)
@@ -519,7 +680,7 @@ class Kit:
 
 
 # ── Widgets ──────────────────────────────────────────────────────────────────────────
-class IconButton(tk.Canvas):
+class IconButton(Canvas):
     """A button drawn on one canvas: optional icon + text, four variants."""
 
     def __init__(self, parent, kit: Kit, text="", icon=None, command=None, variant="secondary",
@@ -607,17 +768,21 @@ class IconButton(tk.Canvas):
         # 1 pt icon strokes match regular text better than bold.
         return self._font or self.kit.fonts.body
 
+    def natural_width(self) -> int:
+        """Width the icon and text need, padding included."""
+        w = 2 * self._padx
+        if self._icon:
+            w += self._icon_size + ((8 if self.variant == "nav" else 6) if self._text else 0)
+        if self._text:
+            w += self._font_obj().measure(self._text)
+        return w
+
     def _resize(self):
         if self._fixed_w or self.variant == "nav":
             if self._fixed_w:
                 super().configure(width=self._fixed_w)
             return
-        w = 2 * self._padx
-        if self._icon:
-            w += self._icon_size + (6 if self._text else 0)
-        if self._text:
-            w += self._font_obj().measure(self._text)
-        super().configure(width=max(w, int(self.winfo_fpixels(self.cget("height")))))
+        super().configure(width=max(self.natural_width(), int(self.winfo_fpixels(self.cget("height")))))
 
     def _set(self, **kw):
         changed = False
@@ -725,7 +890,7 @@ class _Segment:
             self._command()
 
 
-class TransportControl(tk.Canvas):
+class TransportControl(Canvas):
     """Start, Pause and Stop in one place of fixed size."""
 
     DURATION = 180
@@ -904,7 +1069,7 @@ class TransportControl(tk.Canvas):
             self.create_text(x, H / 2, text=part._text, anchor="w", fill=color, font=self._font)
 
 
-class ProgressBar(tk.Canvas):
+class ProgressBar(Canvas):
     """A thin rounded progress bar; set(fraction) like CTkProgressBar."""
 
     def __init__(self, parent, kit: Kit, height=6, bg="surface", fill="accent_fill"):
@@ -962,11 +1127,11 @@ class Tooltip:
         if self._tip or not self.text:
             return
         if self.side == "right":
-            x = self.w.winfo_rootx() + self.w.winfo_width() + 8
+            x = self.w.winfo_rootx() + tk.Misc.winfo_width(self.w) + 8
             y = self.w.winfo_rooty() + 4
         else:
             x = self.w.winfo_rootx() + 8
-            y = self.w.winfo_rooty() + self.w.winfo_height() + 6
+            y = self.w.winfo_rooty() + tk.Misc.winfo_height(self.w) + 6
         self._tip = tk.Toplevel(self.w)
         self._tip.wm_overrideredirect(True)
         self._tip.wm_geometry(f"+{x}+{y}")
@@ -989,7 +1154,7 @@ class Tooltip:
             self._tip = None
 
 
-class FlowCanvas(tk.Canvas):
+class FlowCanvas(Canvas):
     """A canvas that lays out a row of items, wraps them, and sets its own height."""
 
     def __init__(self, parent, kit: Kit, bg="surface", min_height=22):
@@ -1106,7 +1271,7 @@ class QueueList(tk.Frame):
         self.marked: set[int] = set()        # every selected row, the one in focus included
         self._anchor: int | None = None      # where a Shift-click range starts
         self.hover: int | None = None
-        self.cv = tk.Canvas(self, highlightthickness=0, bd=0, bg=kit.c(bg), yscrollincrement=1,
+        self.cv = Canvas(self, highlightthickness=0, bd=0, bg=kit.c(bg), yscrollincrement=1,
                             takefocus=1)
         self.sb = tk.Scrollbar(self, orient="vertical", command=self.cv.yview)
         self.cv.configure(yscrollcommand=self._on_yscroll)
@@ -1567,7 +1732,7 @@ class LogText(tk.Text):
             self.mirror.configure(state="disabled")
 
 
-class IconView(tk.Canvas):
+class IconView(Canvas):
     """One icon on its own small canvas, in a palette colour."""
 
     def __init__(self, parent, kit: Kit, icon: str, size=16, color="muted", bg="surface"):
@@ -1587,7 +1752,7 @@ class IconView(tk.Canvas):
         draw_icon(self, self.icon, 0, 0, self.size_, self.kit.c(self.color), bg=self.kit.c(self._bg))
 
 
-class ArtView(tk.Canvas):
+class ArtView(Canvas):
     """The cover art square: a photo when there is one, else a placeholder icon."""
 
     def __init__(self, parent, kit: Kit, size=72, bg="surface"):
@@ -1611,7 +1776,7 @@ class ArtView(tk.Canvas):
         draw_icon(self, "photo", s / 2 - 12, s / 2 - 12, 24, k.c("faint"))
 
 
-class Tile(tk.Canvas):
+class Tile(Canvas):
     """A rounded metric tile: a caption over a value (both follow StringVars)."""
 
     def __init__(self, parent, kit: Kit, caption: str, var: tk.StringVar, bg="surface", fill="surface2", height=46):
@@ -1649,7 +1814,7 @@ class RoundBox(tk.Frame):
     def __init__(self, parent, kit: Kit, bg="surface", fill="surface2", radius=9, pad=8, height=100):
         super().__init__(parent, bd=0, highlightthickness=0, bg=kit.c(bg))
         self.kit, self._bg, self._fill, self.r, self.pad = kit, bg, fill, radius, pad
-        self.cv = tk.Canvas(self, height=height, highlightthickness=0, bd=0, bg=kit.c(bg))
+        self.cv = Canvas(self, height=height, highlightthickness=0, bd=0, bg=kit.c(bg))
         self.cv.pack(fill="both", expand=True)
         self.inner = self.cv
         self._child = None
