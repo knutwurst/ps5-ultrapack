@@ -7,6 +7,7 @@ import sys
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+from collections import OrderedDict
 from types import SimpleNamespace
 
 # ── Palette ──────────────────────────────────────────────────────────────────────────
@@ -259,6 +260,17 @@ class Canvas(tk.Canvas):
     def create_image(self, *args, **kw):
         return super().create_image(*self._xy(args), **kw)
 
+    def delete(self, *args):
+        refs = getattr(self, "_aa_refs", None)
+        if refs:
+            if "all" in args:
+                refs.clear()
+            else:
+                for a in args:
+                    for i in self.find_withtag(a):
+                        refs.pop(i, None)
+        return super().delete(*args)
+
     def create_window(self, *args, **kw):
         return super().create_window(*self._xy(args), **_scaled_opts(kw))
 
@@ -466,12 +478,112 @@ def _solid_round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, color, kw):
                              fill=color, outline=color, width=d, joinstyle="round", **kw)
 
 
+# Tk on Windows draws canvas shapes through GDI without antialiasing, so rounded corners
+# and icons come out jagged. There they are painted with Pillow at 4x and scaled down.
+_AA = sys.platform == "win32"
+_SS = 4
+_aa_cache: OrderedDict = OrderedDict()
+
+
+def _rgba(color: str, cv) -> tuple:
+    r, g, b = (v // 257 for v in cv.winfo_rgb(color))
+    return r, g, b, 255
+
+
+def _aa_photo(cv, key, w: int, h: int, paint):
+    """A w x h device-pixel image, painted by paint(draw, k) on a canvas k times as big."""
+    photo = _aa_cache.get(key)
+    if photo is None:
+        from PIL import Image, ImageDraw, ImageTk
+        big = Image.new("RGBA", (w * _SS, h * _SS), (0, 0, 0, 0))
+        paint(ImageDraw.Draw(big), _SS)
+        photo = ImageTk.PhotoImage(big.resize((w, h), Image.LANCZOS), master=cv)
+        _aa_cache[key] = photo
+        if len(_aa_cache) > 1500:
+            _aa_cache.popitem(last=False)
+    else:
+        _aa_cache.move_to_end(key)
+    return photo
+
+
+def _aa_place(cv, X: int, Y: int, photo, kw) -> int:
+    """Put a device-pixel image at device (X, Y); the canvas keeps it while the item lives."""
+    iid = cv.create_image(X / SCALE, Y / SCALE, image=photo, anchor="nw", **kw)
+    if not hasattr(cv, "_aa_refs"):
+        cv._aa_refs = {}
+    cv._aa_refs[iid] = photo
+    return iid
+
+
+class _Shifted:
+    """An ImageDraw that moves every rounded rectangle by (dx, dy): one corner of a shape."""
+
+    def __init__(self, d, dx, dy):
+        self.d, self.dx, self.dy = d, dx, dy
+
+    def rounded_rectangle(self, box, **kw):
+        x0, y0, x1, y1 = box
+        self.d.rounded_rectangle((x0 + self.dx, y0 + self.dy, x1 + self.dx, y1 + self.dy), **kw)
+
+
+def _aa_rrect_paint(w, h, R, fill, outline, bw):
+    def paint(d, k):
+        def rr(inset, color, r):
+            box = (inset * k, inset * k, (w - inset) * k - 1, (h - inset) * k - 1)
+            d.rounded_rectangle(box, radius=max(0, r) * k, fill=color)
+        if outline and bw:
+            rr(0, outline, R)
+            if fill:
+                rr(bw, fill, R - bw)
+            else:
+                d.rounded_rectangle((bw * k, bw * k, (w - bw) * k - 1, (h - bw) * k - 1),
+                                    radius=max(0, R - bw) * k, fill=(0, 0, 0, 0))
+        elif fill:
+            rr(0, fill, R)
+    return paint
+
+
+def _aa_round_rect(cv, x1, y1, x2, y2, r, fill, outline, bw, kw) -> int:
+    """round_rect on Windows: a small shape is one image; a large one gets image corners
+    and plain rectangles in between, which need no smoothing."""
+    S = SCALE
+    X1, Y1, X2, Y2 = round(x1 * S), round(y1 * S), round(x2 * S), round(y2 * S)
+    w, h = X2 - X1, Y2 - Y1
+    if w < 1 or h < 1:
+        return 0
+    R = min(r * S, w / 2, h / 2)
+    B = max(1, round(bw * S)) if (outline and bw) else 0
+    f = _rgba(fill, cv) if fill else None
+    o = _rgba(outline, cv) if B else None
+    c = math.ceil(R) + 1
+    if w * h <= 120_000 or 2 * c >= w or 2 * c >= h or (B and not f):
+        photo = _aa_photo(cv, ("rr", w, h, R, f, o, B), w, h, _aa_rrect_paint(w, h, R, f, o, B))
+        return _aa_place(cv, X1, Y1, photo, kw)
+    paint = _aa_rrect_paint(2 * c, 2 * c, R, f, o, B)
+    last = 0
+    for qx, qy, X, Y in ((0, 0, X1, Y1), (c, 0, X2 - c, Y1), (0, c, X1, Y2 - c), (c, c, X2 - c, Y2 - c)):
+        def quadrant(d, k, qx=qx, qy=qy):
+            paint(_Shifted(d, -qx * k, -qy * k), k)
+        last = _aa_place(cv, X, Y, _aa_photo(cv, ("rrq", c, R, f, o, B, qx, qy), c, c, quadrant), kw)
+    rect = lambda a, b, c_, d_, col: tk.Canvas.create_rectangle(cv, a, b, c_, d_, fill=col, outline="", **kw)
+    hexf, hexo = (fill if f else None), (outline if o else None)
+    edge, inner = (hexo, hexf) if B else (hexf, hexf)
+    rect(X1 + c, Y1, X2 - c, Y2, edge)                 # middle column, full height
+    rect(X1, Y1 + c, X2, Y2 - c, edge)                 # middle row, full width
+    if B:
+        rect(X1 + c, Y1 + B, X2 - c, Y2 - B, inner)
+        rect(X1 + B, Y1 + c, X2 - B, Y2 - c, inner)
+    return last
+
+
 def round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, fill="", outline="", width=None, **kw):
     """A rounded rectangle; returns the id of its top shape. A border is drawn as the
     same shape in the border colour with the fill inset on top, so both edges stay
     antialiased. An outline without fill (icons) is a stroked polygon with sampled corners."""
     r = max(0.0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
     bw = (1 if width is None else width) if outline else 0
+    if _AA and (fill or bw):
+        return _aa_round_rect(cv, x1, y1, x2, y2, r, fill, outline, bw, kw)
     if fill:
         if bw:
             _solid_round_rect(cv, x1, y1, x2, y2, r, outline, kw)
@@ -495,6 +607,8 @@ def draw_icon(cv: tk.Canvas, name: str, x: float, y: float, size: float, color: 
     """Draw icon *name* with its top-left corner at (x, y), *size* points square."""
     s = size / 24.0
     w = width if width is not None else max(1.2, 1.9 * s)
+    if _AA:
+        return _aa_icon(cv, name, x, y, size, color, bg, w, tags)
     common = dict(tags=tags)
     for op in ICONS.get(name, ()):
         kind, args = op[0], op[1:]
@@ -525,6 +639,69 @@ def draw_icon(cv: tk.Canvas, name: str, x: float, y: float, size: float, color: 
             cx, cy, r = x + args[0] * s, y + args[1] * s, args[2] * s
             cv.create_arc(cx - r, cy - r, cx + r, cy + r, start=args[3], extent=args[4],
                           style="pieslice", outline=color, fill=color, width=1, **common)
+
+
+def _aa_icon(cv, name, x, y, size, color, bg, w, tags):
+    """draw_icon on Windows: the whole icon as one image, strokes centred like Tk's."""
+    S = SCALE
+    pad = math.ceil(w * S / 2) + 1
+    X, Y = round(x * S) - pad, round(y * S) - pad
+    n = math.ceil(size * S) + 2 * pad
+    col = _rgba(color, cv)
+    back = _rgba(bg, cv) if bg else None
+
+    def paint(d, k):
+        u = size * S / 24 * k                       # one icon unit in big pixels
+        o = pad * k
+        lw = max(1, round(w * S * k))
+        pt = lambda vx, vy: (o + vx * u, o + vy * u)
+
+        def caps(pts):
+            for px, py in pts:
+                d.ellipse((px - lw / 2, py - lw / 2, px + lw / 2, py + lw / 2), fill=col)
+
+        def ring(cx, cy, r, fill=None):
+            e = r * u + lw / 2
+            px, py = pt(cx, cy)
+            if fill is not None:
+                d.ellipse((px - e, py - e, px + e, py + e), fill=fill)
+            d.ellipse((px - e, py - e, px + e, py + e), outline=col, width=lw)
+        for op in ICONS.get(name, ()):
+            kind, a = op[0], op[1:]
+            if kind in ("l", "p", "pf"):
+                pts = [pt(a[i], a[i + 1]) for i in range(0, len(a), 2)]
+                if kind == "pf":
+                    d.polygon(pts, fill=col)
+                    d.line(pts + pts[:1], fill=col, width=max(1, round(2 * S * k)), joint="curve")
+                    continue
+                if kind == "p":
+                    pts = pts + pts[:1]
+                d.line(pts, fill=col, width=lw, joint="curve")
+                caps(pts if kind == "l" else pts[:1])
+                if kind == "l" and len(pts) > 2:
+                    caps(pts[1:-1])
+            elif kind == "c":
+                ring(*a)
+            elif kind == "cf":
+                px, py = pt(a[0], a[1])
+                e = a[2] * u
+                d.ellipse((px - e, py - e, px + e, py + e), fill=col)
+            elif kind == "ck":
+                ring(*a, fill=back)
+            elif kind in ("r", "rf"):
+                (x0, y0), (x1, y1) = pt(a[0], a[1]), pt(a[2], a[3])
+                rad = a[4] * u
+                if kind == "rf":
+                    d.rounded_rectangle((x0, y0, x1, y1), radius=rad, fill=col)
+                else:
+                    e = lw / 2
+                    d.rounded_rectangle((x0 - e, y0 - e, x1 + e, y1 + e), radius=rad + e, outline=col, width=lw)
+            elif kind == "pie":
+                px, py = pt(a[0], a[1])
+                e = a[2] * u
+                d.pieslice((px - e, py - e, px + e, py + e), -(a[3] + a[4]), -a[3], fill=col)
+    photo = _aa_photo(cv, ("icon", name, n, pad, col, back, w, size, S), n, n, paint)
+    return _aa_place(cv, X, Y, photo, {"tags": tags} if tags else {})
 
 
 def truncate(font: tkfont.Font, text: str, max_w: int) -> str:

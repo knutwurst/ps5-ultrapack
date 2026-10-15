@@ -61,16 +61,25 @@ def _run_packaged_cli_mode() -> None:
     if str(backend_dir) not in sys.path:
         sys.path.insert(0, str(backend_dir))
 
-    if sys.argv[1] == "--mkpfs-internal":
-        from mkpfs.cli import cli_mkpfs_main
+    try:
+        if sys.argv[1] == "--mkpfs-internal":
+            from mkpfs.cli import cli_mkpfs_main
 
-        sys.exit(cli_mkpfs_main(sys.argv[2:]))
+            sys.exit(cli_mkpfs_main(sys.argv[2:]))
 
-    import runpy
+        import runpy
 
-    cli_py = backend_dir / "cli.py"
-    sys.argv = [str(cli_py)] + sys.argv[2:]
-    runpy.run_path(str(cli_py), run_name="__main__")
+        cli_py = backend_dir / "cli.py"
+        sys.argv = [str(cli_py)] + sys.argv[2:]
+        runpy.run_path(str(cli_py), run_name="__main__")
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except BaseException:
+        # into the job's log: the windowed Windows exe would show a crash window of its own
+        import traceback
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
+        sys.exit(1)
     sys.exit(0)
 
 
@@ -142,6 +151,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import ultra_core  # noqa: E402
 from ultra_core import *  # noqa: E402,F401,F403
+import ui_kit  # noqa: E402
 from ui_kit import (Kit, IconButton, IconView, ArtView, ProgressBar, QueueList, TransportControl, unpack_touchpad_delta,  # noqa: E402
                     Chips, StepStrip, LogText, Tile, RoundBox, ctk_pair, apply_ctk_theme, PALETTE)
 
@@ -490,13 +500,14 @@ class PanelHost:
         if W < 60 or H < 60:
             self.frame.after(40, self._layout)
             return
-        m = self.MARGIN
+        S = ui_kit.SCALE                       # W and H are device pixels, the sizes logical
+        m = round(self.MARGIN * S)
         slot = top._slot
         if top.LARGE:
-            max_w = getattr(top, "MAX_W", self.LARGE_MAX_W)
+            max_w = round(getattr(top, "MAX_W", self.LARGE_MAX_W) * S)
             slot.place(relx=0.5, y=m, anchor="n", width=min(max_w, W - 2 * m), height=H - 2 * m)
         else:
-            pw, ph = top.preferred_size()
+            pw, ph = (round(v * S) for v in top.preferred_size())
             slot.place(relx=0.5, rely=0.5, anchor="center", width=min(pw, W - 2 * m), height=min(ph, H - 2 * m))
         slot.lift()
         top.raise_close_button()
@@ -531,7 +542,7 @@ class EmbeddedDialog(ctk.CTkFrame):
         self._title, self._pref, self._close_cb, self._keys, self._gone = "", (560, 420), None, {}, False
         self._close_btn = IconButton(self, host.app.kit, icon="x", command=self.request_close, variant="ghost",
                                      height=26, width=26, padx=0, icon_size=14, bg="surface", tooltip="Close  (Esc)")
-        self._close_btn.place(relx=1.0, x=-12, y=12, anchor="ne")
+        self._close_btn.place(relx=1.0, x=-round(12 * ui_kit.SCALE), y=round(12 * ui_kit.SCALE), anchor="ne")
         host.push(self)
 
     def raise_close_button(self):
@@ -629,9 +640,11 @@ class MessageWindow(ctk.CTkToplevel):
                 return
             self.update_idletasks()          # the native window exists from here on
             set_window_appearance(self, ctk.get_appearance_mode())
-            w, h = self._size or (self.winfo_reqwidth(), self.winfo_reqheight())
+            S = ui_kit.SCALE                 # placed in device pixels, sized in logical ones
+            w, h = ((round(self._size[0] * S), round(self._size[1] * S)) if self._size
+                    else (self.winfo_reqwidth(), self.winfo_reqheight()))
             x, y = self._position(owner, w, h)
-            super().geometry(f"{w}x{h}+{x}+{y}")
+            super().geometry(f"{round(w / S)}x{round(h / S)}+{x}+{y}")
             self._shown = True
             self.deiconify()
             self.lift()
@@ -4931,15 +4944,19 @@ class OrganizeView:
             pass
         _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
         style.configure("Org.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
-                        foreground=_pal["text"], rowheight=24, borderwidth=0)
+                        foreground=_pal["text"], rowheight=round(24 * ui_kit.SCALE), borderwidth=0)
         style.configure("Org.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
+        if ui_kit.SCALE != 1:                   # Tk's default fonts stay at 96 dpi on Windows
+            style.configure("Org.Treeview", font=self.app.kit.fonts.body)
+            style.configure("Org.Treeview.Heading", font=self.app.kit.fonts.small)
         style.map("Org.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
         tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
         tframe.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 6))
         self.tree = ttk.Treeview(tframe, columns=("game", "src", "dst"), style="Org.Treeview", selectmode="browse")
         for col, text, w in (("#0", "", 34), ("game", "Game", 170), ("src", "Now", 330), ("dst", "Becomes", 330)):
             self.tree.heading(col, text=text, anchor="w")
-            self.tree.column(col, width=w, minwidth=30 if col == "#0" else 80, stretch=col != "#0", anchor="w")
+            self.tree.column(col, width=round(w * ui_kit.SCALE), minwidth=round((30 if col == "#0" else 80) * ui_kit.SCALE),
+                             stretch=col != "#0", anchor="w")
         self.tree.tag_configure("stay", foreground=_pal["muted"])
         vsb = ctk.CTkScrollbar(tframe, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -5172,17 +5189,20 @@ class LookInsideView:
             pass
         _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
         style.configure("PFS.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
-                        foreground=_pal["text"], rowheight=24, borderwidth=0)
+                        foreground=_pal["text"], rowheight=round(24 * ui_kit.SCALE), borderwidth=0)
         style.configure("PFS.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
+        if ui_kit.SCALE != 1:                   # Tk's default fonts stay at 96 dpi on Windows
+            style.configure("PFS.Treeview", font=self.app.kit.fonts.body)
+            style.configure("PFS.Treeview.Heading", font=self.app.kit.fonts.small)
         style.map("PFS.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
         tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
         tframe.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 6))
         self.tree = ttk.Treeview(tframe, columns=("size", "type"), style="PFS.Treeview", selectmode="extended")
         self.tree.heading("#0", text="Name", anchor="w"); self.tree.heading("size", text="Size", anchor="e")
         self.tree.heading("type", text="Type", anchor="center")
-        self.tree.column("#0", width=470, anchor="w")
-        self.tree.column("size", width=110, anchor="e", stretch=False)
-        self.tree.column("type", width=80, anchor="center", stretch=False)
+        self.tree.column("#0", width=round(470 * ui_kit.SCALE), anchor="w")
+        self.tree.column("size", width=round(110 * ui_kit.SCALE), anchor="e", stretch=False)
+        self.tree.column("type", width=round(80 * ui_kit.SCALE), anchor="center", stretch=False)
         vsb = ctk.CTkScrollbar(tframe, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
@@ -5680,7 +5700,6 @@ class App:
     def _build(self):
         """The main window: sidebar (views + tools) | the active view | status bar."""
         if sys.platform == "win32":     # macOS scales the window itself
-            import ui_kit
             ui_kit.set_scale(ctk.ScalingTracker.get_window_dpi_scaling(self.root))
         kit = self.kit = Kit(self.root, self._theme)
         self.root.configure(fg_color=ctk_pair("bg"))
