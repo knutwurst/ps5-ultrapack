@@ -358,6 +358,30 @@ if IS_MAC:
         for _n in _names:
             setattr(_mod, _n, _without_sheet(getattr(_mod, _n)))
 
+def native_path(p) -> str:
+    """A path as the system writes it: Windows uses backslashes, while Tk's dialogs and older
+    saved settings hand out forward ones. Empty stays empty."""
+    p = str(p or "")
+    return os.path.normpath(p) if (p and sys.platform == "win32") else p
+
+
+def _native_paths(fn):
+    def call(*args, **kw):
+        r = fn(*args, **kw)
+        if isinstance(r, str):
+            return native_path(r)
+        if isinstance(r, (tuple, list)):
+            return type(r)(native_path(x) for x in r)
+        return r
+    call.__wrapped__ = fn
+    call.__name__ = getattr(fn, "__name__", "dialog")
+    return call
+
+
+if sys.platform == "win32":
+    for _n in ("askdirectory", "askopenfilename", "askopenfilenames", "asksaveasfilename"):
+        setattr(filedialog, _n, _native_paths(getattr(filedialog, _n)))
+
 MOD = "Command" if IS_MAC else "Control"
 _KEYS = {"add": "N", "open": "O", "start": "R", "stop": ".", "settings": ",", "queue": "1",
          "history": "2", "log": "3", "details": "I"}
@@ -3480,7 +3504,7 @@ class JobDialog(EmbeddedDialog):
                 src0 = _last
         self.src_var = tk.StringVar(value=src0)
         # The folder the file / folder pickers open in: the parent of the last source.
-        self._last_src_dir = str(settings.get("last_source_dir", "") or "").strip()
+        self._last_src_dir = native_path(str(settings.get("last_source_dir", "") or "").strip())
         self.detect_var = tk.StringVar(value="Choose or drop a source.")
         self.help_var = tk.StringVar(value=self._HELP_IDLE)
         self.sign_var = tk.BooleanVar(value=(bool(getattr(item, "chain_sign", False))
@@ -5698,9 +5722,9 @@ class App:
         self.root.geometry("1280x820")
         self.root.minsize(900, 600)
 
-        self._saved_output = settings.get("output_folder", "")
-        self._saved_temp = settings.get("temp_folder", "")
-        self._saved_source = settings.get("source_path", "")
+        self._saved_output = native_path(settings.get("output_folder", ""))
+        self._saved_temp = native_path(settings.get("temp_folder", ""))
+        self._saved_source = native_path(settings.get("source_path", ""))
         self._saved_auto_clear_temp = settings.get("auto_clear_temp", False)
         def _safe_int(v, default):
             try:
@@ -6908,7 +6932,7 @@ class App:
         # Extra temp/scratch drives (a "pool" added to the primary temp field). When more
         # than one fast drive is available the router can keep pass 1 SSD↔SSD for big
         # archive games by extracting the source to one and building the image on another.
-        self.temp_pool: list[str] = [str(p) for p in (load_settings().get("temp_pool", []) or []) if str(p).strip()]
+        self.temp_pool: list[str] = [native_path(p) for p in (load_settings().get("temp_pool", []) or []) if str(p).strip()]
         self.copy_siblings_var = tk.BooleanVar(value=getattr(self, "_saved_copy_siblings", True))
         settings = load_settings()   # _build() is a separate method from _setup()
         self.keep_pfs_var        = self._persisted_bool(settings, "keep_pfs", False)
@@ -6928,11 +6952,11 @@ class App:
         # ~150-250 MB/s and streaming-heavy games can stutter). True = compressed (default).
         self.output_compressed_var = self._persisted_bool(settings, "output_compressed", True)
         # AMPR/APR emu folder (PlayGo titles): holds libSceAmpr.sprx + libScePlayGo.sprx.
-        self.ampr_var = tk.StringVar(value=settings.get("ampr_folder", ""))
+        self.ampr_var = tk.StringVar(value=native_path(settings.get("ampr_folder", "")))
         # Backport folders (both user-supplied, never bundled): the patched libraries the
         # job dialog offers by default, and the original target-firmware libraries the
         # compatibility check reads.
-        _raw_libs, _fw = (settings.get("backport_libs_root", "") or ""), (settings.get("fw_libs_root", "") or "")
+        _raw_libs, _fw = native_path(settings.get("backport_libs_root", "")), native_path(settings.get("fw_libs_root", ""))
         _libs = _sane_patched_libs(_raw_libs, _fw)
         self._cleared_libs_setting = _raw_libs if _libs != _raw_libs else ""
         if self._cleared_libs_setting:
@@ -6941,7 +6965,7 @@ class App:
         self.fw_libs_var = tk.StringVar(value=_fw)
         # Optional Sony Publishing Tools DLL for the fPKG 'publishingtools' Kraken backend.
         # Never bundled - the user points at their own copy. Empty = built-in encoder only.
-        self.pubtools_dll_var = tk.StringVar(value=settings.get("pubtools_dll", ""))
+        self.pubtools_dll_var = tk.StringVar(value=native_path(settings.get("pubtools_dll", "")))
         # The Output FORMAT is chosen PER JOB in the Pack dialog - three values:
         # 'ffpfsc' (compressed), 'ffpfs' (uncompressed) and 'pkg' (an installable fPKG).
         # output_format_var remembers the last choice as the default the dialog pre-fills
@@ -7006,7 +7030,7 @@ class App:
             var.trace_add("write", lambda *_: save_settings({key: var.get()}))
             return var
         self.after_source_var = _choice("after_source", _aj.ACTIONS, _aj.KEEP)
-        self.after_move_dir_var = tk.StringVar(value=str(settings.get("after_move_dir", "") or ""))
+        self.after_move_dir_var = tk.StringVar(value=native_path(settings.get("after_move_dir", "")))
         self.after_move_dir_var.trace_add("write", lambda *_: save_settings(
             {"after_move_dir": self.after_move_dir_var.get().strip()}))
         self.notify_var = _choice("notify", _aj.NOTIFY, "off")
@@ -7177,7 +7201,7 @@ class App:
         head = pycmd if getattr(sys, "frozen", False) else pycmd + ["-u", str(cli_py)]
         argv = head + ["--prepare-backport-libs", target,
                        "--fw-libs-root", fw, "--backport-libs", out]
-        self.log("INFO", f"Prepare {target}: downloading BackPork patches and applying them to {fw} → {out}/{target}…")
+        self.log("INFO", f"Prepare {target}: downloading BackPork patches and applying them to {fw} → {Path(out) / target}…")
 
         def work():
             try:
@@ -7188,7 +7212,7 @@ class App:
                 proc.wait()
                 if proc.returncode == 0:
                     self.root.after(0, self.log, "OK", f"Prepare {target} finished - the job dialog will pick up "
-                                                       f"{out}/{target}/ as Patched libraries.")
+                                                       f"{Path(out) / target} as Patched libraries.")
                 else:
                     self.root.after(0, self.log, "ERROR", f"Prepare {target} finished with exit code {proc.returncode}.")
             except Exception as e:
@@ -12073,7 +12097,7 @@ class App:
         no editor is opened. Nothing is added when nothing is new. Runs on a worker (the
         folder walk and the archive header reads can take a moment)."""
         settings = load_settings()
-        last_dir = (settings.get("last_source_dir") or "").strip()
+        last_dir = native_path((settings.get("last_source_dir") or "").strip())
         last = (settings.get("last_source") or "").strip()
         if not (last_dir or last):
             messagebox.showinfo("Rescan", "No source to rescan yet. Add a job once, then Rescan "

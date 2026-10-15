@@ -751,7 +751,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
                 continue
             else:
                 note = " (rule Ask: a running job does not stop for each item)" if if_exists == "ask" else ""
-                _say(on_line, f"[INFO] already there, skipped{note}: {folder}/{name}")
+                _say(on_line, f"[INFO] already there, skipped{note}: {Path(folder) / name}")
                 done += size
                 continue
         rc = run(name)
