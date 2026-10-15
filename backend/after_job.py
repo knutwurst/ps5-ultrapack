@@ -11,8 +11,9 @@ from typing import Callable, Iterable, Optional
 
 KEEP, TRASH, MOVE, DELETE = "keep", "trash", "move", "delete"
 ACTIONS = (KEEP, TRASH, MOVE, DELETE)
-LABELS = {KEEP: "Keep", TRASH: "Move to Trash", MOVE: "Move to folder", DELETE: "Delete"}
-DONE_TEXT = {KEEP: "keep the source", TRASH: "move the source to the Trash",
+TRASH_NAME = "Recycle Bin" if sys.platform == "win32" else "Trash"
+LABELS = {KEEP: "Keep", TRASH: f"Move to {TRASH_NAME}", MOVE: "Move to folder", DELETE: "Delete"}
+DONE_TEXT = {KEEP: "keep the source", TRASH: f"move the source to the {TRASH_NAME}",
              MOVE: "move the source to {dest}", DELETE: "delete the source"}
 
 QUEUE_ACTIONS = ("nothing", "sleep", "quit")
@@ -108,7 +109,9 @@ _JUNK_NAMES = frozenset({
     "__macosx", ".spotlight-v100", ".trashes", ".fseventsd", ".temporaryitems",
     ".documentrevisions-v100", ".appledouble", "$recycle.bin", "system volume information",
 })
-_HOME_DIRS = ("Downloads", "Desktop", "Documents", "Movies", "Music", "Pictures", "Library", "Public")
+_HOME_DIRS = ("Downloads", "Desktop", "Documents", "Movies", "Music", "Pictures", "Library", "Public",
+              # Windows
+              "Videos", "OneDrive", "Saved Games", "Favorites", "Links", "Contacts", "Searches", "AppData")
 
 
 def _norm(text: str) -> str:
@@ -273,8 +276,16 @@ def apply(action: str, sources: list, *, dest=None,
                 on_progress(done[0], total)
         out = []
         for s, t in zip(sources, targets):
+            moved = False
             if same(s, dest):
-                os.rename(s, t)
+                from copy_job import cross_device
+                try:
+                    os.rename(s, t)
+                    moved = True
+                except OSError as e:
+                    if not cross_device(e):
+                        raise
+            if moved:
                 if t.is_dir() and not t.is_symlink():
                     _strip_junk(t)                      # the folder arrives without OS clutter
                 tick(size_of([t]))
@@ -287,9 +298,12 @@ def apply(action: str, sources: list, *, dest=None,
 
 def _delete(p: Path) -> None:
     if p.is_symlink() or p.is_file():
+        if os.name == "nt" and not p.is_symlink():
+            os.chmod(p, 0o666)             # Windows will not delete a read-only file
         p.unlink()
     elif p.is_dir():
-        shutil.rmtree(p)
+        from copy_job import rmtree_writable
+        rmtree_writable(p)
 
 
 def _same_device(a: Path, b: Path) -> bool:
@@ -349,7 +363,7 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
     A failed copy removes what it wrote and leaves *src* untouched."""
     try:
         if src.is_symlink():
-            os.symlink(os.readlink(src), dst)
+            os.symlink(os.readlink(src), dst, target_is_directory=src.is_dir())
         elif src.is_file():
             _copy_file(src, dst, tick)
         else:
@@ -361,7 +375,7 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
                 for d in dns:
                     sd, td = Path(dp) / d, dst / rel / d
                     if sd.is_symlink():
-                        os.symlink(os.readlink(sd), td)
+                        os.symlink(os.readlink(sd), td, target_is_directory=True)   # Windows tells them apart
                     else:
                         td.mkdir()
                 for fn in fns:
@@ -441,17 +455,69 @@ def _trash_mac(path: Path) -> str:
         objc.objc_autoreleasePoolPop(pool)
 
 
+def _recycle_bin_limit(path: Path):
+    """(volume root, bytes the Recycle Bin of *path*'s drive takes for one item), 0 bytes when the
+    drive has none (network, removable) or deletes for good there. Windows deletes an item that
+    does not fit instead of recycling it."""
+    import ctypes
+    import winreg
+    k32 = ctypes.windll.kernel32
+    root = ctypes.create_unicode_buffer(1024)
+    if not k32.GetVolumePathNameW(str(path), root, 1024):
+        raise OSError(f"could not tell which drive {path} is on")
+    if k32.GetDriveTypeW(root.value) != 3:              # DRIVE_FIXED
+        return root.value, 0
+    guid = ctypes.create_unicode_buffer(1024)
+    k32.GetVolumeNameForVolumeMountPointW(root.value, guid, 1024)
+    key = guid.value[guid.value.find("{"):guid.value.find("}") + 1]
+    cap_mb, nuke = None, 0
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\"
+                            "Explorer\\BitBucket\\Volume\\" + key) as k:
+            for name in ("MaxCapacity", "NukeOnDelete"):
+                try:
+                    v = winreg.QueryValueEx(k, name)[0]
+                except OSError:
+                    continue
+                cap_mb, nuke = (v, nuke) if name == "MaxCapacity" else (cap_mb, v)
+    except OSError:
+        pass
+    if nuke:
+        return root.value, 0
+    if cap_mb is None:                                  # not set yet: Windows' default, about 5 %
+        total = ctypes.c_ulonglong()
+        k32.GetDiskFreeSpaceExW(root.value, None, ctypes.byref(total), None)
+        return root.value, total.value // 20
+    return root.value, cap_mb * 1024 * 1024
+
+
+def _tree_size(path: Path) -> int:
+    if path.is_file():
+        return path.stat().st_size
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file() and not f.is_symlink())
+
+
 def _trash_windows(path: Path) -> None:
     import ctypes
     from ctypes import wintypes
+
+    root, limit = _recycle_bin_limit(path)
+    if limit == 0:
+        raise OSError(f"{root} has no Recycle Bin; {path.name} was not deleted")
+    size = _tree_size(path)
+    if size > limit:
+        raise OSError(f"{path.name} ({size / 1024**3:.1f} GB) is bigger than the Recycle Bin on {root} takes "
+                      f"({limit / 1024**3:.1f} GB); it was not deleted")
 
     class SHFILEOPSTRUCTW(ctypes.Structure):
         _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
                     ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_uint16), ("fAnyOperationsAborted", wintypes.BOOL),
                     ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
     FO_DELETE, FOF_SILENT, FOF_NOCONFIRMATION, FOF_ALLOWUNDO, FOF_NOERRORUI = 3, 0x4, 0x10, 0x40, 0x400
+    FOF_WANTNUKEWARNING = 0x4000        # asks instead of deleting for good when it cannot recycle
     op = SHFILEOPSTRUCTW(None, FO_DELETE, str(path) + "\0", None,
-                         FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI, False, None, None)
+                         FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_WANTNUKEWARNING,
+                         False, None, None)
     rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
     if rc or op.fAnyOperationsAborted:
         raise OSError(f"could not move {path.name} to the Recycle Bin (code {rc})")
@@ -460,7 +526,12 @@ def _trash_windows(path: Path) -> None:
 # ── notifications and the end of the queue ────────────────────────────────────
 
 def notify(title: str, message: str) -> None:
-    """A banner in Notification Center. Best effort: nothing happens where it is not supported."""
+    """A banner in Notification Center (macOS) or the notification area (Windows). Best effort:
+    nothing happens where it is not supported."""
+    if sys.platform == "win32":
+        import threading
+        threading.Thread(target=_notify_windows, args=(title, message), name="notify", daemon=True).start()
+        return
     if sys.platform != "darwin":
         return
     script = ["on run argv", "display notification (item 2 of argv) with title (item 1 of argv)", "end run"]
@@ -473,11 +544,54 @@ def notify(title: str, message: str) -> None:
         pass
 
 
+def _notify_windows(title: str, message: str, shown_s: float = 10.0) -> None:
+    """A tray balloon from a hidden window, which Windows 10 and 11 show as a notification with the
+    app's name and icon; the icon leaves the tray again afterwards."""
+    import ctypes
+    import time
+    from ctypes import wintypes
+    u32, sh, k32 = ctypes.windll.user32, ctypes.windll.shell32, ctypes.windll.kernel32
+
+    class NOTIFYICONDATAW(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND), ("uID", wintypes.UINT),
+                    ("uFlags", wintypes.UINT), ("uCallbackMessage", wintypes.UINT), ("hIcon", wintypes.HICON),
+                    ("szTip", wintypes.WCHAR * 128), ("dwState", wintypes.DWORD), ("dwStateMask", wintypes.DWORD),
+                    ("szInfo", wintypes.WCHAR * 256), ("uVersion", wintypes.UINT),
+                    ("szInfoTitle", wintypes.WCHAR * 64), ("dwInfoFlags", wintypes.DWORD),
+                    ("guidItem", ctypes.c_byte * 16), ("hBalloonIcon", wintypes.HICON)]
+    u32.CreateWindowExW.restype = wintypes.HWND
+    u32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+                                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND,
+                                    wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
+    sh.ExtractIconW.restype = wintypes.HICON
+    sh.ExtractIconW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT]
+    hwnd = u32.CreateWindowExW(0, "STATIC", "PS5 UltraPack", 0, 0, 0, 0, 0, None, None, None, None)
+    if not hwnd:
+        return
+    icon = sh.ExtractIconW(k32.GetModuleHandleW(None), sys.executable, 0)
+    NIM_ADD, NIM_DELETE, NIF_ICON, NIF_TIP, NIF_INFO, NIIF_INFO = 0, 2, 0x2, 0x4, 0x10, 0x1
+    nid = NOTIFYICONDATAW(cbSize=ctypes.sizeof(NOTIFYICONDATAW), hWnd=hwnd, uID=1,
+                          uFlags=NIF_ICON | NIF_TIP | NIF_INFO, hIcon=icon, dwInfoFlags=NIIF_INFO)
+    nid.szTip, nid.szInfoTitle, nid.szInfo = "PS5 UltraPack", title[:63], message[:255]
+    try:
+        if sh.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
+            time.sleep(shown_s)
+            sh.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
+    finally:
+        u32.DestroyWindow(hwnd)
+        if icon:
+            u32.DestroyIcon(icon)
+
+
 def sleep_now() -> None:
     """Put the computer to sleep."""
     if sys.platform == "darwin":
         subprocess.run(["pmset", "sleepnow"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     elif sys.platform == "win32":
-        subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"], check=True)
+        # called directly: through rundll32 the first argument is a window handle, which
+        # Windows reads as "hibernate"
+        import ctypes
+        if not ctypes.windll.powrprof.SetSuspendState(False, False, False):
+            raise ctypes.WinError()
     else:
         subprocess.run(["systemctl", "suspend"], check=True)

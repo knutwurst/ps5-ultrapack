@@ -13,6 +13,8 @@ fi
 
 # The fPKG helper is built from source (backend/native/src), never taken from git.
 ./BUILD_PKG_TOOL.sh
+# 7-Zip, pinned and checked, from 7-zip.org
+./FETCH_7ZIP.sh
 
 python3 -m pip install -r requirements-build.txt
 python3 -m pip install ./backend/unrar

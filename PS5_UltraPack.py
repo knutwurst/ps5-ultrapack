@@ -61,6 +61,11 @@ def _run_packaged_cli_mode() -> None:
     if str(backend_dir) not in sys.path:
         sys.path.insert(0, str(backend_dir))
 
+    for _stream in (sys.stdout, sys.stderr):     # paths beyond the ANSI code page
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     try:
         if sys.argv[1] == "--mkpfs-internal":
             from mkpfs.cli import cli_mkpfs_main
@@ -225,11 +230,14 @@ def _remove_scratch(p: Path) -> int:
 
 
 def _drive_name(path: Path) -> str:
-    """The drive a path lives on, by its volume name: 'SAMSUNG', or 'the system drive'."""
-    parts = Path(path).parts
-    if len(parts) > 2 and parts[1] == "Volumes":
-        return parts[2]
-    return "the system drive"
+    """The drive a path lives on: 'SAMSUNG', 'D: (Games)', or 'the system drive'."""
+    return ultra_core.drive_display_name(path)
+
+
+def _drive_colon(path: Path) -> str:
+    """The drive's name followed by a colon, 'C:' stays 'C:' (not 'C::')."""
+    name = _drive_name(path)
+    return name if name.endswith(":") else name + ":"
 
 
 def _sane_patched_libs(libs: str, fw_root: str) -> str:
@@ -323,10 +331,11 @@ RED     = ctk_pair("danger")
 DANGER_HOVER = ctk_pair("danger_hover")
 WHITE   = ctk_pair("text")            # primary text (dark text in light mode)
 MUTED   = ctk_pair("muted")           # secondary text
-MONO_FONT = "Menlo"                   # ships with macOS (Consolas does not)
+MONO_FONT = "Consolas" if sys.platform == "win32" else "Menlo"   # each ships with its system
 # Shortcuts: Command on macOS, Control elsewhere. ACCEL is what a menu shows (Tk on macOS
 # turns "Command-N" into a real key equivalent), SHORTCUT what a tooltip says.
 IS_MAC = sys.platform == "darwin"
+TRASH_NAME = "Recycle Bin" if sys.platform == "win32" else "Trash"
 
 
 def _without_sheet(fn):
@@ -923,6 +932,32 @@ class ErrorDialog(MessageWindow):
 
     # ── diagnosis ────────────────────────────────────────────────────────────
     @staticmethod
+    def _diagnose_windows(msg: str, t: str) -> str | None:
+        """The Windows error numbers the backend's lines carry, in plain words."""
+        import re as _re
+        m = _re.search(r"['\"]([a-z]:)\\", msg, _re.I)
+        drive = m.group(1).upper() if m else "the drive"
+        if any(f"[winerror {n}]" in t for n in (21, 433, 1117, 1167)):
+            return (f"Windows lost {drive} during the job: it was disconnected, went to sleep or failed to "
+                    f"respond. Check the cable, wake the drive and rerun the job.")
+        if "[winerror 206]" in t:
+            return ("A path got longer than Windows allows (260 characters). Pick a shorter temp or output "
+                    "folder, or have an administrator turn on long paths in Windows.")
+        if "[winerror 112]" in t or "there is not enough space on the disk" in t:
+            return ("The drive ran out of free space while writing. Free space, move the output or "
+                    "the temp folder to a larger drive, or lower the compression level.")
+        if "[winerror 32]" in t:
+            return ("Another program had a file open (an antivirus scan, Explorer's preview, a player). "
+                    "Close it or wait a moment, then retry the job.")
+        if "[winerror 5]" in t or "permission denied" in t:
+            m = _re.search(r"(?:\[winerror 5\]|permission denied)[^\n]*?:\s*['\"]([^'\"\n]+)", msg, _re.I)
+            path = m.group(1).strip().replace("\\\\", "\\") if m else ""     # repr() doubles them
+            return ("Windows refused access" + (f" to “{path}”" if path else "") +
+                    ". The file is read-only or open in another program, or the folder needs administrator "
+                    "rights. Choose a writable folder or close the other program.")
+        return None
+
+    @staticmethod
     def _diagnose(msg: str, log: str) -> str | None:
         """A short, specific sentence for known failure shapes, or None. Reads the
         backend's own line rather than guessing from a menu of causes."""
@@ -930,6 +965,10 @@ class ErrorDialog(MessageWindow):
         # A drop-out on a mounted external drive: the OS returns EACCES on the mount
         # point itself when the volume vanished mid-run. The message names /Volumes/X.
         import re as _re
+        if sys.platform == "win32":
+            win = ErrorDialog._diagnose_windows(msg, t)
+            if win:
+                return win
         m = _re.search(r"permission denied[^\n]*['\"](/volumes/[^'\"]+)", msg, _re.I)
         if m:
             vol = m.group(1)
@@ -957,6 +996,9 @@ class ErrorDialog(MessageWindow):
         if "operation cancelled" in t or "cancelled by user" in t:
             return "You cancelled this job. Nothing was written to the output."
         if "sigkill" in t or "killed" in t or "-9" in t:
+            if sys.platform == "win32":
+                return ("The backend was stopped by the system, usually for lack of memory or by an "
+                        "antivirus. Try a lower CPU count in Settings.")
             return ("The backend was killed by the system. On macOS that is usually memory pressure "
                     "or a Gatekeeper block - try a lower CPU count in Settings, or run the app once "
                     "from a Finder open.")
@@ -1006,7 +1048,7 @@ class ErrorDialog(MessageWindow):
                       font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(0, 2))
         log = ctk.CTkTextbox(self, fg_color=PANEL, text_color=ctk_pair("log"),
                               border_width=1, border_color=BORDER,
-                              font=ctk.CTkFont(family="Menlo", size=11), wrap="word")
+                              font=ctk.CTkFont(family=MONO_FONT, size=11), wrap="word")
         log.pack(fill="both", expand=True, padx=20, pady=(0, 10))
         log.insert("end", self._tail(self._log) or "(no log available)")
         log.configure(state="disabled")
@@ -1499,7 +1541,7 @@ class SettingsView:
                       hover_color=BTN_HOVER, border_width=1, border_color=BTN_BORDER,
                       command=lambda: self._browse_folder(self.app.after_move_dir_var, "after_move_dir",
                                                           "Choose the folder finished sources move to")).pack(side="left")
-        self._after_note = ctk.CTkLabel(self._after_extra, text="Deleted for good; it does not go to the Trash.",
+        self._after_note = ctk.CTkLabel(self._after_extra, text=f"Deleted for good; it does not go to the {TRASH_NAME}.",
                                         text_color=RED, font=ctk.CTkFont(size=12), anchor="w")
         ctk.CTkLabel(jd, text="The game folder, the archive with all its parts, or the container, once the "
                               "job is Done. New jobs start with this; each job keeps its own choice "
@@ -2027,7 +2069,7 @@ class SettingsView:
             if not messagebox.askyesno(
                     "Delete sources?",
                     "From now on, a new job deletes its source for good once it is Done: the game folder, "
-                    "the archive with all its parts, or the container. It does not go to the Trash.\n\n"
+                    f"the archive with all its parts, or the container. It does not go to the {TRASH_NAME}.\n\n"
                     "Jobs already in the queue keep their own choice. Use Delete for new jobs?"):
                 self._after_seg.set(aj.LABELS.get(prev, aj.LABELS[aj.KEEP]))
                 return
@@ -3254,26 +3296,49 @@ def _kill_process_tree(proc) -> None:
             return
     except Exception:
         return
+    if os.name == "nt":
+        _kill_process_tree_windows(proc)
+        return
     try:
-        if os.name == "nt":
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
             proc.terminate()
-        else:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            if os.name == "nt":
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
                 proc.kill()
-            else:
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except (ProcessLookupError, PermissionError, OSError):
-                    proc.kill()
     except Exception:
         pass
+
+
+def _kill_process_tree_windows(proc) -> None:
+    """Windows has no process groups: stop the backend's children (MkPFS and its workers, the
+    fPKG helper, 7-Zip) by walking the tree, then the backend itself."""
+    try:
+        import psutil
+        root = psutil.Process(proc.pid)
+        procs = root.children(recursive=True) + [root]
+        for p in procs:
+            try:
+                p.terminate()
+            except psutil.Error:
+                pass
+        _gone, alive = psutil.wait_procs(procs, timeout=5)
+        for p in alive:
+            try:
+                p.kill()
+            except psutil.Error:
+                pass
+    except Exception:
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True,
+                           creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
+        except Exception:
+            pass
 
 
 def _hdr_mode(v) -> str:
@@ -3342,8 +3407,9 @@ class JobDialog(EmbeddedDialog):
                     "ShadowMount's byte limit.",
         "after":  "What happens to the source once this job is Done: the game folder, the archive with "
                   "all its parts, or the container. Keep leaves it where it is, also when the output is a "
-                  "plain copy (on the same drive an APFS clone, instant and without extra space). Move to "
-                  "Trash can be put back from the Trash; Delete cannot. Nothing happens when the job fails, "
+                  + ("plain copy (on the same drive an APFS clone, instant and without extra space). " if IS_MAC
+                     else "plain copy. ")
+                  + f"Move to {TRASH_NAME} can be put back from the {TRASH_NAME}; Delete cannot. Nothing happens when the job fails, "
                   "is skipped or stopped, or while another job in the queue still needs the same source. "
                   "Settings › General sets the default.",
         "retail": "Keep on. Drops placeholder license files and issues a valid debug license, sets the "
@@ -3686,7 +3752,7 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkButton(self._after_dir_row, text="Folder…", width=76, fg_color=BTN, hover_color=BTN_HOVER,
                       text_color=WHITE, border_width=1, border_color=BTN_BORDER,
                       command=self._pick_after_dir).pack(side="left", padx=(6, 0))
-        self._after_note = ctk.CTkLabel(ab, text="Deleted for good once the job is Done; it does not go to the Trash.",
+        self._after_note = ctk.CTkLabel(ab, text=f"Deleted for good once the job is Done; it does not go to the {TRASH_NAME}.",
                                         text_color=RED, font=ctk.CTkFont(size=12), anchor="w")
         # .pkg options - two rows, shown only when .pkg is the output
         self._pkg_opts = ctk.CTkFrame(orow, fg_color=PANEL)
@@ -5472,6 +5538,8 @@ class App:
         # After the UI is fully loaded, remind user to report any untested games
         # Restore the user's saved section widths once the layout has settled.
         self.root.after(600, self._restore_sashes)
+        if sys.platform == "win32":
+            self.root.after(2000, self._stay_awake_tick)
         # Offer to reclaim leftover scratch from a crashed/cancelled previous run.
         self.root.after(1500, self._offer_startup_sweep)
 
@@ -5491,6 +5559,18 @@ class App:
             self.root.geometry(f"{w}x{h}+{x}+{y}")
         except Exception:
             pass
+
+    def _stay_awake_tick(self):
+        """Windows: no idle sleep while the queue runs. The request belongs to the calling
+        thread, so it lives on the Tk main thread and is renewed or dropped every 30 s."""
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        try:
+            import ctypes
+            flags = ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if getattr(self, "_batch_running", False) else 0)
+            ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        except Exception:
+            return
+        self.root.after(30000, self._stay_awake_tick)
 
     def _restore_window_geometry(self):
         """Reapply the last saved window position/size, if valid. Vertically clamp so
@@ -5968,7 +6048,7 @@ class App:
         self._clear_btn = self._small(btns, "Clear completed", "check-circle", lambda: self.clear_jobs("done"),
                                       tooltip="Remove the finished jobs. Right-click: clear failed, clear all")
         self._clear_btn.grid(row=0, column=0, padx=(0, 6))
-        for seq in ("<Button-2>", "<Button-3>", "<Control-Button-1>"):
+        for seq in (("<Button-2>", "<Button-3>", "<Control-Button-1>") if IS_MAC else ("<Button-3>",)):
             self._clear_btn.bind(seq, self._clear_menu, add="+")
         self._rescan_btn = self._small(btns, "Rescan", "refresh", self.rescan_last_source,
                                        tooltip="Scan the last source folder for new downloads and add the ones that are not already here.")
@@ -6695,8 +6775,7 @@ class App:
                 free = get_free_space(Path(p))
             except Exception:
                 return f"{kind}: not reachable"
-            parts = Path(p).parts
-            drive = parts[2] if len(parts) > 2 and parts[1] == "Volumes" else "Mac"
+            drive = ultra_core.drive_display_name(p, system="Mac")
             return f"{kind}: {drive}  ·  {format_size(free)} free"
 
         def _work():
@@ -10558,7 +10637,7 @@ class App:
                              "Temp drive (whole scratch)": "Unpack and image",
                              "Output drive (archive unpacked)": "Output"}
                     self.temp_space_var.set(
-                        "  |  ".join(f"{short.get(label, label)} on {_drive_name(Path(str(d)))}: ~{format_size(n)}, "
+                        "  |  ".join(f"{short.get(label, label)} on {_drive_colon(Path(str(d)))} ~{format_size(n)}, "
                                      f"{format_size(get_free_space(d))} free" for label, d, n in needs)
                         + f"  |  {'fits' if ok else 'LOW, may not fit'}")
                     return
@@ -12731,7 +12810,7 @@ class App:
         names = ", ".join(p.name for p in srcs)
         info = getattr(item, "_after_info", None) or {}
         what = "the source folder" if info.get("whole") else "the source"
-        doing = {aj.TRASH: f"moving {what} to the Trash", aj.MOVE: f"moving {what} to {dest}",
+        doing = {aj.TRASH: f"moving {what} to the {TRASH_NAME}", aj.MOVE: f"moving {what} to {dest}",
                  aj.DELETE: "deleting the source"}[act]
         self.log("INFO", f"After the job: {doing}: {names} ({format_size(size)}).")
         results = queue.Queue()
@@ -12747,9 +12826,9 @@ class App:
             try:
                 where = aj.apply(act, srcs, dest=dest, on_progress=progress)
                 if act == aj.TRASH:
-                    msg = (f"Moved {what} of {name} to the Trash ({format_size(size)}; it frees the space once "
-                           f"the Trash is emptied): {names}.")
-                    item._after_result = ("done", f"{what} was moved to the Trash.")
+                    msg = (f"Moved {what} of {name} to the {TRASH_NAME} ({format_size(size)}; it frees the space once "
+                           f"the {TRASH_NAME} is emptied): {names}.")
+                    item._after_result = ("done", f"{what} was moved to the {TRASH_NAME}.")
                 elif act == aj.MOVE:
                     msg = f"Moved {what} of {name} to {dest}: " + ", ".join(Path(w).name for w in where) + "."
                     item._after_result = ("done", f"{what} was moved to {dest}.")
@@ -13498,7 +13577,7 @@ class App:
             if getattr(self, "_names_dirty", False):
                 self._names_dirty = False
                 _sel = getattr(self, "_details_item", None)
-                self.update_queue_box(select_item=_sel)
+                self.update_queue_box()         # new names only: the jobs marked stay marked
                 if _sel is not None and _sel in self.queue:
                     self._fill_job_card(_sel)
                     self.load_art(self._job_art(_sel))
@@ -14046,7 +14125,7 @@ class App:
                     completed_item.kept_extract = keep
                     if keep:
                         own = self._extract_dir_for_item(completed_item)
-                        self.log("INFO", f"Kept the extracted copy in {own} on {_drive_name(own)}: Start runs the job "
+                        self.log("INFO", f"Kept the extracted copy in {own} on {_drive_colon(own)} Start runs the job "
                                          f"from it again, and removing the job from the queue deletes it.")
                 self.update_queue_box()
                 self.start_btn.configure(state="normal")
@@ -14079,7 +14158,7 @@ class App:
                     completed_item.kept_extract = keep
                     if keep:
                         own = self._extract_dir_for_item(completed_item)
-                        self.log("INFO", f"Kept the extracted copy in {own} on {_drive_name(own)}: Edit or Retry "
+                        self.log("INFO", f"Kept the extracted copy in {own} on {_drive_colon(own)} Edit or Retry "
                                          f"runs the job from it again, and removing the job deletes it.")
                 self.update_queue_box()
                 # Batch resilience: one failure must not abort the rest of the queue.
@@ -14116,13 +14195,10 @@ else:
 
 
 def _wire_open_document(root, app):
-    """macOS: a .ffpfsc / .ffpfs that was double-clicked (or 'Open With') opens in Look
-    inside, as a panel of the main window. No-op off macOS (the OpenDocument AppleEvent is
-    macOS-only); argv_emulation stays off in the spec so the event reaches Tk instead of
-    being swallowed into argv."""
-    if sys.platform != "darwin":
-        return
-
+    """A .ffpfsc / .ffpfs / .pkg that was double-clicked (or 'Open With') opens in Look
+    inside, as a panel of the main window. macOS sends it as an OpenDocument AppleEvent
+    (argv_emulation stays off in the spec so the event reaches Tk instead of being swallowed
+    into argv); Windows passes it on the command line."""
     def _on_open(*paths):
         files = [p for p in paths if str(p).lower().endswith((".ffpfsc", ".ffpfs", ".pkg"))]
         if not files:
@@ -14141,6 +14217,11 @@ def _wire_open_document(root, app):
                 except Exception:
                     pass
 
+    if sys.platform != "darwin":
+        args = [a for a in sys.argv[1:] if os.path.isfile(a)]
+        if args:
+            root.after(800, lambda: _on_open(*args))
+        return
     try:
         root.createcommand("::tk::mac::OpenDocument", _on_open)
     except Exception:

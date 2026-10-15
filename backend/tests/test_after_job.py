@@ -282,7 +282,29 @@ class ReleaseFolderTests(Base):
         self.assertTrue((rel2 / "mine.docx").is_file())
 
 
-@unittest.skipUnless(sys.platform == "darwin" and os.environ.get("PS5_TEST_REAL_TRASH") == "1",
+@unittest.skipUnless(sys.platform == "win32", "the Windows Recycle Bin")
+class RecycleBinGuardTest(Base):
+    def test_too_big_for_the_bin_is_not_deleted(self):
+        f = self.file("big.bin", 10)
+        with mock.patch.object(aj, "_recycle_bin_limit", return_value=("X:\\", 5)):
+            with self.assertRaises(OSError) as cm:
+                aj.move_to_trash(f)
+        self.assertTrue(f.exists())
+        self.assertIn("not deleted", str(cm.exception))
+
+    def test_no_bin_on_the_drive_is_not_deleted(self):
+        f = self.file("any.bin", 10)
+        with mock.patch.object(aj, "_recycle_bin_limit", return_value=("X:\\", 0)):
+            with self.assertRaises(OSError):
+                aj.move_to_trash(f)
+        self.assertTrue(f.exists())
+
+    def test_the_local_drive_has_a_bin(self):
+        root, limit = aj._recycle_bin_limit(_SCRATCH)
+        self.assertGreater(limit, 0, root)
+
+
+@unittest.skipUnless(sys.platform in ("darwin", "win32") and os.environ.get("PS5_TEST_REAL_TRASH") == "1",
                      "puts a scratch file into the real Trash; set PS5_TEST_REAL_TRASH=1 to run")
 class RealTrashTest(Base):
     def test_scratch_file_goes_to_the_trash(self):

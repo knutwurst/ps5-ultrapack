@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import sys
 import time
 from pathlib import Path
@@ -15,6 +16,28 @@ MODES = (KEEP, ORGANIZE, MOVE)
 
 _ALLOWED_SUFFIXES = frozenset({".ffpfsc", ".ffpfs", ".pkg"})
 
+
+
+def cross_device(e: OSError) -> bool:
+    """A rename refused because source and target are on different devices: two network shares
+    of one server can carry the same volume serial and look like one drive."""
+    import errno
+    return getattr(e, "winerror", None) == 17 or e.errno == errno.EXDEV
+
+
+def rmtree_writable(path) -> None:
+    """shutil.rmtree that also removes files marked read-only, which Windows refuses to delete."""
+    if os.name != "nt":
+        shutil.rmtree(path)
+        return
+
+    def retry(func, p, *_):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=retry)
+    else:
+        shutil.rmtree(path, onerror=retry)
 
 def _print(on_line: Optional[Callable[[str], None]], msg: str) -> None:
     if on_line is None:
@@ -178,13 +201,16 @@ def run_copy(src, dst_dir, *,
         try:
             os.rename(src, dst)
         except OSError as e:
-            _print(on_line, f"[ERROR] copy: rename failed: {e}")
-            return 1
-        _print(on_line, f"[####] 100% move")
-        # No "[PHASE] Complete" - the worker owns stage transitions; emitting our own
-        # would race the completion path and briefly show "Complete: 0%" in the log.
-        _print(on_line, f"[SUCCESS] Moved {src.name} → {dst}")
-        return 0
+            if not cross_device(e):
+                _print(on_line, f"[ERROR] copy: rename failed: {e}")
+                return 1
+            _print(on_line, "[INFO] copy: the drive could not rename across, copying instead")
+        else:
+            _print(on_line, f"[####] 100% move")
+            # No "[PHASE] Complete" - the worker owns stage transitions; emitting our own
+            # would race the completion path and briefly show "Complete: 0%" in the log.
+            _print(on_line, f"[SUCCESS] Moved {src.name} → {dst}")
+            return 0
 
     # A real copy (across drives, or on a drive that cannot clone): chunked through a
     # *.copy-tmp file so an interrupted write never leaves a truncated target visible
@@ -291,11 +317,14 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
         try:
             os.rename(src, dst)
         except OSError as e:
-            _print(on_line, f"[ERROR] copy: rename failed: {e}")
-            return 1
-        _print(on_line, "[####] 100% move")
-        _print(on_line, f"[SUCCESS] Moved {src.name} → {dst}")
-        return 0
+            if not cross_device(e):
+                _print(on_line, f"[ERROR] copy: rename failed: {e}")
+                return 1
+            _print(on_line, "[INFO] copy: the drive could not rename across, copying instead")
+        else:
+            _print(on_line, "[####] 100% move")
+            _print(on_line, f"[SUCCESS] Moved {src.name} → {dst}")
+            return 0
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # ultra_core next to the app
     from ultra_core import is_fs_junk_name as junk
@@ -357,7 +386,7 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
     if mode == MOVE:
         _print(on_line, "[PHASE] Cleaning Up")
         try:
-            shutil.rmtree(src)
+            rmtree_writable(src)
             _print(on_line, f"[INFO] copy: source removed after a complete copy: {src}")
         except Exception as e:
             _print(on_line, f"[WARN] copy: source could not be removed: {e}")

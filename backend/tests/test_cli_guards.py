@@ -429,8 +429,12 @@ class SilentStepProgress(unittest.TestCase):
         m = self.PROGRESS.search(line)
         self.assertEqual(int(m.group("pct")), 25)
         self.assertTrue(m.group("label").startswith("extract the .pkg to SAMSUNG: 5.0 of 20.0 GB @ "), line)
-        self.assertEqual(cli._drive_label(Path("/Volumes/SAMSUNG/_ffpfsc_temp")), "SAMSUNG")
-        self.assertEqual(cli._drive_label(Path("/tmp")), "the system drive")
+        if os.name == "nt":                 # the letter, with the volume label when it has one
+            self.assertTrue(cli._drive_label(Path(os.environ["SystemDrive"] + "\\Windows")).startswith(
+                os.environ["SystemDrive"]))
+        else:
+            self.assertEqual(cli._drive_label(Path("/Volumes/SAMSUNG/_ffpfsc_temp")), "SAMSUNG")
+            self.assertEqual(cli._drive_label(Path("/tmp")), "the system drive")
 
     def test_the_label_names_the_extract_step(self):
         # the package tool's temp files tell the step: outer temp, inner temp being

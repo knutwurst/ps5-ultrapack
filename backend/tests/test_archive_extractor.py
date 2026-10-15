@@ -22,13 +22,13 @@ _spec = importlib.util.spec_from_file_location("ultra_under_test", str(REPO / "P
 m = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(m)
 
-SEVENZZ = shutil.which("7zz")
 try:
     import py7zr
 except ImportError:          # pragma: no cover - the venv has it
     py7zr = None
 
 AE = m.ArchiveExtractor
+SEVENZZ = AE._find_native_7z()             # the bundled one when FETCH_7ZIP.sh has run
 
 
 def _make_game_tree(root: Path, name: str = "GAME") -> Path:
@@ -148,7 +148,7 @@ class _Base(unittest.TestCase):
 
 # ── item 1: the password loop reaches the right password ──────────────────────
 
-@unittest.skipUnless(SEVENZZ, "7zz not on PATH")
+@unittest.skipUnless(SEVENZZ, "no 7-Zip: run FETCH_7ZIP.sh")
 class NativeCliPasswordLoop(_Base):
 
     def test_header_encrypted_7z_wrong_then_right(self):
@@ -262,7 +262,7 @@ class Py7zrPasswordClassification(_Base):
 
 # ── item 2: AES-encrypted zips ─────────────────────────────────────────────────
 
-@unittest.skipUnless(SEVENZZ, "7zz not on PATH")
+@unittest.skipUnless(SEVENZZ, "no 7-Zip: run FETCH_7ZIP.sh")
 class AesZip(_Base):
 
     def test_aes_zip_wrong_then_right(self):
@@ -289,6 +289,29 @@ class AesZip(_Base):
         root = AE.extract_with_passwords(self.archives / "deflate64.zip", self.dest_root, [], log_fn=self.log)
         self._assert_game_root(root)
         self.assertIn("cannot read", self._log_text())
+
+
+@unittest.skipUnless(os.name == "nt", "Windows install folders")
+class FindSevenZipWindows(unittest.TestCase):
+
+    def test_program_files_without_path(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as td:
+            exe = Path(td) / "7-Zip" / "7z.exe"
+            exe.parent.mkdir()
+            exe.write_bytes(b"")
+            env = {"ProgramFiles": td, "ProgramW6432": td, "ProgramFiles(x86)": td}
+            real_isfile = os.path.isfile
+            no_bundled = lambda p: "native" not in Path(p).parts and real_isfile(p)   # an installed one only
+            with mock.patch.dict(os.environ, env), mock.patch("shutil.which", return_value=None), \
+                    mock.patch("winreg.OpenKey", side_effect=OSError), mock.patch("os.path.isfile", no_bundled):
+                self.assertEqual(Path(AE._find_native_7z()), exe)
+
+    def test_bundled_comes_first(self):
+        bundled = REPO / "backend" / "native" / "7za.exe"
+        if not bundled.is_file():
+            self.skipTest("FETCH_7ZIP.sh has not run")
+        self.assertEqual(Path(AE._find_native_7z()), bundled)
 
 
 # ── item 3: _find_root with several game roots ─────────────────────────────────

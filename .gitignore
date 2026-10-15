@@ -53,3 +53,8 @@ backend/tests/_backpork_*.bps
 
 # Firmware system libraries the user keeps locally for backports: never publish
 /backports/
+
+# 7-Zip console tools, fetched by FETCH_7ZIP.sh from 7-zip.org
+/backend/native/7zz
+/backend/native/7za.exe
+/backend/native/LICENSE.7-Zip.*

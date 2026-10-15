@@ -58,5 +58,71 @@ class ParentWatch(unittest.TestCase):
         self.assertEqual(self._run(False), (False, False))
 
 
+def _alive_windows(pid: int) -> bool:
+    import psutil
+    try:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+
+
+@unittest.skipUnless(os.name == "nt", "Windows has no process groups: the backend watches its app")
+class ParentWatchWindows(unittest.TestCase):
+    def test_backend_ends_with_its_app(self):
+        tmp = Path(tempfile.mkdtemp())
+        pids = tmp / "pids"
+        backend = textwrap.dedent(f"""
+            import subprocess, sys, time
+            sys.path.insert(0, {str(BACKEND)!r})
+            import cli
+            cli._exit_with_parent(poll=0.1)
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+            open({str(pids)!r}, "w").write(f"{{__import__('os').getpid()}} {{child.pid}}")
+            time.sleep(30)
+        """)
+        app = textwrap.dedent(f"""
+            import subprocess, sys, time, pathlib
+            subprocess.Popen([sys.executable, "-c", {backend!r}], creationflags=subprocess.CREATE_NO_WINDOW)
+            for _ in range(200):
+                if pathlib.Path({str(pids)!r}).exists():
+                    break
+                time.sleep(0.05)
+        """)
+        subprocess.run([sys.executable, "-c", app], timeout=60)
+        backend_pid, child_pid = map(int, pids.read_text().split())
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and (_alive_windows(backend_pid) or _alive_windows(child_pid)):
+            time.sleep(0.1)
+        self.assertEqual((_alive_windows(backend_pid), _alive_windows(child_pid)), (False, False))
+
+
+@unittest.skipUnless(os.name == "nt", "Windows: Cancel walks the process tree")
+class KillTreeWindows(unittest.TestCase):
+    def test_cancel_stops_the_backend_and_its_children(self):
+        import importlib.util
+        os.environ.setdefault("PS5_FFPFSC_APP_DIR", tempfile.mkdtemp(prefix="ultrapack-test-profile-"))
+        spec = importlib.util.spec_from_file_location("ultra_app", str(BACKEND.parent / "PS5_UltraPack.py"))
+        app = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(app)
+        pids = Path(tempfile.mkdtemp()) / "pids"
+        backend = textwrap.dedent(f"""
+            import subprocess, sys, time
+            kid = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+            open({str(pids)!r}, "w").write(str(kid.pid))
+            time.sleep(60)
+        """)
+        proc = subprocess.Popen([sys.executable, "-c", backend], creationflags=subprocess.CREATE_NO_WINDOW)
+        for _ in range(200):
+            if pids.exists() and pids.read_text():
+                break
+            time.sleep(0.05)
+        kid = int(pids.read_text())
+        app._kill_process_tree(proc)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and (_alive_windows(proc.pid) or _alive_windows(kid)):
+            time.sleep(0.1)
+        self.assertEqual((_alive_windows(proc.pid), _alive_windows(kid)), (False, False))
+
+
 if __name__ == "__main__":
     unittest.main()

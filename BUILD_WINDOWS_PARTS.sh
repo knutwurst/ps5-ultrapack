@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the Windows x64 parts of the app on a Mac: the fPKG helper (ffpfsc-pkg-tool.exe and
-# its ImageMagick library) into backend/native/, and the UnRAR module for the Windows Python
+# its ImageMagick library) and 7za.exe into backend/native/, and the UnRAR module for the Windows Python
 # that BUILD_WINDOWS_APP.ps1 bundles into backend/unrar/. Needs the .NET SDK 9+ and mingw-w64
 # (brew install mingw-w64). WIN_PYTHON is a copy of that Python's folder (include/ and
 # python3XX.dll are enough).
@@ -35,4 +35,5 @@ for s in "${SOURCES[@]}"; do FILES+=("backend/unrar/src/${s}.cpp"); done
     -Ibackend/unrar/src -I"${WIN_PYTHON}/include" backend/unrar/_unrar.cpp "${FILES[@]}" "${DLL}" \
     -o "backend/unrar/_unrar.${TAG}-win_amd64.pyd" \
     -static -static-libgcc -static-libstdc++ -ladvapi32 -lshell32 -lole32 -luuid -lpowrprof
+./FETCH_7ZIP.sh
 ls -l backend/native/ffpfsc-pkg-tool.exe backend/native/Magick.Native-Q8-x64.dll "backend/unrar/_unrar.${TAG}-win_amd64.pyd"

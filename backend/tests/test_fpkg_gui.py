@@ -39,8 +39,21 @@ m.messagebox.showerror = showerror
 m.messagebox.showinfo = lambda *a, **k: None
 m.messagebox.askyesno = lambda *a, **k: True
 import signal, shutil as _sh
-signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(SystemExit("driver timeout")))
-signal.alarm(240)
+if hasattr(signal, "SIGALRM"):
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(SystemExit("driver timeout")))
+    signal.alarm(240)
+else:                               # Windows: no SIGALRM; interrupt the main thread, then end hard
+    import _thread, threading as _thr
+    def _later(seconds, fn):
+        t = _thr.Timer(seconds, fn)
+        t.daemon = True                     # never what keeps the driver alive
+        t.start()
+
+    def _timeout():
+        print("driver timeout", flush=True)
+        _thread.interrupt_main()
+        _later(60, lambda: os._exit(3))
+    _later(900, _timeout)
 # Protect the user's real settings/queue: snapshot settings.json, restore in finally.
 _settings = m.APP_DIR / "settings.json"
 _backup = _settings.with_suffix(".json.driver-backup")
@@ -476,9 +489,15 @@ try:
         # Look inside is a view of the main window, as Organize is: the whole content area,
         # its sidebar entry selected, no panel over the window
         root.geometry("1500x900"); root.update()
-        ok("browser.is-a-view", app._view == "look" and not app._panels.stack
-           and br.frame.winfo_width() == app._views_parent.winfo_width() and br.frame.winfo_width() > 1000,
-           f"view={app._view} {br.frame.winfo_width()} of {app._views_parent.winfo_width()}")
+        # Windows lays out no withdrawn window (every width reads 1): there the grid placement
+        # that makes the frame fill the content area is what counts
+        _fills = (br.frame.winfo_width() == app._views_parent.winfo_width() and br.frame.winfo_width() > 1000
+                  if sys.platform != "win32" else
+                  br.frame.winfo_manager() == "grid" and br.frame.master is app._views_parent
+                  and set(str(br.frame.grid_info().get("sticky"))) >= set("nsew"))
+        ok("browser.is-a-view", app._view == "look" and not app._panels.stack and _fills,
+           f"view={app._view} {br.frame.winfo_width()} of {app._views_parent.winfo_width()} "
+           f"grid={br.frame.grid_info() if br.frame.winfo_manager() == 'grid' else None}")
         app._show_view("queue"); root.update()
     # 15) queue save/restore keeps fpkg fields
     app._queue_restored = True; app._save_queue()
@@ -2323,7 +2342,7 @@ try:
     app.output_var.set(str(OUT))
     _ov.scan(); pump(lambda: not _ov._busy, timeout=60.0); root.update()
     _rows = [_ov.tree.item(i, "values") for i in _ov.tree.get_children()]
-    ok("organize.scan-no-clutter", [r_[1] for r_ in _rows] == ["Some.Release", "Some.Release/x.ffpfsc"]
+    ok("organize.scan-no-clutter", [r_[1].replace("\\", "/") for r_ in _rows] == ["Some.Release", "Some.Release/x.ffpfsc"]
        and len(_ov._checked) == 2 and all("LibProsperoPKG [PPSA99099]" in r_[2] for r_ in _rows), str(_rows))
     _ov.apply(); pump(lambda: not _ov._busy, timeout=60.0); pump(lambda: not _ov._busy, timeout=60.0); root.update()
     _t = "LibProsperoPKG [PPSA99099] [v01.000.000]"
@@ -2390,7 +2409,8 @@ try:
     _q0 = list(app.queue)
     app.queue[:] = [_ai]; app._details_item = None; app.update_queue_box(); root.update()
     ok("art.shown-at-size", app.art_label._photo is not None and app.art_label.size_ == app.ART_PX >= 96
-       and max(app.art_img.width(), app.art_img.height()) == app.ART_PX, str(getattr(app, "art_img", None)))
+       and max(app.art_img.width(), app.art_img.height()) == round(app.ART_PX * m.ui_kit.SCALE),
+       str(getattr(app, "art_img", None)))
     app._save_queue(); app.queue.clear(); app._details_item = None; app._restore_queue(); root.update()
     _rest = app.queue[0] if app.queue else None
     app.update_game_details(_rest); root.update()
@@ -2408,9 +2428,10 @@ try:
         app.log = _plog_saved
     _pdrv, _pspace = str(_pinfo.get("Drives", "")), app.temp_space_var.get()
     ok("details.drives-from-the-plan", _pdrv.startswith("unpacks on") and "builds on" in _pdrv and "writes to" in _pdrv
-       and " on the system drive: ~" in _pspace and _pspace.endswith("fits") and not hasattr(_pa, "_build_temp")
+       and f" on {m._drive_colon(OUT)} ~" in _pspace and "::" not in _pspace and _pspace.endswith("fits")
+       and not hasattr(_pa, "_build_temp")
        and not any(x.startswith("Auto:") for x in _plogs),
-       f"unpack={_pdrv.startswith('unpacks on')} builds={'builds on' in _pdrv} drive={' on the system drive: ~' in _pspace} "
+       f"unpack={_pdrv.startswith('unpacks on')} builds={'builds on' in _pdrv} drive={f' on {m._drive_colon(OUT)} ~' in _pspace} "
        f"fits={_pspace.endswith('fits')} untouched={not hasattr(_pa, '_build_temp')} "
        f"quiet={not any(x.startswith('Auto:') for x in _plogs)} space={_pspace[-60:]!r}")
     # Placeholder values hide the Space line and the last result
@@ -2701,16 +2722,16 @@ try:
         ok("wire.menu.remove", len(app.queue) == 2 and all(x is not items[0] for x in app.queue), f"{len(app.queue)} left")
 
         # shortcuts, run through the handlers Tk has bound on the window
-        for seq, view in (("<Command-Key-2>", "history"), ("<Command-Key-3>", "log"),
-                          ("<Command-Key-1>", "queue"), ("<Command-comma>", "settings")):
+        for seq, view in ((f"<{m.MOD}-Key-2>", "history"), (f"<{m.MOD}-Key-3>", "log"),
+                          (f"<{m.MOD}-Key-1>", "queue"), (f"<{m.MOD}-comma>", "settings")):
             _fire(root, seq); root.update()
             ok(f"wire.shortcut.{view}", app._view == view, f"{seq} -> view={app._view}")
         app._nav["queue"].invoke(); root.update()
-        _fire(root, "<Command-n>"); root.update()
+        _fire(root, f"<{m.MOD}-n>"); root.update()
         ok("wire.shortcut.add-job", _top() == "JobDialog", str(_top()))
-        _fire(root, "<Command-Key-2>"); root.update()
+        _fire(root, f"<{m.MOD}-Key-2>"); root.update()
         ok("wire.shortcut.view-leaves-panel", app._view == "history" and _top() is None, f"view={app._view} {_top()}")
-        _fire(root, "<Command-n>"); _fire(root, "<Command-r>"); root.update()
+        _fire(root, f"<{m.MOD}-n>"); _fire(root, f"<{m.MOD}-r>"); root.update()
         ok("wire.shortcut.actions-wait-behind-panel", _top() == "JobDialog" and not app._batch_running, str(_top()))
         close_toplevels(); app._show_view("queue"); root.update()
 

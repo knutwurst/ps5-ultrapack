@@ -74,6 +74,8 @@ def fake_sign_file(path: str) -> None:
                 os.chmod(tmp, os.stat(path).st_mode)
             except OSError:
                 pass
+            if os.name == "nt":
+                os.chmod(path, 0o666)       # Windows will not replace a read-only file
             os.replace(tmp, path)
         except BaseException:
             try:

@@ -282,7 +282,8 @@ class Fonts:
         base = tkfont.nametofont("TkDefaultFont").actual().get("family", "Helvetica")
         # Menlo ships with every macOS, so it is looked up first: listing all families costs
         # ~350 ms, and so does asking for one that is missing (Tk searches for a fallback).
-        mono = next((fam for fam in ("Menlo", "Monaco", "Courier New")
+        mono = next((fam for fam in (("Consolas", "Courier New") if sys.platform == "win32"
+                                     else ("Menlo", "Monaco", "Courier New"))
                      if tkfont.Font(root=root, family=fam, size=-11).actual("family") == fam), "Courier")
         # Negative Tk sizes are pixels.
         f = lambda px, weight="normal", fam=base: _Font(root=root, family=fam, size=-round(px * SCALE), weight=weight)
@@ -416,6 +417,8 @@ def attach_wheel_scroll(widget, *, pixel_unit: int = 1, notch_px: int = 40) -> N
         swipe still adds up, and a tick never rounds away to nothing."""
         if not px or not _span_ok(axis):
             return False
+        if isinstance(widget, Canvas):
+            px *= SCALE                 # a canvas scrolls in device pixels
         rem[axis] += px / float(pixel_unit)
         units = int(rem[axis])
         if units == 0:
@@ -1468,8 +1471,8 @@ class QueueList(tk.Frame):
         cv.bind("<Double-Button-1>", self._double)
         cv.bind(f"<{mod}-Button-1>", self._toggle_click)
         cv.bind("<Shift-Button-1>", self._range_click)
-        cv.bind("<Button-2>", self._context)          # right click on macOS
         if aqua:
+            cv.bind("<Button-2>", self._context)          # right click on macOS (middle elsewhere)
             cv.bind("<Control-Button-1>", self._context)   # Ctrl-click is a right click there
         cv.bind("<Button-3>", self._context)
         cv.bind(f"<{mod}-a>", lambda e: self._select_all())
