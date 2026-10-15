@@ -86,6 +86,11 @@ try:
 except ImportError:
     raise SystemExit("Missing customtkinter. Run: py -m pip install customtkinter")
 
+# The window is laid out in logical pixels, which macOS scales and a DPI-aware Windows
+# process does not: let Windows scale it as a whole instead of drawing it at half size.
+if sys.platform == "win32":
+    ctk.deactivate_automatic_dpi_awareness()
+
 try:
     from PIL import Image, ImageTk
 except Exception:

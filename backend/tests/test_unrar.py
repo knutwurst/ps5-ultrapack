@@ -119,6 +119,31 @@ class RarfileArchiveTests(unittest.TestCase):
 
 
 @unittest.skipIf(rarfile is None, NOT_BUILT)
+class NonAsciiNames(unittest.TestCase):
+    """A folder, a file name and a password outside ASCII reach UnRAR unchanged (on Windows
+    its char API reads them in the ANSI code page)."""
+
+    PASSWORD = "p\u00e4 ss"
+
+    def test_list_and_extract(self):
+        if RAR_CLI is None:
+            _skip("no `rar` command line tool on PATH")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "G\u00e4m\u00e9\u2122"
+            (root / "src").mkdir(parents=True)
+            (root / "src" / "d\u00e4ta.bin").write_bytes(os.urandom(50_000))
+            arc = root / "\u00dcber.rar"
+            proc = subprocess.run([RAR_CLI, "a", "-ma5", f"-hp{self.PASSWORD}", "-idq", str(arc), "d\u00e4ta.bin"],
+                                  cwd=root / "src", capture_output=True, text=True, timeout=60)
+            if proc.returncode != 0:
+                _skip(f"`rar a` failed: {(proc.stdout + proc.stderr)[-300:]}")
+            with rarfile.RarFile(str(arc), pwd=self.PASSWORD) as rf:
+                self.assertEqual(rf.namelist(), ["d\u00e4ta.bin"])
+                out = root / "\u00f6ut"
+                rf.extractall(str(out))
+            self.assertEqual((out / "d\u00e4ta.bin").read_bytes(), (root / "src" / "d\u00e4ta.bin").read_bytes())
+
+
 class MultiPartSets(unittest.TestCase):
     """A multi-part RAR 5 set with encrypted headers, brackets in its name and a dot in its
     password, built with the `rar` tool: a password that works opens it among wrong ones,
