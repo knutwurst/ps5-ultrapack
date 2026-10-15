@@ -310,6 +310,17 @@ class ExfatSource(unittest.TestCase):
         self.assertTrue(self.cli._extract_exfat_to(img, dest))
         self.assertTrue(img.is_file())
 
+    def test_titles_read_by_the_backend_and_from_an_image(self):
+        d = {"titleId": "PPSA99090", "localizedParameters": {
+            "defaultLanguage": "ar-AE", "ar-AE": {"titleName": "Arabic"}, "en-US": {"titleName": "English"}}}
+        self.assertEqual(self.cli._fpkg_param_title(d), "English")
+        self.assertEqual(self.cli._param_title(d), "English")
+        (self.game / "sce_sys" / "param.json").write_text(json.dumps(d), encoding="utf-8")
+        from mkpfs.game_metadata import read_game_metadata
+        import ultra_core
+        meta = read_game_metadata(self.write(self.game, self.tmp / "Titled.exfat"))
+        self.assertEqual(ultra_core.param_title(meta.param or {}), "English")
+
     def test_nested_image_is_unwrapped_and_removed(self):
         out = self.tmp / "out"; out.mkdir()
         inner = self.write(self.game, out / "inner.exfat")

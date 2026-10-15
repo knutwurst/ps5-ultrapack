@@ -1196,6 +1196,24 @@ def parse_title_id(path: Path, param_jsons: list | None = None) -> str:
     return "Unknown"
 
 
+def param_title(d) -> str:
+    """The game's title from a param.json dict: English when the game has it, else its
+    default language, else any language, else a top-level titleName."""
+    if not isinstance(d, dict):
+        return ""
+    lp = d.get("localizedParameters")
+    if isinstance(lp, dict):
+        langs = [k for k, v in lp.items() if isinstance(v, dict)]
+        order = (["en-US", "en-GB"] + [k for k in langs if k.lower().startswith("en")]
+                 + [lp.get("defaultLanguage")] + langs)
+        for lang in order:
+            block = lp.get(lang) if isinstance(lang, str) else None
+            name = str(block.get("titleName") or "").strip() if isinstance(block, dict) else ""
+            if name:
+                return name
+    return str(d.get("titleName") or "").strip()
+
+
 def guess_game_name(path: Path) -> str:
     # 1. Try param.json for the real localised title first
     for candidate in (path / "sce_sys" / "param.json",
@@ -1206,13 +1224,7 @@ def guess_game_name(path: Path) -> str:
         try:
             import json as _json
             data = _json.loads(param.read_text(encoding="utf-8", errors="replace"))
-            # param.json structure: {"titleId":..., "localizedParameters":{"defaultLanguage":"en-US", "en-US":{"titleName":"..."}}}
-            loc = data.get("localizedParameters", {})
-            default_lang = loc.get("defaultLanguage", "")
-            title = (loc.get(default_lang, {}).get("titleName", "")
-                     or loc.get("en-US", {}).get("titleName", "")
-                     or next((v.get("titleName", "") for v in loc.values()
-                               if isinstance(v, dict) and v.get("titleName")), ""))
+            title = param_title(data)
             if title:
                 return title.strip()
         except Exception:
@@ -1432,19 +1444,7 @@ def ident_from_param_bytes(data) -> dict | None:
         return None
     if not isinstance(d, dict):
         return None
-    title = ""
-    lp = d.get("localizedParameters") or {}
-    if isinstance(lp, dict):
-        lang = lp.get("defaultLanguage")
-        block = lp.get(lang) if isinstance(lang, str) else None
-        if isinstance(block, dict):
-            title = str(block.get("titleName") or "")
-        if not title:
-            for v in lp.values():
-                if isinstance(v, dict) and v.get("titleName"):
-                    title = str(v["titleName"]); break
-    if not title:
-        title = str(d.get("titleName") or "")
+    title = param_title(d)
     tid = str(d.get("titleId") or "").strip().upper()
     ver = str(d.get("contentVersion") or d.get("masterVersion") or "").strip()
     if not (title or tid):
@@ -3598,6 +3598,7 @@ __all__ = [
     "_space_preflight_ok",
     "space_shortfall",
     "removable_parts",
+    "param_title",
     "_fs_status",
     "_space_report",
     "get_folder_size",

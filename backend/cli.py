@@ -447,10 +447,8 @@ def _firmware_text(v) -> str:
 
 
 def _param_title(param: dict) -> str:
-    loc = param.get("localizedParameters") or {}
-    lang = loc.get("defaultLanguage") or "en-US"
-    return ((loc.get(lang) or {}).get("titleName") or next(
-        (v.get("titleName") for v in loc.values() if isinstance(v, dict) and v.get("titleName")), "") or "")
+    from ultra_core import param_title
+    return param_title(param)
 
 
 def param_report(root: Path) -> int:
@@ -1455,21 +1453,9 @@ def _clean_title(t: str) -> str:
 
 
 def _fpkg_param_title(d: dict) -> str:
-    """The display title from a param.json dict (Sony layout: localizedParameters →
-    defaultLanguage block → titleName; any language as fallback; legacy top-level)."""
-    try:
-        lp = d.get("localizedParameters") or {}
-        if isinstance(lp, dict):
-            lang = lp.get("defaultLanguage")
-            block = lp.get(lang) if isinstance(lang, str) else None
-            if isinstance(block, dict) and block.get("titleName"):
-                return str(block["titleName"])
-            for v in lp.values():
-                if isinstance(v, dict) and v.get("titleName"):
-                    return str(v["titleName"])
-        return str(d.get("titleName") or "")
-    except Exception:
-        return ""
+    """The display title from a param.json dict (ultra_core.param_title)."""
+    from ultra_core import param_title
+    return param_title(d)
 
 
 def _resolve_fpkg_identity(build_src: Path, args) -> dict:
@@ -1783,8 +1769,7 @@ def new_patch_backup(scratch_root: Path, patch_name: str) -> Path:
 
 
 def _write_patch_backup_readme(backup_dir: Path, patch_name: str, game: dict, done: dict) -> None:
-    title = (game.get("localizedParameters") or {}).get((game.get("localizedParameters") or {}).get(
-        "defaultLanguage", "en-US"), {}).get("titleName", "") if isinstance(game.get("localizedParameters"), dict) else ""
+    title = _param_title(game)
     lines = [
         f"Original files of {title or 'the game'} [{game.get('titleId', '?')}] v{game.get('contentVersion', '?')},",
         f"from before this patch was integrated: {patch_name}",

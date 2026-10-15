@@ -4109,16 +4109,7 @@ class JobDialog(EmbeddedDialog):
             self._ident_note.set(f"param.json could not be read ({e}); the identity is used as typed.")
             return
         d = d if isinstance(d, dict) else {}
-        title = ""
-        lp = d.get("localizedParameters") or {}
-        if isinstance(lp, dict):
-            lang = lp.get("defaultLanguage")
-            block = lp.get(lang) if isinstance(lang, str) else None
-            if isinstance(block, dict):
-                title = str(block.get("titleName") or "")
-            if not title:
-                title = next((str(v["titleName"]) for v in lp.values() if isinstance(v, dict) and v.get("titleName")), "")
-        title = title or str(d.get("titleName") or "")
+        title = param_title(d)
         found = {"content_id": str(d.get("contentId") or "").strip(), "title_id": str(d.get("titleId") or "").strip(),
                  "title": title, "version": str(d.get("contentVersion") or d.get("masterVersion") or "").strip()}
         for key, var in (("content_id", self.cid_var), ("title_id", self.tid_var),
@@ -9391,30 +9382,6 @@ class App:
             return ident_from_param_bytes(Path(pj).read_bytes())
         except OSError:
             return None
-        try:
-            d = json.loads(Path(pj).read_text(encoding="utf-8-sig", errors="replace"))
-        except Exception:
-            return None
-        if not isinstance(d, dict):
-            return None
-        title = ""
-        lp = d.get("localizedParameters") or {}
-        if isinstance(lp, dict):
-            lang = lp.get("defaultLanguage")
-            block = lp.get(lang) if isinstance(lang, str) else None
-            if isinstance(block, dict):
-                title = str(block.get("titleName") or "")
-            if not title:
-                for v in lp.values():
-                    if isinstance(v, dict) and v.get("titleName"):
-                        title = str(v["titleName"]); break
-        if not title:
-            title = str(d.get("titleName") or "")
-        tid = str(d.get("titleId") or "").strip().upper()
-        ver = str(d.get("contentVersion") or d.get("masterVersion") or "").strip()
-        if not (title or tid):
-            return None
-        return {"title": title.strip(), "title_id": tid, "version": ver}
 
     def _read_image_metadata(self, p: Path) -> dict | None:
         """param.json-derived identity of a packed image, without unpacking it."""
@@ -9458,7 +9425,7 @@ class App:
             sys.path.insert(0, str(backend))
         from mkpfs.game_metadata import read_game_metadata   # reads only the metadata file
         m = read_game_metadata(p)
-        title = (getattr(m, "game_title", "") or "").strip()
+        title = param_title(getattr(m, "param", None) or {}) or (getattr(m, "game_title", "") or "").strip()
         tid = (getattr(m, "title_id", "") or "").strip()
         ver = (getattr(m, "version", "") or "").strip()
         if tid in ("-", " - ", "Unknown"):

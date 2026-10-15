@@ -50,6 +50,7 @@ class GameMetadata:
     icon_bytes: bytes | None = None
     has_apr_emu: bool = False
     error: str = ""
+    param: dict | None = None
 
     @property
     def size_display(self) -> str:
@@ -327,6 +328,7 @@ def _fill_from_param_json(data: bytes, meta: GameMetadata) -> None:
     root = json.loads(data.decode("utf-8-sig"))
     if not isinstance(root, dict):
         return
+    meta.param = root
 
     content_id = _string_value(root, "contentId", "content_id")
     if content_id:

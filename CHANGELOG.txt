@@ -13,6 +13,11 @@ FIXES
     to a .pkg or a folder, and to any output with a patch, a backport or
     signing on the way. The image now stays; only the After-job rule
     (Move, Trash, Delete) does anything with it.
+  - A game from an .exfat or .ffpkg image could be named in another
+    language, such as Arabic for a US game: its title came from the
+    first language in its param.json. Every source now takes the same
+    title: the English one when the game has it, else the one of its
+    default language.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.3

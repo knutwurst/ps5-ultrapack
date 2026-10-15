@@ -110,5 +110,26 @@ class DashSeparators(unittest.TestCase):
         self.assertEqual(got["title"], "Sample Game Two")
 
 
+class ParamTitle(unittest.TestCase):
+    """The title out of a param.json: English when the game has it, else its default language."""
+
+    def param(self, default, *langs):
+        lp = {"defaultLanguage": default}
+        for lang, name in langs:
+            lp[lang] = {"titleName": name}
+        return {"titleId": "PPSA99090", "localizedParameters": lp}
+
+    def test_english_before_the_first_language(self):
+        d = self.param("ar-AE", ("ar-AE", "Arabic"), ("zh-Hant", "Chinese"), ("en-US", "English"))
+        self.assertEqual(uc.param_title(d), "English")
+        self.assertEqual(uc.ident_from_param_bytes(__import__("json").dumps(d).encode())["title"], "English")
+
+    def test_any_english_then_default_then_any(self):
+        self.assertEqual(uc.param_title(self.param("ja-JP", ("ja-JP", "Japanese"), ("en-GB", "British"))), "British")
+        self.assertEqual(uc.param_title(self.param("fr-FR", ("de-DE", "German"), ("fr-FR", "French"))), "French")
+        self.assertEqual(uc.param_title(self.param("", ("de-DE", "German"))), "German")
+        self.assertEqual(uc.param_title({"titleName": "Plain"}), "Plain")
+
+
 if __name__ == "__main__":
     unittest.main()
