@@ -3,7 +3,45 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.2.4  (current)
+  v2.2.5  (current)
+────────────────────────────────────────────────────────────────────────
+
+ARCHIVES
+
+  - 7-Zip ships with the app (FETCH_7ZIP.sh fetches the pinned 7-Zip
+    console tool for the build). .7z archives unpack with it instead of
+    the pure-Python reader, and zips encrypted with AES or packed with
+    Deflate64 open without anything installed. An installed 7-Zip, then
+    the Python reader, remain as fallbacks.
+
+QUEUE
+
+  - Several selected jobs stay selected when game names come in late;
+    a refresh for new names used to drop the selection to one job.
+
+FIXES
+
+  - A patch file that cannot be applied fails the job with its name,
+    instead of a warning and a game built without that file.
+  - The free space of a work folder the app has not made yet is read
+    from its drive, so a job on a fresh extra temp drive is no longer
+    skipped for lack of space.
+  - Saving settings while another part of the app reads them can no
+    longer set the profile aside as damaged.
+  - A move that the system refuses across devices (two shares of one
+    server) copies instead of failing.
+  - Organize's overwrite no longer stops on a leftover from an earlier,
+    interrupted run, and unpacking into a folder that cannot be
+    cleared stops with a message instead of putting the game inside it.
+
+WINDOWS
+
+  - Windows x64 runs from source and builds as a standalone app
+    (BUILD_WINDOWS_PARTS.sh on a Mac, then BUILD_WINDOWS_APP.ps1). There
+    is no Windows release.
+
+────────────────────────────────────────────────────────────────────────
+  v2.2.4
 ────────────────────────────────────────────────────────────────────────
 
 FIXES
