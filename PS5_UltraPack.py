@@ -120,7 +120,9 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.2.5"
+APP_VERSION = "2.2.6"
+# Windows builds are a preview for now: the title, sidebar and About say so.
+APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
 # For archive sources, the GUI extraction occupies the first slice of a game's overall
 # progress; the worker's pack progress is compressed into the remaining tail so the
 # whole-game percentage stays monotonic across extraction → pack (see CLIWorker._set_stage
@@ -1430,7 +1432,7 @@ def export_diagnostic_zip(last_cmd: str = "", extra_info: str = "") -> Path | No
                 pass
 
             session_info = "\n".join([
-                f"{APP_NAME} {APP_VERSION}",
+                f"{APP_NAME} {APP_VERSION}{APP_EDITION}",
                 f"Generated:      {now_datetime()}",
                 f"Python:         {sys.version}",
                 f"OS:             {sys.platform} {os.name}",
@@ -2059,7 +2061,7 @@ class SettingsView:
         about = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         about.pack(fill="x", pady=(4, 12))
         for line in [
-            f"Version   {APP_VERSION}",
+            f"Version   {APP_VERSION}{APP_EDITION}",
             f"MkPFS     {MKPFS_NAME} {MKPFS_VERSION}",
             f"Config    {SETTINGS_FILE}",
             f"History   {HISTORY_FILE}",
@@ -2369,7 +2371,7 @@ class CLIWorker(threading.Thread):
                 dropped = _raw_lines.popleft()
                 _raw_buf_bytes -= len(dropped.encode("utf-8", errors="replace"))
 
-        self.app.log("INFO", f"{APP_NAME} {APP_VERSION} started")
+        self.app.log("INFO", f"{APP_NAME} {APP_VERSION}{APP_EDITION} started")
         self.app.log("INFO", f"Backend: {BACKEND_NAME}")
         self.app.log("INFO", f"MkPFS: {MKPFS_NAME} v{MKPFS_VERSION}")
         _op_label = {"unpack": "Unpack", "patch": "Integrate patch",
@@ -5718,7 +5720,7 @@ class App:
         ctk.set_default_color_theme("blue")
         apply_ctk_theme(ctk)
         set_window_appearance(self.root, self._theme)
-        self.root.title(f"{APP_NAME} {APP_VERSION}")
+        self.root.title(f"{APP_NAME} {APP_VERSION}{APP_EDITION}")
         self.root.geometry("1280x820")
         self.root.minsize(900, 600)
 
@@ -5927,7 +5929,7 @@ class App:
         brand = kit.frame(side, bg="sidebar")
         brand.pack(fill="x", padx=18, pady=(18, 14))
         kit.label(brand, bg="sidebar", text=APP_NAME, font=kit.fonts.app).pack(anchor="w")
-        kit.label(brand, bg="sidebar", fg="faint", font=kit.fonts.caption, text=APP_VERSION).pack(anchor="w", pady=(1, 0))
+        kit.label(brand, bg="sidebar", fg="faint", font=kit.fonts.caption, text=APP_VERSION + (" preview" if APP_EDITION else "")).pack(anchor="w", pady=(1, 0))
 
         def nav(parent, text, icon, cmd, tooltip=None):
             b = IconButton(parent, kit, text=text, icon=icon, command=cmd, variant="nav", height=28,

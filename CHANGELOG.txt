@@ -3,7 +3,25 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.2.5  (current)
+  v2.2.6  (current)
+────────────────────────────────────────────────────────────────────────
+
+QUEUE
+
+  - The job shown in the details stays there when game names come in
+    late. Since 2.2.5 the details could jump to the job focused in the
+    list. Several selected jobs still stay selected.
+
+WINDOWS (PREVIEW)
+
+  - First Windows x64 build, as a preview: the window title, the sidebar
+    and About say "Windows preview", and the zip is named
+    PS5-UltraPack-<version>-windows-x64-preview.zip.
+  - Paths show with backslashes, also those from the file dialogs and
+    from settings saved with forward slashes.
+
+────────────────────────────────────────────────────────────────────────
+  v2.2.5
 ────────────────────────────────────────────────────────────────────────
 
 ARCHIVES

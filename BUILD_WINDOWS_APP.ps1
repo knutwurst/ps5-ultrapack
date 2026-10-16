@@ -11,7 +11,8 @@ $Version = (Select-String -Path PS5_UltraPack.py -Pattern '^APP_VERSION\s*=\s*"(
 & $Python -m PyInstaller --clean --noconfirm --distpath dist\windows --workpath $WorkPath PS5_UltraPack_windows.spec
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$Zip = "dist\PS5-UltraPack-$Version-windows-x64.zip"
+# Windows builds are a preview for now, and the zip name says so.
+$Zip = "dist\PS5-UltraPack-$Version-windows-x64-preview.zip"
 Remove-Item -Force -ErrorAction SilentlyContinue $Zip, "$Zip.sha256"
 Compress-Archive -Path "dist\windows\PS5 UltraPack" -DestinationPath $Zip
 $Hash = (Get-FileHash -Algorithm SHA256 $Zip).Hash.ToLower()
