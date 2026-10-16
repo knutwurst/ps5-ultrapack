@@ -2588,6 +2588,15 @@ try:
             except Exception as e:
                 bad.append(f"{key}: {e!r}")
         ok("wire.settings.every-page", not bad, str(bad))
+        # About › Donate opens the PayPal page in the browser (the browser call is stubbed here)
+        _opened, _real_open = [], m.webbrowser.open
+        m.webbrowser.open = lambda url, *a, **k: _opened.append(url)
+        try:
+            sv._nav["about"].invoke(); root.update()
+            sv._donate_btn.invoke(); root.update()
+        finally:
+            m.webbrowser.open = _real_open
+        ok("wire.about.donate", _opened == [m.DONATE_URL], str(_opened))
         # Settings › General › When a job is done: Delete asks first, Move shows its folder
         sv._nav["general"].invoke(); root.update()
         _real_ask2 = m.messagebox.askyesno
@@ -2788,6 +2797,13 @@ try:
         was = app._inspector_open
         menus["View"].invoke(_entry(menus["View"], "Hide Details" if was else "Show Details")); root.update()
         ok("wire.menubar.details", app._inspector_open != was, f"{was} -> {app._inspector_open}")
+        _opened, _real_open = [], m.webbrowser.open
+        m.webbrowser.open = lambda url, *a, **k: _opened.append(url)
+        try:
+            menus["Help"].invoke(_entry(menus["Help"], "Buy Me a Coffee…")); root.update()
+        finally:
+            m.webbrowser.open = _real_open
+        ok("wire.menubar.donate", _opened == [m.DONATE_URL], str(_opened))
         ok("wire.menubar.stop-safe-when-idle", (menus["File"].invoke(_entry(menus["File"], "Stop Queue")), not app.cancel_requested)[1], "")
         if m.IS_MAC:
             ok("wire.menubar.mac-settings", bool(root.tk.call("info", "commands", "::tk::mac::ShowPreferences")), "")

@@ -394,6 +394,7 @@ else:
     ACCEL = SHORTCUT = {k: ("Ctrl+Alt+I" if k == "details" else f"Ctrl+{v}") for k, v in _KEYS.items()}
 DETAILS_SEQ = "<Command-Option-i>" if IS_MAC else "<Control-Alt-i>"
 REPO_URL = "https://github.com/knutwurst/ps5-ultrapack"
+DONATE_URL = "https://paypal.me/oliverkoester"
 # The dialogs use the main window's type scale (see ui_kit.Fonts): logical pixels, which
 # is also what CTkFont sizes are. If a CTk scaling is ever set, set it before any window
 # exists: changing it pins every open CTk window to its current size for a second.
@@ -2073,6 +2074,17 @@ class SettingsView:
                                  "with PSBrew's MkPFS and packages with LibProsperoPkg. See NOTICES.md.",
                      text_color=MUTED, font=ctk.CTkFont(size=12), wraplength=520, justify="left").pack(
             anchor="w", padx=14, pady=(8, 12))
+        ctk.CTkLabel(about, text="If you like what I do, you can buy me a coffee.", text_color=WHITE,
+                     font=ctk.CTkFont(size=12), anchor="w").pack(anchor="w", padx=14)
+        self._donate_btn = ctk.CTkButton(about, text="Donate with PayPal", fg_color=BTN, text_color=WHITE,
+                                         hover_color=BTN_HOVER, border_width=1, border_color=BTN_BORDER, width=160,
+                                         command=lambda: webbrowser.open(DONATE_URL))
+        self._donate_btn.pack(anchor="w", padx=14, pady=(6, 4))
+        ctk.CTkLabel(about, text="It doesn't have to be a big donation. A few cents show me who uses the tool and "
+                                 "cares about where it goes next. That keeps me motivated, and I know I'm not "
+                                 "coding for the bin ;)",
+                     text_color=MUTED, font=ctk.CTkFont(size=11), wraplength=520, justify="left").pack(
+            anchor="w", padx=14, pady=(0, 12))
         ctk.CTkButton(scroll, text="Open config folder", fg_color=BTN, text_color=WHITE, hover_color=BTN_HOVER,
                       border_width=1, border_color=BTN_BORDER, width=160,
                       command=lambda: open_path(APP_DIR)).pack(anchor="w", pady=(0, 12))
@@ -6871,6 +6883,7 @@ class App:
             mb.add_cascade(label="Window", menu=tk.Menu(mb, name="window", tearoff=0))
         hm = tk.Menu(mb, name="help", tearoff=0)
         hm.add_command(label=f"{APP_NAME} on GitHub", command=lambda: webbrowser.open(REPO_URL))
+        hm.add_command(label="Buy Me a Coffee…", command=lambda: webbrowser.open(DONATE_URL))
         hm.add_separator()
         hm.add_command(label="Open Log Folder", command=self._open_log_folder)
         hm.add_command(label="Raw Backend Log", command=self.open_raw_log)
