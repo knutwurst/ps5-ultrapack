@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <b>Pack, convert, patch, backport and sign PS5 games, and build installable <code>.pkg</code> files. One Mac app, one queue.</b><br>
+  <b>Pack, convert, patch, backport and sign PS5 games, and build installable <code>.pkg</code> files. One app for macOS and Windows, one queue.</b><br>
   Start from a game folder, an archive, a disk image, a <code>.ffpfs</code> or <code>.ffpfsc</code> container, or a <code>.pkg</code>. Say what to change and what should come out; the queue does the rest.<br>
   <sub>Formerly PS5 FFPFSC ULTRA.</sub>
 </p>
@@ -25,7 +25,7 @@
 
 ## Highlights
 
-- **Installable `.pkg` on macOS.** No Wine, no Sony DLL. Homebrew and a retail title built here install and launch on a retail PS5 on firmware 11.60.
+- **Installable `.pkg` on macOS and Windows.** No Wine, no Sony DLL. Homebrew and a retail title built on the Mac install and launch on a retail PS5 on firmware 11.60.
 - **Backport to an older firmware.** The app lowers the SDK version of the game's executables and checks the game's imports against the target firmware's libraries before it builds. When the target lacks functions, it copies your patched system libraries into the game's `fakelib/` folder, prepared from BestPig's BackPork patches in one click. Targets: 7.61, 6.02, an SDK-only 10.xx, and any firmware whose libraries you keep in a folder.
 - **Look inside without unpacking.** Browse a `.ffpfs`, `.ffpfsc` or `.pkg` and extract single files or folders. Only the blocks you ask for get decoded, byte-identical to the original.
 - **PS4 packages into your library.** A PS4 `.pkg`, a folder or an archive of them lands as `<Title> [CUSA12345] [v01.07]` with the game, `UPDATE [v01.07]` and `<Title> DLC <name>` inside, many DLCs in `DLC Pack`. A title folder that is already there is joined, and a newer update raises its version tag. Look inside and Unpack read PS4 fake packages too.
@@ -53,7 +53,7 @@ Earlier interfaces are kept for comparison in [docs/screenshots](docs/screenshot
 
 ## 🎮 PS5 fPKG that launches on 11.60
 
-**Build console-installable PS5 `.pkg` files on macOS, in-process: no Wine, no Sony DLL.** The bundled `ffpfsc-pkg-tool` (a self-contained .NET 9 build of drakmor's LibProsperoPkg 1.2.0, GPL-3) turns any source, a game folder, an archive, a `.ffpfsc` or an `.exfat` image, into a debug `.pkg` that installs and launches on a jailbroken PS5.
+**Build console-installable PS5 `.pkg` files on macOS and Windows, in-process: no Wine, no Sony DLL.** The bundled `ffpfsc-pkg-tool` (a self-contained .NET 9 build of drakmor's LibProsperoPkg 1.2.0, GPL-3) turns any source, a game folder, an archive, a `.ffpfsc` or an `.exfat` image, into a debug `.pkg` that installs and launches on a jailbroken PS5.
 
 <p align="center">
   <img src="images/add-job-pkg.jpg" alt="Add job with .pkg as the output and More options open: the identity read from param.json, the codec layer" width="760">
@@ -152,7 +152,7 @@ A plain packer asks you to prepare a clean folder, then writes a single image to
 - **It routes the build across your drives.** It reads the source off one drive, builds the inner image on your fast temp SSD, and streams the final container to the output drive, so no disk reads and writes the same data during compression. When the whole footprint fits the SSD it keeps everything there; when it does not, it splits the work; when the SSD cannot even hold the image, it falls back to the output drive so the build still finishes. Every choice is printed in the log.
 - **It tells your drives apart, the awkward ones too.** It detects SSD versus HDD per volume and never treats a big slow disk as scratch just because it has the most free space. A USB SSD that reports no flash flag (common behind a bridge) gets a short timed write, so it is recognized as the SSD it is. A free-space gate skips a job with real numbers instead of failing mid-build.
 - **It builds images the console reads.** Packing forces the 64 KiB PFS block size the PS5 expects. A smaller block passes a local build and verify, then the console misreads the filesystem and crashes on launch. Boot-tested on firmware 11.60: 64 KiB boots, a 4 KiB build of the same game crashes.
-- **You feed it the download, not a prepared folder.** It reads ZIP, RAR and 7z straight through, including multi-part RAR sets and archives with encrypted headers. macOS carries a self-contained native UnRAR module, so RAR needs nothing external.
+- **You feed it the download, not a prepared folder.** It reads ZIP, RAR and 7z straight through, including multi-part RAR sets and archives with encrypted headers. The app carries a self-contained native UnRAR module, so RAR needs nothing external.
 - **It keeps the image clean without losing your files.** Extras that ship next to a game, such as text files, checksum files or a bundle folder, never enter the image, and none of them is deleted: the app moves them next to the finished container. OS clutter (`.DS_Store`, `._*`, `__MACOSX`) is dropped everywhere: it is not unpacked, not copied, not packed and not moved along.
 - **It changes what you ask for, in one run.** Patch, backport and sign are steps of the same job, applied in a fixed order on a staging copy, and the result is validated before it counts as done.
 - **It opens a packed image and pulls one file out.** **Look inside** decompresses only the blocks it touches, so opening a 100 GB container does not wait for a full decompression, and one file costs a fraction of a full unpack.
@@ -195,7 +195,7 @@ It detects SSD versus HDD per drive, including USB SSDs that report no flash fla
 
 ## Requirements
 
-- macOS on Apple Silicon for the app and the releases.
+- macOS on Apple Silicon for the Mac app and its releases.
 - Windows x64 as a [preview](https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.2.6-windows-preview.1): the same features, tested on Windows 11. The preview has not been checked on a console yet.
 - Python 3.10 or newer, to run from source or to build.
 - A C++ compiler for the bundled UnRAR module (Xcode Command Line Tools), needed only when building.
