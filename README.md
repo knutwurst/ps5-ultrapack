@@ -21,6 +21,11 @@
   <img src="https://img.shields.io/badge/binary-GPL--3-3a3a3a?style=for-the-badge" alt="Binary GPL-3">
 </p>
 
+<p align="center">
+  If you like what I do, you can buy me a coffee*: <a href="https://paypal.me/oliverkoester"><img src="https://img.shields.io/badge/Donate-PayPal-0070ba?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate with PayPal" align="absmiddle"></a><br>
+  <sub>*It doesn't have to be a big donation. A few cents show me who uses the tool and cares about where it goes next. That keeps me motivated, and I know I'm not coding for the bin ;)</sub>
+</p>
+
 ---
 
 ## Highlights
@@ -259,3 +264,8 @@ Full breakdown — including trademark and user-responsibility notes — is in [
 **The compiled `.app` binary** statically embeds MkPFS and LibProsperoPkg and is therefore distributed as a **combined work under GPL-3.0-or-later** (GPL-3 section 5). Everything needed to rebuild it is in this repository — the Python and C# sources, the pinned NuGet references, and the LibProsperoPkg 1.2.0 assembly (pristine and patched, with the patch tooling and a modification notice under `backend/native/src/ffpfsc-pkg-tool/lib/`); LibProsperoPkg's lineage is upstream at [drakmor/LibProsperoPkg](https://github.com/drakmor/LibProsperoPkg), and `lib/README.md` records which build is bundled and where its source stands. Every bundled component's license is GPL-3 compatible.
 
 **Not affiliated with Sony Interactive Entertainment Inc.** "PlayStation" and "PS5" are trademarks of Sony Interactive Entertainment; use here is nominative fair use to identify the format and console this tool interoperates with. This tool builds and processes PS5 package formats from files **you** supply — it does not decrypt, decode, or distribute any Sony-owned content, firmware, keys, or executables. You are responsible for having the legal right to any content you process with it (dumps of games you own, homebrew you have written or been licensed to redistribute). See `NOTICES.md` for the full statement.
+
+---
+
+### If you like what I do, you can buy me a coffee*: [![Donate](https://img.shields.io/badge/Donate-PayPal-0070ba?logo=paypal&logoColor=white)](https://paypal.me/oliverkoester)
+<sub>*It doesn't have to be a big donation. A few cents show me who uses the tool and cares about where it goes next. That keeps me motivated, and I know I'm not coding for the bin ;)</sub>
