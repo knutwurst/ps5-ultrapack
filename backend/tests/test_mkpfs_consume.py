@@ -27,7 +27,11 @@ class Consume(unittest.TestCase):
         (g / "data" / "b.bin").write_bytes(b"pattern" * (500 << 10))
         outside = self.d / "outside.bin"
         outside.write_bytes(os.urandom(2 << 20))
-        os.symlink(outside, g / "data" / "link.bin")
+        try:
+            os.symlink(outside, g / "data" / "link.bin")     # Windows: needs a right most users lack
+            self.links = True
+        except OSError:
+            self.links = False
         self.ref = self.d / "ref"
         shutil.copytree(g, self.ref, symlinks=True)
 
@@ -42,7 +46,7 @@ class Consume(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
         self.assertIn("[consume] freed", r.stdout)
         self.assertEqual(self.files(self.d / "game"),
-                         ["data/link.bin", "eboot.bin", "sce_sys/big.dat", "sce_sys/param.json"])
+                         (["data/link.bin"] if self.links else []) + ["eboot.bin", "sce_sys/big.dat", "sce_sys/param.json"])
         self.assertTrue((self.d / "outside.bin").exists())
         # the image holds every file byte for byte (a full check against the untouched copy)
         v = subprocess.run([PY, "-m", "mkpfs", "verify", "--source-dir", str(self.ref), str(self.d / "img.ffpfs")],
