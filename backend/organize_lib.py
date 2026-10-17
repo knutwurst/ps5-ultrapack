@@ -676,6 +676,8 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
         entries = [Entry(src, kind)] if kind else []
     else:
         entries, companions = walk(src)
+    # an archive inside the source is no game of its own here: it comes along like a companion
+    companions += [q for e in entries if e.kind == "archive" for q in (e.parts or [e.path])]
     entries = [e for e in entries if e.kind != "archive"]
     for e in entries:
         try:
@@ -689,8 +691,14 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             if e.kind == "pkg" and e.role == "game" and not e.title_id.startswith("CUSA"):
                 e.role = name_role(e.path, src if src.is_dir() else None) or e.role   # as scan() does
     ok = [e for e in entries if e.known]
-    for e in entries:
-        if not e.known:
+    unread = [e for e in entries if not e.known]
+    single = len({e.title_id for e in ok}) == 1 and src.is_dir()
+    for e in unread:
+        if single:
+            _say(on_line, f"[WARN] {e.path.name}: {e.note or 'no game metadata found'}; "
+                          "it goes into the title folder as it is")
+            companions.append(e.path)
+        else:
             _say(on_line, f"[WARN] {e.path.name}: {e.note or 'no game metadata found'}; left where it is")
     if not ok:
         _say(on_line, "[ERROR] nothing with readable game metadata found")
@@ -802,7 +810,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
         done += size
     # What came with one game (checksums, tools, notes) goes into its title folder, as it sat
     # in the source. With several titles in the source nobody knows whose it is: it stays.
-    if companions and len({e.title_id for e in ok}) == 1 and folders:
+    if companions and single and folders:
         home = folders[0]
         for c in companions:
             try:
@@ -814,7 +822,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
             rc = (copy_job.run_copy_tree(c, dst, mode=cmode, on_line=lambda _l: None) if c.is_dir() else
-                  copy_job.run_copy(c, dst.parent, dst_name=dst.name, mode=cmode, on_line=lambda _l: None))
+                  _bring_file(c, dst, move=cmode == copy_job.MOVE))
             if rc in (0, 2):
                 _say(on_line, f"[OK] Came along: {dst.relative_to(out)}")
             else:
@@ -826,6 +834,30 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
         uc.strip_fs_junk(f)
         _drop_sidecar(f)
     return rc_all
+
+
+def _bring_file(src: Path, dst: Path, *, move: bool) -> int:
+    """Any file (run_copy takes containers only) to *dst*: a rename on one drive, else a copy
+    under a temporary name that takes the real one when complete; a move then drops the source."""
+    if move:
+        try:
+            os.rename(src, dst)
+            return 0
+        except OSError:
+            pass
+    part = dst.with_name(dst.name + ".copy-tmp")
+    try:
+        shutil.copy2(src, part)
+        os.replace(part, dst)
+        if move:
+            src.unlink()
+        return 0
+    except OSError:
+        try:
+            part.unlink()
+        except OSError:
+            pass
+        return 1
 
 
 def _size_of(p: Path) -> int:

@@ -327,6 +327,22 @@ class Into(Tree):
         # the game, not the small backport, carries the game's name
         self.assertGreater((self.lib() / folder / "Alpha Game [PPSA00001] [v01.000] [fw11.00].pkg").stat().st_size, 4000)
 
+    def test_an_unreadable_package_and_an_inner_archive_come_along(self):
+        # what Organize cannot read is not left behind in an unpack that is deleted afterwards
+        self.put("dl/game.pkg", dict(A, fw="11.00"))
+        self.put("dl/backport (4.xx to 10.xx)/game-4xx.pkg", text="not readable")
+        self.put("dl/extras/bonus.part1.rar", text="r1"); self.put("dl/extras/bonus.part2.rar", text="r2")
+        self.put("dl/release.sha256")
+        lines = []
+        self.assertEqual(ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move",
+                                          on_line=lines.append), 0)
+        got = sorted(p.relative_to(self.lib() / FA).as_posix() for p in self.lib().rglob("*") if p.is_file())
+        self.assertEqual(got, sorted(["Alpha Game [PPSA00001] [v01.000] [fw11.00].pkg",
+                                      "backport (4.xx to 10.xx)/game-4xx.pkg",
+                                      "extras/bonus.part1.rar", "extras/bonus.part2.rar", "release.sha256"]), lines)
+        self.assertEqual([p for p in (self.root / "dl").rglob("*") if p.is_file()], [])
+        self.assertTrue(any("game-4xx.pkg" in l and "as it is" in l for l in lines), lines)
+
     def test_several_backports_keep_their_folders(self):
         g = dict(A, fw="11.00")
         self.put("dl/game.pkg", g)

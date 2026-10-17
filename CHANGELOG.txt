@@ -18,9 +18,11 @@ ORGANIZE
     Before, the second was skipped as "already there", and the
     alphabetically first one (a small backport) could take the game's
     name.
-  - What came with one game (checksum files, tools, notes) goes into
-    its title folder as it sat in the source. With several titles in
-    the source it stays where it is.
+  - What came with one game goes into its title folder as it sat in
+    the source: checksum files, tools, notes, an archive inside the
+    release, and any package Organize cannot read (its log says so).
+    Before, all of these stayed in the unpack and went away with it.
+    With several titles in the source they stay where they are.
 
 ARCHIVES
 
