@@ -643,6 +643,7 @@ def extract_pfs_members(image_path, members, dest_dir, overwrite: bool = False) 
             out.parent.mkdir(parents=True, exist_ok=True)
             # written beside its final name and moved there when complete
             fd, tmp = tempfile.mkstemp(prefix=f".{out.name[:80]}.", suffix=".part", dir=str(out.parent))
+            _plain_mode(tmp)                      # the extracted file is not private
             part = Path(tmp)
             try:
                 with os.fdopen(fd, "wb") as o:
@@ -893,6 +894,16 @@ _SCRATCH_ROOTS_MADE: set = set()
 def _drop_empty_dir(path: Path) -> None:
     try:
         Path(path).rmdir()          # only an empty folder; anything else stays
+    except OSError:
+        pass
+
+
+def _plain_mode(path) -> None:
+    """The mode a plain new file or folder gets (mkstemp/mkdtemp make it private, 0600/0700)."""
+    um = os.umask(0)
+    os.umask(um)
+    try:
+        os.chmod(path, (0o777 if os.path.isdir(path) else 0o666) & ~um)
     except OSError:
         pass
 
@@ -1753,6 +1764,11 @@ def _extras_set_aside(game_folder: Path, dest_dir: Path):
             sys.exit(1)
     picked = _non_game_extras(game_folder)
     if not picked:
+        yield
+        return
+    if game_folder.parent == game_folder or os.path.ismount(game_folder):
+        # a drive's root folder: no place beside it (and on Windows "beside" lies inside it)
+        print(f"[WARN] {game_folder} is a drive's root: its non-game extras stay and are packed.", flush=True)
         yield
         return
     try:
@@ -3229,7 +3245,9 @@ def main() -> None:
                 if owned is None and wanted:
                     print("[INFO] Applying the changes to the source folder in place.", flush=True)
                 if wanted:
-                    _chain_transforms(root, args, scratch_root, restorable=owned is None)
+                    # the user's own folder, not the app's unpack handed over with --stage-in-place
+                    _chain_transforms(root, args, scratch_root,
+                                      restorable=owned is None and not getattr(args, "stage_in_place", False))
             except SystemExit:
                 _drop_chain_scratch(owned, args)
                 raise
@@ -3252,6 +3270,7 @@ def main() -> None:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 # the new tree lands beside the destination first; an old one goes only after
                 holder = Path(tempfile.mkdtemp(prefix=f".{dest.name[:60]}.new-", dir=str(dest.parent)))
+                _plain_mode(holder)                 # the folder it becomes is not private
                 shutil.move(str(root), str(holder / "game"))
                 _swap_in_folder(holder / "game", dest)
             except Exception as e:
@@ -3272,8 +3291,11 @@ def main() -> None:
             import atexit
             atexit.register(shutil.rmtree, str(owned), ignore_errors=True)
             args._chain_owned = str(owned)      # pass 1 may consume it, pass 2 does without it
-            if getattr(args, "_chain_extras", None):
-                atexit.register(shutil.rmtree, args._chain_extras, ignore_errors=True)
+
+        # the extras go next to the output now, before the build: a retry that resumes from
+        # the pass-1 image, or a failed build, never takes them along
+        if getattr(args, "_chain_extras", None):
+            _deliver_chain_extras(args, out if out.suffix.lower() not in (".ffpfsc", ".ffpfs", ".pkg") else out.parent)
         args.patch = None; args.backport_target = None; args.backport_libs = None
         args.chain_sign = False; args.fake_sign_first = False; args.chain_to = None
         if to == "pkg":
@@ -3318,6 +3340,7 @@ def main() -> None:
             _phase("Extracting")
             _fpkg_progress._bar(0, "extract inner PFS + CNT metadata")
             work = Path(tempfile.mkdtemp(prefix=f".{out_dir.name[:60]}.partial-", dir=str(out_dir.parent)))
+            _plain_mode(work)
             try:
                 # PS4 and PS5 packages alike write their files directly (see _pkg_extract_plan)
                 _total = _pkg_extract_plan(src, _pkg_content_size(src))
@@ -3498,6 +3521,10 @@ def main() -> None:
             built = sorted((q for q in out_dir.glob("*.pkg")
                             if _pkgs_before.get(q.name) != q.stat().st_mtime_ns),
                            key=lambda x: x.stat().st_mtime)
+            if not built:
+                print(f"\n[ERROR] The package tool reported success, but no new package is in {out_dir}.",
+                      flush=True)
+                sys.exit(1)
             # Run the diagnostic checklist BEFORE announcing the result so a bad build is
             # visible right in the log. A failed check fails the job (exit code 3) but the
             # package stays for inspection; warnings stay warnings.
@@ -4001,7 +4028,9 @@ def main() -> None:
                     # orphan) and removes it on terminal failure/cancel. On a clean pass-2 SUCCESS
                     # we remove it right here; every failure path propagates past this and LEAVES
                     # it for the resume.
-                    inner_dir = app_scratch.parent / "_ffpfsc_inner"
+                    # beside the scratch folder in the temp folder given (the GUI's cleanup, resume
+                    # and startup sweep look there): <temp>/_ffpfsc_inner
+                    inner_dir = (Path(user_temp) if user_temp else Path(tempfile.gettempdir())).resolve() / "_ffpfsc_inner"
                     inner_dir.mkdir(parents=True, exist_ok=True)
                     temp_pfs = inner_dir / f"{title_id}.ffpfs"
                     # We are rebuilding pass 1 from the source folder, so any inner image a

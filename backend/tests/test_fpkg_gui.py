@@ -1204,9 +1204,27 @@ try:
     (_ug / "a.bin").write_bytes(b"patched"); _jr2.record("added", "new.bin"); (_ug / "new.bin").write_bytes(b"n")
     _pi2 = m.GameItem.from_chain(_ug, to="ffpfsc", output_path=str(OUT / "job"))
     _pw3 = types.SimpleNamespace(patch_backup=str(_bk))
-    _may_drop = app._restore_patched_source(_pi2, _pw3)
-    ok("patch.failed-job-restores-the-user-folder", _may_drop and (_ug / "a.bin").read_bytes() == b"original"
-       and not (_ug / "new.bin").exists(), f"drop={_may_drop} a={(_ug / 'a.bin').read_bytes()!r}")
+    app._restore_then_drop_patch_backup(_pi2, _pw3)
+    pump(lambda: app._restores_inflight == 0 and not _bk.parent.exists(), timeout=10.0)
+    ok("patch.failed-job-restores-the-user-folder", (_ug / "a.bin").read_bytes() == b"original"
+       and not (_ug / "new.bin").exists() and not _bk.parent.exists(),
+       f"a={(_ug / 'a.bin').read_bytes()!r} backup_left={_bk.parent.exists()}")
+    # patch backups hold a user's originals: Clear Temp and the startup sweep keep them
+    _keepb = S / "pbtemp" / "_ffpfsc_temp" / "patch-backup-keep" / "Original files - Q"; _keepb.mkdir(parents=True)
+    ok("patch.backups-are-never-swept", _keepb.parent.resolve() in app._patch_backup_dirs([str(S / "pbtemp")]),
+       str(app._patch_backup_dirs([str(S / "pbtemp")])))
+    # a run waits while a patch is still being taken back out of a source folder
+    _later = []
+    _real_after = app.root.after
+    app.root.after = lambda ms, fn=None, *a: _later.append((ms, fn))     # the retry is caught, not run
+    app._restores_inflight += 1
+    try:
+        app.start()
+        _still_idle = not app._batch_running
+    finally:
+        app._restores_inflight -= 1
+        app.root.after = _real_after
+    ok("start.waits-for-a-patch-restore", _still_idle and len(_later) == 1 and _later[0][0] == 500, str(_later))
     # extras a killed run set aside next to the user's game folder go back in
     _ea = _ug.parent / f".{_ug.name}.ffpfsc-extras"; _ea.mkdir(exist_ok=True)
     (_ea / "_notes").mkdir(exist_ok=True); (_ea / "_notes" / "n.txt").write_text("x")
@@ -1443,7 +1461,8 @@ try:
         if _val is not None:
             _gw.patch_backup = _val
         app._publish_patch_backup(_pjob, _gw, lambda: _guard_calls.append(1))
-        app._drop_patch_backup(_gw)
+        app._restore_then_drop_patch_backup(None, _gw)
+    pump(lambda: app._cleanup_inflight == 0, timeout=10.0)
     ok("patch.backup-never-touches-anything-else", len(_guard_calls) == 5 and _guard_dir.is_dir()
        and sorted(os.listdir(".")) == _cwd_before, f"{len(_guard_calls)} {_guard_dir.is_dir()}")
     _pbw = _fake_worker(_pout_f); _pbw.patch_backup = str(_stg); _went2 = []
@@ -1454,7 +1473,8 @@ try:
        and (_dest / "README.txt").is_file() and not _stg.parent.exists(), str(sorted(x.name for x in _pout_f.parent.iterdir())))
     _stg2 = S / "temp" / "_ffpfsc_temp" / "patch-backup-t2" / "Original files - X"; _stg2.mkdir(parents=True)
     _dw = _fake_worker(_pout_f); _dw.patch_backup = str(_stg2)
-    app._drop_patch_backup(_dw)
+    app._restore_then_drop_patch_backup(None, _dw)
+    pump(lambda: not _stg2.parent.exists(), timeout=10.0)
     ok("patch.backup-dropped-on-failure", not _stg2.parent.exists() and _dw.patch_backup == "", "")
     app.queue[:] = [_j1]
     _card = app._card_info_text(_j1)

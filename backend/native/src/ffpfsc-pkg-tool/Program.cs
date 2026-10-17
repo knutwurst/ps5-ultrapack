@@ -1902,7 +1902,7 @@ internal static partial class Program
                             ReplaceFile(relPath, tmp =>
                             {
                                 File.Copy(relPath, tmp, overwrite: true);
-                                MakeWritable(tmp);   // the copy keeps a read-only mode; the final file gets it back below
+                                MakeWritable(tmp);   // the copy keeps a read-only mode; the patched file stays writable
                                 using var fs = new FileStream(tmp, FileMode.Open, FileAccess.Write);
                                 fs.Seek(0x0B, SeekOrigin.Begin);
                                 fs.WriteByte(0x10);

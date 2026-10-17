@@ -172,6 +172,8 @@ def run_copy(src, dst_dir, *,
 
     Returns an exit code (see module docstring).
     """
+    # first: whatever ends this run (also a skip, exit 2 or 3), the app reads it as a copy
+    _print(on_line, "[JOB] copy")
     if mode not in MODES:
         _print(on_line, f"[ERROR] copy: unknown mode {mode!r} (keep, organize or move)")
         return 1
@@ -212,9 +214,8 @@ def run_copy(src, dst_dir, *,
     same_drive = _same_device(src, dst_dir)
     total = src.stat().st_size
 
-    # Tells the GUI this job is a plain copy, whatever command started it (a --copy job,
-    # or a chain job with nothing to change), so its bar follows the copy alone.
-    _print(on_line, "[JOB] copy")
+    # The "[JOB] copy" line at the top told the GUI this job is a plain copy, whatever command
+    # started it (a --copy job, or a chain job with nothing to change).
     _print(on_line, "[PHASE] Writing Final Image")
 
     if same_drive and mode == KEEP and _clone(src, dst):
@@ -323,6 +324,7 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
     beside *dst*, flushed, and the folder takes its name only once all of it is there; a move
     then removes the source. A link stays a link. OS clutter is never copied. A folder that
     cannot be listed fails the copy. Exit codes as run_copy (3: *dst* exists)."""
+    _print(on_line, "[JOB] copy")
     if mode not in MODES:
         _print(on_line, f"[ERROR] copy: unknown mode {mode!r} (keep, organize or move)")
         return 1
@@ -341,7 +343,6 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
     except Exception as e:
         _print(on_line, f"[ERROR] copy: cannot create destination folder {dst.parent}: {e}")
         return 1
-    _print(on_line, "[JOB] copy")
     _print(on_line, "[PHASE] Writing Final Image")
     same_drive = _same_device(src, dst.parent)
     if same_drive and mode != KEEP:

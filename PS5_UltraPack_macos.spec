@@ -73,7 +73,7 @@ def _backend_datas():
 datas = _backend_datas()
 # the window icon the app sets at start (the bundle icon itself is set below)
 datas += [(_os.path.join("assets", "icon", n), _os.path.join("assets", "icon"))
-          for n in ("app-icon-256.png", "app-icon-32.png")]
+          for n in ("app-icon-256.png", "app-icon-32.png", "app-icon.ico")]
 datas += collect_data_files("customtkinter")
 datas += collect_data_files("tkinterdnd2")
 cryptography_datas, cryptography_binaries, cryptography_hiddenimports = collect_all("cryptography")

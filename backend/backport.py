@@ -778,7 +778,10 @@ def analyse_backport(source_root: Path, target: str,
             data = path.read_bytes()
         except OSError:
             continue
-        elf = _as_elf(data)
+        try:
+            elf = _as_elf(data)
+        except self_file.MalformedSelf as e:
+            raise ValueError(f"{path.relative_to(source_root)} is damaged and cannot be read ({e})") from e
         if elf is None:
             img = self_file.parse_self(data) if self_file.is_self(data) else None
             if img is not None and not img.readable:
@@ -815,8 +818,22 @@ def analyse_backport(source_root: Path, target: str,
 def lower_sdk_in_folder(root: Path, target: str, words: tuple[int, int] | None = None) -> LowerReport:
     """Walk *root* and apply lower_sdk_version to every eboot/prx/sprx it holds, in place.
     Raises BackportError after the walk when a file could not be read or lowered."""
+    paths = list(iter_source_elfs(root))
+    # first every module is read and lowered in memory only: one that cannot be leaves the
+    # whole folder as it was, instead of a game with some modules lowered and some not
+    check = LowerReport(written=[], skipped_no_param=[], skipped_not_elf=[])
+    for path in paths:
+        try:
+            _lower_one(path, target, words, check, write=False)
+        except (OSError, ValueError) as e:
+            check.failed.append((path, str(e)))
+    if check.failed:
+        names = ", ".join(f"{p.relative_to(root)} ({e})" for p, e in check.failed[:5])
+        more = f" and {len(check.failed) - 5} more" if len(check.failed) > 5 else ""
+        raise BackportError(f"{len(check.failed)} executable(s) could not be backported (nothing was "
+                            f"changed): {names}{more}", check)
     report = LowerReport(written=[], skipped_no_param=[], skipped_not_elf=[])
-    for path in iter_source_elfs(root):
+    for path in paths:
         try:
             _lower_one(path, target, words, report)
         except (OSError, ValueError) as e:
@@ -829,7 +846,8 @@ def lower_sdk_in_folder(root: Path, target: str, words: tuple[int, int] | None =
     return report
 
 
-def _lower_one(path: Path, target: str, words: tuple[int, int] | None, report: LowerReport) -> None:
+def _lower_one(path: Path, target: str, words: tuple[int, int] | None, report: LowerReport,
+               write: bool = True) -> None:
     data = path.read_bytes()
     signed = self_file.is_self(data)
     if signed:
@@ -848,8 +866,8 @@ def _lower_one(path: Path, target: str, words: tuple[int, int] | None, report: L
     if not changes:
         report.skipped_no_param.append(path)
         return
-    if not effective:
-        report.written.append((path, changes))          # already at/below target
+    if not effective or not write:
+        report.written.append((path, changes))          # already at/below target, or only checked
         return
     tmp = path.with_suffix(path.suffix + ".backport-tmp")
     try:

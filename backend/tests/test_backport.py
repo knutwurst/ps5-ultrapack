@@ -154,6 +154,8 @@ class WalkAndWrite(unittest.TestCase):
                 os.chmod(locked, 0o644)
             self.assertIn("libSceLocked.prx", str(cm.exception))
             self.assertEqual([p.name for p, _e in cm.exception.report.failed], ["libSceLocked.prx"])
+            # nothing was lowered: the readable eboot is as it was
+            self.assertEqual((root / "eboot.bin").read_bytes(), eboot)
 
     def test_a_param_segment_past_the_end_is_a_clear_error(self):
         elf = bytearray(_elf_with_param(bp.PT_SCE_PROCPARAM, 0x4942524F, 0x11090001, 0x08000041))
