@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#14254f"/><stop offset="1" stop-color="#0a1230"/></linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.45" r="0.55"><stop offset="0" stop-color="#3d8bff" stop-opacity="0.55"/><stop offset="1" stop-color="#3d8bff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#cfe2ff"/></linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fb9ff"/><stop offset="1" stop-color="#4f86f0"/></linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a6fe0"/><stop offset="1" stop-color="#1f4bb8"/></linearGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000" flood-opacity="0.45"/></filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)" filter="url(#sh)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#glow)"/>
+  <rect x="101" y="101" width="822" height="822" rx="184" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="2"/>
+  <g transform="translate(0,10)">
+    <polygon points="512,318 692,422 512,526 332,422" fill="url(#top)"/>
+    <polygon points="332,422 512,526 512,742 332,638" fill="url(#left)"/>
+    <polygon points="512,526 692,422 692,638 512,742" fill="url(#right)"/>
+    <polyline points="512,526 512,742" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3" fill="none"/>
+    <polygon points="452,353 572,423 572,463 452,393" fill="#3d8bff" opacity="0.9"/>
+  </g>
+  <g fill="none" stroke="#5ee7ff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="208,470 262,532 208,594"/>
+    <polyline points="816,470 762,532 816,594"/>
+  </g>
+</svg>

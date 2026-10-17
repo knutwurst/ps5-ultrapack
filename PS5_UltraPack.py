@@ -5807,6 +5807,17 @@ class App:
         v.trace_add("write", lambda *_: save_settings({key: v.get()}))
         return v
 
+    def _set_window_icon(self) -> None:
+        """The app icon on the window and in the taskbar (the Dock when run from source)."""
+        base = Path(getattr(sys, "_MEIPASS", "") or Path(__file__).resolve().parent) / "assets" / "icon"
+        try:
+            self._icon_images = [tk.PhotoImage(master=self.root, file=str(base / n))
+                                 for n in ("app-icon-256.png", "app-icon-32.png") if (base / n).is_file()]
+            if self._icon_images:
+                self.root.iconphoto(True, *self._icon_images)
+        except Exception:
+            pass                                  # an icon must never stop the app
+
     def _setup(self):
         settings = load_settings()
         # A profile that exists but cannot be read (locked by another program): wait a little,
@@ -5827,6 +5838,7 @@ class App:
         apply_ctk_theme(ctk)
         set_window_appearance(self.root, self._theme)
         self.root.title(f"{APP_NAME} {APP_VERSION}{APP_EDITION}")
+        self._set_window_icon()
         self.root.geometry("1280x820")
         self.root.minsize(900, 600)
 

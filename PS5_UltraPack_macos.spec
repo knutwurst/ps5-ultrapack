@@ -71,6 +71,9 @@ def _backend_datas():
 
 
 datas = _backend_datas()
+# the window icon the app sets at start (the bundle icon itself is set below)
+datas += [(_os.path.join("assets", "icon", n), _os.path.join("assets", "icon"))
+          for n in ("app-icon-256.png", "app-icon-32.png")]
 datas += collect_data_files("customtkinter")
 datas += collect_data_files("tkinterdnd2")
 cryptography_datas, cryptography_binaries, cryptography_hiddenimports = collect_all("cryptography")
@@ -171,7 +174,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="PS5 UltraPack.app",
-    icon=None,
+    icon=_os.path.join("assets", "icon", "app-icon.icns"),
     # Own identifier (distinct from the older PS5 FFPFSC PRO and ULTRA bundles) so Launch
     # Services associates .ffpfsc with THIS app, not a legacy bundle.
     bundle_identifier="com.knutwurst.ps5ultrapack",
