@@ -2289,7 +2289,7 @@ class CLIWorker(threading.Thread):
             return self.FPKG_EXTRACT_WEIGHTS, self._EXTRACT_FIRST_ORDER
         to = self._cmd_value(cmd, "--to")
         _ri = getattr(self.item, "_resume_inner", None)
-        if to == "ffpfsc" and _ri and Path(str(_ri)).is_file():
+        if (to == "ffpfsc" or (not to and self.operation == "pack")) and _ri and Path(str(_ri)).is_file():
             return self.RESUME_WEIGHTS, self._EXTRACT_FIRST_ORDER     # compression only
         if to:
             src = Path(str(getattr(self.item, "path", "") or ""))
@@ -11203,7 +11203,7 @@ class App:
                 "--fpkg-inner", str(getattr(item, "fpkg_inner_mode", "kraken") or "kraken"),
                 "--fpkg-kraken-backend", str(getattr(item, "fpkg_kraken_backend", "builtin") or "builtin"),
             ]
-            if self._extract_dir_for_item(item) is not None:
+            if self._consumable_extract(item):
                 cmd.append("--stage-in-place")      # our own unpacked copy: built in place, taken in as it goes
             # Retail switches (CHANGELOG 1.1.12). Only the non-default positions are passed;
             # the backend's defaults are the console-verified configuration.

@@ -1214,6 +1214,15 @@ def _pkg_content_size(pkg: Path) -> int:
         return 0
 
 
+def _tree_has_links(root: Path) -> bool:
+    """Whether a folder holds a symbolic link anywhere (followed by nothing here)."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        for name in dirnames + filenames:
+            if os.path.islink(os.path.join(dirpath, name)):
+                return True
+    return False
+
+
 def _pkg_extract_plan(pkg: Path, content: int) -> int:
     """Bytes a full .pkg extract writes, all on the drive it unpacks to: the files alone
     (measured 2026-10-17, the tool decodes straight into them; no temp images on the way)."""
@@ -3055,6 +3064,10 @@ def main() -> None:
             # grows: no copy, and the unpacked game shrinks while the image grows.
             _in_place = (staged is not None or bool(getattr(args, "_fpkg_in_place", False))
                          or bool(getattr(args, "stage_in_place", False)))
+            if _in_place and _tree_has_links(Path(build_src)):
+                # a link may lead out of the copy, or to a file taken in earlier
+                print("[INFO] The unpacked copy holds links: it is copied for the build, not taken in.", flush=True)
+                _in_place = False
             if _in_place:
                 print("[INFO] Building in the unpacked copy itself: each file is removed as soon as the package "
                       "holds it. A build that fails is unpacked again on Retry.", flush=True)

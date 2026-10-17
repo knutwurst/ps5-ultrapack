@@ -459,6 +459,17 @@ class SilentStepProgress(unittest.TestCase):
             self.assertTrue(last.startswith("[" + "#" * 32 + "] 100% extract the .pkg on "), last)
             self.assertIn("(2.0 of 2.0 GB written)", last)
 
+    def test_a_copy_with_links_is_not_taken_in(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "game"; (d / "sub").mkdir(parents=True)
+            (d / "sub" / "a.bin").write_bytes(b"x")
+            self.assertFalse(cli._tree_has_links(d))
+            try:
+                os.symlink(d / "sub" / "a.bin", d / "b.bin")
+            except OSError:
+                self.skipTest("links need a right this system lacks")
+            self.assertTrue(cli._tree_has_links(d))
+
     def test_the_writers_counter_wins_over_file_sizes(self):
         # the .pkg tool creates each file at its full size first, then fills it: the size
         # on disk says 100 % while the data is still coming. The tool's own write counter

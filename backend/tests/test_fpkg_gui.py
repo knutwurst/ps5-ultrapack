@@ -981,6 +981,9 @@ try:
     _rcw = m.CLIWorker(app, _rj, ["py", "cli.py", str(_inner), str(OUT), "--to", "ffpfsc"], _pcwd, _pout, _ptmp)
     ok("progress.resume-compress-only", _rcw._weights is m.CLIWorker.RESUME_WEIGHTS
        and "Extracting" not in _rcw._weights, str(list(_rcw._weights)))
+    _pj2 = m.GameItem.from_chain(_cpk, to="ffpfsc"); _pj2.operation = "pack"; _pj2._resume_inner = str(_inner)
+    _pw2 = m.CLIWorker(app, _pj2, ["py", "cli.py", str(_inner), str(OUT)], _pcwd, _pout, _ptmp)
+    ok("progress.pack-resume-compress-only", _pw2._weights is m.CLIWorker.RESUME_WEIGHTS, str(list(_pw2._weights)))
     app._active_item = None
     _ci = app._card_info_text(_pj)
     ok("card.info.drives", "writes to" in _ci.get("Drives", "") and "builds on" in _ci.get("Drives", ""),
@@ -1143,8 +1146,16 @@ try:
     app.queue[:] = [_cj, _cj2]
     _shared = app._consumable_extract(_cj)
     app.queue[:] = _q4
-    ok("consume.only-own-unshared-unpack", _no_origin is False and _alone is True and _shared is False,
-       f"no_origin={_no_origin} alone={_alone} shared={_shared}")
+    _fb = m.GameItem.from_chain(_ce, to="pkg", output_path=str(OUT / "job"))
+    _fb.operation = "fpkg-build"; _fb.origin_archive = _cj.origin_archive
+    app.queue[:] = [_fb, _cj]
+    _fb_shared = "--stage-in-place" in app.build_command(_fb)[0]
+    app.queue[:] = [_fb]
+    _fb_alone = "--stage-in-place" in app.build_command(_fb)[0]
+    app.queue[:] = _q4
+    ok("consume.only-own-unshared-unpack", _no_origin is False and _alone is True and _shared is False
+       and _fb_shared is False and _fb_alone is True,
+       f"no_origin={_no_origin} alone={_alone} shared={_shared} fpkg shared={_fb_shared} alone={_fb_alone}")
     # two packages unpacked from one archive: cleaning up after one keeps the other's file
     _two = _kt / "_extracted" / "Two__7"; _two.mkdir(parents=True, exist_ok=True)
     for _n in ("A.pkg", "B.pkg", "notes.txt"):
