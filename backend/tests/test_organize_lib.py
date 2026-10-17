@@ -343,6 +343,50 @@ class Into(Tree):
         self.assertEqual([p for p in (self.root / "dl").rglob("*") if p.is_file()], [])
         self.assertTrue(any("game-4xx.pkg" in l and "as it is" in l for l in lines), lines)
 
+    def test_every_entry_goes_to_its_own_title(self):
+        # A's game, B's game, A's update: the layout groups by title, the placement must not shift
+        big = self.put("dl/1/a.pkg", A); big.write_text(json.dumps(A) + " " * 4000)
+        self.put("dl/2/b.pkg", B)
+        self.put("dl/3/a-update.pkg", dict(A, version="01.100.000", role="update"))
+        self.assertEqual(ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move",
+                                          on_line=lambda _l: None), 0)
+        got = sorted(p.relative_to(self.lib()).as_posix() for p in self.lib().rglob("*") if p.is_file())
+        fa = "Alpha Game [PPSA00001] [v01.100.000]"
+        self.assertEqual(got, sorted([f"{fa}/Alpha Game [PPSA00001] [v01.000].pkg",
+                                      f"{fa}/Alpha Game [PPSA00001] UPDATE [v01.100].pkg",
+                                      f"{FB}/Beta Game [PPSA00002] [v01.000].pkg"]))
+        # and behind each name sits the right file
+        read = lambda rel: json.loads((self.lib() / rel).read_text())
+        self.assertEqual(read(f"{FB}/Beta Game [PPSA00002] [v01.000].pkg")["title_id"], "PPSA00002")
+        self.assertEqual(read(f"{fa}/Alpha Game [PPSA00001] UPDATE [v01.100].pkg")["version"], "01.100.000")
+
+    def test_a_companion_never_replaces_another(self):
+        self.put("dl/game.pkg", A); self.put("dl/tools.ini", text="new one")
+        self.put(f"library/{FA}/tools.ini", text="old")
+        self.assertEqual(ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move",
+                                          on_line=lambda _l: None), 0)
+        self.assertEqual((self.lib() / FA / "tools.ini").read_text(), "old")
+        self.assertEqual((self.lib() / FA / "tools (2).ini").read_text(), "new one")
+
+    def test_a_companion_that_cannot_come_along_fails_the_job(self):
+        self.put("dl/game.pkg", A); self.put("dl/tools.ini")
+        real = ol._bring_file
+        ol._bring_file = lambda *a, **k: 1
+        try:
+            rc = ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move", on_line=lambda _l: None)
+        finally:
+            ol._bring_file = real
+        self.assertEqual(rc, 1)
+        self.assertTrue((self.root / "dl/tools.ini").exists())
+
+    def test_bring_file_leaves_a_foreign_temp_alone(self):
+        d = self.root / "x"; d.mkdir()
+        (d / "f.copy-tmp").write_text("someone else's"); src = self.put("s/f", text="new")
+        self.assertEqual(ol._bring_file(src, d / "f", move=False), 0)
+        self.assertEqual((d / "f.copy-tmp").read_text(), "someone else's")
+        self.assertEqual((d / "f").read_text(), "new")
+        self.assertEqual(sorted(p.name for p in d.iterdir()), ["f", "f.copy-tmp"])
+
     def test_several_backports_keep_their_folders(self):
         g = dict(A, fw="11.00")
         self.put("dl/game.pkg", g)

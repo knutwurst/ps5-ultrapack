@@ -3219,7 +3219,13 @@ class CLIWorker(threading.Thread):
                     if target.exists() and get_folder_size(target) == get_folder_size(src):
                         copied += 1
                         continue
-                    self.app.log("INFO", f"Copying extra folder next to output: {src.name} "
+                    if target.exists():
+                        # a different folder of that name is there: both stay, nothing is merged over
+                        n = 2
+                        while (dest_dir / f"{src.name} ({n})").exists():
+                            n += 1
+                        target = dest_dir / f"{src.name} ({n})"
+                    self.app.log("INFO", f"Copying extra folder next to output: {target.name} "
                                          f"({format_size(get_folder_size(src))})")
                     self._written.append(str(target))
                     shutil.copytree(src, target, dirs_exist_ok=True,
@@ -8533,15 +8539,20 @@ class App:
         one archive share one."""
         return {r for r in (self._extract_dir_for_item(j) for j in self._open_jobs(exclude)) if r is not None}
 
-    def _extract_cleanup_parts(self, item) -> list:
+    def _extract_cleanup_parts(self, item, keep_own_extras: bool = False) -> list:
         """What cleaning up *item*'s extracted copy deletes: all of it, or, while other jobs
-        still read from the same copy, all of it but what they read."""
+        still read from the same copy, all of it but what they read. Mid-job (after pass 1)
+        the job's own extras stay too: they are copied next to the output only at the end."""
         root = self._extract_dir_for_item(item)
         if root is None:
             return []
         keep = set()
-        for j in self._open_jobs(exclude=item):
-            for src in [getattr(j, "path", None)] + list(getattr(j, "bundle_siblings", None) or []):
+        jobs = list(self._open_jobs(exclude=item)) + ([item] if keep_own_extras else [])
+        for j in jobs:
+            srcs = list(getattr(j, "bundle_siblings", None) or [])
+            if j is not item:
+                srcs.insert(0, getattr(j, "path", None))
+            for src in srcs:
                 try:
                     rp = Path(str(src)).resolve() if src else None
                 except OSError:
@@ -8609,7 +8620,7 @@ class App:
         if own is None:
             return   # user's own folder - never delete
         item._source_freed = True
-        parts = self._extract_cleanup_parts(item)   # not what other jobs still read
+        parts = self._extract_cleanup_parts(item, keep_own_extras=True)   # not what other jobs still read, nor its own extras
         def _work(d=own):
             try:
                 if parts:
@@ -8756,8 +8767,11 @@ class App:
                     item.chain_to = ("pkg" if getattr(item, "operation", "") == "fpkg-build" else
                                      "ffpfs" if getattr(item, "output_compressed", True) is False else "ffpfsc")
                     item.operation = "chain"
-                if kind == "pkg" and not getattr(item, "origin_payload", None):    # a retry keeps its package
+                if kind == "pkg":
                     paths, _ports = self._split_backport_packages(Path(extracted_root), paths)
+                    _want = getattr(item, "origin_payload", None)       # a retry keeps its package
+                    _back = [x for x in _ports if self._payload_key(extracted_root, x) == _want]
+                    paths, _ports = _back + paths, [x for x in _ports if x not in _back]
                     for _bp in _ports:
                         self.log("INFO", f"{_bp.name} is a backport: it goes next to the output, not into a job of its own")
                 payload_items = [self._item_from_payload_path(kind, path) for path in paths]

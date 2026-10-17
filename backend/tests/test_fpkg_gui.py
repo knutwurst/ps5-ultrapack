@@ -1090,6 +1090,17 @@ try:
     app.queue[:] = _q2
     ok("cleanup.keeps-what-another-job-reads", _parts_open == ["A.pkg", "notes.txt"] and _parts_done == ["Two__7"],
        f"open={_parts_open} done={_parts_done}")
+    # after pass 1 the source goes, but the job's own extras stay until they are copied
+    _rx = _kt / "_extracted" / "Rel__8"; (_rx / "backport 4.xx").mkdir(parents=True, exist_ok=True)
+    (_rx / "G.pkg").write_bytes(b"x"); (_rx / "backport 4.xx" / "G-4xx.pkg").write_bytes(b"x")
+    (_rx / "G.sha256").write_bytes(b"x")
+    _jr = m.GameItem.from_chain(_rx / "G.pkg", to="ffpfsc", output_path=str(OUT / "job"))
+    _jr.bundle_siblings = [_rx / "backport 4.xx", _rx / "G.sha256"]
+    _q3 = list(app.queue); app.queue[:] = [_jr]
+    _mid = sorted(p.name for p in app._extract_cleanup_parts(_jr, keep_own_extras=True))
+    _end = [p.name for p in app._extract_cleanup_parts(_jr)]
+    app.queue[:] = _q3
+    ok("cleanup.pass1-keeps-own-extras", _mid == ["G.pkg"] and _end == ["Rel__8"], f"mid={_mid} end={_end}")
     # J6j) a finished job stays in the queue, marked Done, until it is cleared
     _real_sum, _real_open = app.summary_popup_var.get(), app.open_output_var.get()
     app.summary_popup_var.set(False); app.open_output_var.set(False)

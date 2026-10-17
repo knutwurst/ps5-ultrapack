@@ -708,7 +708,10 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
     sizes = {e.path: max(1, _size_of(e.path)) for e in ok}
     # the game first and the biggest first: when two get the same name, the main one keeps it
     ok.sort(key=lambda e: (e.role != "game", -sizes[e.path]))
-    placed = uc.library_layout([_lib_item(e) for e in ok], {t: k for t, k in known.items() if k})
+    # library_layout groups by title: match its answers to the entries by source path, not order
+    _by_key = {Path(k): (k, f, sb, n) for k, f, sb, n in
+               uc.library_layout([_lib_item(e) for e in ok], {t: k for t, k in known.items() if k})}
+    placed = [_by_key[e.path] for e in ok]
     # A title folder already there takes its new name (a newer version) by a rename.
     renamed: dict[str, str] = {}
     for e, (_k, folder, _s, _n) in zip(ok, placed):
@@ -818,15 +821,20 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             except ValueError:
                 continue
             if os.path.lexists(dst):
-                _say(on_line, f"[INFO] already there, skipped: {dst.relative_to(out)}")
-                continue
+                if c.is_file() and dst.is_file() and dst.stat().st_size == c.stat().st_size:
+                    _say(on_line, f"[INFO] already there, skipped: {dst.relative_to(out)}")
+                    continue
+                dst = dst.parent / _free_name(dst.parent, dst.name)     # both stay
+                _say(on_line, f"[WARN] {c.name}: another item of that name is there; it comes along as {dst.name}")
             dst.parent.mkdir(parents=True, exist_ok=True)
             rc = (copy_job.run_copy_tree(c, dst, mode=cmode, on_line=lambda _l: None) if c.is_dir() else
                   _bring_file(c, dst, move=cmode == copy_job.MOVE))
             if rc in (0, 2):
                 _say(on_line, f"[OK] Came along: {dst.relative_to(out)}")
             else:
-                _say(on_line, f"[WARN] could not bring {c.name} along; it stays in the source")
+                # the job fails, so the app keeps the unpack and nothing of the release is lost
+                _say(on_line, f"[ERROR] could not bring {c.name} along; it stays in the source")
+                rc_all = 1
     elif companions:
         _say(on_line, f"[INFO] {len(companions)} other item(s) stay in the source: they belong to no one game")
     bar(100, 0, "")
@@ -845,18 +853,22 @@ def _bring_file(src: Path, dst: Path, *, move: bool) -> int:
             return 0
         except OSError:
             pass
-    part = dst.with_name(dst.name + ".copy-tmp")
+    part = None
     try:
+        fd, part = tempfile.mkstemp(prefix=".copy-", suffix=".tmp", dir=dst.parent)   # ours alone
+        os.close(fd)
         shutil.copy2(src, part)
         os.replace(part, dst)
+        part = None
         if move:
             src.unlink()
         return 0
     except OSError:
-        try:
-            part.unlink()
-        except OSError:
-            pass
+        if part:
+            try:
+                os.unlink(part)
+            except OSError:
+                pass
         return 1
 
 

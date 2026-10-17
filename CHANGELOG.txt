@@ -24,8 +24,24 @@ ORGANIZE
     Before, all of these stayed in the unpack and went away with it.
     With several titles in the source they stay where they are.
 
+  - A source with several titles puts each item into its own title's
+    folder. When one title came twice with another in between (game,
+    other game, update), an item could take the next one's place and
+    name (also in earlier versions).
+  - Companions never replace a different file of the same name in the
+    library ("(2)"), and one that cannot be brought along fails the
+    job, so the app keeps the unpack. A copy goes through a temporary
+    file of its own.
+
 ARCHIVES
 
+  - The extras of an archive job (DLC folders, backports, checksums)
+    stay in the unpack until they are copied next to the output. After
+    pass 1 the app freed the whole unpack, extras included, so they
+    were missing at the end (also in earlier versions).
+  - An extra folder never merges into a different folder of the same
+    name next to the output; it gets "(2)". A retry that unpacks the
+    archive again treats its backports the same way.
   - A package release unpacked for a .ffpfsc or .pkg job: a package
     that its name or folder marks as a backport is no job of its own.
     It goes next to the output with everything else of the release
