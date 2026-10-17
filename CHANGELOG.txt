@@ -3,14 +3,40 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.2.7  (in progress)
+  v2.2.7  (current)
 ────────────────────────────────────────────────────────────────────────
+
+ORGANIZE
+
+  - An Organize job reads a package's role from its folders too: a
+    package under "backport (4.xx to 10.xx)" is a backport, as in the
+    Organize view. It goes into the title folder under its backport
+    name and keeps that folder, so backports for several firmwares
+    never meet under one name.
+  - Two items of one source never share a library name: the game, then
+    the biggest, keeps the name, the next gets "(2)" and the log warns.
+    Before, the second was skipped as "already there", and the
+    alphabetically first one (a small backport) could take the game's
+    name.
+  - What came with one game (checksum files, tools, notes) goes into
+    its title folder as it sat in the source. With several titles in
+    the source it stays where it is.
+
+ARCHIVES
+
+  - A package release unpacked for a .ffpfsc or .pkg job: a package
+    that its name or folder marks as a backport is no job of its own.
+    It goes next to the output with everything else of the release
+    that is not the game (checksums, tools, more backport folders),
+    wherever it sits in the archive. An extra file never overwrites a
+    different file of the same name next to the output; it gets "(2)".
 
 ABOUT
 
-  - Settings > About has a "Donate with PayPal" button, and the Help
-    menu a "Buy Me a Coffee…" entry. Both open the PayPal page in the
-    browser; the app never asks on its own.
+  - Settings > About has a "Donate with PayPal" button, the Help menu
+    a "Buy Me a Coffee…" entry and the sidebar a "Buy me a coffee"
+    link under Settings. They open the PayPal page in the browser; the
+    app never asks on its own.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.6

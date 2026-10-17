@@ -155,6 +155,30 @@ def _name_role(name: str) -> str:
     return ""
 
 
+def role_folder(path, root) -> str:
+    """The nearest folder between *root* and *path* whose name gives the file its role, as a
+    path below *root* ('' when none): a backport keeps it, so backports for different firmwares
+    never meet under one name."""
+    path, root = Path(path), Path(root)
+    for d in _below(path, root):
+        if _name_role(d.name):
+            return d.relative_to(root).as_posix()
+    return ""
+
+
+def name_role(path, root=None) -> str:
+    """The role a file's name says, else the nearest folder between *root* and it that says
+    one ('backport (4.xx to 10.xx)/game.pkg'); '' when neither does."""
+    path = Path(path)
+    role = _name_role(path.stem)
+    if not role and root is not None:
+        for d in _below(path, Path(root)):
+            role = _name_role(d.name)
+            if role:
+                break
+    return role
+
+
 def scan(root, identify: Callable, on_progress=None) -> tuple[list[Entry], list[Path]]:
     """walk() plus the game of every entry, read through *identify(path, kind)* →
     {'title','title_id','version','fw','role','platform','ps4'} or None (it may raise; the
@@ -174,7 +198,7 @@ def scan(root, identify: Callable, on_progress=None) -> tuple[list[Entry], list[
             e.platform = got.get("platform") or ("ps4" if e.title_id.startswith("CUSA") else "ps5")
             role = got.get("role") or "game"
             if e.platform == "ps5" and e.kind == "pkg" and role == "game":
-                role = _name_role(e.path.stem) or role     # the user's own naming, until the package says more
+                role = name_role(e.path, root) or role     # the user's own naming, until the package says more
             e.role = role
         elif not e.note:
             e.note = ("the game inside cannot be read before unpacking" if e.kind == "archive"
@@ -644,13 +668,14 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
         return 1
     _say(on_line, "[JOB] copy")
     _say(on_line, "[PHASE] Writing Final Image")
+    companions: list[Path] = []
     if src.is_dir() and _game_folder_kind(src):
         entries = [Entry(src, "folder")]
     elif src.is_file():
         kind = FILE_KINDS.get(src.suffix.lower())
         entries = [Entry(src, kind)] if kind else []
     else:
-        entries, _ = walk(src)
+        entries, companions = walk(src)
     entries = [e for e in entries if e.kind != "archive"]
     for e in entries:
         try:
@@ -661,6 +686,8 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             e.title, e.title_id = str(got.get("title") or ""), str(got["title_id"]).upper()
             e.version, e.fw, e.ps4 = str(got.get("version") or ""), str(got.get("fw") or ""), got.get("ps4")
             e.role = got.get("role") or "game"
+            if e.kind == "pkg" and e.role == "game" and not e.title_id.startswith("CUSA"):
+                e.role = name_role(e.path, src if src.is_dir() else None) or e.role   # as scan() does
     ok = [e for e in entries if e.known]
     for e in entries:
         if not e.known:
@@ -670,6 +697,9 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
         return 1
     out.mkdir(parents=True, exist_ok=True)
     known = library_folders(out)
+    sizes = {e.path: max(1, _size_of(e.path)) for e in ok}
+    # the game first and the biggest first: when two get the same name, the main one keeps it
+    ok.sort(key=lambda e: (e.role != "game", -sizes[e.path]))
     placed = uc.library_layout([_lib_item(e) for e in ok], {t: k for t, k in known.items() if k})
     # A title folder already there takes its new name (a newer version) by a rename.
     renamed: dict[str, str] = {}
@@ -689,7 +719,6 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
         except OSError as ex:
             _say(on_line, f"[WARN] could not rename {lib.folder} ({ex}); the files go into it as it is")
             renamed[folder] = lib.folder
-    sizes = {e.path: max(1, _size_of(e.path)) for e in ok}
     total = sum(sizes.values())
     done = 0
     last = [-1]
@@ -713,14 +742,23 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
 
     rc_all = 0
     folders: list[Path] = []
+    written: set[Path] = set()
     cmode = copy_job.MOVE if mode == "move" else copy_job.KEEP
     for e, (_k, folder, sub, name) in zip(ok, placed):
         folder = renamed.get(folder, folder)
+        if e.role == "backport" and not sub and src.is_dir():
+            sub = Path(role_folder(e.path, src)).name
         dst_dir = out / folder / sub if sub else out / folder
         if out / folder not in folders:
             folders.append(out / folder)
         size = sizes[e.path]
         target = dst_dir / name
+        if target in written:
+            # another source of this run already took the name: never skip one of them
+            name = _free_name(dst_dir, name)
+            _say(on_line, f"[WARN] {e.path.name} gets the same name as another item of this source; "
+                          f"it goes in as {name}")
+            target = dst_dir / name
         run = (lambda nm: copy_job.run_copy_tree(e.path, dst_dir / nm, mode=cmode, on_line=relay(size, name))) \
             if e.kind == "folder" else \
             (lambda nm: copy_job.run_copy(e.path, dst_dir, dst_name=nm, mode=cmode, on_line=relay(size, name)))
@@ -739,6 +777,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
                     rc_all = 1
                     done += size
                     continue
+                written.add(target)
                 rc = run(name)
                 if rc == 0:
                     old = dst_dir / part
@@ -754,12 +793,34 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
                 _say(on_line, f"[INFO] already there, skipped{note}: {Path(folder) / name}")
                 done += size
                 continue
+        written.add(target)
         rc = run(name)
         if rc in (0, 2):
             _say(on_line, f"[OK] Organized: {dst_dir / name}")
         else:
             rc_all = 1
         done += size
+    # What came with one game (checksums, tools, notes) goes into its title folder, as it sat
+    # in the source. With several titles in the source nobody knows whose it is: it stays.
+    if companions and len({e.title_id for e in ok}) == 1 and folders:
+        home = folders[0]
+        for c in companions:
+            try:
+                dst = home / c.relative_to(src)
+            except ValueError:
+                continue
+            if os.path.lexists(dst):
+                _say(on_line, f"[INFO] already there, skipped: {dst.relative_to(out)}")
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            rc = (copy_job.run_copy_tree(c, dst, mode=cmode, on_line=lambda _l: None) if c.is_dir() else
+                  copy_job.run_copy(c, dst.parent, dst_name=dst.name, mode=cmode, on_line=lambda _l: None))
+            if rc in (0, 2):
+                _say(on_line, f"[OK] Came along: {dst.relative_to(out)}")
+            else:
+                _say(on_line, f"[WARN] could not bring {c.name} along; it stays in the source")
+    elif companions:
+        _say(on_line, f"[INFO] {len(companions)} other item(s) stay in the source: they belong to no one game")
     bar(100, 0, "")
     for f in folders:
         uc.strip_fs_junk(f)

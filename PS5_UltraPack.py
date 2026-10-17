@@ -120,7 +120,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.2.6"
+APP_VERSION = "2.2.7"
 # Windows builds are a preview for now: the title, sidebar and About say so.
 APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
 # For archive sources, the GUI extraction occupies the first slice of a game's overall
@@ -204,6 +204,15 @@ def _is_ps4_source(p) -> bool:
         return bool(pkgs) and all(m.is_ps4_package(x) for x in pkgs)
     except Exception:
         return False
+
+
+def _organize_module():
+    """backend/organize_lib.py: library names and roles (Tk-free)."""
+    _bd = str(backend_base_dir())
+    if _bd not in sys.path:
+        sys.path.insert(0, _bd)
+    import organize_lib
+    return organize_lib
 
 
 def _after_job_module():
@@ -3220,7 +3229,13 @@ class CLIWorker(threading.Thread):
                     if target.exists() and target.stat().st_size == src.stat().st_size:
                         copied += 1
                         continue
-                    self.app.log("INFO", f"Copying extra next to output: {src.name} ({format_size(src.stat().st_size)})")
+                    if target.exists():
+                        # another file of that name is already there: both stay
+                        n = 2
+                        while (dest_dir / f"{src.stem} ({n}){src.suffix}").exists():
+                            n += 1
+                        target = dest_dir / f"{src.stem} ({n}){src.suffix}"
+                    self.app.log("INFO", f"Copying extra next to output: {target.name} ({format_size(src.stat().st_size)})")
                     shutil.copy2(src, target)
                     self._written.append(str(target))
                     copied += 1
@@ -5964,6 +5979,8 @@ class App:
         bottom = kit.frame(side, bg="sidebar")
         bottom.pack(side="bottom", fill="x", pady=(0, 10))
         self._nav["settings"] = nav(bottom, "Settings", "settings", self.open_settings, SHORTCUT["settings"])
+        self._donate_nav = nav(bottom, "Buy me a coffee", "coffee", lambda: webbrowser.open(DONATE_URL),
+                               "Support the development with a PayPal donation")
         kit.fit_width(side, 188, *(b.natural_width() + 16 for b in self._nav_all),
                       kit.fonts.app.measure(APP_NAME) + 36)
 
@@ -7538,6 +7555,49 @@ class App:
             return GameItem.from_exfat(path)
         return GameItem(path)
 
+    def _split_backport_packages(self, root: Path, packages: list) -> tuple[list, list]:
+        """(games, backports) among the packages of an unpacked archive. A package whose name
+        or folder says backport ('backport (4.xx to 10.xx)/…-4xx.pkg') is no game of its own: it
+        goes next to the output with the rest of the release. Alone in the archive it is the job."""
+        ol = _organize_module()
+        ports = [p for p in packages if ol.name_role(p, root) == "backport"]
+        if not ports or len(ports) == len(packages):
+            return list(packages), []
+        return [p for p in packages if p not in ports], ports
+
+    def _release_extras(self, root: Path, game_paths) -> list:
+        """Everything of an unpacked release that is not one of its games, wherever it sits:
+        the topmost file or folder that holds no game. A folder that holds a game is opened
+        and its other contents taken. OS clutter stays behind; nothing else does."""
+        games = []
+        for g in game_paths:
+            try:
+                games.append(Path(g).resolve())
+            except OSError:
+                pass
+        out = []
+
+        def visit(d: Path) -> None:
+            try:
+                children = sorted(d.iterdir(), key=lambda q: q.name.lower())
+            except OSError:
+                return
+            for c in children:
+                if is_fs_junk_name(c.name) or c.is_symlink():
+                    continue
+                try:
+                    rc = c.resolve()
+                except OSError:
+                    continue
+                if rc in games:
+                    continue
+                if c.is_dir() and any(rc in g.parents for g in games):
+                    visit(c)
+                else:
+                    out.append(c)
+        visit(Path(root))
+        return out
+
     def _sibling_extras(self, parent: Path, game_paths) -> list:
         """Extra items (DLC subfolders, loose non-junk files) sitting BESIDE the game in an
         extracted archive tree, to copy next to the .ffpfsc. Excludes the detected game
@@ -8696,6 +8756,10 @@ class App:
                     item.chain_to = ("pkg" if getattr(item, "operation", "") == "fpkg-build" else
                                      "ffpfs" if getattr(item, "output_compressed", True) is False else "ffpfsc")
                     item.operation = "chain"
+                if kind == "pkg" and not getattr(item, "origin_payload", None):    # a retry keeps its package
+                    paths, _ports = self._split_backport_packages(Path(extracted_root), paths)
+                    for _bp in _ports:
+                        self.log("INFO", f"{_bp.name} is a backport: it goes next to the output, not into a job of its own")
                 payload_items = [self._item_from_payload_path(kind, path) for path in paths]
                 for pi, path in zip(payload_items, paths):
                     pi.origin_payload = self._payload_key(extracted_root, path)
@@ -8738,7 +8802,13 @@ class App:
                 # Carry extra subfolders/files that sit BESIDE the game in the archive
                 # (e.g. an '[ ALL DLC ]' wrapper) so they're copied next to the .ffpfsc.
                 # Skipped when the archive root IS the game (no wrapper → no siblings).
-                if kind == "game" and not (len(paths) == 1
+                if kind == "pkg":
+                    # a package release: backports, checksums and the rest all go along
+                    try:
+                        item.bundle_siblings = self._release_extras(Path(extracted_root), paths)
+                    except Exception:
+                        item.bundle_siblings = []
+                elif kind == "game" and not (len(paths) == 1
                         and Path(paths[0]).resolve() == Path(extracted_root).resolve()):
                     try:
                         item.bundle_siblings = self._sibling_extras(Path(primary.path).parent, paths)

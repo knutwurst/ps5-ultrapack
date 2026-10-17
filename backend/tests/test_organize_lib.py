@@ -309,6 +309,79 @@ class Into(Tree):
         self.assertTrue((self.lib() / FA / "Alpha Game [PPSA00001] [v01.000] (2).ffpfsc").exists())
         self.assertEqual(sorted(p.name for p in (self.lib() / FA).iterdir() if p.name.startswith(".")), [])
 
+    def test_backport_package_in_a_backport_folder_keeps_its_role(self):
+        # an unpacked release: the game, its backport in a folder that says so, checksum tools
+        g = dict(A, fw="11.00")
+        self.put("dl/UP0001-PPSA00001_00-X.pkg", g, )
+        (self.root / "dl/UP0001-PPSA00001_00-X.pkg").write_text(json.dumps(g) + " " * 4000)
+        self.put("dl/backport (4.xx to 10.xx)/UP0001-PPSA00001_00-X-4xx.pkg", g)
+        self.put("dl/_SHA256/Tool.exe"); self.put("dl/_SHA256/UP0001.sha256"); self.put("dl/.DS_Store")
+        lines = []
+        rc = ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move", on_line=lines.append)
+        self.assertEqual(rc, 0, lines)
+        folder = "Alpha Game [PPSA00001] [v01.000.000]"
+        got = sorted(p.relative_to(self.lib()).as_posix() for p in self.lib().rglob("*") if p.is_file())
+        self.assertEqual(got, sorted([f"{folder}/Alpha Game [PPSA00001] [v01.000] [fw11.00].pkg",
+                                      f"{folder}/backport (4.xx to 10.xx)/Alpha Game BACKPORT [fw11.00] [PPSA00001].pkg",
+                                      f"{folder}/_SHA256/Tool.exe", f"{folder}/_SHA256/UP0001.sha256"]), lines)
+        # the game, not the small backport, carries the game's name
+        self.assertGreater((self.lib() / folder / "Alpha Game [PPSA00001] [v01.000] [fw11.00].pkg").stat().st_size, 4000)
+
+    def test_several_backports_keep_their_folders(self):
+        g = dict(A, fw="11.00")
+        self.put("dl/game.pkg", g)
+        self.put("dl/Backport 4.xx/game-4xx.pkg", g)
+        self.put("dl/Backport 7.xx/game-7xx.pkg", g)
+        self.put("dl/Backport 7.xx/game-7xx-fix.pkg", g)      # two in one folder: both stay
+        self.assertEqual(ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move",
+                                          on_line=lambda _l: None), 0)
+        got = sorted(p.relative_to(self.lib() / FA).as_posix() for p in self.lib().rglob("*") if p.is_file())
+        bp = "Alpha Game BACKPORT [fw11.00] [PPSA00001]"
+        self.assertEqual(got, sorted(["Alpha Game [PPSA00001] [v01.000] [fw11.00].pkg",
+                                      f"Backport 4.xx/{bp}.pkg", f"Backport 7.xx/{bp}.pkg",
+                                      f"Backport 7.xx/{bp} (2).pkg"]))
+        self.assertEqual([p for p in (self.root / "dl").rglob("*") if p.is_file()], [])
+
+    def test_two_sources_never_share_one_name(self):
+        big = self.put("dl/a/game.pkg", A); big.write_text(json.dumps(A) + " " * 4000)
+        self.put("dl/b/game.pkg", A)
+        lines = []
+        self.assertEqual(ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move",
+                                          on_line=lines.append), 0)
+        names = sorted(p.name for p in (self.lib() / FA).iterdir())
+        self.assertEqual(names, ["Alpha Game [PPSA00001] [v01.000] (2).pkg", "Alpha Game [PPSA00001] [v01.000].pkg"])
+        self.assertGreater((self.lib() / FA / "Alpha Game [PPSA00001] [v01.000].pkg").stat().st_size, 4000)
+        self.assertTrue(any(l.startswith("[WARN]") and "(2)" in l for l in lines), lines)
+        self.assertFalse(any("skipped" in l for l in lines), lines)
+
+    def test_companions_stay_when_the_source_holds_several_titles(self):
+        self.put("dl/a.ffpfsc", A); self.put("dl/b.ffpfsc", B); self.put("dl/notes/readme.md")
+        self.assertEqual(ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move",
+                                          on_line=lambda _l: None), 0)
+        self.assertTrue((self.root / "dl/notes/readme.md").exists())
+        self.assertFalse(any(p.name == "readme.md" for p in self.lib().rglob("*")))
+
+
+class Roles(unittest.TestCase):
+    def test_role_from_the_name_or_a_folder_above(self):
+        root = Path("/x/dl")
+        self.assertEqual(ol.name_role(root / "Game-backport.pkg", root), "backport")
+        self.assertEqual(ol.name_role(root / "backport (4.xx to 10.xx)" / "g-4xx.pkg", root), "backport")
+        self.assertEqual(ol.name_role(root / "Update 1.02" / "g.pkg", root), "update")
+        self.assertEqual(ol.name_role(root / "g.pkg", root), "")
+        # folders at or above the root say nothing about the file
+        self.assertEqual(ol.name_role(Path("/backport/dl/g.pkg"), Path("/backport/dl")), "")
+
+    def test_scan_reads_the_backport_folder_too(self):
+        d = Path(tempfile.mkdtemp(prefix="organize_")).resolve()
+        try:
+            f = d / "backport (4.xx to 10.xx)" / "g-4xx.pkg"
+            f.parent.mkdir(parents=True); f.write_text(json.dumps(A))
+            entries, _ = ol.scan(d, fake_identify)
+            self.assertEqual([e.role for e in entries], ["backport"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

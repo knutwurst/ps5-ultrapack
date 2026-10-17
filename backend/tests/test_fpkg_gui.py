@@ -691,6 +691,29 @@ try:
     _pi = app._item_from_payload_path(_kind, _paths[0])
     ok("archive.payload.pkg", _kind == "pkg" and _paths[0].name == "Title [PPSA00004].pkg"
        and _pi.path == _paths[0] and m.chain_source_kind(_pi) == "pkg", f"{_kind} {_paths}")
+    # a release with a backport package and checksum tools: one job for the game, the rest
+    # goes next to its output
+    _rl = S / "extracted_release"; (_rl / "backport (4.xx to 10.xx)").mkdir(parents=True, exist_ok=True)
+    (_rl / "_SHA256").mkdir(exist_ok=True)
+    (_rl / "UP0000-PPSA00004_00-X.pkg").write_bytes(b"\x7fCNT")
+    (_rl / "backport (4.xx to 10.xx)" / "UP0000-PPSA00004_00-X-4xx.pkg").write_bytes(b"\x7fCNT")
+    (_rl / "_SHA256" / "UP0000.sha256").write_text("x"); (_rl / ".DS_Store").write_text("x")
+    _kind, _paths = app._classify_extracted_payload(_rl, "x.7z")
+    _games, _ports = app._split_backport_packages(_rl, _paths)
+    (_rl / "More" / "backport 7.xx").mkdir(parents=True, exist_ok=True)
+    (_rl / "More" / "backport 7.xx" / "UP0000-PPSA00004_00-X-7xx.pkg").write_bytes(b"\x7fCNT")
+    _sib = sorted(x.name for x in app._release_extras(_rl, _games))
+    ok("archive.payload.backport-goes-along", _kind == "pkg" and [x.name for x in _games] == ["UP0000-PPSA00004_00-X.pkg"]
+       and [x.name for x in _ports] == ["UP0000-PPSA00004_00-X-4xx.pkg"]
+       and _sib == ["More", "_SHA256", "backport (4.xx to 10.xx)"], f"{_games} {_ports} {_sib}")
+    # a game package inside a wrapper folder: the wrapper is opened, its other contents go along
+    _wr = S / "extracted_wrapped"; (_wr / "Game" / "backport 4.xx").mkdir(parents=True, exist_ok=True)
+    (_wr / "Game" / "g.pkg").write_bytes(b"\x7fCNT"); (_wr / "Game" / "backport 4.xx" / "g-4xx.pkg").write_bytes(b"x")
+    (_wr / "Game" / "notes.sha256").write_text("x"); (_wr / "Game" / ".DS_Store").write_text("x")
+    _ws = sorted(x.relative_to(_wr).as_posix() for x in app._release_extras(_wr, [_wr / "Game" / "g.pkg"]))
+    ok("archive.payload.release-extras-anywhere", _ws == ["Game/backport 4.xx", "Game/notes.sha256"], str(_ws))
+    _alone, _none = app._split_backport_packages(_rl, [_rl / "backport (4.xx to 10.xx)" / "UP0000-PPSA00004_00-X-4xx.pkg"])
+    ok("archive.payload.backport-alone-is-the-job", len(_alone) == 1 and _none == [], f"{_alone} {_none}")
     # J6f) the archive password prompt: sized to its content, and shown only when no
     # saved password opens the header (an odd size is no password problem)
     _dlg = m.ArchivePasswordPrompt(app, "Example.part1.rar"); root.update_idletasks()
@@ -2804,6 +2827,13 @@ try:
         finally:
             m.webbrowser.open = _real_open
         ok("wire.menubar.donate", _opened == [m.DONATE_URL], str(_opened))
+        _opened, _real_open = [], m.webbrowser.open
+        m.webbrowser.open = lambda url, *a, **k: _opened.append(url)
+        try:
+            _v = app._view; app._donate_nav.invoke(); root.update()
+        finally:
+            m.webbrowser.open = _real_open
+        ok("wire.sidebar.donate", _opened == [m.DONATE_URL] and app._view == _v, f"{_opened} view={app._view}")
         ok("wire.menubar.stop-safe-when-idle", (menus["File"].invoke(_entry(menus["File"], "Stop Queue")), not app.cancel_requested)[1], "")
         if m.IS_MAC:
             ok("wire.menubar.mac-settings", bool(root.tk.call("info", "commands", "::tk::mac::ShowPreferences")), "")
