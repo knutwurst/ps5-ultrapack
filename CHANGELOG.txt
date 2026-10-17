@@ -40,7 +40,10 @@ ARCHIVES
     pass 1 the app freed the whole unpack, extras included, so they
     were missing at the end (also in earlier versions).
   - An extra folder never merges into a different folder of the same
-    name next to the output; it gets "(2)". A retry that unpacks the
+    name next to the output; it gets "(2)". "Already there" means the
+    same bytes, not the same size. Extras that do not reach the output
+    (a copy error, or Copy extras off) keep the unpack and the job in
+    the queue; removing the job deletes the unpack. A retry that unpacks the
     archive again treats its backports the same way.
   - A package release unpacked for a .ffpfsc or .pkg job: a package
     that its name or folder marks as a backport is no job of its own.

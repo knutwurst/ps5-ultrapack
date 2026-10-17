@@ -1100,6 +1100,21 @@ try:
     _mid = sorted(p.name for p in app._extract_cleanup_parts(_jr, keep_own_extras=True))
     _end = [p.name for p in app._extract_cleanup_parts(_jr)]
     app.queue[:] = _q3
+    # a done job whose extras did not reach the output keeps its unpack: later cleanups leave it
+    _jr.status, _jr.kept_extract = "Done", True
+    app.queue[:] = [_jr]
+    _held = app._extract_dir_for_item(_jr) in app._open_extracts()
+    _jr.kept_extract = False
+    _freed = app._extract_dir_for_item(_jr) not in app._open_extracts()
+    app.queue[:] = _q3
+    ok("cleanup.done-job-that-kept-its-unpack", _held and _freed, f"held={_held} freed={_freed}")
+    # same size is not the same: extras are compared by content
+    _ta, _tb = S / "tree_a", S / "tree_b"
+    for _t, _c in ((_ta, b"1111"), (_tb, b"2222")):
+        (_t / "d").mkdir(parents=True, exist_ok=True); (_t / "d" / "f.sha256").write_bytes(_c)
+    _diff = m.CLIWorker._same_tree(_ta, _tb)
+    (_tb / "d" / "f.sha256").write_bytes(b"1111")
+    ok("extras.same-tree-by-content", _diff is False and m.CLIWorker._same_tree(_ta, _tb), f"diff={_diff}")
     ok("cleanup.pass1-keeps-own-extras", _mid == ["G.pkg"] and _end == ["Rel__8"], f"mid={_mid} end={_end}")
     # J6j) a finished job stays in the queue, marked Done, until it is cleared
     _real_sum, _real_open = app.summary_popup_var.get(), app.open_output_var.get()

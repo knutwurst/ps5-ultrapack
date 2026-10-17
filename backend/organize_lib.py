@@ -1,6 +1,7 @@
 """Organize a library in place, and write one source into a library (the "Organize" output)."""
 from __future__ import annotations
 
+import filecmp
 import json
 import os
 import re
@@ -821,7 +822,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             except ValueError:
                 continue
             if os.path.lexists(dst):
-                if c.is_file() and dst.is_file() and dst.stat().st_size == c.stat().st_size:
+                if c.is_file() and dst.is_file() and filecmp.cmp(c, dst, shallow=False):
                     _say(on_line, f"[INFO] already there, skipped: {dst.relative_to(out)}")
                     continue
                 dst = dst.parent / _free_name(dst.parent, dst.name)     # both stay

@@ -368,6 +368,14 @@ class Into(Tree):
         self.assertEqual((self.lib() / FA / "tools.ini").read_text(), "old")
         self.assertEqual((self.lib() / FA / "tools (2).ini").read_text(), "new one")
 
+    def test_a_companion_of_the_same_size_is_compared_by_content(self):
+        self.put("dl/game.pkg", A); self.put("dl/a.sha256", text="1111")
+        self.put(f"library/{FA}/a.sha256", text="2222")
+        self.assertEqual(ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move",
+                                          on_line=lambda _l: None), 0)
+        self.assertEqual((self.lib() / FA / "a.sha256").read_text(), "2222")
+        self.assertEqual((self.lib() / FA / "a (2).sha256").read_text(), "1111")
+
     def test_a_companion_that_cannot_come_along_fails_the_job(self):
         self.put("dl/game.pkg", A); self.put("dl/tools.ini")
         real = ol._bring_file

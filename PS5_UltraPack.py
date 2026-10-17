@@ -17,6 +17,7 @@ import shutil
 import struct
 import types
 import webbrowser
+import filecmp
 import multiprocessing
 from pathlib import Path
 
@@ -3192,6 +3193,20 @@ class CLIWorker(threading.Thread):
         if n:
             self.app.log("INFO", f"Removed {n} macOS clutter file(s) ('._' sidecars) from the output.")
 
+    @staticmethod
+    def _same_tree(a: Path, b: Path) -> bool:
+        """*a* and *b* hold the same files with the same bytes (OS clutter aside)."""
+        def files(root):
+            out = set()
+            for dp, dn, fn in os.walk(root):
+                dn[:] = [d for d in dn if not is_fs_junk_name(d)]
+                out.update(Path(dp, f).relative_to(root) for f in fn if not is_fs_junk_name(f))
+            return out
+        fa = files(a)
+        if fa != files(b):
+            return False
+        return all(filecmp.cmp(a / f, b / f, shallow=False) for f in fa)
+
     def _copy_bundle_siblings(self) -> None:
         """Copy the extra files AND folders (DLCs etc.) next to the packed .ffpfsc.
         Handles both loose files and whole subfolders (e.g. an '[ ALL DLC ]' wrapper),
@@ -3200,8 +3215,10 @@ class CLIWorker(threading.Thread):
         siblings = getattr(self.item, "bundle_siblings", None)
         if not siblings:
             return
+        self.extras_left = []
         if not getattr(self, "copy_siblings", True):
             self.app.log("INFO", "Copy extras is off - leaving DLC/extra files in the source folder.")
+            self.extras_left = [Path(x).name for x in siblings if Path(x).exists()]
             return
         dest_dir = self.output_dir
         copied = 0
@@ -3216,7 +3233,7 @@ class CLIWorker(threading.Thread):
                     # identical-size copy is already there so a re-run doesn't re-copy GBs.
                     if target.resolve() == src.resolve():
                         continue   # source already sits in the destination - nothing to do
-                    if target.exists() and get_folder_size(target) == get_folder_size(src):
+                    if target.exists() and self._same_tree(src, target):
                         copied += 1
                         continue
                     if target.exists():
@@ -3232,7 +3249,7 @@ class CLIWorker(threading.Thread):
                                     ignore=shutil.ignore_patterns(*_COPYTREE_JUNK_GLOBS))
                     copied += 1
                 elif src.is_file():
-                    if target.exists() and target.stat().st_size == src.stat().st_size:
+                    if target.exists() and filecmp.cmp(src, target, shallow=False):
                         copied += 1
                         continue
                     if target.exists():
@@ -3247,6 +3264,7 @@ class CLIWorker(threading.Thread):
                     copied += 1
             except Exception as e:
                 self.app.log("WARN", f"Could not copy extra '{Path(src).name}': {e}")
+                self.extras_left.append(Path(src).name)
         if copied:
             self.app.log("OK", f"Copied {copied} extra item(s) next to the .ffpfsc.")
 
@@ -8525,12 +8543,14 @@ class App:
         return None
 
     def _open_jobs(self, exclude=None):
-        """Jobs that still read their extracted copy: waiting or running, or failed and kept it."""
+        """Jobs that still read or hold their extracted copy: waiting or running, failed and kept
+        it, or done with extras that did not reach the output."""
         for j in self.queue:
             if j is exclude or getattr(j, "archive_path", None):
                 continue
             st = getattr(j, "status", "")
-            if st == "Done" or (st in self._RETRYABLE and not getattr(j, "kept_extract", False)):
+            kept = getattr(j, "kept_extract", False)
+            if (st == "Done" and not kept) or (st in self._RETRYABLE and not kept):
                 continue
             yield j
 
@@ -14186,18 +14206,28 @@ class App:
                     except Exception as e:
                         self.log("WARN", f"Could not record history: {e}")
 
+                _done_worker = self.worker
+                # extras that did not reach the output keep the unpack: nothing of a release is lost
+                _left = list(getattr(_done_worker, "extras_left", None) or [])
+                if _left and completed_item is not None and self._extract_dir_for_item(completed_item):
+                    completed_item.kept_extract = True
+                    self.log("WARN", f"{', '.join(_left)} did not come along to the output; the unpack stays in "
+                                     f"{self._extract_dir_for_item(completed_item)}. Removing the job from the "
+                                     "queue deletes it.")
+                else:
+                    _left = []
                 # Feature 5: auto-clear temp after success
-                if self.auto_clear_temp_var.get():
+                if self.auto_clear_temp_var.get() and not _left:
                     self._auto_clear_temp(completed_item)
                 # Always reclaim THIS item's extracted source - covers the spread-mode
                 # extract on the OUTPUT drive, which _auto_clear_temp (temp only) misses.
-                _done_worker = self.worker
                 if completed_item is not None:
-                    self._cleanup_item_extract(completed_item)
+                    if not _left:
+                        self._cleanup_item_extract(completed_item)
                     self._cleanup_inner_image(completed_item)   # drop the pass-1 inner cache
                     self._ampr_cleanup(completed_item)   # restore a direct source folder
                     self._notify_job(completed_item, True)
-                    if self.auto_remove_done_var.get():
+                    if self.auto_remove_done_var.get() and not _left:     # one that kept its unpack stays
                         if completed_item in self.queue:
                             self.queue.remove(completed_item)
                     else:
