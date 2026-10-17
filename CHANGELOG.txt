@@ -3,7 +3,62 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.2.7  (current)
+  v2.2.8  (current)
+────────────────────────────────────────────────────────────────────────
+
+APP
+
+  - An app icon for macOS and Windows: a package pressed from both
+    sides, with a simpler mark for the 16 and 32 pixel sizes. It also
+    shows on the window and in the taskbar.
+
+YOUR FILES (a deep review of the backend; each fix with a test)
+
+  - After-job Move, PS4 sorting and Organize never let two items of one
+    run share a name, also names that differ only in letter case: the
+    second gets "(2)". Before, the second could replace the first.
+  - Copies use a temp name of their own, never one a user file may
+    carry; a folder copy fails on a subfolder it cannot read instead of
+    leaving it out, and keeps links as links.
+  - The backend no longer deletes OS clutter (._ files, a Recycle Bin or
+    Trash folder) inside a user's own source folder; it only keeps it
+    out of the image. Extras it sets aside for the pack go back into the
+    folder afterwards, also after a crash.
+  - A patch applied to a user's own folder is taken back out when the
+    job fails or is cancelled, and after a crash at the next start;
+    every change is recorded before it is made.
+  - "Look inside > Extract" and the package tool's extract never
+    overwrite a file in the chosen folder; a different one gets "(2)".
+  - The temp sweep removes only the app's own working folders, never a
+    user folder whose name happens to look like one (tmp...).
+  - Settings that cannot be read at start (another program holds the
+    file) are never replaced by defaults: that session saves nothing.
+  - A backport keeps a different fakelib library in a user's folder.
+
+NO FALSE SUCCESS
+
+  - A nested exFAT image that cannot be unpacked fails the job instead
+    of building a partial game; so do fake-sign failures, truncated
+    executables, unreadable modules in a backport, and package metadata
+    that cannot be added on extract.
+  - A package that fails its checks fails the job (exit code 3); the
+    package is kept for a look. The check looks at this build's package.
+  - Organize and PS4 sorting that leave items in the source say so
+    (exit code 4): the job is done, its unpack and its source stay.
+  - Extras that do not reach the output keep the source and the unpack.
+  - A finished image whose final rename failed is kept, not deleted.
+
+SPACE AND RETRIES
+
+  - Needs that share a drive are added up; unknown archive sizes,
+    .ffpfsc chains and .pkg chains without a size get an estimate;
+    a copy on the same drive counts unless it can clone (APFS).
+  - ZIP files whose names collide on a case-insensitive drive are
+    refused; a ZipCrypto password that passes its first check but is
+    wrong no longer hides the right one.
+
+────────────────────────────────────────────────────────────────────────
+  v2.2.7
 ────────────────────────────────────────────────────────────────────────
 
 SPACE (measured 2026-10-17 on a test package, APFS and exFAT)

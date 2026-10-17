@@ -121,7 +121,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.2.7"
+APP_VERSION = "2.2.8"
 # Windows builds are a preview for now: the title, sidebar and About say so.
 APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
 # For archive sources, the GUI extraction occupies the first slice of a game's overall
