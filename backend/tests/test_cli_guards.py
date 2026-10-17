@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import io
 import json
+import contextlib
 import os
 import shutil
 import subprocess
@@ -436,28 +437,27 @@ class SilentStepProgress(unittest.TestCase):
             self.assertEqual(cli._drive_label(Path("/Volumes/SAMSUNG/_ffpfsc_temp")), "SAMSUNG")
             self.assertEqual(cli._drive_label(Path("/tmp")), "the system drive")
 
-    def test_the_label_names_the_extract_step(self):
-        # the package tool's temp files tell the step: outer temp, inner temp being
-        # written under a second name, then the finished inner image
+    def test_the_extract_bar_counts_the_files_only(self):
+        # the package tool writes the files straight out: the bar's total is their size, and
+        # its last line reads like the others (no function name, no placeholders)
         with tempfile.TemporaryDirectory() as td:
             folder = Path(td)
-            self.assertEqual(cli._pkg_extract_step(folder), 0)
-            (folder / ".libprospero-outer-ab.tmp").write_bytes(b"x")
-            self.assertEqual(cli._pkg_extract_step(folder), 1)
-            (folder / "..libprospero-inner-cd.tmp.ef.tmp").write_bytes(b"x")
-            self.assertEqual(cli._pkg_extract_step(folder), 2)
-            (folder / "..libprospero-inner-cd.tmp.ef.tmp").rename(folder / ".libprospero-inner-cd.tmp")
-            (folder / ".libprospero-outer-ab.tmp").unlink()
-            self.assertEqual(cli._pkg_extract_step(folder), 3)
             line = cli._progress_line(150 * 1024 ** 3, 200 * 1024 ** 3, 60,
                                       lambda: cli._pkg_extract_label(folder))
             m = self.PROGRESS.search(line)
-            self.assertIn("step 3 of 3: write the game files (150.0 of 200.0 GB written)", m.group("label"))
+            self.assertIn("(150.0 of 200.0 GB written)", m.group("label"))
             self.assertTrue(m.group("label").startswith("extract the .pkg on "), line)
             self.assertNotIn("compress", m.group("label"))   # the GUI would read it as Compressing
             pkg = folder / "t.pkg"; pkg.write_bytes(b"\0" * 1000)
-            self.assertEqual(cli._pkg_extract_plan(pkg, 5000), 11000)
+            self.assertEqual(cli._pkg_extract_plan(pkg, 5000), 5000)
             self.assertEqual(cli._pkg_extract_plan(pkg, 0), 0)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                cli._run_with_folder_progress(lambda: 0, folder, 2 * 1024 ** 3,
+                                              lambda: cli._pkg_extract_label(folder), interval=0.01)
+            last = out.getvalue().strip().splitlines()[-1]
+            self.assertTrue(last.startswith("[" + "#" * 32 + "] 100% extract the .pkg on "), last)
+            self.assertIn("(2.0 of 2.0 GB written)", last)
 
     def test_the_writers_counter_wins_over_file_sizes(self):
         # the .pkg tool creates each file at its full size first, then fills it: the size

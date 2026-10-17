@@ -12,6 +12,7 @@ import itertools
 import json
 import multiprocessing as mp
 import os
+import stat
 import queue
 import re
 import shutil
@@ -1814,6 +1815,37 @@ def write_source_to_blocks(
             remaining_bytes -= block_bytes_to_copy
 
 
+# Files below this size stay: they free little, and small metadata may be read again.
+CONSUME_MIN_SIZE: int = 1 << 20
+_CONSUME_REPORT_STEP: int = 1 << 30
+
+
+def _consume_written_source(path: Path, source_root: Path, freed: int, files: int) -> tuple[int, int]:
+    """Delete one source file whose bytes the image now holds (an uncompressed build whose
+    caller owns the source copy). Only below *source_root*, never under sce_sys, never a link,
+    never a small file. Prints '[consume] freed …' each GB. Returns the new (bytes, files)."""
+    try:
+        rel = path.resolve().relative_to(source_root.resolve())
+    except (OSError, ValueError):
+        return freed, files
+    if rel.parts and rel.parts[0].lower() == "sce_sys":
+        return freed, files
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_size < CONSUME_MIN_SIZE:
+            return freed, files
+        os.unlink(path)
+    except OSError as exc:
+        print(f"[consume] could not remove {rel.as_posix()}: {exc}", flush=True)
+        return freed, files
+    before = freed // _CONSUME_REPORT_STEP
+    freed, files = freed + st.st_size, files + 1
+    if files == 1 or freed // _CONSUME_REPORT_STEP > before:
+        print(f"[consume] freed {freed / (1 << 30):.1f} GB so far ({files} file(s) the image already holds)",
+              flush=True)
+    return freed, files
+
+
 def write_source_to_offset(out: BinaryIO, source_path: Path, payload_size: int, offset: int) -> None:
     """Write payload bytes from a source file into one contiguous output region.
 
@@ -3161,6 +3193,7 @@ def build_pfs(
     min_file_gain: int = 0,
     min_compress_size: int = 0,
     temp_folder: Path | None = None,
+    consume_source: bool = False,
 ) -> BuildStats:
     """Build a PFS image from a source tree.
 
@@ -3850,7 +3883,11 @@ def build_pfs(
     try:
         image_size = final_ndblock * block_size
         with tmp_path.open("w+b") as out:
-            out.truncate(image_size)
+            # Consuming the source, the image grows as its files arrive (they are laid out in
+            # ascending order): presized, it would claim the whole game at once on a drive
+            # without sparse files (exFAT, NTFS) while the source still holds it too.
+            if not (consume_source and not compress):
+                out.truncate(image_size)
 
             hdr = _pack_pfs_header_block(
                 block_size=block_size,
@@ -3917,6 +3954,8 @@ def build_pfs(
                 payload_size for _inode, payload_size, _is_dir, _bytes, _path in all_nodes_data
             )
             written_bytes: int = 0
+            consumed_bytes: int = 0
+            consumed_files: int = 0
             for (
                 inode,
                 payload_size,
@@ -3963,6 +4002,9 @@ def build_pfs(
                             payload_size=payload_size,
                             offset=inode.db[0] * block_size,
                         )
+                    if consume_source and not compress:
+                        consumed_bytes, consumed_files = _consume_written_source(
+                            payload_source_path, source_root, consumed_bytes, consumed_files)
                 written_bytes += payload_size
                 progress.step(
                     "write",
@@ -3970,6 +4012,8 @@ def build_pfs(
                     total_write_bytes,
                     bytes_processed=written_bytes,
                 )
+            if consume_source and not compress:
+                out.truncate(image_size)        # the full size, now that all of it is written
 
             if signed:
                 sign_key = pfs_gen_sign_key(resolved_ekpfs, seed)

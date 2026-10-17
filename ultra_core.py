@@ -265,12 +265,15 @@ def space_safety_factor() -> float:
 ARCHIVE_PEAK_FACTOR = 2.2
 INPLACE_PEAK_FACTOR = 1.2
 PATCH_PEAK_FACTOR   = 3.0
-# A chain that unpacks a .pkg: the package tool writes the decoded inner image and then the
-# files beside it, so the drive holds twice the game at the end of the unpack (measured: an
-# 80.9 GB game, 80.9 GB decoded image next to it); pass 1 then holds the files plus the
-# uncompressed image (~1.03x). Valid only on the game's real size (pkg_content_size), which
-# is larger than the package: its data is compressed.
-PKG_UNPACK_PEAK_FACTOR = 2.2
+# A chain that unpacks a .pkg, measured 2026-10-17 (APFS and exFAT): the package tool writes
+# the files straight out (1.0x the game, no decoded image any more); pass 1 holds the files
+# plus the uncompressed image (2.0x), unless it frees each file the image already holds
+# (--consume-source, the chain's own unpack, no check against the source): then the files
+# not yet written plus the image, at most the game plus its largest file. Pass 2 holds the
+# image (1.0x). Valid only on the game's real size (pkg_content_size), which is larger than
+# the package: its data is compressed.
+PKG_UNPACK_PEAK_FACTOR = 2.2            # pass 1 without freeing (a check against the source)
+PKG_CONSUME_MARGIN = 0.1                # the image's own blocks and directories, metadata
 
 # Free-space multiple for JUST the inner uncompressed PFS image (pass 1) on the temp/SSD
 # drive - used by the split path (image on the SSD, source on the output drive). 1.2x covers
@@ -385,6 +388,20 @@ def _is_app_tmp_dir(name: str) -> bool:
     return bool(_APP_TMP_RE.fullmatch(name))
 
 
+def pkg_peak_factor(item) -> float:
+    """Scratch peak multiple of a .pkg chain: the game plus its largest file when pass 1 frees
+    what the image holds (no check against the source), else the game twice."""
+    content = int(getattr(item, "pkg_content_size", 0) or 0)
+    largest = int(getattr(item, "pkg_largest_file", 0) or 0)
+    try:
+        verifies = bool(load_settings().get("verify_output", False))
+    except Exception:
+        verifies = False
+    if verifies or not content or not largest:
+        return PKG_UNPACK_PEAK_FACTOR
+    return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + largest / content + PKG_CONSUME_MARGIN))
+
+
 def _peak_factor_for(item) -> float:
     """Scratch peak multiple for this item's source kind (and auto-patch mode)."""
     try:
@@ -396,7 +413,7 @@ def _peak_factor_for(item) -> float:
     # unpacked game AND the inner image at once - the same shape as a patch job.
     if getattr(item, "operation", "pack") == "chain" and chain_needs_unpack(item):
         if chain_source_kind(item) == "pkg" and getattr(item, "pkg_content_size", 0):
-            return PKG_UNPACK_PEAK_FACTOR
+            return pkg_peak_factor(item)
         return PATCH_PEAK_FACTOR
     return INPLACE_PEAK_FACTOR if getattr(item, "source_kind", "archive") == "inplace" else ARCHIVE_PEAK_FACTOR
 
@@ -3465,6 +3482,7 @@ class GameItem:
     archive_title_id = ""
     archive_version = ""
     pkg_content_size = 0    # .pkg source: bytes of its files, from the package's directory (0 = not read)
+    pkg_largest_file = 0    # .pkg source: its largest file (pass 1 peaks at the game plus this one)
     origin_archive = None   # str: the archive this job's source was extracted from (retry restarts there)
     origin_extracted_size = 0  # that archive's extracted size, read from its headers
     kept_extract = False    # cancelled after its archive was extracted: that copy stays until the job is removed

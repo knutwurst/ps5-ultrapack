@@ -1,0 +1,109 @@
+[INFO] CHAIN: UP9000-PPSA99099_00-PROSPERO00000000-A0100-V0100.pkg (pkg) → no changes → ffpfsc
+[PHASE] Extracting
+[INFO] Unpacking UP9000-PPSA99099_00-PROSPERO00000000-A0100-V0100.pkg (pkg) into /WORK/temp/_ffpfsc_temp/chain-uzbnekjw (the system drive, 150.03 GB free) before the next step...
+[INFO] The package holds 2.39 GB of files. Unpacking writes them on the system drive and needs about that much there.
+[#####################-----------]  66% extract the .pkg on the system drive (1.6 of 2.4 GB written) @ 1.57 GB/s ETA 0s
+[############################----]  89% extract the .pkg on the system drive (2.1 of 2.4 GB written) @ 1.06 GB/s ETA 0s
+[################################] 100% extract the .pkg on the system drive (2.4 of 2.4 GB written)
+[OK] Found game source at /WORK/temp/_ffpfsc_temp/chain-uzbnekjw
+[INFO] Packing folder chain-uzbnekjw to uncompressed PFS image PPSA99099.ffpfs...
+[##------------------------------]   7% scan
+[####----------------------------]  14% scan
+[######--------------------------]  21% scan
+[#########-----------------------]  28% scan
+[###########---------------------]  35% scan
+[#############-------------------]  42% scan
+[################----------------]  50% scan
+[##################--------------]  57% scan
+[####################------------]  64% scan
+[######################----------]  71% scan
+[#########################-------]  78% scan
+[###########################-----]  85% scan
+[#############################---]  92% scan
+[################################] 100% scan
+[###############-----------------]  49% read
+[###############################-]  99% read
+[################################] 100% read
+[--------------------------------]   0% write
+[--------------------------------]   0% write======================================================================
+[consume] freed 1.2 GB so far (1 file(s) the image already holds)
+[###############-----------------]  49% write @ 1.89 GB/s ETA 0s
+[#######################---------]  74% write the PFS image on the system drive: 1.8 of 2.4 GB @ 1.76 GB/s ETA 0s
+[consume] freed 2.4 GB so far (2 file(s) the image already holds)
+[###############################-]  99% write @ 1.92 GB/s ETA 0s
+[################################] 100% write @ 1.89 GB/s
+[OK] Uncompressed PFS creation complete: /WORK/temp/_ffpfsc_inner/PPSA99099.ffpfs
+[PASS1-DONE] /WORK/temp/_ffpfsc_inner/PPSA99099.ffpfs
+[INFO] Freed the unpacked copy (pass 2 needs only the image).
+[--------------------------------]   0% compress
+[--------------------------------]   0% compress @ 213.48 MB/s ETA 11s
+[--------------------------------]   0% compress @ 213.86 MB/s ETA 11s
+[--------------------------------]   0% compress @ 213.88 MB/s ETA 11s
+[--------------------------------]   0% compress @ 213.95 MB/s ETA 11s
+[--------------------------------]   0% compress @ 214.39 MB/s ETA 11s
+[--------------------------------]   0% compress @ 214.48 MB/s ETA 11s
+[--------------------------------]   0% compress @ 214.28 MB/s ETA 11s
+[--------------------------------]   0% compress @ 214.68 MB/s ETA 11s
+[--------------------------------]   0% compress @ 215.07 MB/s ETA 11s
+[--------------------------------]   0% compress @ 215.46 MB/s ETA 11s
+[--------------------------------]   0% compress @ 215.69 MB/s ETA 11s
+[--------------------------------]   0% compress @ 216.19 MB/s ETA 11s
+[--------------------------------]   0% compress @ 216.16 MB/s ETA 11s
+[--------------------------------]   0% compress @ 215.99 MB/s ETA 11s
+[--------------------------------]   0% compress @ 216.50 MB/s ETA 11s
+[--------------------------------]   0% compress @ 216.73 MB/s ETA 11s
+[--------------------------------]   0% compress @ 216.85 MB/s ETA 11s
+[--------------------------------]   0% compress @ 216.96 MB/s ETA 11s
+[--------------------------------]   0% compress @ 217.49 MB/s ETA 11s
+[--------------------------------]   0% compress @ 217.88 MB/s ETA 11s
+[--------------------------------]   0% compress @ 218.33 MB/s ETA 11s
+[--------------------------------]   0% compress @ 218.57 MB/s ETA 11s
+[--------------------------------]   0% compress @ 218.66 MB/s ETA 11s
+[--------------------------------]   0% compress @ 219.15 MB/s ETA 11s
+[--------------------------------]   0% compress @ 218.94 MB/s ETA 11s
+[--------------------------------]   0% compress @ 218.45 MB/s ETA 11s
+[--------------------------------]   0% compress @ 218.89 MB/s ETA 11s
+[--------------------------------]   0% compress @ 219.19 MB/s ETA 11s
+[--------------------------------]   0% compress @ 219.56 MB/s ETA 11s
+[--------------------------------]   0% compress @ 219.80 MB/s ETA 11s
+[--------------------------------]   0% compress @ 219.76 MB/s ETA 11s
+[--------------------------------]   0% compress @ 220.19 MB/s ETA 11s
+[--------------------------------]   0% compress @ 220.13 MB/s ETA 11s
+[--------------------------------]   0% compress @ 220.62 MB/s ETA 10s
+[--------------------------------]   0% compress @ 220.79 MB/s ETA 10s
+[--------------------------------]   0% compress @ 221.02 MB/s ETA 10s
+[--------------------------------]   0% compress @ 221.12 MB/s ETA 10s
+[--------------------------------]   0% compress @ 221.41 MB/s ETA 10s
+[--------------------------------]   0% compress @ 221.70 MB/s ETA 10s
+[--------------------------------]   0% compress @ 222.01 MB/s ETA 10s
+[--------------------------------]   0% compress @ 222.22 MB/s ETA 10s
+[--------------------------------]   0% compress @ 222.51 MB/s ETA 10s
+[--------------------------------]   0% compress @ 222.71 MB/s ETA 10s
+[--------------------------------]   0% compress @ 222.79 MB/s ETA 10s
+[--------------------------------]   0% compress @ 223.06 MB/s ETA 10s
+[--------------------------------]   0% compress @ 223.21 MB/s ETA 10s
+[--------------------------------]   0% compress @ 223.67 MB/s ETA 10s
+[--------------------------------]   0% compress @ 223.81 MB/s ETA 10s
+[--------------------------------]   0% compress @ 224.04 MB/s ETA 10s
+[#-------------------------------]   5% compress @ 290.61 MB/s ETA 7s
+[###-----------------------------]  10% compress @ 281.49 MB/s ETA 7s
+[####----------------------------]  15% compress @ 277.94 MB/s ETA 7s
+[######--------------------------]  20% compress @ 280.27 MB/s ETA 6s
+[########------------------------]  25% compress @ 283.76 MB/s ETA 6s
+[#########-----------------------]  30% compress @ 289.17 MB/s ETA 5s
+[###########---------------------]  35% compress @ 292.68 MB/s ETA 5s
+[############--------------------]  40% compress @ 296.68 MB/s ETA 4s
+[##############------------------]  45% compress @ 298.88 MB/s ETA 4s
+[################----------------]  50% compress @ 302.16 MB/s ETA 4s
+[#################---------------]  55% compress @ 317.22 MB/s ETA 3s
+[###################-------------]  60% compress @ 331.24 MB/s ETA 2s
+[####################------------]  65% compress @ 343.98 MB/s ETA 2s
+[######################----------]  70% compress @ 355.74 MB/s ETA 2s
+[########################--------]  75% compress @ 366.09 MB/s ETA 1s
+[#########################-------]  80% compress @ 376.22 MB/s ETA 1s
+[###########################-----]  85% compress @ 385.66 MB/s ETA 0s
+[############################----]  90% compress @ 394.43 MB/s ETA 0s
+[##############################--]  95% compress @ 401.66 MB/s ETA 0s
+[################################] 100% compress @ 408.50 MB/s
+[OK] Compression complete: /WORK/out/PPSA99099.ffpfsc
+[SUCCESS] All operations completed successfully!

@@ -1196,7 +1196,9 @@ def _run_with_folder_progress(work, folder: Path, total: int, label: str, interv
         raise error["exc"]
     if total:
         width = 32
-        print(f"[{'#' * width}] 100% {label}", flush=True)
+        text = (label() if callable(label) else label).replace(
+            "{done}", f"{total / 1024 ** 3:.1f}").replace("{total}", f"{total / 1024 ** 3:.1f}")
+        print(f"[{'#' * width}] 100% {text}", flush=True)
     return result.get("value")
 
 
@@ -1213,39 +1215,14 @@ def _pkg_content_size(pkg: Path) -> int:
 
 
 def _pkg_extract_plan(pkg: Path, content: int) -> int:
-    """Bytes a full .pkg extract writes, all on the drive it unpacks to."""
-    try:
-        size = Path(pkg).stat().st_size
-    except OSError:
-        size = 0
-    return size + 2 * content if content else 0
-
-
-def _pkg_extract_step(folder: Path) -> int:
-    """Which of the package tool's three extract steps runs, from its temp files in
-    *folder*: 1 decrypt (outer temp only), 2 decode (the inner image is being written
-    under a second temp name), 3 write the files (the finished inner image)."""
-    try:
-        names = [n for n in os.listdir(folder) if n.startswith(".")]
-    except OSError:
-        return 0
-    if any(n.startswith("..libprospero-inner-") for n in names):
-        return 2
-    if any(n.startswith(".libprospero-inner-") for n in names):
-        return 3
-    if any(n.startswith(".libprospero-outer-") for n in names):
-        return 1
-    return 0
-
-
-_PKG_EXTRACT_STEPS = {1: "decrypt the package", 2: "unpack the game image", 3: "write the game files"}
+    """Bytes a full .pkg extract writes, all on the drive it unpacks to: the files alone
+    (measured 2026-10-17, the tool decodes straight into them; no temp images on the way)."""
+    return int(content or 0)
 
 
 def _pkg_extract_label(folder: Path) -> str:
-    """Progress label for a full .pkg extract: where it writes and which step runs."""
-    step = _pkg_extract_step(folder)
-    what = f", step {step} of 3: {_PKG_EXTRACT_STEPS[step]}" if step else ""
-    return f"extract the .pkg on {_drive_label(folder)}{what} ({{done}} of {{total}} GB written)"
+    """Progress label for a full .pkg extract: where it writes."""
+    return f"extract the .pkg on {_drive_label(folder)} ({{done}} of {{total}} GB written)"
 
 
 def _drive_label(path: Path) -> str:
@@ -1620,6 +1597,7 @@ def pack_folder_uncompressed(
     verbose: bool = False,
     temp_folder: Path | None = None,
     replace_existing: bool = False,
+    consume_source: bool = False,
 ) -> None:
     # Never pack OS metadata junk (._*, .DS_Store, Spotlight/Trash dirs, …) into the
     # image. Done here so EVERY folder-pack path (normal pack + patch repack) is covered.
@@ -1648,6 +1626,11 @@ def pack_folder_uncompressed(
         cmd += ["--temp-folder", str(temp_folder)]
     if verbose:
         cmd.append("--verbose")
+    if consume_source and not verify_enabled:
+        # our own copy of the game: each larger file goes once the image holds it, so the
+        # drive never holds the game twice (a check against the source would need it all)
+        print("[INFO] The unpacked copy is ours: each file is freed once the image holds it.", flush=True)
+        cmd.append("--consume-source")
     if verify_enabled:
         print("[INFO] Post-pack verify is ENABLED (full check against the source folder - slower, more RAM).", flush=True)
         cmd.append("--verify")
@@ -2293,10 +2276,8 @@ def _chain_materialize(src: Path, scratch_root: Path, args) -> tuple[Path, Path 
             content = _pkg_content_size(src)
             total = _pkg_extract_plan(src, content)
             if content:
-                print(f"[INFO] The package holds {content / 1024 ** 3:.2f} GB of files. Unpacking it writes "
-                      f"about {total / 1024 ** 3:.2f} GB on {_drive_label(scratch)} in three steps (decrypt, "
-                      f"unpack the game image, write the files) and needs about "
-                      f"{2 * content / 1024 ** 3:.2f} GB there at the end.", flush=True)
+                print(f"[INFO] The package holds {content / 1024 ** 3:.2f} GB of files. Unpacking writes "
+                      f"them on {_drive_label(scratch)} and needs about that much there.", flush=True)
             tool = {}
             rc = _run_with_folder_progress(
                 lambda: _fpkg.extract(src, scratch, passcode=args.fpkg_passcode,
@@ -2904,6 +2885,7 @@ def main() -> None:
         if owned is not None:
             import atexit
             atexit.register(shutil.rmtree, str(owned), ignore_errors=True)
+            args._chain_owned = str(owned)      # pass 1 may consume it, pass 2 does without it
         args.patch = None; args.backport_target = None; args.backport_libs = None
         args.chain_sign = False; args.fake_sign_first = False; args.chain_to = None
         if to == "pkg":
@@ -2945,10 +2927,8 @@ def main() -> None:
             _phase("Extracting")
             _fpkg_progress._bar(0, "extract inner PFS + CNT metadata")
             out_dir.mkdir(parents=True, exist_ok=True)
-            # a PS4 package writes its files directly (no temp images on the way); a PS5 one
-            # decodes two temp images first, see _pkg_extract_plan
-            _total = (_pkg_content_size(src) if _fpkg.is_ps4(src)
-                      else _pkg_extract_plan(src, _pkg_content_size(src)))
+            # PS4 and PS5 packages alike write their files directly (see _pkg_extract_plan)
+            _total = _pkg_extract_plan(src, _pkg_content_size(src))
             _tool = {}
             rc = _run_with_folder_progress(
                 lambda: _fpkg.extract(src, out_dir, passcode=args.fpkg_passcode,
@@ -3311,7 +3291,8 @@ def main() -> None:
                 _phase("Creating Temp PFS")
                 pack_folder_uncompressed(
                     game_root, temp_pfs, mkpfs_cmd_base, mkpfs_cwd,
-                    verify_enabled=args.verify, temp_folder=Path(td2), **patch_pack_kwargs,
+                    verify_enabled=args.verify, temp_folder=Path(td2),
+                    consume_source=temp_game_dir is not None, **patch_pack_kwargs,
                 )
                 # Pass 1 has consumed the patched game folder into temp_pfs; pass 2 reads
                 # only temp_pfs. Drop the (temp) game folder now to reclaim ~1x the game
@@ -3580,15 +3561,22 @@ def main() -> None:
                 # at its interactive overwrite prompt.
                 _discard_stale_pass1_output(temp_pfs)
 
+                _owned = getattr(args, "_chain_owned", None)
+                _ours = bool(_owned) and (Path(_owned) == Path(item) or Path(_owned) in Path(item).parents)
                 pack_folder_uncompressed(
                     item, temp_pfs, mkpfs_cmd_base, mkpfs_cwd,
                     verify_enabled=args.verify,
                     temp_folder=inner_dir,
+                    consume_source=_ours or bool(getattr(args, "stage_in_place", False)),
                     **pack_kwargs,
                 )
                 # Pass 1 done: tell the GUI so it frees the extracted source now (pass 2 needs
                 # only the inner image) and records the image path for a resume-on-OOM.
                 print(f"[PASS1-DONE] {temp_pfs}", flush=True)
+                if _ours:
+                    # the chain's own unpack: pass 2 reads only the image, so it goes now
+                    shutil.rmtree(_owned, ignore_errors=True)
+                    print("[INFO] Freed the unpacked copy (pass 2 needs only the image).", flush=True)
 
                 # Incompressible-image fast path: if the inner image barely shrinks
                 # (already-compressed game assets - common; gain ~0%), pass 2 at

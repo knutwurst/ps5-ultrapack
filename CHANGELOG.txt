@@ -6,6 +6,35 @@
   v2.2.7  (current)
 ────────────────────────────────────────────────────────────────────────
 
+SPACE (measured 2026-10-17 on a test package, APFS and exFAT)
+
+  - Converting a .pkg to .ffpfsc needed the game twice on the temp
+    drive through pass 1 and pass 2. Now pass 1 frees each larger file
+    of the app's own unpack once the image holds it, and the image
+    grows as it is written instead of claiming its full size at once
+    (exFAT and NTFS have no sparse files). Pass 2 starts after the
+    unpack is gone. Measured peak: 1.3x the game on temp instead of
+    2.0x (the test package is two big files; it is the game plus its
+    largest file at most). The same holds for an archive the app
+    unpacked. "Verify Output" keeps the source until it is checked.
+  - The structure check after pass 2 no longer copies the image on a
+    drive without links (exFAT on Windows); it compares names only and
+    stages an empty stand-in.
+  - The space estimate for a .pkg job counts the game plus its largest
+    file (read from the package), not 2.2x the game, and adds the
+    finished file when temp and output share a drive. It no longer
+    plans a split between an image drive and a source drive that a
+    .pkg job never uses.
+  - A retry after pass 2 ran out of memory continues from the image
+    pass 1 left, for chain jobs too, instead of starting over.
+
+PROGRESS
+
+  - The unpack of a .pkg counted on writing the package plus twice the
+    game (an older tool did); it writes the game once, so the bar
+    stopped at a third and jumped to the end. Its last line no longer
+    shows a function name instead of the text.
+
 ORGANIZE
 
   - An Organize job reads a package's role from its folders too: a

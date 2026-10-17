@@ -1234,6 +1234,9 @@ def _run_pack_build(
         min_file_gain=config.min_file_gain,
         min_compress_size=config.min_compress_size,
         temp_folder=temp_folder,
+        # a check against the source needs the source: consuming it only when none follows
+        consume_source=bool(getattr(args, "consume_source", False))
+        and _resolve_pack_verification_mode(args) == PackVerificationMode.SKIP,
     )
 
     stats.input_path = display_source_path
@@ -1261,7 +1264,8 @@ def _run_pack_build(
 
 @contextmanager
 def _stage_single_file_source_root(
-    *, source_file: Path, temp_folder: Path | None = None, staged_file_name: str | None = None
+    *, source_file: Path, temp_folder: Path | None = None, staged_file_name: str | None = None,
+    names_only: bool = False,
 ) -> Iterator[Path]:
     """Yield a temporary source root exposing one file, avoiding data copies when possible.
 
@@ -1306,6 +1310,12 @@ def _stage_single_file_source_root(
         staging_root: Path = Path(staging_dir_name)
         staging_file_name: str = staged_file_name if staged_file_name is not None else source_file.name
         staging_file: Path = staging_root / staging_file_name
+        if names_only:
+            # a check of the structure compares names only: an empty stand-in is enough, so no
+            # drive without links (exFAT on Windows) needs a full copy of the image for it
+            staging_file.touch()
+            yield staging_root
+            return
         try:
             os.link(src=source_file, dst=staging_file)
         except OSError:
@@ -1603,6 +1613,7 @@ def _run_stream_pack_file(*, args: argparse.Namespace, source_file: Path) -> int
         source_file=source_file,
         temp_folder=temp_folder,
         staged_file_name=internal_file_name,
+        names_only=verification_mode == PackVerificationMode.STRUCTURE,
     ) as staging_root:
         rc: int = _run_post_pack_verify(
             output_path=output_path,
@@ -2135,6 +2146,12 @@ def cli_mkpfs_main_parsers() -> argparse.ArgumentParser:
         "--raw",
         action="store_true",
         help="Pack the folder directly into a PFS image instead of the default exFAT-wrapped .ffpfsc",
+    )
+    folder_parser.add_argument(
+        "--consume-source",
+        action="store_true",
+        help="With --raw --no-compress: delete each larger source file once the image holds it "
+        "(for a source copy the caller owns; sce_sys and files under 1 MiB stay)",
     )
     folder_parser.add_argument(
         "--no-ampr-index",

@@ -808,6 +808,35 @@ try:
     ok("progress.no-backward-phase", _stays == "Reading Game" and _temp_ok, f"{_stays} {_cw.phase}")
     ok("progress.heartbeat-equals-lines", _last_sent is not None and abs(_hb - _last_sent) < 0.01
        and all(k.get("job") is _cji for _a, k in _sent), f"{_hb} {_last_sent}")
+    # J6g2b) a real .pkg -> .ffpfsc run (recorded with the space fixes: files freed during
+    # pass 1, the unpack freed after it): the bar runs forward through every band, without
+    # stalls or leaps, and ends in the compress band
+    _fx = (REPO / "backend" / "tests" / "fixtures" / "chain_pkg_to_ffpfsc.log").read_text().splitlines()
+    _rp = S / "replay_src" / "Game.pkg"; _rp.parent.mkdir(exist_ok=True); _rp.write_bytes(b"\x7fCNT")
+    _ri = m.GameItem.from_chain(_rp, to="ffpfsc")
+    _rw = m.CLIWorker(app, _ri, ["py", "cli.py", str(_rp), str(OUT), "--to", "ffpfsc"], _pcwd, _pout, _ptmp)
+    _rw.start_time = time.time()
+    _real_su2 = app.status_update
+    app.status_update = lambda *a, **k: None
+    _trace = []
+    try:
+        for _l in _fx:
+            _rw._handle_line(_l)
+            _trace.append((_l, _rw.phase, _rw._job_overall()))
+    finally:
+        app.status_update = _real_su2
+    _vals = [v for _x, _p, v in _trace]
+    _at = lambda marker: next(v for l, _p, v in _trace if l.startswith(marker))
+    _leap = max(b - a for a, b in zip(_vals, _vals[1:]))
+    _phases = list(dict.fromkeys(p for _x, p, _v in _trace))
+    ok("progress.pkg-chain-replay", all(b >= a for a, b in zip(_vals, _vals[1:]))
+       and _at("[INFO] Packin") >= 29 and _at("[PASS1-DONE]") >= 57 and _vals[-1] >= 91
+       and _leap <= 25 and [p for p in _phases if p != "Starting"][:1] == ["Extracting"]
+       and "Creating Temp PFS" in _phases
+       and "Compressing" in _phases and _rw.consumed,
+       f"phases={_phases} pack={_at('[INFO] Packin'):.1f} pass1={_at('[PASS1-DONE]'):.1f} "
+       f"end={_vals[-1]:.1f} leap={_leap:.1f} at {_trace[[b - a for a, b in zip(_vals, _vals[1:])].index(_leap) + 1][0][:60]!r} "
+       f"consumed={_rw.consumed}")
     # J6g3) a job the backend turns into a plain copy (.pkg → .pkg, nothing to change, or
     # --copy): the bar follows the copy, and stages the copy never runs are not ticked
     _cpj = m.GameItem.from_chain(_cpk, to="pkg")
@@ -924,8 +953,16 @@ try:
     finally:
         if _real_li is not None:
             _fp.list_inner = _real_li
+    # pass 1 frees what the image holds: the game plus its largest file (and a margin);
+    # with a check against the source nothing is freed, the game is there twice
+    _f_free = m._peak_factor_for(_si)
+    _vo = m.load_settings().get("verify_output", False)
+    m.save_settings({"verify_output": True})
+    _f_check = m._peak_factor_for(_si)
+    m.save_settings({"verify_output": _vo})
     ok("space.pkg-game-size", _got == 2000 and _si.pkg_content_size == 2000 and _si.extracted_size == 2000
-       and m._peak_factor_for(_si) == m.PKG_UNPACK_PEAK_FACTOR, f"{_got} {_si.extracted_size}")
+       and _si.pkg_largest_file == 1100 and abs(_f_free - 1.65) < 1e-9
+       and _f_check == m.PKG_UNPACK_PEAK_FACTOR, f"{_got} {_si.extracted_size} {_f_free} {_f_check}")
     app._active_item = None
     _ci = app._card_info_text(_pj)
     ok("card.info.drives", "writes to" in _ci.get("Drives", "") and "builds on" in _ci.get("Drives", ""),
