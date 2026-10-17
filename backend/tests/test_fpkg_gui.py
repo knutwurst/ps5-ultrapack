@@ -1550,6 +1550,13 @@ try:
     _de.update({"status": "Done", "path": str(S / "gone3" / "x"), "archive_path": None})
     m.save_settings({"queue": [_de]}); app.queue.clear(); app._restore_queue()
     ok("queue.restore-keeps-done-record", len(app.queue) == 1 and app.queue[0].status == "Done", str(len(app.queue)))
+    # a done job that kept its unpack for its extras still points at it after a restart
+    _oa = S / "orig_release.7z"; _oa.write_bytes(b"7z")
+    _de2 = dict(_de, kept_extract=True, origin_archive=str(_oa), bundle_siblings=[str(S / "gone3" / "backport 4.xx")])
+    m.save_settings({"queue": [_de2]}); app.queue.clear(); app._restore_queue()
+    _rq = app.queue[0] if app.queue else None
+    ok("queue.restore-keeps-kept-unpack", _rq is not None and _rq.archive_path is None and _rq.path is not None
+       and [x.name for x in _rq.bundle_siblings] == ["backport 4.xx"], str(vars(_rq) if _rq else None)[:200])
     m.save_settings({"queue": _saved_q2 or []})
     app.summary_popup_var.set(_real_sum); app.open_output_var.set(_real_open)
     # J6p) a dropped source is remembered; Add job pre-fills with it next time

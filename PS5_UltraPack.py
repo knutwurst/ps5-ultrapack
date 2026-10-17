@@ -10320,7 +10320,10 @@ class App:
                 # An archive job whose extracted copy was cleaned up restarts at its archive.
                 _src = getattr(obj, "path", None)
                 _org = getattr(obj, "origin_archive", None)
-                if (_org and not getattr(obj, "archive_path", None) and _src
+                # A done job that kept its unpack for extras that did not come along keeps
+                # pointing at it, so the cleanups after a restart leave those extras alone.
+                _holds = getattr(obj, "status", "") == "Done" and getattr(obj, "kept_extract", False)
+                if (_org and not _holds and not getattr(obj, "archive_path", None) and _src
                         and not Path(str(_src)).exists() and Path(_org).exists()):
                     obj.archive_path, obj.path = Path(_org), None
                     obj.source_kind, obj.files, obj.bundle_siblings = "archive", 0, []
