@@ -1640,10 +1640,14 @@ try:
     _dt2 = dict(_dt, origin_archive=str(S / "gone.7z"))
     m.save_settings({"queue": [_dt, _dt2]}); app.queue.clear(); app._restore_queue()
     _ra, _rb = (app.queue + [None, None])[:2]
+    _parked = [x for x in (app._queue_missing_saved or []) if x.get("origin_archive") == str(S / "gone.7z")]
+    app._mark_source_taken_in(_tk, ["py", "cli.py"])                  # a run without freeing clears it
     ok("queue.restore-taken-in-unpacks-again", _marked and _ra is not None and _ra.archive_path == _tarc
        and _ra.path is None and _ra.status == "Pending Extract" and not _ra.source_taken_in
-       and _rb is not None and _rb.status == "Failed" and "no longer there" in _rb.status_note,
-       f"a={getattr(_ra, 'status', None)}/{getattr(_ra, 'archive_path', None)} b={getattr(_rb, 'status', None)}")
+       and _rb is None and len(_parked) == 1 and _parked[0].get("source_taken_in") is True
+       and _tk.source_taken_in is False,
+       f"a={getattr(_ra, 'status', None)}/{getattr(_ra, 'archive_path', None)} b={_rb} parked={len(_parked)}")
+    app._queue_missing_saved = []
     # a done job that kept its unpack for its extras still points at it after a restart
     _oa = S / "orig_release.7z"; _oa.write_bytes(b"7z")
     _de2 = dict(_de, kept_extract=True, origin_archive=str(_oa), bundle_siblings=[str(S / "gone3" / "backport 4.xx")])

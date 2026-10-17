@@ -8560,12 +8560,20 @@ class App:
                     return None
         return None
 
+    @staticmethod
+    def _run_took_files(worker) -> bool:
+        """The run may have taken files out of its unpack: it said so, or it was allowed to (the
+        backend prints its notice after a file is gone, so a crash in between says nothing)."""
+        return bool(worker is not None and (getattr(worker, "consumed", False)
+                                            or "--stage-in-place" in (getattr(worker, "cmd", None) or [])))
+
     def _mark_source_taken_in(self, item, cmd) -> None:
         """Before a run that takes files out of the app's own unpack, record it in the saved
         queue: should the app end mid-run, the restart unpacks the archive again instead of
         building from a copy that lacks files."""
-        if "--stage-in-place" in (cmd or []) and not getattr(item, "source_taken_in", False):
-            item.source_taken_in = True
+        taken = "--stage-in-place" in (cmd or [])
+        if bool(getattr(item, "source_taken_in", False)) != taken:
+            item.source_taken_in = taken          # per run: only this run's command counts
             self._save_queue()
 
     def _consumable_extract(self, item) -> bool:
@@ -10358,15 +10366,16 @@ class App:
                 # pointing at it, so the cleanups after a restart leave those extras alone.
                 _holds = getattr(obj, "status", "") == "Done" and getattr(obj, "kept_extract", False)
                 # A run that took files out of its unpack and did not finish: the copy lacks them,
-                # so the job starts at its archive again (or fails when the archive is gone).
-                _taken = getattr(obj, "source_taken_in", False) and getattr(obj, "status", "") != "Done"
-                _rearm = bool(_taken and _org and Path(_org).exists() and not getattr(obj, "archive_path", None))
-                if _taken:
-                    obj.source_taken_in = False
-                    if not _rearm:
-                        obj.status = "Failed"
-                        obj.status_note = ("The run ended while it took files out of the unpacked copy, and "
-                                           "the archive is no longer there to unpack it again.")
+                # so the job starts at its archive again. Without the archive it waits, parked like
+                # a job whose drive is away, and never runs from the incomplete copy.
+                _taken = (getattr(obj, "source_taken_in", False) and getattr(obj, "status", "") != "Done"
+                          and not getattr(obj, "archive_path", None))
+                _rearm = bool(_taken and _org and Path(_org).exists())
+                if _taken and not _rearm:
+                    skipped += 1
+                    missing.append(d)
+                    continue
+                obj.source_taken_in = False
                 if (_org and not _holds and not getattr(obj, "archive_path", None) and _src
                         and (_rearm or not Path(str(_src)).exists()) and Path(_org).exists()):
                     obj.archive_path, obj.path = Path(_org), None
@@ -11746,7 +11755,7 @@ class App:
         # skipping pass 1 entirely. (No inner image yet = a rare pass-1 OOM → rebuild from
         # the source, which keep_source below preserves.)
         inner = getattr(item, "_inner_image", None)
-        if not (inner and Path(str(inner)).is_file()) and getattr(self.worker, "consumed", False):
+        if not (inner and Path(str(inner)).is_file()) and self._run_took_files(self.worker):
             # pass 1 had already taken files out of the unpack: a rebuild from it would miss them
             self.log("ERROR", f"Out of memory in pass 1 after part of the unpacked copy was taken in - "
                               f"no automatic retry for {item.name}; Retry unpacks it again.")
@@ -14240,6 +14249,9 @@ class App:
             completed_item = self._active_item
             if completed_item is not None and completed_item in self.queue:
                 completed_item.status = "Done" if success else "Failed"
+            if completed_item is not None:
+                # the copy lacks files only after a failed run that took some in
+                completed_item.source_taken_in = bool(not success and self._run_took_files(self.worker))
 
             if success:
                 self._batch_done += 1
@@ -14340,7 +14352,7 @@ class App:
                 self.extract_cancel_event.clear()
                 self._drop_patch_backup(self.worker)
                 if completed_item is not None:
-                    keep = self._extract_is_complete(completed_item) and not getattr(self.worker, "consumed", False)
+                    keep = self._extract_is_complete(completed_item) and not self._run_took_files(self.worker)
                     self._cleanup_after_failure(completed_item, keep_source=keep)
                     self._cleanup_inner_image(completed_item)   # no resume after a cancel
                     self._retire_failed(completed_item, "Cancelled")
@@ -14371,7 +14383,7 @@ class App:
                     # A finished extraction stays, as after a cancel: Edit and Retry run the
                     # job from it again instead of unpacking the archive a second time. A
                     # later job that needs the space frees it (_release_failed_copies).
-                    keep = self._extract_is_complete(completed_item) and not getattr(self.worker, "consumed", False)
+                    keep = self._extract_is_complete(completed_item) and not self._run_took_files(self.worker)
                     self._cleanup_after_failure(completed_item, keep_source=keep)
                     self._cleanup_inner_image(completed_item)   # terminal failure / gave up - no resume
                     # Keep the failed item in the queue (marked Failed, moved to the end) - 
