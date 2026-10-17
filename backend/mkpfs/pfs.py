@@ -3886,7 +3886,8 @@ def build_pfs(
             # Consuming the source, the image grows as its files arrive (they are laid out in
             # ascending order): presized, it would claim the whole game at once on a drive
             # without sparse files (exFAT, NTFS) while the source still holds it too.
-            if not (consume_source and not compress):
+            consume_source = consume_source and not compress and not signed
+            if not consume_source:
                 out.truncate(image_size)
 
             hdr = _pack_pfs_header_block(
@@ -4002,7 +4003,7 @@ def build_pfs(
                             payload_size=payload_size,
                             offset=inode.db[0] * block_size,
                         )
-                    if consume_source and not compress:
+                    if consume_source:
                         consumed_bytes, consumed_files = _consume_written_source(
                             payload_source_path, source_root, consumed_bytes, consumed_files)
                 written_bytes += payload_size
@@ -4012,7 +4013,7 @@ def build_pfs(
                     total_write_bytes,
                     bytes_processed=written_bytes,
                 )
-            if consume_source and not compress:
+            if consume_source:
                 out.truncate(image_size)        # the full size, now that all of it is written
 
             if signed:

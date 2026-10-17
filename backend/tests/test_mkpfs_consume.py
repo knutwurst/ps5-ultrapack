@@ -77,6 +77,14 @@ class Consume(unittest.TestCase):
         self.assertNotIn("[consume] freed", r.stdout)
         self.assertEqual(self.files(self.d / "game"), self.files(self.ref))
 
+    def test_a_signed_image_frees_nothing(self):
+        if self.links:                       # a link alone already stops the freeing
+            (self.d / "game" / "data" / "link.bin").unlink(); (self.ref / "data" / "link.bin").unlink()
+        r = pack(self.d / "game", self.d / "img.ffpfs", "--consume-source", "--no-verify-structure", "--signed")
+        self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
+        self.assertNotIn("[consume] freed", r.stdout)
+        self.assertEqual(self.files(self.d / "game"), self.files(self.ref))
+
     def test_without_the_flag_nothing_goes(self):
         r = pack(self.d / "game", self.d / "img.ffpfs", "--no-verify-structure")
         self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])

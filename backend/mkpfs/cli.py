@@ -1222,7 +1222,10 @@ def _run_pack_build(
     if config.compress and _contains_direct_game_markers(build_source_root):
         _emit_game_folder_compression_warning()
 
+    # signed images write their pointer blocks up front, across the whole layout: no growth
+    # with the data there, so no freeing either
     consuming: bool = (bool(getattr(args, "consume_source", False)) and not config.compress
+                       and not getattr(args, "signed", False)
                        and _resolve_pack_verification_mode(args) == PackVerificationMode.SKIP)
     if consuming and source_has_links(build_source_root):
         info("The source holds links: nothing is freed during the build (a link may point at a freed file).")

@@ -17,6 +17,11 @@ SPACE (measured 2026-10-17 on a test package, APFS and exFAT)
     2.0x (the test package is two big files; it is the game plus its
     largest file at most). The same holds for an archive the app
     unpacked. "Verify Output" keeps the source until it is checked.
+    Only the app's own unpack that no other job reads is freed, never
+    one with links in it; a run that ends while it frees files (a
+    crash) starts at its archive again after the restart, and a pass-1
+    out-of-memory retry does not rebuild from a copy it already freed.
+    A .pkg built from the app's own unpack follows the same rules.
   - The structure check after pass 2 no longer copies the image on a
     drive without links (exFAT on Windows); it compares names only and
     stages an empty stand-in.

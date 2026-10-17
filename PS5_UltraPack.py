@@ -8560,6 +8560,14 @@ class App:
                     return None
         return None
 
+    def _mark_source_taken_in(self, item, cmd) -> None:
+        """Before a run that takes files out of the app's own unpack, record it in the saved
+        queue: should the app end mid-run, the restart unpacks the archive again instead of
+        building from a copy that lacks files."""
+        if "--stage-in-place" in (cmd or []) and not getattr(item, "source_taken_in", False):
+            item.source_taken_in = True
+            self._save_queue()
+
     def _consumable_extract(self, item) -> bool:
         """The job's source is the app's own unpack of an archive, and no other job of the
         queue reads from that unpack: the backend may free its files as it takes them in."""
@@ -10349,8 +10357,18 @@ class App:
                 # A done job that kept its unpack for extras that did not come along keeps
                 # pointing at it, so the cleanups after a restart leave those extras alone.
                 _holds = getattr(obj, "status", "") == "Done" and getattr(obj, "kept_extract", False)
+                # A run that took files out of its unpack and did not finish: the copy lacks them,
+                # so the job starts at its archive again (or fails when the archive is gone).
+                _taken = getattr(obj, "source_taken_in", False) and getattr(obj, "status", "") != "Done"
+                _rearm = bool(_taken and _org and Path(_org).exists() and not getattr(obj, "archive_path", None))
+                if _taken:
+                    obj.source_taken_in = False
+                    if not _rearm:
+                        obj.status = "Failed"
+                        obj.status_note = ("The run ended while it took files out of the unpacked copy, and "
+                                           "the archive is no longer there to unpack it again.")
                 if (_org and not _holds and not getattr(obj, "archive_path", None) and _src
-                        and not Path(str(_src)).exists() and Path(_org).exists()):
+                        and (_rearm or not Path(str(_src)).exists()) and Path(_org).exists()):
                     obj.archive_path, obj.path = Path(_org), None
                     obj.source_kind, obj.files, obj.bundle_siblings = "archive", 0, []
                     obj.extracted_size = int(getattr(obj, "origin_extracted_size", 0) or 0)
@@ -12857,6 +12875,7 @@ class App:
         self.log("INFO", f"── Batch auto-advance: game {current}/{self._batch_total} - {item.name}")
         self.cancel_requested = False
         self._active_item = item
+        self._mark_source_taken_in(item, cmd)
         self.worker = CLIWorker(self, item, cmd, cwd, out_dir, temp_dir)
         self.worker.start()
 
@@ -13441,6 +13460,7 @@ class App:
             self._begin_job_progress(item)
         self.status_update(label, "Launching backend.", "Starting", 0, _floor, "00:00", " - ", " - ", job=item)
         self._active_item = item
+        self._mark_source_taken_in(item, cmd)
         self.worker = CLIWorker(self, item, cmd, cwd, out_dir, temp_dir)
         self.worker.start()
 

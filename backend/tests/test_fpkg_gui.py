@@ -1629,6 +1629,21 @@ try:
     _de.update({"status": "Done", "path": str(S / "gone3" / "x"), "archive_path": None})
     m.save_settings({"queue": [_de]}); app.queue.clear(); app._restore_queue()
     ok("queue.restore-keeps-done-record", len(app.queue) == 1 and app.queue[0].status == "Done", str(len(app.queue)))
+    # a run that took files out of its unpack and did not finish: after a restart the job starts
+    # at its archive again; without the archive it fails instead of building a copy that lacks files
+    _tdir = S / "taken_src"; _tdir.mkdir(exist_ok=True); (_tdir / "eboot.bin").write_bytes(b"x")
+    _tarc = S / "taken.7z"; _tarc.write_bytes(b"7z")
+    _tk = m.GameItem.from_chain(_tdir, to="ffpfsc", output_path=str(OUT / "job"))
+    app._mark_source_taken_in(_tk, ["py", "cli.py", "--stage-in-place"])
+    _marked = _tk.source_taken_in is True
+    _dt = dict(_de, path=str(_tdir), status="Running", source_taken_in=True, origin_archive=str(_tarc), archive_path=None)
+    _dt2 = dict(_dt, origin_archive=str(S / "gone.7z"))
+    m.save_settings({"queue": [_dt, _dt2]}); app.queue.clear(); app._restore_queue()
+    _ra, _rb = (app.queue + [None, None])[:2]
+    ok("queue.restore-taken-in-unpacks-again", _marked and _ra is not None and _ra.archive_path == _tarc
+       and _ra.path is None and _ra.status == "Pending Extract" and not _ra.source_taken_in
+       and _rb is not None and _rb.status == "Failed" and "no longer there" in _rb.status_note,
+       f"a={getattr(_ra, 'status', None)}/{getattr(_ra, 'archive_path', None)} b={getattr(_rb, 'status', None)}")
     # a done job that kept its unpack for its extras still points at it after a restart
     _oa = S / "orig_release.7z"; _oa.write_bytes(b"7z")
     _de2 = dict(_de, kept_extract=True, origin_archive=str(_oa), bundle_siblings=[str(S / "gone3" / "backport 4.xx")])
