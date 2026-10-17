@@ -8574,7 +8574,21 @@ class App:
         taken = "--stage-in-place" in (cmd or [])
         if bool(getattr(item, "source_taken_in", False)) != taken:
             item.source_taken_in = taken          # per run: only this run's command counts
-            self._save_queue()
+            if taken and not (self._save_queue() and self._queue_marks_taken_in(item)):
+                # unrecorded, a crash would leave a copy that looks whole: free nothing then
+                item.source_taken_in = False
+                cmd.remove("--stage-in-place")
+                self.log("WARN", "Could not save the queue: this run keeps the unpacked copy whole.")
+
+    @staticmethod
+    def _queue_marks_taken_in(item) -> bool:
+        """The saved queue on disk carries the job's taken-in mark (read back, not assumed)."""
+        try:
+            src = str(getattr(item, "path", "") or "")
+            return any(d.get("source_taken_in") is True and str(d.get("path") or "") == src
+                       for d in (load_settings().get("queue") or []) if isinstance(d, dict))
+        except Exception:
+            return False
 
     def _consumable_extract(self, item) -> bool:
         """The job's source is the app's own unpack of an archive, and no other job of the
@@ -10314,7 +10328,7 @@ class App:
         _restore_queue runs so the initial empty render can't clobber the saved queue.
         Best-effort - never breaks the UI rebuild."""
         if not getattr(self, "_queue_restored", False):
-            return
+            return False
         try:
             items = []
             for it in self.queue:
@@ -10332,8 +10346,9 @@ class App:
                 items.append(d)
             items += list(getattr(self, "_queue_missing_saved", None) or [])
             save_settings({"queue": items})
+            return True
         except Exception:
-            pass
+            return False
 
     def _restore_queue(self):
         """Rebuild the saved queue on startup. Items whose source path no longer exists
@@ -12171,6 +12186,9 @@ class App:
         if item not in self.queue or getattr(item, "status", "") not in self._RETRYABLE:
             return
         self._rearm_from_archive(item)
+        if self._copy_lacks_files(item):
+            self.update_queue_box(select_item=item)
+            return
         item.status = "Pending Extract" if getattr(item, "archive_path", None) else "Queued"
         item.status_note = ""
         name = getattr(item, "display_name", None) or item.name
@@ -12686,6 +12704,17 @@ class App:
             return False
         return True                              # unknown: the extraction step reports what it finds
 
+    def _copy_lacks_files(self, item) -> bool:
+        """A failed run took files out of the unpacked copy, and the archive is not there to
+        unpack it again: the job stays Failed rather than build an incomplete game."""
+        if not getattr(item, "source_taken_in", False) or getattr(item, "archive_path", None):
+            return False
+        item.status = "Failed"
+        item.status_note = ("The unpacked copy lacks files the last run took in, and its archive is not "
+                            "there to unpack it again. Bring the archive back, then Retry.")
+        self.log("WARN", f"{getattr(item, 'display_name', None) or item.name}: {item.status_note}")
+        return True
+
     def _rearm_from_archive(self, item) -> bool:
         """A job whose source was extracted from an archive, when that extracted copy is gone
         (a failed or cancelled run cleans it up): point it back at the archive, so the next
@@ -12876,6 +12905,8 @@ class App:
         _floor = self._archive_extract_pct(item) if getattr(item, "_from_archive", False) else 0
         if not getattr(item, "_from_archive", False):
             self._begin_job_progress(item)
+        elif getattr(item, "_resume_inner", None):
+            self._begin_job_progress(item, _floor)        # a resume: compression only, after the unpack share
         self.status_update(
             f"Game {current}/{self._batch_total}",
             f"Starting: {item.name}",
@@ -13312,6 +13343,8 @@ class App:
             for it in self.queue:
                 if getattr(it, "status", "") in ("Failed", "Skipped", "Cancelled"):
                     self._rearm_from_archive(it)
+                    if self._copy_lacks_files(it):
+                        continue
                     it.status = "Pending Extract" if getattr(it, "archive_path", None) else "Queued"
                     requeued += 1
             if requeued:
@@ -13467,6 +13500,8 @@ class App:
         _floor = self._archive_extract_pct(item) if getattr(item, "_from_archive", False) else 0
         if not getattr(item, "_from_archive", False):
             self._begin_job_progress(item)
+        elif getattr(item, "_resume_inner", None):
+            self._begin_job_progress(item, _floor)        # a resume: compression only, after the unpack share
         self.status_update(label, "Launching backend.", "Starting", 0, _floor, "00:00", " - ", " - ", job=item)
         self._active_item = item
         self._mark_source_taken_in(item, cmd)

@@ -1634,8 +1634,11 @@ try:
     _tdir = S / "taken_src"; _tdir.mkdir(exist_ok=True); (_tdir / "eboot.bin").write_bytes(b"x")
     _tarc = S / "taken.7z"; _tarc.write_bytes(b"7z")
     _tk = m.GameItem.from_chain(_tdir, to="ffpfsc", output_path=str(OUT / "job"))
-    app._mark_source_taken_in(_tk, ["py", "cli.py", "--stage-in-place"])
-    _marked = _tk.source_taken_in is True
+    _q6 = list(app.queue); app.queue[:] = [_tk]          # a job that runs is in the queue
+    _c1 = ["py", "cli.py", "--stage-in-place"]
+    app._mark_source_taken_in(_tk, _c1)
+    _marked = _tk.source_taken_in is True and "--stage-in-place" in _c1
+    app.queue[:] = _q6
     _dt = dict(_de, path=str(_tdir), status="Running", source_taken_in=True, origin_archive=str(_tarc), archive_path=None)
     _dt2 = dict(_dt, origin_archive=str(S / "gone.7z"))
     m.save_settings({"queue": [_dt, _dt2]}); app.queue.clear(); app._restore_queue()
@@ -1648,6 +1651,29 @@ try:
        and _tk.source_taken_in is False,
        f"a={getattr(_ra, 'status', None)}/{getattr(_ra, 'archive_path', None)} b={_rb} parked={len(_parked)}")
     app._queue_missing_saved = []
+    # unrecorded, a run frees nothing: a failed queue save drops --stage-in-place
+    _tk2 = m.GameItem.from_chain(_tdir, to="ffpfsc", output_path=str(OUT / "job"))
+    _real_sq = app._save_queue
+    app._save_queue = lambda: False
+    _c2 = ["py", "cli.py", "--stage-in-place"]
+    try:
+        app._mark_source_taken_in(_tk2, _c2)
+    finally:
+        app._save_queue = _real_sq
+    ok("queue.unsaved-mark-frees-nothing", "--stage-in-place" not in _c2 and not _tk2.source_taken_in, str(_c2))
+    # Retry never runs a copy a failed run took files from when its archive is gone
+    _tk3 = m.GameItem.from_chain(_tdir, to="ffpfsc", output_path=str(OUT / "job"))
+    _tk3.status, _tk3.source_taken_in, _tk3.origin_archive = "Failed", True, str(S / "gone.7z")
+    _q5 = list(app.queue); app.queue[:] = [_tk3]
+    _real_start = app.start
+    app.start = lambda *a, **k: None
+    try:
+        app._retry_job(_tk3)
+    finally:
+        app.start = _real_start
+        app.queue[:] = _q5
+    ok("retry.never-from-a-copy-that-lacks-files", _tk3.status == "Failed" and "lacks files" in _tk3.status_note,
+       f"{_tk3.status} {_tk3.status_note[:40]!r}")
     # a done job that kept its unpack for its extras still points at it after a restart
     _oa = S / "orig_release.7z"; _oa.write_bytes(b"7z")
     _de2 = dict(_de, kept_extract=True, origin_archive=str(_oa), bundle_siblings=[str(S / "gone3" / "backport 4.xx")])
