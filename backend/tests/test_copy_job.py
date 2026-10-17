@@ -318,5 +318,19 @@ class RunCopyTests(unittest.TestCase):
 CHUNK_SIZE_FOR_TEST = copy_job.CHUNK
 
 
+
+class LongNames(unittest.TestCase):
+    def test_a_long_name_still_gets_a_temp_name_within_the_limit(self):
+        import tempfile as _tf
+        d = Path(_tf.mkdtemp())
+        try:
+            dst = d / ("x" * 239 + ".pkg")
+            tmp = copy_job._temp_next_to(dst)
+            self.assertLessEqual(len(tmp.name.encode("utf-8")), 255)
+            self.assertTrue(tmp.name.endswith(copy_job.TEMP_SUFFIX))
+            tmp.unlink()
+        finally:
+            import shutil as _sh; _sh.rmtree(d, ignore_errors=True)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

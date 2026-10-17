@@ -31,8 +31,12 @@ def kept_line(names) -> str:
 def _temp_next_to(dst: Path, folder: bool = False) -> Path:
     """A new temp file (or folder) beside *dst* that no one else uses: created exclusively,
     with the mode a plain new file or folder gets (mkstemp would make it private)."""
+    # a long target name is shortened in the temp name, so it stays within 255 bytes
+    stem = dst.name
+    while stem and len(f".{stem}.copy-00000000{TEMP_SUFFIX}".encode("utf-8")) > 250:
+        stem = stem[:-1]
     for _ in range(100):
-        tmp = dst.with_name(f".{dst.name}.copy-{os.urandom(4).hex()}{TEMP_SUFFIX}")
+        tmp = dst.with_name(f".{stem}.copy-{os.urandom(4).hex()}{TEMP_SUFFIX}")
         try:
             if folder:
                 os.mkdir(tmp)

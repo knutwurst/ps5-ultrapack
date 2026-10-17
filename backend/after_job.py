@@ -332,7 +332,9 @@ def _free_names(sources: list, dest: Path) -> list:
     for i, s in enumerate(sources):
         is_dir = s.is_dir()
         base, _rest = _split(s.name, is_dir)
-        key = (str(_real(s.parent)), base.casefold()) if not is_dir and _VOLUME_RE.search(s.name) else i
+        # one set: its volumes share the exact base (two sets whose names differ only in case
+        # are two groups, so each finds a number of its own)
+        key = (str(_real(s.parent)), base) if not is_dir and _VOLUME_RE.search(s.name) else i
         groups.setdefault(key, []).append(i)
     out: list = [None] * len(sources)
     taken: set = set()
@@ -349,6 +351,8 @@ def _free_names(sources: list, dest: Path) -> list:
                     and not any(os.path.lexists(str(t)) for t in names)):
                 break
             n += 1
+            if n > 100000:
+                raise OSError(f"no free names in {dest} for {[sources[i].name for i in idx]}")
         taken.update(keys)
         for i, t in zip(idx, names):
             out[i] = t

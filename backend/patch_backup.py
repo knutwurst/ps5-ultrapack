@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 MANIFEST = "restore.jsonl"
@@ -95,7 +96,10 @@ def restore_originals(backup_dir: Path, game_root: Path) -> int:
                 if not keep.is_file():
                     continue          # recorded, but the game file was never touched
                 target.parent.mkdir(parents=True, exist_ok=True)
-                part = target.with_name(f".{target.name}.restore")
+                # a temp name of its own, never one a user file may carry
+                fd, part = tempfile.mkstemp(prefix=f".{target.name[:40]}.", suffix=".restore", dir=target.parent)
+                os.close(fd)
+                part = Path(part)
                 try:
                     shutil.copy2(keep, part)
                     os.replace(part, target)

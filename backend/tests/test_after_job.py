@@ -380,5 +380,29 @@ def tearDownModule():
     shutil.rmtree(_SCRATCH, ignore_errors=True)
 
 
+
+class CaseTwinSets(unittest.TestCase):
+    def test_two_volumes_that_differ_only_in_case_get_names_and_never_hang(self):
+        import tempfile as _tf, shutil as _sh
+        d = Path(_tf.mkdtemp())
+        try:
+            src = d / "src"; src.mkdir(); dest = d / "dest"; dest.mkdir()
+            a, b = src / "Game.rar", src / "game.rar"
+            a.write_text("a")
+            try:
+                b.write_text("b")
+            except OSError:
+                self.skipTest("this filesystem cannot hold both names")
+            if len(list(src.iterdir())) < 2:
+                self.skipTest("case-insensitive filesystem: only one name exists")
+            names = aj._free_names([a, b], dest)
+            self.assertEqual(len({n.name.casefold() for n in names}), 2, names)
+        finally:
+            _sh.rmtree(d, ignore_errors=True)
+
+    def test_the_name_search_has_an_end(self):
+        names = aj._free_names([Path("/nonexistent/x/Game.rar")], Path("/nonexistent/dest"))
+        self.assertEqual(names[0].name, "Game.rar")
+
 if __name__ == "__main__":
     unittest.main()

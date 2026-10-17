@@ -1076,6 +1076,34 @@ internal static partial class Program
 
     /// <summary>Write <paramref name="path"/> through a temp file next to it that is renamed over
     /// it, so a failure leaves the old file whole. A link is replaced, never written through.</summary>
+    /// A 64-bit ELF whose program headers or segments reach past the end of the file: the
+    /// signer would fill the gap with zeros. Returns what is missing, or null when it is whole.
+    static string? TruncatedSegment(byte[] b)
+    {
+        if (b.Length < 0x40 || b[4] != 2) return null;            // not ELF64: the signer decides
+        ulong phoff = BitConverter.ToUInt64(b, 0x20);
+        int phentsize = BitConverter.ToUInt16(b, 0x36), phnum = BitConverter.ToUInt16(b, 0x38);
+        if (phnum == 0) return null;
+        if (phentsize < 0x38 || phoff + (ulong)phentsize * (ulong)phnum > (ulong)b.Length)
+            return "program headers";
+        for (int i = 0; i < phnum; i++)
+        {
+            int at = (int)phoff + i * phentsize;
+            ulong off = BitConverter.ToUInt64(b, at + 0x08), size = BitConverter.ToUInt64(b, at + 0x20);
+            if (size > 0 && (off > (ulong)b.Length || size > (ulong)b.Length - off))
+                return $"segment {i}: {off + size} of {b.Length} bytes";
+        }
+        return null;
+    }
+
+    static void MakeWritable(string path)
+    {
+        if (OperatingSystem.IsWindows())
+            File.SetAttributes(path, File.GetAttributes(path) & ~FileAttributes.ReadOnly);
+        else
+            File.SetUnixFileMode(path, File.GetUnixFileMode(path) | UnixFileMode.UserWrite);
+    }
+
     static void ReplaceFile(string path, Action<string> writeTemp)
     {
         var full = Path.GetFullPath(path);
@@ -1767,6 +1795,9 @@ internal static partial class Program
                         byte[] fself;
                         var bytes = File.ReadAllBytes(srcFile);
                         if (!ProsperoFself.IsElf(bytes) || ProsperoFself.IsSelf(bytes)) { skipped++; continue; }
+                        var cut = TruncatedSegment(bytes);
+                        if (cut != null)
+                            throw new InvalidOperationException($"{relPath} is cut short ({cut}); the game copy is incomplete");
                         try
                         {
                             fself = ProsperoFself.MakeFself(bytes, new FselfOptions());
@@ -1871,6 +1902,7 @@ internal static partial class Program
                             ReplaceFile(relPath, tmp =>
                             {
                                 File.Copy(relPath, tmp, overwrite: true);
+                                MakeWritable(tmp);   // the copy keeps a read-only mode; the final file gets it back below
                                 using var fs = new FileStream(tmp, FileMode.Open, FileAccess.Write);
                                 fs.Seek(0x0B, SeekOrigin.Begin);
                                 fs.WriteByte(0x10);

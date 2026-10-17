@@ -875,7 +875,8 @@ def _app_scratch_root(temp_dir=None) -> Path:
     """<temp>/_ffpfsc_temp, the app's own folder on the temp drive (system temp when no
     --temp-dir): every scratch folder of this backend lives in it, never loose in the temp root."""
     base = Path(temp_dir) if temp_dir else Path(tempfile.gettempdir())
-    root = base.resolve() / "_ffpfsc_temp"
+    base = base.resolve()
+    root = base if base.name == "_ffpfsc_temp" else base / "_ffpfsc_temp"      # an extra temp drive's folder is one already
     made = not root.exists()
     root.mkdir(parents=True, exist_ok=True)
     if made and str(root) not in _SCRATCH_ROOTS_MADE:
@@ -991,6 +992,7 @@ def _commit_or_keep(build_path: Path, final_path: Path) -> None:
     except OSError as e:
         print(f"[ERROR] The build finished but could not replace {final_path}: {e}. "
               f"The finished image is kept as {build_path}", flush=True)
+        print(f"[KEPT-BUILD] {build_path}", flush=True)     # the app's failure cleanup leaves it
         sys.exit(1)
 
 
@@ -1791,6 +1793,7 @@ def _extras_set_aside(game_folder: Path, dest_dir: Path):
                               f"to the output (kept out of the image; the game folder keeps it).", flush=True)
                     except Exception as e:
                         print(f"[WARN] Could not copy '{p.name}' next to the output: {e}", flush=True)
+                        print(f"[EXTRAS-LEFT] {p.name} (it stays in the game folder)", flush=True)
             move_back()
         except Exception as e:
             print(f"[ERROR] Could not move the extras back into {game_folder}: {e}. They are in {aside}",
@@ -2434,8 +2437,9 @@ def _backport_precheck(folder, target: str, libs_root=None, fw_root=None):
     return words, libs
 
 
-def _apply_backport(folder, target: str, libs_root=None, fw_root=None) -> None:
-    """Backport pass on *folder*, IN PLACE."""
+def _apply_backport(folder, target: str, libs_root=None, fw_root=None, own_copy: bool = False) -> None:
+    """Backport pass on *folder*, IN PLACE. In a user's folder a fakelib library that differs
+    from the patched one is kept (it may be the user's own); in the app's own copy it is replaced."""
     from pathlib import Path
     import backport as _bp
     folder = Path(folder)
@@ -2471,6 +2475,11 @@ def _apply_backport(folder, target: str, libs_root=None, fw_root=None) -> None:
             kept += 1
             continue
         existed = dst.exists()
+        if existed and not own_copy:
+            kept += 1
+            print(f"[WARN] Backport: fakelib/{src.name} differs from your patched library and is kept "
+                  f"as it is (remove it to use the patched one).", flush=True)
+            continue
         _atomic_copy(src, dst)
         if existed:
             replaced += 1
@@ -2621,6 +2630,7 @@ def _deliver_chain_extras(args, out_dir: Path) -> None:
         return
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    left = []
     for p in sorted(Path(holding).iterdir()):
         target = _free_entry_name(out_dir, p.name, p.is_file())
         try:
@@ -2628,8 +2638,13 @@ def _deliver_chain_extras(args, out_dir: Path) -> None:
             print(f"[INFO] '{p.name}' from the source (not part of the game) is kept next to the output: "
                   f"{target}", flush=True)
         except Exception as e:
+            left.append(p.name)
             print(f"[WARN] Could not put '{p.name}' from the source next to the output: {e}", flush=True)
-    shutil.rmtree(holding, ignore_errors=True)
+    if left:
+        # what did not arrive stays where it is, and the source must stay too
+        print(f"[EXTRAS-LEFT] {', '.join(left)} (still in {holding})", flush=True)
+    else:
+        shutil.rmtree(holding, ignore_errors=True)
     args._chain_extras = None
 
 
@@ -2669,7 +2684,7 @@ def _chain_transforms(root: Path, args, scratch_root: Path, restorable: bool = F
         done.append("patch")
     try:
         if args.backport_target:
-            _apply_backport(root, args.backport_target, *_backport_dirs(args))
+            _apply_backport(root, args.backport_target, *_backport_dirs(args), own_copy=not restorable)
             done.append(f"backport {args.backport_target}")
         if getattr(args, "chain_sign", False):
             counts = _fake_sign_tree(root)
@@ -3449,6 +3464,8 @@ def main() -> None:
             if _in_place:
                 print("[INFO] Building in the unpacked copy itself: each file is removed as soon as the package "
                       "holds it. A build that fails is unpacked again on Retry.", flush=True)
+            # what is in the output folder before: the validation looks at this build's package only
+            _pkgs_before = {q.name: q.stat().st_mtime_ns for q in out_dir.glob("*.pkg")}
             try:
                 rc = _fpkg.build(build_src, out_dir,
                                  content_id=_cid,
@@ -3478,7 +3495,9 @@ def main() -> None:
                     print(f"[INFO] Removed unwrap scratch {staged}", flush=True)
             if rc != 0:
                 print(f"\n[ERROR] fPKG build failed (rc={rc}).", flush=True); sys.exit(1)
-            built = sorted(out_dir.glob("*.pkg"), key=lambda x: x.stat().st_mtime)
+            built = sorted((q for q in out_dir.glob("*.pkg")
+                            if _pkgs_before.get(q.name) != q.stat().st_mtime_ns),
+                           key=lambda x: x.stat().st_mtime)
             # Run the diagnostic checklist BEFORE announcing the result so a bad build is
             # visible right in the log. A failed check fails the job (exit code 3) but the
             # package stays for inspection; warnings stay warnings.

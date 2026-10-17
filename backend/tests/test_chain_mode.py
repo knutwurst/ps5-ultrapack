@@ -208,7 +208,7 @@ class BackportRules(unittest.TestCase):
         self.assertTrue((g / "fakelib" / "libSceX.sprx").is_file(), "the 7.61 set lands in fakelib/")
         self.assertEqual(sdk_of(g / "eboot.bin"), (SDK_761_PS5, SDK_761_PS4))
 
-    def test_a_stale_fakelib_file_is_replaced_and_a_matching_one_reused(self):
+    def test_a_differing_fakelib_file_in_a_user_folder_is_kept_and_a_matching_one_reused(self):
         g = self.game()
         libs = self.root / "patched" / "7.61"; libs.mkdir(parents=True)
         lib = _elf_with_exports([("BBBBBBBBBBB", 0, "libSceX", 0, "libSceX")])
@@ -219,10 +219,11 @@ class BackportRules(unittest.TestCase):
         (g / "fakelib" / "libSceY.sprx").write_bytes(b"y" * 64)
         rc, log = self.backport(g, "7.61", "--backport-libs", str(self.root / "patched"))
         self.assertEqual(rc, 0, log[-1500:])
-        self.assertEqual((g / "fakelib" / "libSceX.sprx").read_bytes(), lib)
+        # the user's folder: a library that differs may be the user's own, so it stays
+        self.assertEqual((g / "fakelib" / "libSceX.sprx").read_bytes(), b"stale")
         self.assertEqual((g / "fakelib" / "libSceY.sprx").read_bytes(), b"y" * 64)
         self.assertEqual(sorted(p.name for p in (g / "fakelib").iterdir()), ["libSceX.sprx", "libSceY.sprx"])
-        self.assertIn("replaced 1", log)
+        self.assertIn("differs from your patched library and is kept", log)
 
     def test_the_firmware_folder_as_patched_libraries_is_refused(self):
         g = self.game()

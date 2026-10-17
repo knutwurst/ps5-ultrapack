@@ -30,6 +30,17 @@ def find_packages(src) -> list[Path]:
                   if p.is_file() and not any(is_fs_junk_name(part) for part in p.relative_to(src).parts))
 
 
+def other_files(src) -> list[Path]:
+    """Files below *src* that are no .pkg (OS clutter skipped): a sort leaves them where they
+    are, so the run must say so."""
+    src = Path(src)
+    if not src.is_dir():
+        return []
+    return sorted(p for p in src.rglob("*")
+                  if (p.is_file() or p.is_symlink()) and p.suffix.lower() != ".pkg"
+                  and not any(is_fs_junk_name(part) for part in p.relative_to(src).parts))
+
+
 def _free_name(dst_dir: Path, name: str, taken=(), key=str) -> str:
     stem, ext = os.path.splitext(name)
     n = 2
@@ -91,6 +102,9 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
     if not items:
         _say(on_line, "[ERROR] no PS4 package found")
         return 1
+    for p in other_files(src):
+        _say(on_line, f"[INFO] not a package, left where it is: {p.relative_to(src).as_posix()}")
+        kept.append(p.name)
     _say(on_line, f"[PS4] {len(items)} package(s)")
     kinds = {p: i.kind for p, i in items}
     known = scan_ps4_library(out_dir)

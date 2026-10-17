@@ -2256,7 +2256,7 @@ class ArchiveExtractor:
         try:
             if suffix in (".rar", ".7z"):
                 ArchiveExtractor._check_name_collisions(
-                    archive, ArchiveExtractor.list_members(archive, [password] if password else []))
+                    archive, ArchiveExtractor.member_entries(archive, [password] if password else []))
             if suffix == ".zip":
                 ArchiveExtractor._zip(archive, dest, log_fn, progress_fn, password, cancel_event)
             elif suffix == ".rar":
@@ -2561,6 +2561,45 @@ class ArchiveExtractor:
                     continue
             return []
         return []
+
+    @staticmethod
+    def member_entries(archive: Path, passwords=None) -> list[str]:
+        """Member names like list_members, with a trailing '/' on folders (RAR and 7z list
+        folders without one): what the name check needs to tell a folder from a file."""
+        suffix = archive.suffix.lower()
+        cands = [p for p in (passwords or []) if p] + [""]
+        if suffix == ".rar":
+            resolved = ArchiveExtractor._first_volume(archive)
+            try:
+                backend_dir = backend_base_dir()
+                if str(backend_dir) not in sys.path:
+                    sys.path.insert(0, str(backend_dir))
+                from unrar import rarfile as _br  # type: ignore
+            except Exception:
+                return []
+            for pwd in cands:
+                try:
+                    with _br.RarFile(str(resolved), pwd=pwd or None) as rf:
+                        return [i.filename.replace("\\", "/").rstrip("/") + ("/" if i.is_directory else "")
+                                for i in rf.infolist()]
+                except Exception:
+                    continue
+            return []
+        if suffix == ".7z":
+            try:
+                import py7zr  # type: ignore
+            except ImportError:
+                return []
+            for pwd in cands:
+                try:
+                    kwargs = {"password": pwd} if pwd else {}
+                    with py7zr.SevenZipFile(str(archive), mode="r", **kwargs) as sz:
+                        return [f.filename.replace("\\", "/").rstrip("/") + ("/" if f.is_directory else "")
+                                for f in sz.list()]
+                except Exception:
+                    continue
+            return []
+        return ArchiveExtractor.list_members(archive, passwords)
 
     @staticmethod
     def uncompressed_size(archive: Path, passwords=None) -> int:

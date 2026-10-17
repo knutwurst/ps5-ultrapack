@@ -2348,6 +2348,7 @@ class CLIWorker(threading.Thread):
         self._weights, self._stage_order = self._pick_weights(cmd)
         self._is_copy = False
         self.patch_backup = ""        # the originals a patch replaced, staged by the backend
+        self.extras_left: list[str] = []   # extras that did not reach the output (backend lines, sibling copy)
         self.validate_failed = False   # the .pkg checklist reported failures: the source stays
         self.consumed = False          # the backend took the unpacked copy's files into the package as it went
         self._written: list[str] = []  # extra outputs of this job (bundle extras, PS4 title folders)
@@ -2543,7 +2544,7 @@ class CLIWorker(threading.Thread):
             # destination name (3). Nothing was written, nothing was lost, and the
             # pack-flavoured "Compression Failed" dialog (with MkPFS/temp-space causes)
             # would be actively misleading. Report them as a plain skip instead.
-            if self.operation == "copy" and code in (2, 3):
+            if (self.operation == "copy" or self._is_copy) and code in (2, 3):   # a chain that became a copy too
                 reason = ("source and destination are the same file"
                           if code == 2 else
                           "a different file already uses that name in the output folder")
@@ -2551,7 +2552,7 @@ class CLIWorker(threading.Thread):
                 self.app.finish(True, f"Copy skipped - {reason}. Nothing was changed.",
                                 self.last_cmd_str)
                 return
-            if code == 3 and self._is_fpkg:
+            if code == 3 and self._is_fpkg and not self._is_copy:
                 where = getattr(self, "invalid_pkg", "") or "the output folder"
                 self.app.finish(False, f"The package was built but failed its checks (see the log): {where}. "
                                        "It is kept so you can look at it; it is not marked as done.",
@@ -2560,7 +2561,7 @@ class CLIWorker(threading.Thread):
             if code == 4 and self.operation == "copy":
                 # done, but some items stayed in the source ([KEPT] line): a success that keeps
                 # the unpack and leaves the source as it is
-                self.extras_left = ["items the backend left in the source (see the [KEPT] line)"]
+                self.extras_left.append("items the backend left in the source (see the [KEPT] line)")
                 code = 0
             if code != 0:
                 smart = smart_error_from_log()
@@ -2843,6 +2844,12 @@ class CLIWorker(threading.Thread):
         # one forward pack sequence; a patch extracts first, then packs).
         if line.startswith("[PATCH-BACKUP] "):
             self.patch_backup = line[len("[PATCH-BACKUP] "):].strip()
+            return
+        if line.startswith("[KEPT-BUILD] "):
+            self.kept_build = line[len("[KEPT-BUILD] "):].strip()    # a finished image the rename refused
+            return
+        if line.startswith("[EXTRAS-LEFT] "):
+            self.extras_left.append(line[len("[EXTRAS-LEFT] "):].strip())   # not everything reached the output
             return
         if line.startswith("[EXTRAS-ASIDE] "):
             self.extras_aside = line[len("[EXTRAS-ASIDE] "):].strip()   # "<aside> -> <game folder>"
@@ -3251,10 +3258,9 @@ class CLIWorker(threading.Thread):
         siblings = getattr(self.item, "bundle_siblings", None)
         if not siblings:
             return
-        self.extras_left = []
         if not getattr(self, "copy_siblings", True):
             self.app.log("INFO", "Copy extras is off - leaving DLC/extra files in the source folder.")
-            self.extras_left = [Path(x).name for x in siblings if Path(x).exists()]
+            self.extras_left += [Path(x).name for x in siblings if Path(x).exists()]
             return
         dest_dir = self.output_dir
         copied = 0
@@ -9968,6 +9974,13 @@ class App:
         if getattr(item, "content_kind", "") in ("ps4", ORGANIZE_TARGET):
             return None
         op = getattr(item, "operation", "pack")
+        if op == "fpkg-extract":
+            # its folder counts as there when an earlier extract left files in it
+            _od = self._job_output_dir(item)
+            if not _od:
+                return None
+            folder = self._fpkg_extract_folder(item, _od)
+            return folder if self._folder_taken(folder) else None
         if op == "chain":
             to = getattr(item, "chain_to", None) or "ffpfsc"
         elif op == "pack":
@@ -10016,6 +10029,22 @@ class App:
             return bp.sdk_firmware(bp.SDK_TARGETS["10.xx"][0]) if bt == "10.xx" else str(bt)
         except Exception:
             return None
+
+    @staticmethod
+    def _fpkg_extract_folder(item, out: Path) -> Path:
+        """Where an fPKG extract writes: its own '<package> [extracted]' folder, never straight
+        into a library folder."""
+        out = Path(out)
+        if not out.name.endswith(" [extracted]"):
+            out = out / f"{sanitize_filename(Path(item.path).stem)} [extracted]"
+        return out
+
+    @staticmethod
+    def _folder_taken(path: Path) -> bool:
+        try:
+            return Path(path).is_dir() and any(Path(path).iterdir())
+        except OSError:
+            return False
 
     def _existing_output(self, target: Path, item=None) -> Path | None:
         """The file in the output folder that is this job's output already: same title, version and format."""
@@ -10467,6 +10496,16 @@ class App:
             except Exception:
                 skipped += 1
         self._queue_missing_saved = missing   # re-persisted by _save_queue, untouched
+        # extras a crashed run set aside beside a user's game folder go back in
+        for obj in list(self.queue):
+            try:
+                g = Path(str(getattr(obj, "path", "") or ""))
+                aside = g.parent / f".{g.name}.ffpfsc-extras"
+                if g.is_dir() and aside.is_dir():
+                    self._return_extras_aside(types.SimpleNamespace(extras_aside=f"{aside} -> {g}"))
+                    self.log("INFO", f"Extras an interrupted run had set aside are back in {g}.")
+            except Exception:
+                pass
         self._queue_restored = True   # from here on, queue mutations persist
         # Covers no job uses any more go after a while (the parked jobs keep theirs).
         _keep = {getattr(o, "art_key", "") for o in self.queue} | {str(d.get("art_key") or "") for d in missing}
@@ -11254,16 +11293,11 @@ class App:
             # Never dump /app0 straight into a library folder: the extract gets its own
             # "<package> [extracted]" subfolder (the dialog pre-names it that way when
             # the global Output is empty).
-            if not out.name.endswith(" [extracted]"):
-                out = out / f"{sanitize_filename(Path(item.path).stem)} [extracted]"
-            # an earlier extract there: the "already exists" rule decides (the backend replaces
-            # it only with --overwrite, and only once the new one is complete)
-            _rule = self.output_exists_var.get() or "skip"
-            try:
-                _taken = out.is_dir() and any(out.iterdir())
-            except OSError:
-                _taken = False
-            if _taken and _rule == "keep":
+            out = self._fpkg_extract_folder(item, out)
+            # an earlier extract there: the start's "already exists" decision applies (the
+            # backend replaces it only with --overwrite, and only once the new one is complete)
+            _taken = self._folder_taken(out)
+            if _taken and getattr(item, "_keep_both", False):
                 n = 2
                 while (out.parent / f"{out.name} ({n})").exists():
                     n += 1
@@ -11271,7 +11305,7 @@ class App:
             head = (pycmd + ["placeholder", str(out)] if getattr(sys, "frozen", False)
                     else pycmd + ["-u", str(cli_py), "placeholder", str(out)])
             cmd = head + ["--fpkg-extract", str(item.path)]
-            if _taken and _rule == "overwrite":
+            if _taken and getattr(item, "_replace_output", False):
                 cmd.append("--overwrite")
             try:
                 out.mkdir(parents=True, exist_ok=True)
@@ -11866,6 +11900,7 @@ class App:
         _w = getattr(self, "worker", None)
         _partial_dir = Path(str(getattr(_w, "output_dir", "") or "")) if _w is not None else None
         _partial_since = float(getattr(_w, "start_time", 0) or 0) - 2.0
+        _kept_build = str(getattr(_w, "kept_build", "") or "") if _w is not None else ""
         _stage_parent = None
         try:
             _src = Path(str(getattr(item, "path", "") or ""))
@@ -11873,7 +11908,11 @@ class App:
                 _stage_parent = _src.parent
         except Exception:
             _stage_parent = None
-        for cand in (getattr(item, "_build_temp", None), self.temp_var.get().strip(), out_spool):
+        _bt = getattr(item, "_build_temp", None)
+        _tv = self.temp_var.get().strip()
+        # the backend keeps its own scratch in <temp>/_ffpfsc_temp (chain-*, tmp*)
+        _scr = [str(Path(c) / "_ffpfsc_temp") for c in (_bt, _tv) if c and Path(c).name != "_ffpfsc_temp"]
+        for cand in (_bt, _tv, out_spool, *_scr):
             if not cand:
                 continue
             r = Path(cand)
@@ -11897,6 +11936,7 @@ class App:
                 try:
                     for p in root.iterdir():
                         if p.is_dir() and (is_app_tmp_dir_in(p) or p.name.startswith("ffpfsc_spool_")
+                                           or (root.name == "_ffpfsc_temp" and p.name.startswith("chain-"))
                                            or (not keep_source and p.name == "_ffpfsc_inner")):
                             sz = get_folder_size(p)
                             shutil.rmtree(str(p), ignore_errors=True)
@@ -11915,9 +11955,30 @@ class App:
                 except Exception:
                     pass
             if _partial_dir is not None and _partial_dir.is_dir():
+                # a copy this run cut short leaves a hidden temp ('.<name>.copy-<hex>.copy-tmp')
+                # beside its target: in the output folder or a title folder (and its DLC Pack)
+                try:
+                    _lvl = [_partial_dir]
+                    for _depth in range(3):
+                        _next = []
+                        for d in _lvl:
+                            for p in d.iterdir():
+                                if (p.name.startswith(".") and re.search(r"\.copy-[0-9a-f]{8}\.copy-tmp$", p.name)
+                                        and p.stat().st_mtime >= _partial_since):
+                                    sz = get_folder_size(p) if p.is_dir() else p.stat().st_size
+                                    shutil.rmtree(str(p), ignore_errors=True) if p.is_dir() else p.unlink()
+                                    freed += sz
+                                elif p.is_dir() and not p.is_symlink() and _depth < 2:
+                                    _next.append(p)
+                        _lvl = _next
+                except Exception:
+                    pass
                 try:
                     for p in _partial_dir.iterdir():
                         n = p.name.lower()
+                        if _kept_build and str(p) in (_kept_build, _kept_build + ".tmp"):
+                            continue          # finished, only its rename failed: it stays for the user
+
                         if p.is_file() and (n.endswith(".partial") or n.endswith(".partial.tmp")) \
                                 and p.stat().st_mtime >= _partial_since:
                             sz = p.stat().st_size
@@ -11946,6 +12007,45 @@ class App:
         self._run_cleanup(_work)
 
     # ── Feature 5: Auto-clear temp ────────────────────────────────────────────
+    def _recover_patch_backups(self, bases) -> set:
+        """Patch backups a crashed run left in <base>/_ffpfsc_temp/patch-backup-*: each one that
+        belongs to a folder outside the app's scratch is restored into it and then removed.
+        Returns the backups that stay (could not be restored), resolved. Thread-safe: no Tk."""
+        held: set = set()
+        try:
+            pb = _patch_backup_module()
+        except Exception:
+            return held
+        for base in bases:
+            if not base:
+                continue
+            for root in {Path(base) if Path(base).name == "_ffpfsc_temp" else Path(base) / "_ffpfsc_temp"}:
+                try:
+                    cands = [d for d in root.glob("patch-backup-*/*") if (d / "restore.jsonl").is_file()]
+                except OSError:
+                    continue
+                for d in cands:
+                    try:
+                        game, _ops = pb._entries(d)
+                    except Exception:
+                        game = None
+                    if not game or not Path(game).is_dir() or "_ffpfsc_temp" in Path(game).parts \
+                            or "_extracted" in Path(game).parts:
+                        continue          # the app's own copy, or the folder is gone: nothing to put back
+                    try:
+                        n = pb.restore_originals(d, Path(game))
+                        self.log("INFO", f"An interrupted patch job: its patch was taken back out of {game} "
+                                         f"({n} change(s) undone).")
+                        shutil.rmtree(d.parent, ignore_errors=True)
+                    except Exception as e:
+                        self.log("ERROR", f"An interrupted patch job left originals for {game} in {d}, and they "
+                                          f"could not be put back ({e}). They stay there.")
+                        try:
+                            held.add(d.parent.resolve())
+                        except OSError:
+                            held.add(d.parent)
+        return held
+
     def _offer_startup_sweep(self):
         """On launch, look for orphaned scratch from a crashed/cancelled run - tmp* and _extracted on the temp drive, plus _ffpfsc_temp / _ffpfsc_extract on the output drive - and offer to reclaim it."""
         if getattr(self, "_browser_only", False):
@@ -11962,6 +12062,10 @@ class App:
         def _scan():
             targets, seen = [], set()
             bases = list(bases0)
+            # A crash during a patch job on the user's own folder: put the originals back first,
+            # and never offer to delete a backup that could not be restored.
+            held = self._recover_patch_backups(bases0)
+            keep.update(held)
             # Drives from the history: each recorded output path is a folder we WROTE to,
             # so its parent may still hold our _ffpfsc_temp from a run that never cleaned up.
             try:
@@ -13282,6 +13386,46 @@ class App:
         except OSError:
             pass
 
+    def _restore_then_drop_patch_backup(self, item, worker) -> None:
+        """A failed or cancelled job: put a patch back out of the user's own folder (in the
+        background; a big patch copies gigabytes back), then drop the staged backup. What to
+        restore is decided here, on the main thread."""
+        p = self._staged_patch_backup(worker)
+        if p is None:
+            return
+        restore_root = self._patch_restore_root(item, p)
+        name = getattr(item, "name", "") if item is not None else ""
+        if worker is not None:
+            worker.patch_backup = ""
+
+        def _work(p=p, root=restore_root, name=name):
+            if root is not None:
+                try:
+                    n = _patch_backup_module().restore_originals(p, root)
+                    if n:
+                        self.log("INFO", f"{name}: the job did not finish; the patch was taken back out of "
+                                         f"{root} ({n} change(s) undone).")
+                except Exception as e:
+                    self.log("ERROR", f"{name}: the patch could not be taken back out of the source folder "
+                                      f"({e}). The originals stay in {p}.")
+                    return                      # the backup stays: it holds the only originals
+            shutil.rmtree(p.parent, ignore_errors=True)
+        self._run_cleanup(_work)
+
+    def _patch_restore_root(self, item, p: Path):
+        """The user's own folder a staged patch backup belongs to, or None (the app's own copy
+        was patched, no record, or the record names another folder)."""
+        if item is None or not (p / "restore.jsonl").is_file() or self._extract_dir_for_item(item) is not None:
+            return None
+        try:
+            root, _ops = _patch_backup_module()._entries(p)
+            src = Path(str(getattr(item, "path", "") or "")).resolve()
+        except Exception:
+            return None
+        if not root or not (Path(root) == src or src in Path(root).parents):
+            return None
+        return Path(root)
+
     def _restore_patched_source(self, item, worker) -> bool:
         """A failed or cancelled job that patched the user's own folder: put the originals back
         from the staged backup before it goes. True when the backup may go now."""
@@ -13686,7 +13830,7 @@ class App:
         # user may have pointed at a drive root or a shared directory.
         def _ours(p: Path) -> bool:
             return p.is_dir() and (p.name in ("_extracted", "_ffpfsc_extract", "_ffpfsc_inner",
-                                              "_patch_game", "_patch_files")
+                                              "_patch_game", "_patch_files", "_ffpfsc_temp")
                                    or is_app_tmp_dir_in(p) or p.name.startswith("ffpfsc_spool_"))
         if self._job_active():
             messagebox.showinfo("Clear Temp", "A job is working in the temp folder. Clear it once the queue has stopped.")
@@ -14494,8 +14638,7 @@ class App:
                 self.cancel_requested = False
                 self.extract_cancel_event.clear()
                 self._return_extras_aside(self.worker)
-                if self._restore_patched_source(completed_item, self.worker):
-                    self._drop_patch_backup(self.worker)
+                self._restore_then_drop_patch_backup(completed_item, self.worker)
                 if completed_item is not None:
                     keep = self._extract_is_complete(completed_item) and not self._run_took_files(self.worker)
                     self._cleanup_after_failure(completed_item, keep_source=keep)
@@ -14523,8 +14666,7 @@ class App:
                 self.log("ERROR", msg)
                 self.play_complete_sound(False)
                 self._return_extras_aside(self.worker)
-                if self._restore_patched_source(completed_item, self.worker):
-                    self._drop_patch_backup(self.worker)
+                self._restore_then_drop_patch_backup(completed_item, self.worker)
                 self._notify_job(completed_item, False, msg)
                 if completed_item is not None:
                     # A finished extraction stays, as after a cancel: Edit and Retry run the

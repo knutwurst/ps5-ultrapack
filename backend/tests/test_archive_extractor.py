@@ -609,5 +609,23 @@ class ZipCryptoLuckyPassword(_Base):
         self.assertIn("none of the 1 saved password(s) worked", str(cm.exception))
 
 
+
+class FolderEntries(unittest.TestCase):
+    def test_a_7z_folder_that_differs_in_case_from_another_is_no_collision(self):
+        import py7zr, tempfile as _tf, shutil as _sh
+        d = Path(_tf.mkdtemp())
+        try:
+            (d / "src" / "Game" / "data").mkdir(parents=True)
+            (d / "src" / "Game" / "data" / "a.bin").write_text("x")
+            arc = d / "t.7z"
+            with py7zr.SevenZipFile(arc, "w") as z:
+                z.writeall(d / "src" / "Game", "Game")
+            names = AE.member_entries(arc)
+            self.assertIn("Game/data/", names)
+            self.assertEqual(AE._name_collisions(names + ["Game/Data/"]), [])
+            self.assertTrue(AE._name_collisions(["Game/Data.bin", "Game/data.bin"]))
+        finally:
+            _sh.rmtree(d, ignore_errors=True)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

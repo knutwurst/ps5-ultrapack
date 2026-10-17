@@ -128,6 +128,14 @@ class Sort(unittest.TestCase):
         self.assertIn("[WARN] not a PS4 package", log)
         self.assertIn("[KEPT] 1 item(s) stay in the source: other.pkg", log)
 
+    def test_other_files_of_the_source_are_reported(self):
+        (self.src / "Fix").mkdir(); (self.src / "Fix" / "readme.txt").write_text("x")
+        (self.src / ".DS_Store").write_text("x")
+        rc, log = self.run_sort()
+        self.assertEqual(rc, 4, log)
+        self.assertIn("not a package, left where it is: Fix/readme.txt", log)
+        self.assertNotIn(".DS_Store", log)
+
     def test_a_package_already_in_its_place_counts_as_placed(self):
         self.run_sort()
         buf = io.StringIO()

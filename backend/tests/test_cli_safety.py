@@ -17,6 +17,8 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
+import contextlib
 import zipfile
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -512,6 +514,41 @@ class ChainArchiveExtras(Case):
         self.assertIn("[INFO]", log)
         self.assertIn("DLC Pack", log)
 
+
+
+class ReviewRoundTwo(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="rr2_"))
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_restore_never_touches_a_file_named_like_its_temp(self):
+        import patch_backup as pb
+        game = self.d / "game"; game.mkdir()
+        (game / "eboot.bin").write_bytes(b"orig")
+        (game / ".eboot.bin.restore").write_bytes(b"user's own file")
+        bk = self.d / "bk"
+        j = pb.Journal(bk, game); j.keep_original(game, "eboot.bin"); j.record("replaced", "eboot.bin")
+        (game / "eboot.bin").write_bytes(b"patched")
+        self.assertEqual(pb.restore_originals(bk, game), 1)
+        self.assertEqual((game / "eboot.bin").read_bytes(), b"orig")
+        self.assertEqual((game / ".eboot.bin.restore").read_bytes(), b"user's own file")
+
+    def test_extras_that_do_not_arrive_stay_and_are_reported(self):
+        hold = self.d / "hold"; (hold / "_DLC").mkdir(parents=True); (hold / "_DLC" / "a").write_text("x")
+        out = self.d / "out"
+        args = types.SimpleNamespace(_chain_extras=str(hold))
+        buf = io.StringIO()
+        with mock.patch.object(cli.shutil, "move", side_effect=OSError("disk full")), \
+                contextlib.redirect_stdout(buf):
+            cli._deliver_chain_extras(args, out)
+        self.assertTrue((hold / "_DLC" / "a").exists())
+        self.assertIn("[EXTRAS-LEFT]", buf.getvalue())
+
+    def test_an_extra_temp_drive_folder_gets_no_second_scratch_folder(self):
+        base = self.d / "_ffpfsc_temp"; base.mkdir()
+        self.assertEqual(cli._app_scratch_root(base), base.resolve())
 
 if __name__ == "__main__":
     unittest.main()
