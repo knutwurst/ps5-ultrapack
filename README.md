@@ -12,7 +12,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS (Apple Silicon)">
-  <a href="https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.2.6-windows-preview.1"><img src="https://img.shields.io/badge/Windows%20x64-preview-f59e0b?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64 preview"></a>
+  <a href="https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.2.7-windows-preview.1"><img src="https://img.shields.io/badge/Windows%20x64-preview-f59e0b?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64 preview"></a>
   <img src="https://img.shields.io/badge/PS5%20fPKG-native-22c55e?style=for-the-badge" alt="PS5 fPKG native">
   <img src="https://img.shields.io/badge/FW%2011.60-verified-22c55e?style=for-the-badge" alt="FW 11.60 verified">
   <img src="https://img.shields.io/badge/Backport-7.61%20%C2%B7%206.02-22c55e?style=for-the-badge" alt="Backport 7.61 and 6.02">
@@ -201,7 +201,7 @@ It detects SSD versus HDD per drive, including USB SSDs that report no flash fla
 ## Requirements
 
 - macOS on Apple Silicon for the Mac app and its releases.
-- Windows x64 as a [preview](https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.2.6-windows-preview.1): the same features, tested on Windows 11. The preview has not been checked on a console yet.
+- Windows x64 as a [preview](https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.2.7-windows-preview.1): the same features, tested on Windows 11. The preview has not been checked on a console yet.
 - Python 3.10 or newer, to run from source or to build.
 - A C++ compiler for the bundled UnRAR module (Xcode Command Line Tools), needed only when building.
 - 7-Zip ships with the app: `FETCH_7ZIP.sh` downloads the pinned 7-Zip console tools from 7-zip.org for the build. Run from source without them, the app uses an installed 7-Zip, else a slower pure-Python path for `.7z`. AES-encrypted and Deflate64 zips need 7-Zip either way.
