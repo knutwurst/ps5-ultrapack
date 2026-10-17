@@ -197,7 +197,19 @@ def prepare_target(target: str, fw_libs_root: Path, out_root: Path,
                 log(f"  [fail] {stem}: {e}")
             continue
         dst = out_dir / (stem + source.suffix)
-        dst.write_bytes(patched)
+        tmp = dst.with_name(f".{dst.name}.prepare-tmp")
+        try:
+            tmp.write_bytes(patched)
+            os.replace(tmp, dst)
+        except OSError as e:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            result.failed.append((stem, f"could not write {dst.name}: {e}"))
+            if log:
+                log(f"  [fail] {stem}: could not write {dst.name}: {e}")
+            continue
         result.patched.append((dst.name, len(patched)))
         if log:
             log(f"  [patched] {dst.name} ({len(patched):,} B)")

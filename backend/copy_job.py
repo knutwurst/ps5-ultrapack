@@ -15,8 +15,33 @@ KEEP, ORGANIZE, MOVE = "keep", "organize", "move"
 MODES = (KEEP, ORGANIZE, MOVE)
 
 _ALLOWED_SUFFIXES = frozenset({".ffpfsc", ".ffpfs", ".pkg"})
+# Ends every temp name of a copy still under way, so organize_lib.PARTIAL_SUFFIXES knows it.
+TEMP_SUFFIX = ".copy-tmp"
+# Exit code of a sort or organize run that finished but left items in the source.
+KEPT = 4
 
 
+def kept_line(names) -> str:
+    """The one line that says which items stayed in the source (at most five named)."""
+    names = list(names)
+    more = f" and {len(names) - 5} more" if len(names) > 5 else ""
+    return f"[KEPT] {len(names)} item(s) stay in the source: {', '.join(names[:5])}{more}"
+
+
+def _temp_next_to(dst: Path, folder: bool = False) -> Path:
+    """A new temp file (or folder) beside *dst* that no one else uses: created exclusively,
+    with the mode a plain new file or folder gets (mkstemp would make it private)."""
+    for _ in range(100):
+        tmp = dst.with_name(f".{dst.name}.copy-{os.urandom(4).hex()}{TEMP_SUFFIX}")
+        try:
+            if folder:
+                os.mkdir(tmp)
+            else:
+                os.close(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666))
+            return tmp
+        except FileExistsError:
+            continue
+    raise FileExistsError(f"no free temp name beside {dst}")
 
 def cross_device(e: OSError) -> bool:
     """A rename refused because source and target are on different devices: two network shares
@@ -212,8 +237,8 @@ def run_copy(src, dst_dir, *,
             _print(on_line, f"[SUCCESS] Moved {src.name} → {dst}")
             return 0
 
-    # A real copy (across drives, or on a drive that cannot clone): chunked through a
-    # *.copy-tmp file so an interrupted write never leaves a truncated target visible
+    # A real copy (across drives, or on a drive that cannot clone): chunked through a temp
+    # file of its own so an interrupted write never leaves a truncated target visible
     # under the final name. It needs the whole size free on the destination.
     try:
         free = shutil.disk_usage(dst_dir).free
@@ -223,12 +248,13 @@ def run_copy(src, dst_dir, *,
         _print(on_line, f"[ERROR] copy: not enough space on the destination: {total / 1e9:.2f} GB needed, "
                         f"{free / 1e9:.2f} GB free")
         return 1
-    tmp = dst.with_suffix(dst.suffix + ".copy-tmp")
     _print(on_line, f"[INFO] copy: {'cross-drive' if not same_drive else 'same-drive'} copy - {src.name} → {dst}")
     written = 0
     last_pct = -1
     t0 = time.monotonic()
+    tmp = None
     try:
+        tmp = _temp_next_to(dst)
         with open(src, "rb", buffering=0) as fin, open(tmp, "wb", buffering=0) as fout:
             while True:
                 buf = fin.read(CHUNK)
@@ -262,8 +288,8 @@ def run_copy(src, dst_dir, *,
         _fsync_dir(dst.parent)
     except Exception as e:
         try:
-            if tmp.exists():
-                tmp.unlink()
+            if tmp is not None and tmp.exists():
+                tmp.unlink()                # ours alone
         except Exception:
             pass
         _print(on_line, f"[ERROR] copy: write failed: {e}")
@@ -289,9 +315,10 @@ def run_copy(src, dst_dir, *,
 
 def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str], None]] = None) -> int:
     """Copy or move the folder *src* to the new folder *dst* (an unpacked game). Same drive
-    and a move: one rename. Otherwise every file is copied in chunks into '<dst>.copy-tmp',
-    flushed, and the folder takes its name only once all of it is there; a move then removes
-    the source. OS clutter is never copied. Exit codes as run_copy (3: *dst* exists)."""
+    and a move: one rename. Otherwise every file is copied in chunks into a new temp folder
+    beside *dst*, flushed, and the folder takes its name only once all of it is there; a move
+    then removes the source. A link stays a link. OS clutter is never copied. A folder that
+    cannot be listed fails the copy. Exit codes as run_copy (3: *dst* exists)."""
     if mode not in MODES:
         _print(on_line, f"[ERROR] copy: unknown mode {mode!r} (keep, organize or move)")
         return 1
@@ -328,13 +355,22 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # ultra_core next to the app
     from ultra_core import is_fs_junk_name as junk
-    files, dirs = [], []
-    for dirpath, dirnames, filenames in os.walk(src):
-        dirnames[:] = [d for d in dirnames if not junk(d)]
+    files, dirs, unreadable = [], [], []
+    for dirpath, dirnames, filenames in os.walk(src, onerror=unreadable.append):
         rel = Path(dirpath).relative_to(src)
+        dirnames[:] = [d for d in dirnames if not junk(d)]
+        # a link to a folder is copied as a link, like a link to a file (os.walk lists it here)
+        files.extend(rel / d for d in dirnames if os.path.islink(os.path.join(dirpath, d)))
+        dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
         dirs.extend(rel / d for d in dirnames)
         files.extend(rel / f for f in filenames if not junk(f))
-    total = sum(os.lstat(src / f).st_size for f in files)
+    try:
+        total = sum(os.lstat(src / f).st_size for f in files)
+    except OSError as e:
+        unreadable.append(e)
+    if unreadable:
+        _print(on_line, f"[ERROR] copy: cannot read the source: {unreadable[0]}")
+        return 1
     try:
         free = shutil.disk_usage(dst.parent).free
     except OSError:
@@ -343,19 +379,17 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
         _print(on_line, f"[ERROR] copy: not enough space on the destination: {total / 1e9:.2f} GB needed, "
                         f"{free / 1e9:.2f} GB free")
         return 1
-    tmp = dst.with_name(dst.name + ".copy-tmp")
     _print(on_line, f"[INFO] copy: folder copy - {src.name} → {dst}")
     written, last_pct, t0 = 0, -1, time.monotonic()
+    tmp = None
     try:
-        if tmp.is_dir() and not tmp.is_symlink():
-            shutil.rmtree(tmp)      # a copy of ours that was cut off (the name says so)
-        tmp.mkdir()
+        tmp = _temp_next_to(dst, folder=True)
         for d in dirs:
             (tmp / d).mkdir(parents=True, exist_ok=True)
         for f in files:
             s, t = src / f, tmp / f
             if s.is_symlink():
-                os.symlink(os.readlink(s), t)
+                os.symlink(os.readlink(s), t, target_is_directory=s.is_dir())   # Windows tells them apart
                 continue
             with open(s, "rb", buffering=0) as fin, open(t, "wb", buffering=0) as fout:
                 while True:
@@ -379,7 +413,8 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
         os.rename(tmp, dst)
         _fsync_dir(dst.parent)
     except Exception as e:
-        shutil.rmtree(tmp, ignore_errors=True)
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)       # ours alone
         _print(on_line, f"[ERROR] copy: write failed: {e}")
         return 1
     _print(on_line, "[####] 100% copy")

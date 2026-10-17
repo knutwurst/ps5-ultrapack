@@ -57,6 +57,8 @@ class Sort(unittest.TestCase):
         game.write_bytes(b"old")
         rc, log = self.run_sort(if_exists="skip")
         self.assertEqual(game.read_bytes(), b"old"); self.assertIn("already there", log)
+        self.assertEqual(rc, 4, log)                     # skipped items stay in the source
+        self.assertIn("[KEPT] 7 item(s) stay in the source: ", log)
         rc, log = self.run_sort(if_exists="ask")
         self.assertEqual(game.read_bytes(), b"old"); self.assertIn("Ask", log)
         rc, log = self.run_sort(if_exists="keep")
@@ -122,8 +124,71 @@ class Sort(unittest.TestCase):
     def test_non_ps4_package_is_reported(self):
         (self.src / "other.pkg").write_bytes(b"\x7fFIH" + b"\0" * 5000)
         rc, log = self.run_sort()
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 4, log)
         self.assertIn("[WARN] not a PS4 package", log)
+        self.assertIn("[KEPT] 1 item(s) stay in the source: other.pkg", log)
+
+    def test_a_package_already_in_its_place_counts_as_placed(self):
+        self.run_sort()
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = ps4_sort.sort_packages(self.top / "Sample Game [CUSA00001] [v01.00].pkg", self.out)
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertIn("already in place", buf.getvalue())
+
+    def test_two_packages_of_one_name_both_arrive(self):
+        twin = Path(tempfile.mkdtemp())
+        a = pkg(twin / "a", "base.pkg", "game", "01.00")
+        b = pkg(twin / "b", "base.pkg", "game", "01.00")
+        b.write_bytes(b.read_bytes() + b"\0" * 100)       # another dump of the same game
+        for rule in ("skip", "overwrite"):
+            out = Path(tempfile.mkdtemp())
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = ps4_sort.sort_packages(twin, out, if_exists=rule)
+            self.assertEqual(rc, 0, buf.getvalue())
+            top = out / "Sample Game [CUSA00001] [v01.00]"
+            self.assertEqual(sorted(p.name for p in top.iterdir()),
+                             ["Sample Game [CUSA00001] [v01.00] (2).pkg", "Sample Game [CUSA00001] [v01.00].pkg"])
+            self.assertEqual(sorted(p.stat().st_size for p in top.iterdir()),
+                             sorted([a.stat().st_size, b.stat().st_size]))
+
+    def test_overwrite_cut_short_leaves_no_hidden_package(self):
+        self.run_sort()
+        game = self.top / "Sample Game [CUSA00001] [v01.00].pkg"
+        game.write_bytes(b"old")
+        real = ps4_sort.os.replace
+
+        def failing(a, b, *x, **k):
+            if str(a).endswith(".ps4sort-part"):
+                raise OSError(5, "drive gone")
+            return real(a, b, *x, **k)
+        ps4_sort.os.replace = failing
+        try:
+            rc, log = self.run_sort(if_exists="overwrite", mode="move")
+        finally:
+            ps4_sort.os.replace = real
+        self.assertEqual(rc, 1, log)
+        self.assertFalse(list(self.out.rglob("*.ps4sort-part")), log)
+        self.assertEqual(game.read_bytes(), b"old")
+        self.assertTrue((self.top / "Sample Game [CUSA00001] [v01.00] (2).pkg").is_file(), log)
+
+    def test_a_leftover_part_is_restored(self):
+        self.run_sort()
+        game = self.top / "Sample Game [CUSA00001] [v01.00].pkg"
+        upd = self.top / "Sample Game [CUSA00001] UPDATE [v01.07].pkg"
+        game.rename(game.with_name(game.name + ".ps4sort-part"))          # killed after the old one went
+        (upd.with_name(upd.name + ".ps4sort-part")).write_bytes(b"new")    # killed before it replaced the old
+        lone = Path(tempfile.mkdtemp())
+        pkg(lone, "d.pkg", "dlc", "01.00", title="Sample Game - Skin")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = ps4_sort.sort_packages(lone, self.out)
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertFalse(list(self.out.rglob("*.ps4sort-part")), buf.getvalue())
+        self.assertTrue(game.is_file())
+        self.assertNotEqual(upd.read_bytes(), b"new")
+        self.assertEqual(upd.with_name(upd.stem + " (2).pkg").read_bytes(), b"new")
 
     def test_nothing_found(self):
         empty = Path(tempfile.mkdtemp())

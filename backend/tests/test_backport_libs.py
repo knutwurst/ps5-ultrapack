@@ -13,6 +13,7 @@ import struct
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from backend import backport_libs as bl
@@ -160,6 +161,23 @@ class PrepareTarget(unittest.TestCase):
         r = bl.prepare_target("7.61", self.fw, self.out, cache_dir=self.cache)
         self.assertEqual(len(r.failed), 1)
         self.assertIn("CRC", r.failed[0][1])
+
+    def test_a_failed_write_keeps_the_old_library_and_leaves_no_partial(self):
+        dst = self.out / "7.61" / "libSceExample.sprx"
+        dst.parent.mkdir(parents=True)
+        dst.write_bytes(b"OLD")
+        real_write = Path.write_bytes
+
+        def half_then_full_disk(path, data):
+            real_write(path, data[:len(data) // 2])
+            raise OSError(28, "No space left on device")
+        with mock.patch.object(Path, "write_bytes", half_then_full_disk):
+            r = bl.prepare_target("7.61", self.fw, self.out, cache_dir=self.cache)
+        self.assertEqual(r.patched, [])
+        self.assertEqual(len(r.failed), 1)
+        self.assertIn("No space", r.failed[0][1])
+        self.assertEqual(dst.read_bytes(), b"OLD")
+        self.assertEqual(sorted(p.name for p in dst.parent.iterdir()), ["libSceExample.sprx"])
 
 
 if __name__ == "__main__":

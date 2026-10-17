@@ -251,6 +251,48 @@ class Organize(Tree):
         ol.apply(p, self.root.parent / (self.root.name + ".journal.json"), selected={idx}, on_line=lambda _l: None)
         self.assertEqual(self.tree(), sorted([f"{FA}/Alpha Game [PPSA00001] [v01.000].ffpfsc", "b.ffpfsc"]))
 
+    def test_journal_is_written_after_every_move(self):
+        self.put("a.ffpfsc", A); self.put("b.ffpfsc", B)
+        p = self.run_plan()
+        journal = self.root.parent / (self.root.name + ".journal.json")
+        real, seen = ol._rename, []
+
+        def spy(src, dst, *a, **k):
+            seen.append(json.loads(journal.read_text())["ops"] if journal.exists() else None)
+            return real(src, dst, *a, **k)
+        ol._rename = spy
+        try:
+            ol.apply(p, journal, on_line=lambda _l: None)
+        finally:
+            ol._rename = real
+        self.assertEqual(len(seen), 2)
+        self.assertIsNotNone(seen[1], "a run killed now would leave no journal")
+        self.assertTrue(any(op["op"] == "move" for op in seen[1]), seen[1])
+        self.assertFalse(list(journal.parent.glob(journal.name + ".tmp")))
+
+    def test_case_rename_cut_in_half_is_journaled_and_undone(self):
+        src = self.put("alpha.ffpfsc", A)
+        dst = self.root / "ALPHA.ffpfsc"
+        p = ol.Plan(self.root, [ol.Move(src, dst, "PPSA00001", "Alpha")], [], 0)
+        journal = self.root.parent / (self.root.name + ".journal.json")
+        real = os.rename
+
+        def failing(a, b, *x, **k):
+            if str(a).endswith(".organize-case"):
+                raise OSError(5, "drive gone")
+            return real(a, b, *x, **k)
+        ol.os.rename = failing
+        try:
+            res = ol.apply(p, journal, on_line=lambda _l: None)
+        finally:
+            ol.os.rename = real
+        self.assertEqual(len(res["failed"]), 1)
+        self.assertEqual([q.name for q in self.root.iterdir()], ["alpha.ffpfsc.organize-case"])
+        back = ol.undo(journal, on_line=lambda _l: None)
+        self.assertEqual(back["failed"], [])
+        self.assertEqual([q.name for q in self.root.iterdir()], ["alpha.ffpfsc"])
+        self.assertEqual(json.loads(src.read_text()), A)
+
     def test_plan_json_round_trip(self):
         self.put("a.ffpfsc", A); self.put("dl/x.rar", text="?")
         p = self.run_plan()
@@ -298,10 +340,22 @@ class Into(Tree):
                                           on_line=lambda _l: None), 1)
         self.assertFalse((self.root / "dl" / "lib").exists())
 
+    def test_an_overwrite_cut_short_gets_its_old_item_back(self):
+        # a run killed between setting the old item aside and the new copy: the next run
+        # gives the old item its name back before it decides anything
+        self.put(f"library/{FA}/Alpha Game [PPSA00001] [v01.000].ffpfsc.copy-old", A)
+        lines = []
+        rc = ol.organize_into(self.put("dl/a.ffpfsc", A), self.lib(), fake_identify, on_line=lines.append)
+        names = sorted(p.name for p in (self.lib() / FA).iterdir())
+        self.assertIn("Alpha Game [PPSA00001] [v01.000].ffpfsc", names)
+        self.assertFalse(any(n.endswith(".copy-old") for n in names), names)
+        self.assertTrue(any("took its name back" in l for l in lines), lines)
+        self.assertIn(rc, (0, 4))
+
     def test_existing_name_follows_the_rule(self):
         self.put(f"library/{FA}/Alpha Game [PPSA00001] [v01.000].ffpfsc", text="old")
         src = self.put("dl/a.ffpfsc", A)
-        self.assertEqual(ol.organize_into(src, self.lib(), fake_identify, on_line=lambda _l: None), 0)
+        self.assertEqual(ol.organize_into(src, self.lib(), fake_identify, on_line=lambda _l: None), 4)
         self.assertEqual((self.lib() / FA / "Alpha Game [PPSA00001] [v01.000].ffpfsc").read_text(), "old")
         ol.organize_into(src, self.lib(), fake_identify, if_exists="overwrite", on_line=lambda _l: None)
         self.assertEqual(json.loads((self.lib() / FA / "Alpha Game [PPSA00001] [v01.000].ffpfsc").read_text()), A)
@@ -424,10 +478,48 @@ class Into(Tree):
 
     def test_companions_stay_when_the_source_holds_several_titles(self):
         self.put("dl/a.ffpfsc", A); self.put("dl/b.ffpfsc", B); self.put("dl/notes/readme.md")
+        lines = []
         self.assertEqual(ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move",
-                                          on_line=lambda _l: None), 0)
+                                          on_line=lines.append), 4)
         self.assertTrue((self.root / "dl/notes/readme.md").exists())
         self.assertFalse(any(p.name == "readme.md" for p in self.lib().rglob("*")))
+        self.assertIn("[KEPT] 1 item(s) stay in the source: notes", lines)
+
+    def test_names_that_differ_only_in_case_both_arrive(self):
+        # DLC names keep the case of their titles: "... DLC x ..." and "... DLC X ..."
+        self.put("dl/g.pkg", A)
+        self.put("dl/d1.pkg", dict(A, title="Alpha Game - x", role="dlc"))
+        self.put("dl/d2.pkg", dict(A, title="Alpha Game - X", role="dlc"))
+        for rule in ("skip", "overwrite"):
+            lines = []
+            out = self.root / f"lib-{rule}"
+            rc = ol.organize_into(self.root / "dl", out, fake_identify, mode="keep", if_exists=rule,
+                                  on_line=lines.append)
+            self.assertEqual(rc, 0, lines)
+            got = sorted(json.loads(p.read_text())["title"] for p in out.rglob("*DLC*.pkg"))
+            self.assertEqual(got, ["Alpha Game - X", "Alpha Game - x"], lines)
+            self.assertEqual(len({p.name.casefold() for p in out.rglob("*DLC*.pkg")}), 2)
+            self.assertFalse([p for p in out.rglob("*") if p.name.endswith(".copy-old")])
+
+    def test_items_left_in_the_source_give_code_4(self):
+        self.put("dl/a.ffpfsc", A); self.put("dl/b.ffpfsc", B); self.put("dl/what.ffpfsc", text="unreadable")
+        lines = []
+        rc = ol.organize_into(self.root / "dl", self.lib(), fake_identify, mode="move", on_line=lines.append)
+        self.assertEqual(rc, 4, lines)
+        self.assertIn("[KEPT] 1 item(s) stay in the source: what.ffpfsc", lines)
+        self.assertTrue((self.root / "dl/what.ffpfsc").exists())
+        # the Skip rule leaves the second copy in the source as well
+        self.put("dl/a.ffpfsc", A)
+        lines = []
+        rc = ol.organize_into(self.root / "dl" / "a.ffpfsc", self.lib(), fake_identify, mode="move",
+                              on_line=lines.append)
+        self.assertEqual(rc, 4, lines)
+        self.assertEqual([l for l in lines if l.startswith("[KEPT]")], ["[KEPT] 1 item(s) stay in the source: a.ffpfsc"])
+
+    def test_kept_line_names_five_at_most(self):
+        import copy_job
+        self.assertEqual(copy_job.kept_line([f"f{i}" for i in range(7)]),
+                         "[KEPT] 7 item(s) stay in the source: f0, f1, f2, f3, f4 and 2 more")
 
 
 class Roles(unittest.TestCase):

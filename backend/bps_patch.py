@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 
 BPS_MAGIC = b"BPS1"
+# A system library is a few MB; a larger declared target is a hostile or broken patch.
+MAX_TARGET_SIZE = 1 << 30
 
 
 class BpsError(ValueError):
@@ -86,6 +88,9 @@ def apply(patch: bytes, source: bytes, *, verify_source: bool = True) -> bytes:
     hdr, pos = read_header(patch)
     if len(source) != hdr.source_size:
         raise BpsError(f"source is {len(source)} bytes, patch expects {hdr.source_size}")
+    if hdr.target_size > MAX_TARGET_SIZE:
+        raise BpsError(f"patch declares a target size of {hdr.target_size} bytes, more than "
+                       f"any library can be")
     if len(patch) < pos + 12:                                # 3 × u32 footer
         raise BpsError("patch is shorter than its footer")
     footer_start = len(patch) - 12
@@ -102,6 +107,8 @@ def apply(patch: bytes, source: bytes, *, verify_source: bool = True) -> bytes:
         action, pos = _decode_vli(patch, pos)
         mode = action & 0b11
         length = (action >> 2) + 1
+        if len(out) + length > hdr.target_size:
+            raise BpsError("an action writes past the declared target size")
         if mode == 0:                                        # SourceRead
             if len(out) + length > hdr.source_size:
                 raise BpsError("SourceRead overruns the source")
@@ -128,8 +135,6 @@ def apply(patch: bytes, source: bytes, *, verify_source: bool = True) -> bytes:
             for i in range(length):
                 out.append(out[tgt_cur + i])
             tgt_cur += length
-        if len(out) > hdr.target_size:
-            raise BpsError("actions produced more bytes than target_size declares")
 
     if len(out) != hdr.target_size:
         raise BpsError(f"actions produced {len(out)} bytes, target_size is {hdr.target_size}")

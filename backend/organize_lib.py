@@ -20,6 +20,7 @@ from ultra_core import is_fs_junk_name
 
 FILE_KINDS = {".ffpfs": "ffpfs", ".ffpfsc": "ffpfsc", ".exfat": "exfat", ".ffpkg": "ffpkg", ".pkg": "pkg"}
 # Half-written files of a copy or sort that is still running (or was cut short): never touched.
+# copy_job's temp names are '.<name>.copy-<random>.copy-tmp'; older runs left '<name>.copy-tmp'.
 PARTIAL_SUFFIXES = (".copy-tmp", ".ps4sort-part")
 _TAG = re.compile(r"\[((?:PPSA|CUSA)\d{5})\]", re.I)
 _NAME_ROLE = ((re.compile(r"\bback-?port(?:ed)?\b", re.I), "backport"),
@@ -420,14 +421,27 @@ def _drop_sidecars_of(ops: list) -> None:
                         _drop_sidecar(q)
 
 
-def _rename(src: Path, dst: Path) -> None:
-    """os.rename, also for a change of case alone on a drive that ignores case."""
+def _rename(src: Path, dst: Path, step: Optional[Callable[[Path, Path], None]] = None) -> None:
+    """os.rename, also for a change of case alone on a drive that ignores case (in two steps
+    through a temporary name). *step(a, b)* after each rename that happened, for the journal."""
+    step = step or (lambda _a, _b: None)
     if str(src) != str(dst) and str(src).lower() == str(dst).lower():
         tmp = src.with_name(src.name + ".organize-case")
         os.rename(src, tmp)
-        os.rename(tmp, dst)
+        step(src, tmp)
+        try:
+            os.rename(tmp, dst)
+        except OSError:
+            try:
+                os.rename(tmp, src)
+                step(tmp, src)
+            except OSError:
+                pass                    # it stays at tmp; the journal says so
+            raise
+        step(tmp, dst)
     else:
         os.rename(src, dst)
+        step(src, dst)
 
 
 def _only_clutter(d: Path) -> bool:
@@ -473,6 +487,14 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
                 return new / src.relative_to(old)
         return src
 
+    def record(op: dict) -> None:
+        """Every step goes into the journal at once: a run that is killed leaves an accurate one."""
+        ops.append(op)
+        _write_json(Path(journal_path), {"root": str(root), "ops": ops})
+
+    def moved_step(a: Path, b: Path) -> None:
+        record({"op": "move", "src": str(a), "dst": str(b)})
+
     def mkdirs(d: Path) -> None:
         missing = []
         q = d
@@ -481,7 +503,7 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
             q = q.parent
         for q in reversed(missing):
             q.mkdir()
-            ops.append({"op": "mkdir", "path": str(q)})
+            record({"op": "mkdir", "path": str(q)})
 
     try:
         for i, m in enumerate(p.moves):
@@ -500,14 +522,13 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
                     # folder of that name: step aside first.
                     aside = src.with_name(src.name + ".organize-move")
                     os.rename(src, aside)
-                    ops.append({"op": "move", "src": str(src), "dst": str(aside)})
+                    moved_step(src, aside)
                     src = aside
                 mkdirs(dst.parent)
-                _rename(src, dst)
+                _rename(src, dst, moved_step)
             except OSError as e:
                 failed.append(f"{m.src.name}: {e.strerror or e}")
                 continue
-            ops.append({"op": "move", "src": str(src), "dst": str(dst)})
             if m.is_dir:
                 moved_dirs.append((m.src, dst))
             _drop_sidecar(src)
@@ -520,7 +541,7 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
         for d in sorted(touched, key=lambda q: len(q.parts), reverse=True):
             q = now(d)
             while q != root and root in q.parents and _remove_empty(q):
-                ops.append({"op": "rmdir", "path": str(q)})
+                record({"op": "rmdir", "path": str(q)})
                 q = q.parent
     finally:
         _drop_sidecars_of(ops)
@@ -649,15 +670,62 @@ def library_folders(out) -> dict:
     return found
 
 
-def _free_name(dst_dir: Path, name: str) -> str:
-    stem, ext = os.path.splitext(name)
+def _free_name(dst_dir: Path, name: str, taken=(), key=str, is_dir: bool = False) -> str:
+    """'<stem> (n)<ext>' that is not on disk and whose key(path) is not in *taken*."""
+    stem, ext = (name, "") if is_dir else os.path.splitext(name)
     n = 2
-    while (dst_dir / f"{stem} ({n}){ext}").exists():
+    while os.path.lexists(dst_dir / f"{stem} ({n}){ext}") or key(dst_dir / f"{stem} ({n}){ext}") in taken:
         n += 1
     return f"{stem} ({n}){ext}"
 
 
+def case_blind(d: Path) -> bool:
+    """True when the drive of folder *d* does not tell names apart by case (the default on macOS
+    and Windows); found by a probe file. Unknown counts as True, the careful answer."""
+    try:
+        fd, probe = tempfile.mkstemp(prefix=".CaseProbe-", dir=str(d))
+        os.close(fd)
+    except OSError:
+        return True
+    probe = Path(probe)
+    try:
+        return os.path.lexists(probe.with_name(probe.name.swapcase()))
+    finally:
+        try:
+            probe.unlink()
+        except OSError:
+            pass
+        _drop_sidecar(probe)
+
+
 _BAR = re.compile(r"^\[#+\]\s*(\d+)%")
+
+
+_SET_ASIDE = re.compile(r"^(?P<base>.+)\.copy-old(?: \(\d+\))?$")
+
+
+def restore_set_aside(folder: Path, on_line=None) -> int:
+    """An Overwrite cut short leaves the old item as '<name>.copy-old': where '<name>' is gone,
+    it takes its name back (it may be the only intact copy). How many came back."""
+    back = 0
+    try:
+        entries = list(Path(folder).iterdir())
+    except OSError:
+        return 0
+    for p in entries:
+        m = _SET_ASIDE.match(p.name)
+        if not m:
+            continue
+        base = p.with_name(m.group("base"))
+        if os.path.lexists(base):
+            continue
+        try:
+            os.rename(p, base)
+            back += 1
+            _say(on_line, f"[INFO] {base.name}: took its name back from an Overwrite that was cut short")
+        except OSError:
+            pass
+    return back
 
 
 def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists: str = "skip", on_line=None) -> int:
@@ -694,6 +762,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
     ok = [e for e in entries if e.known]
     unread = [e for e in entries if not e.known]
     single = len({e.title_id for e in ok}) == 1 and src.is_dir()
+    kept: list[str] = []                     # what stays in the source, for the [KEPT] line
     for e in unread:
         if single:
             _say(on_line, f"[WARN] {e.path.name}: {e.note or 'no game metadata found'}; "
@@ -701,10 +770,13 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             companions.append(e.path)
         else:
             _say(on_line, f"[WARN] {e.path.name}: {e.note or 'no game metadata found'}; left where it is")
+            kept.append(e.path.name)
     if not ok:
         _say(on_line, "[ERROR] nothing with readable game metadata found")
         return 1
     out.mkdir(parents=True, exist_ok=True)
+    # names that differ only in case are one name on such a drive
+    key = (lambda p: str(p).casefold()) if case_blind(out) else str
     known = library_folders(out)
     sizes = {e.path: max(1, _size_of(e.path)) for e in ok}
     # the game first and the biggest first: when two get the same name, the main one keeps it
@@ -713,6 +785,10 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
     _by_key = {Path(k): (k, f, sb, n) for k, f, sb, n in
                uc.library_layout([_lib_item(e) for e in ok], {t: k for t, k in known.items() if k})}
     placed = [_by_key[e.path] for e in ok]
+    for _folder in {(f, sb) for _k, f, sb, _n in placed}:
+        for _d in {out / _folder[0], out / _folder[0] / _folder[1]} if _folder[1] else {out / _folder[0]}:
+            if _d.is_dir():
+                restore_set_aside(_d, on_line)
     # A title folder already there takes its new name (a newer version) by a rename.
     renamed: dict[str, str] = {}
     for e, (_k, folder, _s, _n) in zip(ok, placed):
@@ -754,7 +830,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
 
     rc_all = 0
     folders: list[Path] = []
-    written: set[Path] = set()
+    written: set[str] = set()                # key() of every target this run wrote
     cmode = copy_job.MOVE if mode == "move" else copy_job.KEEP
     for e, (_k, folder, sub, name) in zip(ok, placed):
         folder = renamed.get(folder, folder)
@@ -765,9 +841,9 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             folders.append(out / folder)
         size = sizes[e.path]
         target = dst_dir / name
-        if target in written:
+        if key(target) in written:
             # another source of this run already took the name: never skip one of them
-            name = _free_name(dst_dir, name)
+            name = _free_name(dst_dir, name, written, key, is_dir=e.kind == "folder")
             _say(on_line, f"[WARN] {e.path.name} gets the same name as another item of this source; "
                           f"it goes in as {name}")
             target = dst_dir / name
@@ -776,7 +852,8 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             (lambda nm: copy_job.run_copy(e.path, dst_dir, dst_name=nm, mode=cmode, on_line=relay(size, name)))
         if target.exists() and not _same_entry(target, e.path):
             if if_exists == "keep":
-                name = _free_name(dst_dir, name)
+                name = _free_name(dst_dir, name, written, key, is_dir=e.kind == "folder")
+                target = dst_dir / name
             elif if_exists == "overwrite":
                 # a free name: a leftover of an interrupted run may be the only intact copy
                 part = name + ".copy-old"
@@ -789,7 +866,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
                     rc_all = 1
                     done += size
                     continue
-                written.add(target)
+                written.add(key(target))
                 rc = run(name)
                 if rc == 0:
                     old = dst_dir / part
@@ -803,9 +880,10 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             else:
                 note = " (rule Ask: a running job does not stop for each item)" if if_exists == "ask" else ""
                 _say(on_line, f"[INFO] already there, skipped{note}: {Path(folder) / name}")
+                kept.append(e.path.name)
                 done += size
                 continue
-        written.add(target)
+        written.add(key(target))
         rc = run(name)
         if rc in (0, 2):
             _say(on_line, f"[OK] Organized: {dst_dir / name}")
@@ -835,14 +913,18 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
             else:
                 # the job fails, so the app keeps the unpack and nothing of the release is lost
                 _say(on_line, f"[ERROR] could not bring {c.name} along; it stays in the source")
+                kept.append(c.name)
                 rc_all = 1
     elif companions:
         _say(on_line, f"[INFO] {len(companions)} other item(s) stay in the source: they belong to no one game")
+        kept.extend(c.name for c in companions)
     bar(100, 0, "")
     for f in folders:
         uc.strip_fs_junk(f)
         _drop_sidecar(f)
-    return rc_all
+    if kept:
+        _say(on_line, copy_job.kept_line(kept))
+    return rc_all or (copy_job.KEPT if kept else 0)
 
 
 def _bring_file(src: Path, dst: Path, *, move: bool) -> int:

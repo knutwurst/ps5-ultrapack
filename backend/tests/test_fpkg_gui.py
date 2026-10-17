@@ -1,5 +1,5 @@
 """In-process GUI test for the fPKG integration."""
-import sys, os, importlib.util, traceback, argparse, shutil, subprocess, tempfile, time, zipfile, json, re
+import sys, os, importlib.util, traceback, argparse, shutil, subprocess, tempfile, time, zipfile, json, re, types
 from pathlib import Path
 import tkinter as tk
 HERE = Path(__file__).resolve().parent
@@ -1195,6 +1195,24 @@ try:
     (_tb / "d" / "f.sha256").write_bytes(b"1111")
     ok("extras.same-tree-by-content", _diff is False and m.CLIWorker._same_tree(_ta, _tb), f"diff={_diff}")
     ok("cleanup.pass1-keeps-own-extras", _mid == ["G.pkg"] and _end == ["Rel__8"], f"mid={_mid} end={_end}")
+    # a failed job that patched the user's own folder: the originals go back before the backup goes
+    import patch_backup as _pbm
+    _ug = S / "user_game"; (_ug / "sce_sys").mkdir(parents=True, exist_ok=True)
+    (_ug / "a.bin").write_bytes(b"original")
+    _bk = S / "pbtemp" / "_ffpfsc_temp" / "patch-backup-x1" / "Original files - P"
+    _jr2 = _pbm.Journal(_bk, _ug); _jr2.keep_original(_ug, "a.bin"); _jr2.record("replaced", "a.bin")
+    (_ug / "a.bin").write_bytes(b"patched"); _jr2.record("added", "new.bin"); (_ug / "new.bin").write_bytes(b"n")
+    _pi2 = m.GameItem.from_chain(_ug, to="ffpfsc", output_path=str(OUT / "job"))
+    _pw3 = types.SimpleNamespace(patch_backup=str(_bk))
+    _may_drop = app._restore_patched_source(_pi2, _pw3)
+    ok("patch.failed-job-restores-the-user-folder", _may_drop and (_ug / "a.bin").read_bytes() == b"original"
+       and not (_ug / "new.bin").exists(), f"drop={_may_drop} a={(_ug / 'a.bin').read_bytes()!r}")
+    # extras a killed run set aside next to the user's game folder go back in
+    _ea = _ug.parent / f".{_ug.name}.ffpfsc-extras"; _ea.mkdir(exist_ok=True)
+    (_ea / "_notes").mkdir(exist_ok=True); (_ea / "_notes" / "n.txt").write_text("x")
+    app._return_extras_aside(types.SimpleNamespace(extras_aside=f"{_ea} -> {_ug}"))
+    ok("extras.aside-go-back-after-a-kill", (_ug / "_notes" / "n.txt").is_file() and not _ea.exists(),
+       str(sorted(p.name for p in _ug.iterdir())))
     # J6j) a finished job stays in the queue, marked Done, until it is cleared
     _real_sum, _real_open = app.summary_popup_var.get(), app.open_output_var.get()
     app.summary_popup_var.set(False); app.open_output_var.set(False)

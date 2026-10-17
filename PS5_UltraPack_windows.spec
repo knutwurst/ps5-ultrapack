@@ -32,7 +32,7 @@ _BACKEND_SKIP_FILES_MAC = {_os.path.join("native", "ffpfsc-pkg-tool"), _os.path.
 _BACKEND_REQUIRED = [
     "cli.py", "fpkg.py", "copy_job.py", "fake_sign.py", "make_fself.py",
     "backport.py", "self_file.py", "backport_libs.py", "bps_patch.py",
-    "organize_lib.py", "ps4pkg.py", "ps4_sort.py", "after_job.py", "title_db.py",
+    "organize_lib.py", "ps4pkg.py", "ps4_sort.py", "after_job.py", "title_db.py", "patch_backup.py",
     _os.path.join("mkpfs", "cli.py"), _os.path.join("mkpfs", "pfs.py"),
     _os.path.join("unrar", "__init__.py"), _os.path.join("unrar", "rarfile.py"),
     _os.path.join("native", "ffpfsc-pkg-tool.exe"),

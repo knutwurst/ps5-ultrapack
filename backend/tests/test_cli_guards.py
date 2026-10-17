@@ -306,7 +306,7 @@ class FpkgBuildOrderTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def _run_with_fake_tool(self, validate_rc: int) -> str:
+    def _run_with_fake_tool(self, validate_rc: int) -> tuple[int, str]:
         fake = types.ModuleType("fpkg")
         fake.is_available = lambda: True
 
@@ -316,7 +316,11 @@ class FpkgBuildOrderTests(unittest.TestCase):
             return 0
 
         def validate(pkg, on_line=None, **kw):
-            on_line("Summary: 1 failed" if validate_rc else "Summary: 0 failed")
+            on_line("  [ok  ]  magic                     CNT magic")
+            on_line("  [WARN]  icon0                     no icon")
+            if validate_rc:
+                on_line("  [FAIL]  eboot.magic               raw ELF (0x7F454C46) - not fake-signed")
+            on_line(f"summary: 1 passed, 1 warned, {1 if validate_rc else 0} failed")
             return validate_rc
 
         fake.build = build
@@ -328,32 +332,38 @@ class FpkgBuildOrderTests(unittest.TestCase):
         # OUTPUT is the second positional (as the GUI passes it); --fpkg-build names the source.
         sys.argv = ["cli.py", str(self.game), str(self.out), "--fpkg-build", str(self.game),
                     "--temp-dir", str(self.temp)]
+        code = 0
         try:
             with redirect_stdout(out):
                 cli.main()
+        except SystemExit as e:
+            code = e.code
         finally:
             sys.argv = saved_argv
             if saved_mod is None:
                 sys.modules.pop("fpkg", None)
             else:
                 sys.modules["fpkg"] = saved_mod
-        return out.getvalue()
+        return code, out.getvalue()
 
-    def test_validation_precedes_success_and_failures_are_flagged(self):
-        log = self._run_with_fake_tool(validate_rc=1)
-        summary = log.index("Summary: 1 failed")
-        success = log.index("[SUCCESS] fPKG built.")
-        complete = log.index(f"[OK] fPKG complete: {self.out / 'test.pkg'}")
-        warn = log.index("[WARN] Validation reported failures")
-        self.assertLess(summary, success)
-        self.assertLess(success, complete)
-        self.assertLess(complete, warn)
+    def test_failed_validation_is_an_error_with_exit_code_3_and_keeps_the_package(self):
+        code, log = self._run_with_fake_tool(validate_rc=1)
+        self.assertEqual(code, 3, log)
+        self.assertNotIn("[SUCCESS]", log)
+        err = next(l for l in log.splitlines() if l.startswith("[ERROR]"))
+        self.assertIn("eboot.magic", err)
+        self.assertNotIn("icon0", err, "a warning is not a failure")
+        self.assertLess(log.index("summary:"), log.index("[ERROR]"))
+        self.assertIn(f"[FPKG-INVALID] {self.out / 'test.pkg'}", log)
+        self.assertTrue((self.out / "test.pkg").is_file(), "the package is kept for inspection")
 
     def test_clean_validation_emits_no_warning(self):
-        log = self._run_with_fake_tool(validate_rc=0)
+        code, log = self._run_with_fake_tool(validate_rc=0)
+        self.assertEqual(code, 0, log)
         self.assertIn("[SUCCESS] fPKG built.", log)
         self.assertIn("[OK] fPKG complete:", log)
-        self.assertNotIn("[WARN] Validation reported failures", log)
+        self.assertLess(log.index("summary:"), log.index("[SUCCESS] fPKG built."))
+        self.assertNotIn("[ERROR]", log)
 
 
 class MkpfsResolverTests(unittest.TestCase):

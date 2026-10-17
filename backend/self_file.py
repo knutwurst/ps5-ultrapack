@@ -20,6 +20,10 @@ _PROPS_INDEX_MASK = 0xFFFF
 PT_SCE_VERSION = 0x6FFFFF01
 
 
+class MalformedSelf(ValueError):
+    """A SELF whose headers point outside the file."""
+
+
 def is_self(data: bytes) -> bool:
     return bytes(data[:4]) in SELF_MAGICS
 
@@ -86,12 +90,20 @@ def elf_image(data: bytes, img: SelfImage | None = None) -> bytes | None:
     img = img or parse_self(data)
     if img is None or not img.readable:
         return None
+    # The image only adds alignment gaps to the stored bytes, so it cannot be much
+    # larger than the SELF; a bigger one comes from a broken or hostile header.
+    cap = 2 * len(data) + (4 << 20)
     end = img.elf_header_size
     for index, seg in img.segments.items():
         end = max(end, img.phdrs[index][2] + seg.filesz)
+        if end > cap:
+            raise MalformedSelf(f"segment {index} lies past the end of the file "
+                                f"(ELF offset {img.phdrs[index][2]:#x})")
     version = [(i, ph) for i, ph in enumerate(img.phdrs) if ph[0] == PT_SCE_VERSION and ph[5]]
-    for _i, ph in version:
+    for i, ph in version:
         end = max(end, ph[2] + ph[5])
+        if end > cap:
+            raise MalformedSelf(f"version segment {i} lies past the end of the file")
     buf = bytearray(end)
     buf[:img.elf_header_size] = data[img.elf_offset:img.elf_offset + img.elf_header_size]
     for index, seg in img.segments.items():

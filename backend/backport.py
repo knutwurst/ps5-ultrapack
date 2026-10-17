@@ -51,6 +51,17 @@ _SDK_PS4_OFFSET = 0x10
 _SDK_PS5_OFFSET = 0x14
 
 
+class MalformedElf(ValueError):
+    """An executable whose headers point outside the file."""
+
+
+class BackportError(RuntimeError):
+    """The SDK pass could not handle every executable; *report* says which."""
+    def __init__(self, msg: str, report: "LowerReport"):
+        super().__init__(msg)
+        self.report = report
+
+
 # ── result types ──────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class SdkChange:
@@ -112,6 +123,9 @@ def _find_param_segment(data: bytes) -> tuple[str, int] | None:
             continue
         if p_filesz < _SDK_PS5_OFFSET + 4:
             continue
+        if p_offset + _SDK_PS5_OFFSET + 4 > len(data):
+            raise MalformedElf(f"the param segment at {p_offset:#x} lies past the end of "
+                               f"the file ({len(data)} bytes)")
         magic = struct.unpack_from("<I", data, p_offset + 0x08)[0]
         if magic not in _ACCEPTED_MAGICS:
             continue
@@ -262,9 +276,9 @@ def derive_sdk_words(fw_dir: Path, sample: int = 80) -> tuple[int, int] | None:
     for path in sorted(Path(fw_dir).rglob("*.sprx"))[:sample]:
         try:
             elf = _as_elf(path.read_bytes())
-        except OSError:
+            hit = _find_param_segment(elf) if elf else None
+        except (OSError, ValueError):           # one odd sample does not decide the vote
             continue
-        hit = _find_param_segment(elf) if elf else None
         if hit:
             ps4, ps5 = struct.unpack_from("<2I", elf, hit[1] + _SDK_PS4_OFFSET)
             counts[(ps5, ps4)] += 1
@@ -392,6 +406,7 @@ class LowerReport:
     skipped_not_elf: list[Path]          # neither a raw ELF nor a SELF this reader understands
     self_patched: list[Path] = field(default_factory=list)   # fake-signed, lowered in place
     encrypted: list[Path] = field(default_factory=list)      # SELFs with encrypted segments, untouched
+    failed: list[tuple[Path, str]] = field(default_factory=list)   # could not be read or lowered
 
     def summary(self) -> str:
         changed = sum(1 for _p, ch in self.written if any(not c.unchanged() for c in ch))
@@ -405,6 +420,8 @@ class LowerReport:
             parts.append(f"{len(self.skipped_not_elf)} not executables")
         if self.encrypted:
             parts.append(f"{len(self.encrypted)} encrypted")
+        if self.failed:
+            parts.append(f"{len(self.failed)} failed")
         return "; ".join(parts)
 
 
@@ -796,44 +813,54 @@ def analyse_backport(source_root: Path, target: str,
 
 
 def lower_sdk_in_folder(root: Path, target: str, words: tuple[int, int] | None = None) -> LowerReport:
-    """Walk *root* and apply lower_sdk_version to every eboot/prx/sprx it holds, in place."""
+    """Walk *root* and apply lower_sdk_version to every eboot/prx/sprx it holds, in place.
+    Raises BackportError after the walk when a file could not be read or lowered."""
     report = LowerReport(written=[], skipped_no_param=[], skipped_not_elf=[])
     for path in iter_source_elfs(root):
         try:
-            data = path.read_bytes()
-        except OSError:
-            continue
-        signed = self_file.is_self(data)
-        if signed:
-            img = self_file.parse_self(data)
-            if img is None:
-                report.skipped_not_elf.append(path)
-                continue
-            if not img.readable:
-                report.encrypted.append(path)
-                continue
-        elif not _is_ps5_elf64(data):
-            report.skipped_not_elf.append(path)
-            continue
-        new_data, changes = lower_sdk_version(data, target, words)
-        effective = [c for c in changes if not c.unchanged()]
-        if not changes:
-            report.skipped_no_param.append(path)
-            continue
-        if not effective:
-            report.written.append((path, changes))          # already at/below target
-            continue
-        tmp = path.with_suffix(path.suffix + ".backport-tmp")
-        try:
-            tmp.write_bytes(new_data)
-            if os.name == "nt":
-                os.chmod(path, 0o666)       # Windows will not replace a read-only file
-            os.replace(tmp, path)
-        finally:
-            if tmp.exists():
-                try: tmp.unlink()
-                except OSError: pass
-        report.written.append((path, changes))
-        if signed:
-            report.self_patched.append(path)
+            _lower_one(path, target, words, report)
+        except (OSError, ValueError) as e:
+            report.failed.append((path, str(e)))
+    if report.failed:
+        names = ", ".join(f"{p.relative_to(root)} ({e})" for p, e in report.failed[:5])
+        more = f" and {len(report.failed) - 5} more" if len(report.failed) > 5 else ""
+        raise BackportError(f"{len(report.failed)} executable(s) could not be backported: "
+                            f"{names}{more}", report)
     return report
+
+
+def _lower_one(path: Path, target: str, words: tuple[int, int] | None, report: LowerReport) -> None:
+    data = path.read_bytes()
+    signed = self_file.is_self(data)
+    if signed:
+        img = self_file.parse_self(data)
+        if img is None:
+            report.skipped_not_elf.append(path)
+            return
+        if not img.readable:
+            report.encrypted.append(path)
+            return
+    elif not _is_ps5_elf64(data):
+        report.skipped_not_elf.append(path)
+        return
+    new_data, changes = lower_sdk_version(data, target, words)
+    effective = [c for c in changes if not c.unchanged()]
+    if not changes:
+        report.skipped_no_param.append(path)
+        return
+    if not effective:
+        report.written.append((path, changes))          # already at/below target
+        return
+    tmp = path.with_suffix(path.suffix + ".backport-tmp")
+    try:
+        tmp.write_bytes(new_data)
+        if os.name == "nt":
+            os.chmod(path, 0o666)       # Windows will not replace a read-only file
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try: tmp.unlink()
+            except OSError: pass
+    report.written.append((path, changes))
+    if signed:
+        report.self_patched.append(path)

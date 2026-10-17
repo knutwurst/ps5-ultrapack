@@ -189,6 +189,68 @@ class ActionTests(Base):
         self.assertTrue((g / "data" / "a.bin").is_file())
         self.assertFalse((dest / "Game").exists())
 
+    def test_move_two_sources_of_one_name_both_arrive(self):
+        a, b = self.file("x/Game.pkg"), self.file("y/Game.pkg", 200)
+        dest = self.tmp / "done"
+        for same in (None, lambda s, d: False):
+            out = aj.apply(aj.MOVE, [a, b], dest=dest / str(bool(same)), same_device=same)
+            self.assertEqual([Path(p).name for p in out], ["Game.pkg", "Game (2).pkg"])
+            self.assertEqual(sorted(Path(p).stat().st_size for p in out), [100, 200])
+            a, b = self.file("x/Game.pkg"), self.file("y/Game.pkg", 200)
+
+    def test_move_names_that_differ_only_in_case_never_meet(self):
+        a, b = self.file("x/game.pkg"), self.file("y/GAME.pkg", 200)
+        out = aj.apply(aj.MOVE, [a, b], dest=self.tmp / "done")
+        self.assertEqual(len({Path(p).name.casefold() for p in out}), 2)
+        self.assertEqual(sorted(Path(p).stat().st_size for p in out), [100, 200])
+
+    def test_free_names_keep_a_set_together_beside_a_twin(self):
+        parts = [self.file(f"x/Game.part{i}.rar") for i in (1, 2)]
+        other = self.file("y/Game.part1.rar")
+        names = [t.name for t in aj._free_names(parts + [other], self.tmp / "done")]
+        self.assertEqual(names, ["Game.part1.rar", "Game.part2.rar", "Game (2).part1.rar"])
+
+    def test_cross_drive_never_removes_what_was_already_there(self):
+        g = self.game()
+        dest = self.tmp / "other_drive"
+        (dest / "Game").mkdir(parents=True)
+        (dest / "Game" / "mine.txt").write_text("the user's")
+        with mock.patch.object(aj, "_free_names", return_value=[dest / "Game"]):
+            with self.assertRaises(OSError):
+                aj.apply(aj.MOVE, [g], dest=dest, same_device=lambda a, b: False)
+        self.assertEqual((dest / "Game" / "mine.txt").read_text(), "the user's")
+        self.assertTrue((g / "data" / "a.bin").is_file())
+
+    def test_cross_drive_keeps_the_copy_when_the_source_vanished(self):
+        import shutil
+        g = self.game()
+        dest = self.tmp / "other_drive"
+        real = aj._copy_file
+        calls = []
+
+        def copy_then_lose_source(s, d, tick):
+            real(s, d, tick)
+            calls.append(d)
+            if len(calls) == 2:
+                shutil.rmtree(g)                     # the source drive went away mid-move
+        with mock.patch.object(aj, "_copy_file", side_effect=copy_then_lose_source):
+            with self.assertRaises(OSError):
+                aj.apply(aj.MOVE, [g], dest=dest, same_device=lambda a, b: False)
+        self.assertEqual(sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()),
+                         ["Game/data/a.bin", "Game/eboot.bin"])
+
+    @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "needs a folder this user cannot read")
+    def test_cross_drive_unreadable_folder_keeps_the_source(self):
+        g = self.game(files=(("eboot.bin", 300), ("data/a.bin", 700), ("locked/b.bin", 50)))
+        os.chmod(g / "locked", 0)
+        try:
+            with self.assertRaises(OSError):
+                aj.apply(aj.MOVE, [g], dest=self.tmp / "other_drive", same_device=lambda a, b: False)
+        finally:
+            os.chmod(g / "locked", 0o755)
+        self.assertTrue((g / "locked" / "b.bin").is_file())
+        self.assertTrue((g / "eboot.bin").is_file() and (g / "data" / "a.bin").is_file())
+
     def test_move_needs_a_folder(self):
         with self.assertRaises(OSError):
             aj.apply(aj.MOVE, [self.game()], dest=None)

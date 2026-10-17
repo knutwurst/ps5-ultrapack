@@ -24,7 +24,7 @@ _TMP_PREFIX = ".fself-"
 
 
 class NotSignable(Exception):
-    """Raised when a candidate file is not something we can/should fake-sign: not an ELF at all, an already-signed SELF, or an ELF the signer can't parse (wrong class/arch/type, truncated)."""
+    """Raised when a candidate file is not something we can/should fake-sign: not an ELF at all, an already-signed SELF, or an ELF the signer can't parse (wrong class/arch/type). A truncated ELF is a failure, not a skip."""
 
 
 def is_elf(path: str) -> bool:
@@ -41,9 +41,9 @@ def fake_sign_file(path: str) -> None:
 
     Returns normally when the file was signed. Raises :class:`NotSignable` when
     the file should be skipped (not an ELF, already-signed SELF, or an ELF the
-    signer can't parse - wrong arch/class/type, truncated). Raises any other
-    exception only on a genuine I/O failure; the original is left untouched in
-    that case (we only ``os.replace`` after a fully successful save).
+    signer can't parse - wrong arch/class/type). Raises OSError for a truncated
+    ELF and any other exception on a genuine I/O failure; the original is left
+    untouched in both cases (we only ``os.replace`` after a fully successful save).
     """
     if not is_elf(path):
         raise NotSignable("not an ELF")
@@ -57,6 +57,8 @@ def fake_sign_file(path: str) -> None:
             with open(path, "rb") as f:
                 elf = make_fself.ElfFile(ignore_shdrs=True)
                 elf.load(f)
+        except make_fself.ElfTruncatedError as exc:
+            raise OSError(f"truncated file, left unsigned ({exc})")
         except make_fself.ElfError as exc:
             raise NotSignable(f"not a signable PS5 ELF ({exc})")
         except (struct.error, ValueError) as exc:

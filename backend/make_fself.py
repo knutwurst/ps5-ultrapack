@@ -66,6 +66,9 @@ class ElfError(Exception):
 	def __str__(self):
 		return repr(self.msg)
 
+class ElfTruncatedError(ElfError):
+	"""The file ends before a program header or segment does."""
+
 class ElfEHdr(object):
 	FMT = '<4s5B6xB'
 	EX_FMT = '<2HI3QI6H'
@@ -246,11 +249,18 @@ class ElfFile(object):
 			for i in range(self.ehdr.phnum):
 				f.seek(start_offset + self.ehdr.phoff + i * self.ehdr.phentsize)
 				phdr = ElfPHdr(i)
-				phdr.load(f)
+				try:
+					phdr.load(f)
+				except struct.error:
+					raise ElfTruncatedError('File is truncated: program header #{0} is cut off.'.format(i))
 				self.phdrs.append(phdr)
 				if phdr.filesz > 0:
+					if phdr.offset + phdr.filesz > self.file_size:
+						raise ElfTruncatedError('File is truncated: segment #{0} needs {1} bytes at 0x{2:X}, the file has {3}.'.format(i, phdr.filesz, phdr.offset, self.file_size))
 					f.seek(start_offset + phdr.offset)
 					data = f.read(phdr.filesz)
+					if len(data) != phdr.filesz:
+						raise ElfTruncatedError('File is truncated: segment #{0} read {1} of {2} bytes.'.format(i, len(data), phdr.filesz))
 				else:
 					data = b''
 				self.segments.append(data)

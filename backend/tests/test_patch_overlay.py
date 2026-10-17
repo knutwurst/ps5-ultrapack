@@ -56,12 +56,16 @@ class OverlayTests(unittest.TestCase):
         write(root / "SHA256SUMS", b"sums")
         return self.tmp / "patch"
 
-    def run_overlay(self, patch, backup=True):
+    def run_overlay(self, patch, backup=True, **kw):
         bk = cli.new_patch_backup(self.tmp, "Example_backport_files.zip") if backup else None
         out = io.StringIO()
         with redirect_stdout(out):
-            n = cli.overlay_patch(self.game, patch, bk, "Example_backport_files.zip")
+            n = cli.overlay_patch(self.game, patch, bk, "Example_backport_files.zip", **kw)
         return n, bk, out.getvalue()
+
+    def snapshot(self):
+        return {p.relative_to(self.game).as_posix(): p.read_bytes()
+                for p in sorted(self.game.rglob("*")) if p.is_file()}
 
     def test_backport_applied_originals_kept_with_readme(self):
         n, bk, log = self.run_overlay(self.backport())
@@ -127,6 +131,59 @@ class OverlayTests(unittest.TestCase):
         _n, bk, log = self.run_overlay(patch)
         self.assertFalse(bk.exists())
         self.assertNotIn("[PATCH-BACKUP]", log)
+
+
+    def test_a_failed_overlay_puts_every_original_back(self):
+        write(self.game / "zz", b"a file where the patch needs a folder")
+        before = self.snapshot()
+        patch = self.tmp / "half"
+        write(patch / "data" / "level.bin", b"new level")
+        write(patch / "eboot.bin", b"new eboot")
+        write(patch / "new.bin", b"added")
+        write(patch / "zz" / "blocker", b"cannot land")
+        out = io.StringIO()
+        bk = cli.new_patch_backup(self.tmp, "half.zip")
+        with redirect_stdout(out), self.assertRaises(RuntimeError):
+            cli.overlay_patch(self.game, patch, bk, "half.zip")
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.game / "new.bin").exists())
+        log = out.getvalue()
+        self.assertIn("[PATCH-BACKUP]", log)
+        self.assertLess(log.index("[PATCH-BACKUP]"), log.index("[ERROR]"))
+
+    def test_restore_originals_undoes_a_finished_overlay(self):
+        import patch_backup
+        before = self.snapshot()
+        _n, bk, log = self.run_overlay(self.backport())
+        self.assertNotEqual(self.snapshot(), before)
+        n = patch_backup.restore_originals(bk, self.game)
+        self.assertGreater(n, 0)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(patch_backup.restore_originals(bk, self.game), n, "running it twice is harmless")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_restore_removes_what_an_add_only_patch_brought(self):
+        import patch_backup
+        before = self.snapshot()
+        patch = self.tmp / "addon"
+        write(patch / "extra" / "deep" / "new.bin", b"new")
+        write(patch / "more.bin", b"more")
+        _n, bk, log = self.run_overlay(patch, restorable=True)
+        self.assertIn("[PATCH-BACKUP]", log)
+        self.assertTrue((self.game / "extra" / "deep" / "new.bin").is_file())
+        patch_backup.restore_originals(bk, self.game)
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.game / "extra").exists())
+
+    def test_restore_refuses_another_folder(self):
+        import patch_backup
+        _n, bk, _log = self.run_overlay(self.backport())
+        other = self.tmp / "other"
+        other.mkdir()
+        with self.assertRaises(ValueError):
+            patch_backup.restore_originals(bk, other)
+        self.assertEqual(list(other.iterdir()), [])
+        self.assertEqual(patch_backup.restore_originals(self.tmp / "missing", self.game), 0)
 
 
 if __name__ == "__main__":

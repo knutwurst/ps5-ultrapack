@@ -26,6 +26,12 @@ internal static partial class Program
     {
         // UTF-8 on every system: a Windows console or pipe defaults to the OEM code page
         Console.OutputEncoding = new System.Text.UTF8Encoding(false);
+        // One number format (invariant: 1,234.5) for everything printed; the build log is parsed
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture = invariant;
+        System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = invariant;
+        System.Globalization.CultureInfo.CurrentCulture = invariant;
+        System.Globalization.CultureInfo.CurrentUICulture = invariant;
         try
         {
             RedirectMagickNative();                    // must run before ANY Magick.NET call
@@ -253,13 +259,14 @@ internal static partial class Program
         // sce_sys/playgo-*.dat files live in the CNT entry table, not the inner PFS.
         // Without them, mkpfs pack-to-ffpfsc would refuse the /app0 folder. Merge them
         // into the extracted tree so downstream tools see a complete PS5 game folder.
+        // A folder without them is no complete game: a failed lift or merge fails the extract.
         int mergedCount = 0;
         if (inner && mergeCnt)
         {
             var tmpCnt = Path.Combine(outDir, ".cnt-tmp-" + Guid.NewGuid().ToString("N"));
+            var errors = new List<string>();
             try
             {
-                var errors = new List<string>();
                 foreach (var kv in LiftCntSceSys(pkg, passcode, tmpCnt, errors))
                 {
                     var dst = SafeTarget(outDir, kv.Key);
@@ -267,15 +274,20 @@ internal static partial class Program
                     File.Copy(kv.Value, dst, overwrite: true);
                     mergedCount++;
                 }
-                foreach (var e in errors) Console.Error.WriteLine("[warn] " + e + " — extract still succeeded but /app0 may be incomplete.");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                Console.Error.WriteLine("[warn] CNT metadata merge failed: " + ex.Message + " — extract still succeeded but /app0 may be incomplete.");
+                errors.Add("CNT metadata merge failed: " + ex.Message);
             }
             finally
             {
                 try { Directory.Delete(tmpCnt, recursive: true); } catch { }
+            }
+            if (errors.Count > 0)
+            {
+                foreach (var e in errors) Console.Error.WriteLine("[error] " + e);
+                Console.Error.WriteLine($"[error] extract failed: the sce_sys metadata (param.json, icons, PlayGo) could not be added, so {outDir} is not a complete game folder");
+                return 1;
             }
         }
 
@@ -583,19 +595,21 @@ internal static partial class Program
             foreach (var e in fileTargets)
             {
                 var dst = SafeTarget(outDir, e.path);
+                string got;
                 if (e.source == "cnt")
                 {
-                    File.Copy(cnt[e.path], dst, overwrite: true);
+                    got = WriteExtractedFile(dst, o => { using var i = File.OpenRead(cnt[e.path]); i.CopyTo(o); }, keepExisting: true);
                     cntCount++;
                     Progress(e.size ?? 0, e.path);
                 }
                 else
                 {
                     var node = img.Pfs.GetFile(e.path) ?? throw new InvalidDataException("inner file vanished: " + e.path);
-                    using var fs = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20);
-                    img.CopyFile(node, fs, n => Progress(n, e.path));
+                    got = WriteExtractedFile(dst, o => img.CopyFile(node, o, n => Progress(n, e.path)), keepExisting: true);
                 }
-                written.Add(e.path);
+                var gotRel = Path.GetRelativePath(outDir, got).Replace('\\', '/');
+                if (gotRel != e.path) Console.Error.WriteLine($"[info] {e.path} already exists with other content; extracted as {gotRel}");
+                written.Add(gotRel);
             }
             Console.WriteLine("[####] 100% extract");
             if (json)
@@ -1032,6 +1046,111 @@ internal static partial class Program
         var p = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         var r = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         return p.Equals(r, StringComparison.Ordinal) || p.StartsWith(r + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
+    /// <summary>How the file system compares names: case-insensitive on Windows and macOS.</summary>
+    static StringComparison FsComparison =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    /// <summary>True when <paramref name="path"/> lies below <paramref name="root"/>, both
+    /// resolved through links, and no part of it below the root is a link itself.</summary>
+    static bool IsRealFileInside(string path, string root)
+    {
+        var r = Path.TrimEndingDirectorySeparator(RealPath(root));
+        var p = RealPath(path);
+        if (!p.StartsWith(r + Path.DirectorySeparatorChar, FsComparison)) return false;
+        var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var full = Path.GetFullPath(path);
+        if (!full.StartsWith(rootFull + Path.DirectorySeparatorChar, FsComparison)) return false;
+        for (var cur = full; cur.Length > rootFull.Length; cur = Path.GetDirectoryName(cur)!)
+        {
+            try
+            {
+                FileSystemInfo info = Directory.Exists(cur) ? new DirectoryInfo(cur) : new FileInfo(cur);
+                if (info.LinkTarget != null || info.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
+            }
+            catch { return false; }
+        }
+        return true;
+    }
+
+    /// <summary>Write <paramref name="path"/> through a temp file next to it that is renamed over
+    /// it, so a failure leaves the old file whole. A link is replaced, never written through.</summary>
+    static void ReplaceFile(string path, Action<string> writeTemp)
+    {
+        var full = Path.GetFullPath(path);
+        var tmp = Path.Combine(Path.GetDirectoryName(full)!, "." + Path.GetFileName(full) + "." + Guid.NewGuid().ToString("N")[..8] + ".tmp");
+        try
+        {
+            writeTemp(tmp);
+            if (OperatingSystem.IsWindows() && File.Exists(full)) File.SetAttributes(full, FileAttributes.Normal);
+            File.Move(tmp, full, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+        }
+    }
+
+    static bool Occupied(string p)
+    {
+        try { return File.Exists(p) || Directory.Exists(p) || new FileInfo(p).LinkTarget != null; } catch { return true; }
+    }
+
+    static bool SameContent(string a, string b)
+    {
+        using var fa = new FileStream(a, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20);
+        using var fb = new FileStream(b, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20);
+        if (fa.Length != fb.Length) return false;
+        var ba = new byte[1 << 20]; var bb = new byte[1 << 20];
+        while (true)
+        {
+            int n = fa.ReadAtLeast(ba, ba.Length, throwOnEndOfStream: false);
+            if (n == 0) return true;
+            if (fb.ReadAtLeast(bb, n, throwOnEndOfStream: false) != n || !ba.AsSpan(0, n).SequenceEqual(bb.AsSpan(0, n))) return false;
+        }
+    }
+
+    /// <summary>Write one extracted file without touching what is already there: the bytes go to
+    /// a temp name first (removed on error), then get renamed. With <paramref name="keepExisting"/>
+    /// an existing file with the same bytes stays and a different one keeps its name while the
+    /// new file gets the first free "name (2).ext". Returns the path that holds the bytes.</summary>
+    static string WriteExtractedFile(string dst, Action<Stream> write, bool keepExisting)
+    {
+        var dir = Path.GetDirectoryName(dst)!;
+        var tmp = Path.Combine(dir, "." + Path.GetFileName(dst) + "." + Guid.NewGuid().ToString("N")[..8] + ".part");
+        try
+        {
+            using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20))
+                write(fs);
+            if (!keepExisting)
+            {
+                File.Move(tmp, dst, overwrite: true);
+                return dst;
+            }
+            var stem = Path.GetFileNameWithoutExtension(dst);
+            var ext = Path.GetExtension(dst);
+            for (int n = 1; n < 10000; n++)
+            {
+                var target = n == 1 ? dst : Path.Combine(dir, $"{stem} ({n}){ext}");
+                if (Occupied(target))
+                {
+                    if (File.Exists(target) && new FileInfo(target).LinkTarget == null && SameContent(tmp, target)) return target;
+                    continue;
+                }
+                try
+                {
+                    File.Move(tmp, target, overwrite: false);
+                    return target;
+                }
+                catch (IOException) when (Occupied(target)) { }   // appeared meanwhile: next name
+            }
+            throw new IOException("no free name next to " + dst);
+        }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+        }
     }
 
     /// <summary>Copy *src* into *dst*: real subdirectories and a real copy of every regular file
@@ -1636,7 +1755,8 @@ internal static partial class Program
                 }
 
                 // (b) Fake-sign raw ELFs. LibProsperoPkg's own MakeFself does the byte-
-                // faithful conversion; skips SELFs and non-ELFs.
+                // faithful conversion; skips SELFs and non-ELFs. A file that cannot be signed
+                // fails the build: its package would not start.
                 if (elfsToSign.Length > 0)
                 {
                     int signed = 0, skipped = 0;
@@ -1644,24 +1764,34 @@ internal static partial class Program
                     {
                         var srcFile = Path.Combine(effectiveSource, relPath);
                         var stagedFile = Path.Combine(autoStage, relPath);
+                        byte[] fself;
+                        var bytes = File.ReadAllBytes(srcFile);
+                        if (!ProsperoFself.IsElf(bytes) || ProsperoFself.IsSelf(bytes)) { skipped++; continue; }
                         try
                         {
-                            var bytes = File.ReadAllBytes(srcFile);
-                            if (!ProsperoFself.IsElf(bytes) || ProsperoFself.IsSelf(bytes)) { skipped++; continue; }
-                            var fself = ProsperoFself.MakeFself(bytes, new FselfOptions());
-                            // Replace the staged file (in place it is the source file itself, read above).
-                            if (File.Exists(stagedFile) || IsSymlink(stagedFile)) File.Delete(stagedFile);
+                            fself = ProsperoFself.MakeFself(bytes, new FselfOptions());
+                        }
+                        catch (Exception ex) when (ex is ArgumentException || ex is InvalidDataException || ex is FormatException)
+                        {
+                            // not a module the signer takes (a 32-bit or odd ELF): left as it is, as before
+                            Console.Error.WriteLine($"  [sign] skipped {relPath}: {ex.Message}");
+                            skipped++;
+                            continue;
+                        }
+                        try
+                        {
+                            // Replace the staged file by rename (in place it is the source file itself, read above).
                             Directory.CreateDirectory(Path.GetDirectoryName(stagedFile)!);
-                            File.WriteAllBytes(stagedFile, fself);
-                            signed++;
+                            ReplaceFile(stagedFile, tmp => File.WriteAllBytes(tmp, fself));
                         }
                         catch (Exception ex)
                         {
-                            skipped++;
-                            Console.Error.WriteLine($"  [sign] skipped {relPath}: {ex.GetType().Name}: {ex.Message}");
+                            // the signed module could not be written: its package would not start
+                            throw new InvalidOperationException($"fake-signing {relPath} failed ({ex.GetType().Name}: {ex.Message})", ex);
                         }
+                        signed++;
                     }
-                    Console.Error.WriteLine($"  [sign] fake-signed {signed} ELF(s); skipped {skipped} (already-SELF, non-ELF, or errors)");
+                    Console.Error.WriteLine($"  [sign] fake-signed {signed} ELF(s); skipped {skipped} (already-SELF, non-ELF, or not a signable module)");
                 }
 
                 // (c) Retail-normalize: two moves to make a "standard"-DRM retail dump
@@ -1718,7 +1848,7 @@ internal static partial class Program
                     // SDK-version record past the new-declared metadata boundary and confused
                     // the loader).
                     int selfPatched = 0, selfLeft = 0;
-                    foreach (var relPath in Directory.EnumerateFiles(autoStage, "*", SearchOption.AllDirectories))
+                    foreach (var relPath in Directory.EnumerateFiles(autoStage, "*", SearchOption.AllDirectories).ToList())
                     {
                         var name = Path.GetFileName(relPath);
                         var ext = Path.GetExtension(relPath).ToLowerInvariant();
@@ -1736,18 +1866,21 @@ internal static partial class Program
                                 { selfLeft++; continue; }
                             }
                             if (head[0x0B] == 0x10) { selfLeft++; continue; }
-                            var backup = relPath + ".pre-retail";
-                            File.Copy(relPath, backup, overwrite: true);
-                            File.Delete(relPath);
-                            File.Move(backup, relPath);
-                            using (var fs = new FileStream(relPath, FileMode.Open, FileAccess.Write))
+                            // a patched copy renamed over the file: a hard link to the source
+                            // is replaced, never written through, and a failure leaves it whole
+                            ReplaceFile(relPath, tmp =>
                             {
+                                File.Copy(relPath, tmp, overwrite: true);
+                                using var fs = new FileStream(tmp, FileMode.Open, FileAccess.Write);
                                 fs.Seek(0x0B, SeekOrigin.Begin);
                                 fs.WriteByte(0x10);
-                            }
+                            });
                             selfPatched++;
                         }
-                        catch (Exception ex) { Console.Error.WriteLine($"  [self-hdr] skipped {relFromRoot}: {ex.GetType().Name}: {ex.Message}"); selfLeft++; }
+                        catch (Exception ex)
+                        {
+                            throw new InvalidOperationException($"setting the retail bit on {relFromRoot} failed ({ex.GetType().Name}: {ex.Message})", ex);
+                        }
                     }
                     Console.Error.WriteLine($"  [self-hdr] set retail bit (byte 0x0B: 0x10) on {selfPatched} eboot.bin/*.prx; left {selfLeft} untouched");
 
@@ -1905,17 +2038,32 @@ internal static partial class Program
 
         Console.Error.WriteLine($"[info] build  {opts.SourceFolder} -> {opts.OutputFolder}  (inner={opts.InnerCompression}, backend={opts.KrakenBackend}, level={opts.KrakenCompressionLevel}, workers={(opts.KrakenMaxDegreeOfParallelism == 0 ? $"auto ({Environment.ProcessorCount})" : opts.KrakenMaxDegreeOfParallelism.ToString())}, temp={opts.TemporaryDirectory ?? "$TMPDIR"}, chunks={opts.PlayGoChunkCount}, fake-sign={autoFakeSign}, retail-normalize={doRetailNormalize})");
 
-        // Baselines for the cleanup after a failed or cancelled build: only files that did not
-        // exist before the build are removed — a .pkg in the output folder (the library writes
-        // the FIH image straight under its final name) and the library's intermediates in temp.
+        // The cleanup after a failed or cancelled build removes only what this build writes: its
+        // own package name in the output folder (the library writes the FIH image straight under
+        // it) when the build created or changed it, the library's temp files for that name
+        // (.<name>.<guid>.build.tmp and kin) and its new intermediates in temp. A package the
+        // user put into the output folder meanwhile stays.
         string outFull = Path.GetFullPath(opts.OutputFolder);
         string tempFull = Path.GetFullPath(string.IsNullOrWhiteSpace(opts.TemporaryDirectory) ? Path.GetTempPath() : opts.TemporaryDirectory!);
-        var pkgBefore = new HashSet<string>(SafeEnumerate(outFull, "*.pkg"), StringComparer.Ordinal);
+        string? pkgName = PackageFileName(opts);
+        var pkgBefore = new Dictionary<string, (long, DateTime)>(StringComparer.Ordinal);
+        foreach (var p in SafeEnumerate(outFull, "*.pkg")) pkgBefore[p] = FileStamp(p);
+        bool OursPkg(string p)
+        {
+            var n = Path.GetFileName(p);
+            return pkgName != null ? n.Equals(pkgName, FsComparison)
+                                   : n.StartsWith(opts.ContentId + "-", FsComparison);   // name unknown: this content id only
+        }
+        IEnumerable<string> BuildTempFiles() => pkgName == null ? Enumerable.Empty<string>()
+            : SafeEnumerate(outFull, "." + pkgName + ".*.tmp").Concat(SafeEnumerate(tempFull, "." + pkgName + ".*.tmp"));
+        foreach (var p in BuildTempFiles().Distinct().ToList()) TryDeleteFile(p, "stale build temp file");
         var tempBefore = new HashSet<string>(LibraryTempFiles(tempFull), StringComparer.Ordinal);
         void CleanupAfterFailure()
         {
             if (!stageInPlace) CleanupStage(autoStage);
-            foreach (var p in SafeEnumerate(outFull, "*.pkg")) if (!pkgBefore.Contains(p)) TryDeleteFile(p, "partial package");
+            foreach (var p in SafeEnumerate(outFull, "*.pkg"))
+                if (OursPkg(p) && (!pkgBefore.TryGetValue(p, out var was) || was != FileStamp(p))) TryDeleteFile(p, "partial package");
+            foreach (var p in BuildTempFiles().Distinct().ToList()) TryDeleteFile(p, "build temp file");
             foreach (var p in LibraryTempFiles(tempFull)) if (!tempBefore.Contains(p)) TryDeleteFile(p, "library temp file");
         }
 
@@ -1948,7 +2096,9 @@ internal static partial class Program
         try
         {
             long consumedBytes = 0; int consumedFiles = 0;
-            var packedLine = new System.Text.RegularExpressions.Regex(@"\[inner\]\s+data\s+\d+% \(\d+/\d+\): (/\S+) ->");
+            // "data  53% (1,234/2,000): /dir/a file.bin -> 12,752 bytes (...)": counts may carry
+            // group separators, names may hold spaces; the name ends at the last " -> ".
+            var packedLine = new System.Text.RegularExpressions.Regex(@"\[inner\]\s+data\s+\d+%\s+\([\d.,'\u00A0\u202F ]+/[\d.,'\u00A0\u202F ]+\):\s+(/.+) -> ");
             void Log(string s)
             {
                 Console.Error.WriteLine("  " + s);
@@ -1957,10 +2107,13 @@ internal static partial class Program
                 if (!m.Success) return;
                 // The library names a file once it sits in the inner image and never reads it
                 // again (verified: a build that deleted each one this way gave the identical
-                // deterministic package). Only files inside the stage, never anything else.
+                // deterministic package). Only real files inside the stage, never through a link,
+                // never sce_sys (the library reads param.json and the media again later).
                 var rel = m.Groups[1].Value.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+                var first = rel.Split(Path.DirectorySeparatorChar)[0];
+                if (first.Equals("sce_sys", StringComparison.OrdinalIgnoreCase)) return;
                 var f = Path.GetFullPath(Path.Combine(autoStage, rel));
-                if (!IsInside(f, autoStage) || !File.Exists(f)) return;
+                if (!File.Exists(f) || !IsRealFileInside(f, autoStage)) return;
                 try
                 {
                     long len = new FileInfo(f).Length;
@@ -1990,6 +2143,8 @@ internal static partial class Program
             buildDone.Set();
             if (!stageInPlace) CleanupStage(autoStage);
         }
+        if (pkgName != null && !Path.GetFileName(result.OutputPath).Equals(pkgName, FsComparison))
+            Console.Error.WriteLine($"[warn] the library named the package {Path.GetFileName(result.OutputPath)}, not {pkgName}: a failed build of this name may leave a partial file");
         Console.WriteLine($"OK — wrote {result.OutputPath} ({new FileInfo(result.OutputPath).Length:N0} B)");
         if (result.Warnings != null)
             foreach (var w in result.Warnings) Console.Error.WriteLine("[warn] " + w);
@@ -2089,6 +2244,24 @@ internal static partial class Program
     /// (pfs_image.dat, naps_pkg_layout.dat, outer.pfs) and .&lt;pkg name&gt;.&lt;guid&gt;.cnt.tmp.</summary>
     static IEnumerable<string> LibraryTempFiles(string tempDir)
         => SafeEnumerate(tempDir, "libprospero-publisher-*").Concat(SafeEnumerate(tempDir, ".*.cnt.tmp"));
+
+    static (long, DateTime) FileStamp(string path)
+    {
+        try { var fi = new FileInfo(path); return (fi.Length, fi.LastWriteTimeUtc); } catch { return (-1, DateTime.MinValue); }
+    }
+
+    /// <summary>The package name the library writes for these options (its own private
+    /// ComposePkgFileName), or null when the library no longer has it.</summary>
+    static string? PackageFileName(ProsperoBuildOptions opts)
+    {
+        try
+        {
+            var m = typeof(ProsperoPackageBuilder).GetMethod("ComposePkgFileName", BindingFlags.NonPublic | BindingFlags.Static,
+                                                            new[] { typeof(string), typeof(string) });
+            return m?.Invoke(null, new object[] { opts.ContentId, opts.Version }) as string;
+        }
+        catch { return null; }
+    }
 
     static void TryDeleteFile(string path, string what)
     {

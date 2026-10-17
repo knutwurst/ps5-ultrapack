@@ -20,11 +20,31 @@ class Consume(unittest.TestCase):
         from mkpfs import cli as mcli
         if self.links:
             (self.d / "game" / "data" / "link.bin").unlink()
-        need = mcli.consuming_space_need(self.d / "game")
-        kept = (3 << 20) + len('{"titleId": "PPSA00001"}') + 1004
-        total = kept + (2 << 20) + len(b"pattern" * (500 << 10))
+        need = mcli.consuming_space_need(self.d / "game", block_size=65536)
+        # kept files in whole blocks (sce_sys and the small eboot), the largest freed file
+        kept = (3 << 20) + 65536 + 65536
         largest = max(2 << 20, len(b"pattern" * (500 << 10)))
-        self.assertEqual(need, kept + largest + total // 100)
+        self.assertGreaterEqual(need, kept + largest)
+        self.assertLess(need, kept + largest + (4 << 20))
+
+    def test_the_space_check_covers_the_blocks_of_many_tiny_files(self):
+        sys.path.insert(0, str(BACKEND))
+        from mkpfs import cli as mcli
+        g = self.d / "tiny"
+        (g / "sce_sys").mkdir(parents=True)
+        (g / "sce_sys" / "param.json").write_text('{"titleId": "PPSA00001"}')
+        for i in range(40):
+            d = g / f"d{i:02d}"; d.mkdir()
+            for j in range(50):
+                (d / f"f{j:02d}.txt").write_bytes(b"x")
+        (g / "big.bin").write_bytes(os.urandom(2 << 20))
+        r = pack(g, self.d / "tiny.ffpfs", "--no-verify-structure")
+        self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
+        image = (self.d / "tiny.ffpfs").stat().st_size
+        need = mcli.consuming_space_need(g, block_size=65536)
+        # at the peak the image holds everything but the freed file is gone
+        self.assertGreaterEqual(need, image - (2 << 20) + (2 << 20))
+        self.assertLess(need, image + (8 << 20))
 
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="consume_"))

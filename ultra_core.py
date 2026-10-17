@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import zipfile
+import zlib
 from pathlib import Path
 from typing import NamedTuple
 
@@ -220,16 +221,18 @@ def get_total_space(path: Path) -> int:
 
 
 def same_drive(path_a: Path, path_b: Path) -> bool:
-    """True if both paths are on the same filesystem/volume."""
+    """True if both paths are on the same filesystem/volume. A folder that does not exist yet
+    counts as the drive of its nearest existing ancestor."""
+    a, b = _existing_ancestor(Path(path_a)), _existing_ancestor(Path(path_b))
     try:
-        a = path_a if path_a.exists() else path_a.parent
-        b = path_b if path_b.exists() else path_b.parent
         return os.stat(a).st_dev == os.stat(b).st_dev
-    except Exception:
-        try:
-            return path_a.resolve().drive.lower() == path_b.resolve().drive.lower()
-        except Exception:
-            return str(path_a)[:2].lower() == str(path_b)[:2].lower()
+    except OSError:
+        pass
+    if os.name == "nt":
+        da, db = Path(os.path.abspath(a)).drive.lower(), Path(os.path.abspath(b)).drive.lower()
+        return bool(da) and da == db
+    # a drive that is not attached: only the same missing volume matches
+    return os.path.abspath(a) == os.path.abspath(b)
 
 
 def space_safety_factor() -> float:
@@ -385,7 +388,38 @@ _APP_TMP_RE = re.compile(r"tmp[a-z0-9_]{8}$")
 
 
 def _is_app_tmp_dir(name: str) -> bool:
+    """Name check only: right for leftovers inside the app's own work folders."""
     return bool(_APP_TMP_RE.fullmatch(name))
+
+
+_APP_TMP_PARENTS = ("_ffpfsc_temp", "_ffpfsc_inner", "_ffpfsc_extract", "_extracted")
+_APP_TMP_LEFTOVER_PREFIXES = ("mkpfs-", "ffpfsc_spool_")
+_APP_TMP_LEFTOVER_SUFFIXES = (".ffpfs", ".ffpfsc", ".pfsc", ".partial", ".tmp")
+
+
+def is_app_tmp_dir_in(path: Path) -> bool:
+    """True for a tmpXXXXXXXX folder the app may remove: inside one of its own work folders,
+    or anywhere when it holds nothing but mkpfs/backend leftovers (or nothing at all), so a
+    user folder like 'tmp_archive' or 'tmpdownload' with real files is never taken."""
+    p = Path(path)
+    if not _is_app_tmp_dir(p.name):
+        return False
+    try:
+        if p.is_symlink() or not p.is_dir():
+            return False
+        if p.parent.name in _APP_TMP_PARENTS:
+            return True
+        for e in p.iterdir():
+            name = e.name.lower()
+            if e.is_symlink():
+                return False
+            if (is_fs_junk_name(e.name) or name.startswith(_APP_TMP_LEFTOVER_PREFIXES)
+                    or name.endswith(_APP_TMP_LEFTOVER_SUFFIXES)):
+                continue
+            return False
+    except OSError:
+        return False
+    return True
 
 
 # What pass 1 never frees (backend/mkpfs pfs.CONSUME_MIN_SIZE and the sce_sys rule).
@@ -569,8 +603,9 @@ def estimate_peak_space_needed(extracted_size: int, factor: float = ARCHIVE_PEAK
     """Peak free space the SCRATCH (build) drive needs. *factor* is the co-resident
     multiple of the EXTRACTED size for {source + inner image + pass-2 spool}. When the
     final .ffpfsc also lands on this drive (scratch == output), add ~1x for it."""
-    mult = factor + (1.05 if same_temp_output_drive else 0.0)
-    return int(extracted_size * mult * space_safety_factor())
+    # the safety factor tunes the scratch share only; the final container is never scaled down
+    mult = factor * space_safety_factor() + (1.05 if same_temp_output_drive else 0.0)
+    return int(extracted_size * mult)
 
 
 def estimate_image_space_needed(extracted_size: int) -> int:
@@ -599,10 +634,88 @@ def estimate_output_space_needed(game_size: int, compressed: bool = True,
     return min(est, worst)
 
 
-def _space_requirements(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, int]]:
-    """What the chosen placement needs, drive by drive: [(label, folder, bytes needed)]."""
-    temp_dir, out_dir = Path(temp_dir), Path(out_dir)
+_CLONE_CACHE: dict = {}
+
+
+def _drive_can_clone(path: Path) -> bool:
+    """True when *path* sits on an APFS volume, where the copy job clones a file on the same
+    drive instead of writing it again (backend/copy_job._clone)."""
+    if sys.platform != "darwin":
+        return False
+    target = _existing_ancestor(Path(path))
+    try:
+        dev = os.stat(target).st_dev
+    except OSError:
+        return False
+    if dev in _CLONE_CACHE:
+        return _CLONE_CACHE[dev]
+    can = False
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        try:
+            fn = getattr(libc, "statfs$INODE64")     # Intel: the 64-bit inode layout
+        except AttributeError:
+            fn = libc.statfs                         # Apple silicon has only that layout
+        buf = ctypes.create_string_buffer(4096)
+        if fn(os.fsencode(str(target)), buf) == 0:
+            can = buf.raw[72:88].split(b"\0")[0].decode("ascii", "replace").lower() == "apfs"
+    except Exception:
+        can = False
+    _CLONE_CACHE[dev] = can
+    return can
+
+
+def _copy_moves(item) -> bool:
+    """True when a copy job renames its source on the same drive instead of copying it
+    (copy mode move/organize; a PS4/Organize job as PS5_UltraPack._ps4_copy_mode decides)."""
+    if getattr(item, "content_kind", "") in ("ps4", ORGANIZE_TARGET):
+        if getattr(item, "origin_archive", None) or getattr(item, "_from_archive", False):
+            return True
+        return (getattr(item, "after_source", None) or "keep") == "delete"
+    return (getattr(item, "copy_mode", None) or "keep") != "keep"
+
+
+def _space_size_of(item) -> int:
+    """_build_size_of, with estimates where it knows nothing better: an archive without a
+    size in its headers is its on-disk set x 1.05 (like the router); a compressed container a
+    chain unpacks (.ffpfsc, or a .pkg whose content probe failed) is twice the container."""
     size = _build_size_of(item)
+    if size <= 0 and getattr(item, "source_kind", None) == "archive":
+        on_disk = int(getattr(item, "size", 0) or 0)
+        if on_disk <= 0 and getattr(item, "archive_path", None):
+            on_disk = archive_set_ondisk_size(Path(str(item.archive_path)))
+        return int(on_disk * 1.05)
+    if getattr(item, "operation", "pack") == "chain" and chain_needs_unpack(item):
+        kind = chain_source_kind(item)
+        container = int(getattr(item, "size", 0) or 0)
+        if size <= container and (kind == "ffpfsc" or (kind == "pkg" and not getattr(item, "pkg_content_size", 0))):
+            return container * 2
+    return size
+
+
+def _merge_same_drive(needs: list) -> list:
+    """Add up the needs that land on one drive: each part may fit while their sum does not."""
+    merged: list = []
+    for label, d, need in needs:
+        for i, (l2, d2, n2) in enumerate(merged):
+            if same_drive(Path(d2), Path(d)):
+                merged[i] = (f"{l2} + {label}", d2, n2 + need)
+                break
+        else:
+            merged.append((label, d, need))
+    return merged
+
+
+def _space_requirements(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, int]]:
+    """What the chosen placement needs, drive by drive: [(label, folder, bytes needed)].
+    Needs that share a drive are one row with their sum."""
+    return _merge_same_drive(_space_needs(item, Path(temp_dir), Path(out_dir)))
+
+
+def _space_needs(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, int]]:
+    """_space_requirements before the needs on one drive are added up."""
+    size = _space_size_of(item)
     if size <= 0:
         return []
     comp  = bool(getattr(item, "_output_compressed", True))
@@ -619,7 +732,10 @@ def _space_requirements(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, 
             # _item_is_single_pass and the router), then renamed into place
             return [("Output drive (archive unpacked)", out_dir, int(size * 1.02))]
         if src_dir is not None and same_drive(src_dir, out_dir):
-            return []
+            # a move is a rename; a kept file is cloned on APFS (a folder never is), else written again
+            if _copy_moves(item) or (src.is_file() and _drive_can_clone(out_dir)):
+                return []
+            return [("Output drive (copy on the same drive)", out_dir, int(size * 1.02))]
         # Streamed through a .copy-tmp then os.replace (no doubling); 1.02x slack.
         return [("Output drive", out_dir, int(size * 1.02))]
     if _item_is_single_pass(item):
@@ -1879,23 +1995,86 @@ def find_artwork(path: Path):
     return None
 
 
-def load_history():
-    ensure_app_dir()
-    if HISTORY_FILE.exists():
+_HISTORY_UNREADABLE = False      # the last read of history.json failed: do not overwrite it
+_HISTORY_CORRUPT_COPY: Path | None = None    # where an unparsable history.json was moved
+
+
+def _keep_aside(path: Path) -> Path | None:
+    """Move an unreadable profile file to '<name>.corrupt-<time>' so nothing overwrites it."""
+    stamp = int(time.time())
+    keep = path.with_name(f"{path.name}.corrupt-{stamp}")
+    n = 1
+    while keep.exists():
+        keep = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+        n += 1
+    try:
+        _retry_io(lambda: path.replace(keep))
+        return keep
+    except OSError:
+        return None
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write *path* through a temp file in the same folder and os.replace, so a crash or a
+    full disk never leaves a torn file under the real name."""
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        _retry_io(lambda: os.replace(tmp, path))
+    except BaseException:
         try:
-            return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            return []
-    return []
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
-def save_history(items):
+def load_history():
+    """The saved history, [] when there is none. An unparsable file is kept aside; a file
+    that cannot be read right now is left alone and the next save_history skipped."""
+    global _HISTORY_UNREADABLE, _HISTORY_CORRUPT_COPY
     ensure_app_dir()
-    HISTORY_FILE.write_text(json.dumps(items[-100:], indent=2), encoding="utf-8")
+    with _SETTINGS_LOCK:
+        if not HISTORY_FILE.exists():
+            _HISTORY_UNREADABLE = False
+            return []
+        try:
+            text = _retry_io(lambda: HISTORY_FILE.read_text(encoding="utf-8-sig"), _SETTINGS_READ_TRIES)
+        except OSError:
+            _HISTORY_UNREADABLE = True
+            return []
+        _HISTORY_UNREADABLE = False
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if isinstance(data, list):
+            return data
+        kept = _keep_aside(HISTORY_FILE)
+        if kept is None:
+            _HISTORY_UNREADABLE = True
+        else:
+            _HISTORY_CORRUPT_COPY = kept
+        return []
 
 
-_SETTINGS_UNREADABLE = False      # settings.json exists but does not parse
+def save_history(items) -> bool:
+    """Write the last 100 entries atomically. False (nothing written) while the last read
+    of an existing history.json failed: saving now would drop the entries it holds."""
+    ensure_app_dir()
+    with _SETTINGS_LOCK:
+        if _HISTORY_UNREADABLE and HISTORY_FILE.exists():
+            return False
+        _atomic_write_text(HISTORY_FILE, json.dumps(items[-100:], indent=2))
+        return True
+
+
+_SETTINGS_UNREADABLE = False      # settings.json exists but is not a JSON object
 _SETTINGS_CORRUPT_COPY: Path | None = None   # where the unreadable file was moved
+_SETTINGS_READ_OK = True          # False after the last read of an existing file failed or was corrupt
+_SETTINGS_READ_TRIES = 8          # a plain read: about 1.4 s for a file another process holds
+_SETTINGS_SAVE_TRIES = 6          # before a save gives up: about 3 s (it may run on the UI thread)
 
 
 _SETTINGS_LOCK = threading.RLock()
@@ -1913,24 +2092,32 @@ def _retry_io(fn, tries: int = 8):
             time.sleep(0.05 * (i + 1))
 
 
-def _read_settings() -> tuple[dict, bool]:
+def _read_settings(tries: int | None = None) -> tuple[dict, bool]:
     """(settings, read): read is False while the file exists but cannot be opened, which is
     not the same as corrupt."""
-    global _SETTINGS_UNREADABLE
+    global _SETTINGS_UNREADABLE, _SETTINGS_READ_OK
     ensure_app_dir()
     with _SETTINGS_LOCK:
         if not SETTINGS_FILE.exists():
+            _SETTINGS_UNREADABLE = False
+            _SETTINGS_READ_OK = True
             return {}, True
         try:
-            text = _retry_io(lambda: SETTINGS_FILE.read_text(encoding="utf-8"))
+            text = _retry_io(lambda: SETTINGS_FILE.read_text(encoding="utf-8-sig"),
+                             tries or _SETTINGS_READ_TRIES)
         except OSError:
+            _SETTINGS_READ_OK = False
             return {}, False
         try:
             data = json.loads(text)
-            _SETTINGS_UNREADABLE = False
-            return (data if isinstance(data, dict) else {}), True
         except ValueError:
-            _SETTINGS_UNREADABLE = True
+            data = None
+        if isinstance(data, dict):
+            _SETTINGS_UNREADABLE = False
+            _SETTINGS_READ_OK = True
+            return data, True
+        _SETTINGS_UNREADABLE = True        # corrupt, or JSON that is not an object
+        _SETTINGS_READ_OK = False
         return {}, True
 
 
@@ -1941,35 +2128,50 @@ def load_settings() -> dict:
     return _read_settings()[0]
 
 
-def save_settings(data: dict) -> None:
+def settings_readable() -> bool:
+    """False when the last read found settings.json present but unreadable or corrupt: the
+    {} it returned is not the profile, so nothing should be saved on top of it as defaults."""
+    return _SETTINGS_READ_OK
+
+
+_SAVES_BLOCKED = False
+
+
+def block_settings_saves() -> None:
+    """For the rest of this session no save reaches settings.json: the app started while the
+    file could not be read, so what it holds now are defaults, not the user's settings."""
+    global _SAVES_BLOCKED
+    _SAVES_BLOCKED = True
+
+
+def save_settings(data: dict) -> bool:
     """Merge *data* into settings.json atomically: write settings.json.tmp, then
-    os.replace, so a crash or power loss mid-write never leaves a torn file."""
+    os.replace, so a crash or power loss mid-write never leaves a torn file. Leaves the file
+    untouched and returns False when it cannot be read even after a short wait (saving only
+    *data* then would drop the rest of the profile); callers never see an exception."""
     global _SETTINGS_CORRUPT_COPY
-    ensure_app_dir()
-    with _SETTINGS_LOCK:
-        existing, read = _read_settings()
-        if not read:
-            # saving only *data* now would drop the rest of the profile
-            raise OSError(f"{SETTINGS_FILE} is in use and cannot be read; not saved")
-        if _SETTINGS_UNREADABLE:
-            try:
-                keep = SETTINGS_FILE.with_name(f"settings.json.corrupt-{int(time.time())}")
-                SETTINGS_FILE.replace(keep)
+    if _SAVES_BLOCKED:
+        return False
+    try:
+        ensure_app_dir()
+        with _SETTINGS_LOCK:
+            existing, read = _read_settings(_SETTINGS_SAVE_TRIES)
+            if not read:
+                print(f"[WARN] {SETTINGS_FILE} is in use and cannot be read; settings not saved", file=sys.stderr)
+                return False
+            if _SETTINGS_UNREADABLE:
+                keep = _keep_aside(SETTINGS_FILE)
+                if keep is None:
+                    print(f"[WARN] {SETTINGS_FILE} is damaged and could not be kept aside; settings not saved",
+                          file=sys.stderr)
+                    return False
                 _SETTINGS_CORRUPT_COPY = keep
-            except Exception:
-                pass
-        existing.update(data)
-        fd, tmp = tempfile.mkstemp(prefix="settings.json.", suffix=".tmp", dir=str(SETTINGS_FILE.parent))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(json.dumps(existing, indent=2))
-            _retry_io(lambda: os.replace(tmp, SETTINGS_FILE))
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+            existing.update(data)
+            _atomic_write_text(SETTINGS_FILE, json.dumps(existing, indent=2))
+            return True
+    except OSError as e:
+        print(f"[WARN] settings not saved: {e}", file=sys.stderr)
+        return False
 
 
 def is_first_run() -> bool:
@@ -1998,6 +2200,11 @@ class ArchivePasswordError(RuntimeError):
     """An extractor reported a wrong or missing archive password. Its own type so
     extract_with_passwords() moves on to the next candidate instead of surfacing
     it as a generic failure."""
+
+
+class ArchiveDataError(RuntimeError):
+    """A ZipCrypto member failed its data check (decompression or CRC) with a password that
+    passed the one-byte header check: a wrong password (1 in 256 pass) or damage."""
 
 
 class ArchiveToolError(RuntimeError):
@@ -2047,6 +2254,9 @@ class ArchiveExtractor:
                    + (" [password-protected]" if password else ""))
         ArchiveExtractor._check_cancel(cancel_event)
         try:
+            if suffix in (".rar", ".7z"):
+                ArchiveExtractor._check_name_collisions(
+                    archive, ArchiveExtractor.list_members(archive, [password] if password else []))
             if suffix == ".zip":
                 ArchiveExtractor._zip(archive, dest, log_fn, progress_fn, password, cancel_event)
             elif suffix == ".rar":
@@ -2124,6 +2334,7 @@ class ArchiveExtractor:
             if p and p not in named:
                 named.append(p)
         candidates = named + [""]   # always end with a clean no-password attempt
+        data_error = None           # (password number, error): a password got past the check, the data did not
         for idx, pwd in enumerate(candidates):
             ArchiveExtractor._check_cancel(cancel_event)
             try:
@@ -2133,12 +2344,26 @@ class ArchiveExtractor:
                 )
             except ArchiveExtractionCancelled:
                 raise
+            except ArchiveDataError as e:
+                # wrong password or damage: only the next candidate can tell
+                data_error = data_error or (idx + 1, e)
+                if log_fn:
+                    log_fn("INFO", f"  password {idx + 1}/{len(named)} opened the archive but its data "
+                                   "failed the check - trying next…")
+                continue
             except Exception as e:
                 if ArchiveExtractor._is_password_error(e):
                     if log_fn and pwd and len(candidates) > 1:
                         log_fn("INFO", f"  password {idx + 1}/{len(named)} did not match - trying next…")
                     continue
                 raise   # not a password problem - surface it
+        if data_error:
+            n, e = data_error
+            raise RuntimeError(
+                f"Could not extract {archive.name}: the archive looks damaged or incomplete. "
+                f"Saved password {n} opened it, but the data failed its check ({e}).\n\n"
+                "Download the archive again. Should it be intact, that password is not the "
+                "right one: add the correct one in Settings → Saved Archive Passwords.")
         if named:
             raise RuntimeError(
                 f"Could not open {archive.name}: wrong or missing password - none of the "
@@ -2491,6 +2716,54 @@ class ArchiveExtractor:
             raise ArchiveExtractionCancelled("Archive extraction cancelled by user.")
 
     @staticmethod
+    def _name_collisions(names) -> list[tuple[str, str]]:
+        """Pairs of member names that land on one path on a drive that ignores letter case and
+        Unicode form (APFS, NTFS, exFAT), so one would overwrite the other. Folders that differ
+        only in case merge harmlessly and are not reported; OS clutter is ignored."""
+        import unicodedata
+        files: dict[str, None] = {}
+        dirs: set[str] = set()
+        for n in names or []:
+            raw = str(n).replace("\\", "/")
+            is_dir = raw.endswith("/")
+            raw = raw.strip("/")
+            parts = raw.split("/")
+            if not raw or any(is_fs_junk_name(p) for p in parts if p):
+                continue
+            dirs.update("/".join(parts[:k]) for k in range(1, len(parts)))
+            if is_dir:
+                dirs.add(raw)
+            else:
+                files[raw] = None
+        key = lambda n: unicodedata.normalize("NFC", n).casefold()
+        out: list[tuple[str, str]] = []
+        seen: dict[str, str] = {}
+        real_files = [n for n in files if n not in dirs]
+        for n in real_files:
+            first = seen.setdefault(key(n), n)
+            if first != n:
+                out.append((first, n))
+        dir_keys: dict[str, str] = {}
+        for d in sorted(dirs):
+            dir_keys.setdefault(key(d), d)
+        for n in real_files:
+            d = dir_keys.get(key(n))
+            if d is not None:
+                out.append((n, d))
+        return out
+
+    @staticmethod
+    def _check_name_collisions(archive: Path, names) -> None:
+        pairs = ArchiveExtractor._name_collisions(names)
+        if pairs:
+            shown = "; ".join(f"'{a}' and '{b}'" for a, b in pairs[:5])
+            more = f" (and {len(pairs) - 5} more)" if len(pairs) > 5 else ""
+            raise RuntimeError(
+                f"Cannot extract {archive.name}: {len(pairs)} member name(s) differ only in letter "
+                f"case or Unicode form and would overwrite each other on a drive that ignores "
+                f"case: {shown}{more}.")
+
+    @staticmethod
     def _zip(archive: Path, dest: Path, log_fn, progress_fn=None, password: str = "",
              cancel_event: threading.Event | None = None):
         # WinZip/7-Zip AES encryption (method 99 - what 7-Zip and WinZip produce for a
@@ -2500,6 +2773,7 @@ class ArchiveExtractor:
         # plumbing as .7z.
         with zipfile.ZipFile(archive, "r") as zf:
             aes = any(getattr(zi, "compress_type", 0) == 99 for zi in zf.infolist())
+            ArchiveExtractor._check_name_collisions(archive, zf.namelist())
         if aes:
             ArchiveExtractor._zip_via_native_7z(archive, dest, log_fn, progress_fn, password,
                                                 cancel_event, reason="AES-encrypted ZIP")
@@ -2510,10 +2784,17 @@ class ArchiveExtractor:
             names = [n for n in zf.namelist()
                      if not any(is_fs_junk_name(part) for part in n.replace("\\", "/").split("/") if part)]
             total = len(names)
+            import lzma
             for i, name in enumerate(names):
                 ArchiveExtractor._check_cancel(cancel_event)
                 try:
                     zf.extract(name, dest, pwd=pwd_bytes)
+                except (zlib.error, zipfile.BadZipFile, EOFError, lzma.LZMAError) as e:
+                    # ZipCrypto checks a password against one byte: a wrong one passes 1 time in
+                    # 256 and then fails here like damaged data
+                    if pwd_bytes and zf.getinfo(name).flag_bits & 0x1:
+                        raise ArchiveDataError(f"{name}: {e}") from e
+                    raise
                 except NotImplementedError as e:
                     # A method the header scan did not flag (Deflate64, PPMd, an AES
                     # member without the method-99 marker, …): same native route.
@@ -3792,6 +4073,7 @@ __all__ = [
     "INPLACE_PEAK_FACTOR",
     "PATCH_PEAK_FACTOR",
     "PKG_UNPACK_PEAK_FACTOR",
+    "block_settings_saves",
     "PKG_CONSUME_MARGIN",
     "PKG_CONSUME_MIN_SIZE",
     "pkg_file_stays",
@@ -3805,12 +4087,14 @@ __all__ = [
     "display_size",
     "_APP_TMP_RE",
     "_is_app_tmp_dir",
+    "is_app_tmp_dir_in",
     "_peak_factor_for",
     "estimate_peak_space_needed",
     "estimate_image_space_needed",
     "COMPRESSED_OUTPUT_RATIO",
     "estimate_output_space_needed",
     "_space_requirements",
+    "_drive_can_clone",
     "_space_preflight_ok",
     "space_shortfall",
     "removable_parts",
@@ -3870,9 +4154,11 @@ __all__ = [
     "prune_art_cache",
     "load_history",
     "save_history",
+    "_HISTORY_CORRUPT_COPY",
     "_SETTINGS_UNREADABLE",
     "_SETTINGS_CORRUPT_COPY",
     "load_settings",
+    "settings_readable",
     "save_settings",
     "CHAIN_TARGETS",
     "CHAIN_TARGET_LABEL",
@@ -3890,6 +4176,7 @@ __all__ = [
     "ArchiveExtractionCancelled",
     "ArchivePasswordError",
     "ArchiveToolError",
+    "ArchiveDataError",
     "ArchiveExtractor",
     "EXTRA_JUNK_EXTS",
     "FS_JUNK_NAMES",

@@ -155,15 +155,23 @@ internal static partial class Program
         long total = files.Sum(x => Ps4Size(x.Item1)), done = 0;
         int lastPct = -1;
         var buf = new byte[1 << 20];
+        // a selective extract ("Look inside") never replaces a file already in the destination
+        bool keepExisting = wanted != null;
+        void Placed(string rel, string got)
+        {
+            var gotRel = Path.GetRelativePath(outDir, got).Replace('\\', '/');
+            if (gotRel != rel) Console.Error.WriteLine($"[info] {rel} already exists with other content; extracted as {gotRel}");
+        }
         foreach (var (f, rel) in files)
         {
             var dst = SafeTarget(outDir, rel);
             Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
             Orbis.Util.IMemoryReader view = f.GetView();
             if (f.size != f.compressed_size) view = new Orbis.PFS.PFSCReader(view);
-            long size = Ps4Size(f), pos = 0;
-            using (var o = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+            long size = Ps4Size(f);
+            Placed(rel, WriteExtractedFile(dst, o =>
             {
+                long pos = 0;
                 while (pos < size)
                 {
                     int n = (int)Math.Min(buf.Length, size - pos);
@@ -173,7 +181,7 @@ internal static partial class Program
                     int pct = total > 0 ? (int)Math.Min(99, done * 100 / total) : 99;
                     if (pct != lastPct) { lastPct = pct; Console.WriteLine($"[####] {pct}% extract ({rel})"); }
                 }
-            }
+            }, keepExisting));
         }
         using (var acc = img.Mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read))
             foreach (var (rel, m) in cnt)
@@ -182,7 +190,7 @@ internal static partial class Program
                 Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
                 var data = new byte[m.DataSize];
                 acc.ReadArray(m.DataOffset, data, 0, data.Length);
-                File.WriteAllBytes(dst, data);
+                Placed(rel, WriteExtractedFile(dst, o => o.Write(data, 0, data.Length), keepExisting));
             }
         Console.WriteLine("[####] 100% extract");
         Console.WriteLine($"[ok] extracted {files.Count + cnt.Count} file(s) to {outDir}");

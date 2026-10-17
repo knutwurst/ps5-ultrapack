@@ -208,6 +208,22 @@ class BackportRules(unittest.TestCase):
         self.assertTrue((g / "fakelib" / "libSceX.sprx").is_file(), "the 7.61 set lands in fakelib/")
         self.assertEqual(sdk_of(g / "eboot.bin"), (SDK_761_PS5, SDK_761_PS4))
 
+    def test_a_stale_fakelib_file_is_replaced_and_a_matching_one_reused(self):
+        g = self.game()
+        libs = self.root / "patched" / "7.61"; libs.mkdir(parents=True)
+        lib = _elf_with_exports([("BBBBBBBBBBB", 0, "libSceX", 0, "libSceX")])
+        (libs / "libSceX.sprx").write_bytes(lib)
+        (libs / "libSceY.sprx").write_bytes(b"y" * 64)
+        (g / "fakelib").mkdir()
+        (g / "fakelib" / "libSceX.sprx").write_bytes(b"stale")
+        (g / "fakelib" / "libSceY.sprx").write_bytes(b"y" * 64)
+        rc, log = self.backport(g, "7.61", "--backport-libs", str(self.root / "patched"))
+        self.assertEqual(rc, 0, log[-1500:])
+        self.assertEqual((g / "fakelib" / "libSceX.sprx").read_bytes(), lib)
+        self.assertEqual((g / "fakelib" / "libSceY.sprx").read_bytes(), b"y" * 64)
+        self.assertEqual(sorted(p.name for p in (g / "fakelib").iterdir()), ["libSceX.sprx", "libSceY.sprx"])
+        self.assertIn("replaced 1", log)
+
     def test_the_firmware_folder_as_patched_libraries_is_refused(self):
         g = self.game()
         before = (g / "eboot.bin").read_bytes()

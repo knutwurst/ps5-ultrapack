@@ -354,8 +354,9 @@ def test_negative_missing_param_json(r: Runner):
 
 
 def test_negative_missing_eboot(r: Runner):
-    """No eboot.bin: the builder does not refuse. The package is written (rc 0) and the
-    CLI's auto-validate is what flags it, as its single failure ('[FAIL] inner.eboot')."""
+    """No eboot.bin: the builder does not refuse. The package is written, and the CLI's
+    auto-validate flags it as its single failure ('[FAIL] inner.eboot'): the job fails with
+    exit code 3 and the package is kept for a look."""
     src = make_synth_folder(r.work / "neg_no_eboot", with_eboot=False)
     out = r.work / "neg_no_eboot_out"; out.mkdir(exist_ok=True)
     rc, log = r.run_cli([str(src), str(out),
@@ -365,8 +366,8 @@ def test_negative_missing_eboot(r: Runner):
                          "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
     pkg = next(out.glob("*.pkg"), None)
     r.check("negative.missing-eboot.exit",
-            rc == 0 and pkg is not None,
-            f"rc=0, {pkg.name if pkg else ''} written without an eboot",
+            rc == 3 and pkg is not None and "[FPKG-INVALID]" in log and "[SUCCESS]" not in log,
+            f"rc=3, {pkg.name if pkg else ''} kept, the job failed its checks",
             f"rc={rc}, pkg={pkg}; last log: " + log[-300:])
     r.check("negative.missing-eboot.validate-flags-it",
             "[FAIL]" in log and "inner.eboot" in log and "eboot.bin not present in inner PFS" in log

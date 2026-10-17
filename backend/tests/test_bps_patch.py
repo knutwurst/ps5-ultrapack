@@ -101,6 +101,30 @@ class Apply(unittest.TestCase):
         with self.assertRaises(bps.BpsError):
             bps.apply(b"NOPE" + b"\x00" * 32, b"")
 
+    def test_an_oversized_copy_is_refused_before_it_runs(self):
+        # A hostile TargetCopy or SourceCopy far past target_size must fail before
+        # copying a byte, so it never grows the output (or eats memory).
+        import tracemalloc
+        src = b"\x01" * 64
+        for action in (("TargetCopy", 5_000_000, 0), ("SourceCopy", 5_000_000, 0)):
+            patch = make_bps(src, b"\x01" * 8, [("TargetRead", 1, b"\x01"), action])
+            tracemalloc.start()
+            try:
+                with self.assertRaises(bps.BpsError):
+                    bps.apply(patch, src)
+                peak = tracemalloc.get_traced_memory()[1]
+            finally:
+                tracemalloc.stop()
+            self.assertLess(peak, 1 << 20, action[0])
+
+    def test_a_huge_declared_target_is_refused(self):
+        src = b"\x01" * 4
+        patch = bytearray(make_bps(src, src, [("SourceRead", 4, None)]))
+        hdr_end = 4 + len(bps._encode_vli(4))
+        patch[hdr_end:hdr_end + 1] = bps._encode_vli(bps.MAX_TARGET_SIZE + 1)
+        with self.assertRaisesRegex(bps.BpsError, "target size"):
+            bps.apply(bytes(patch), src)
+
 
 class RealBackPorkPatch(unittest.TestCase):
     """Apply a real BackPork .bps to a synthetic 'source' file whose bytes match the

@@ -138,6 +138,50 @@ class WalkAndWrite(unittest.TestCase):
             # The low prx bytes are unchanged.
             self.assertEqual((root / "libSceExample.prx").read_bytes(), low)
 
+    def test_a_module_that_cannot_be_read_fails_the_backport(self):
+        import os
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            eboot = _elf_with_param(bp.PT_SCE_PROCPARAM, 0x4942524F, 0x11090001, 0x08000041)
+            (root / "eboot.bin").write_bytes(eboot)
+            locked = root / "libSceLocked.prx"
+            locked.write_bytes(eboot)
+            os.chmod(locked, 0)
+            try:
+                with self.assertRaises(bp.BackportError) as cm:
+                    bp.lower_sdk_in_folder(root, "7.61")
+            finally:
+                os.chmod(locked, 0o644)
+            self.assertIn("libSceLocked.prx", str(cm.exception))
+            self.assertEqual([p.name for p, _e in cm.exception.report.failed], ["libSceLocked.prx"])
+
+    def test_a_param_segment_past_the_end_is_a_clear_error(self):
+        elf = bytearray(_elf_with_param(bp.PT_SCE_PROCPARAM, 0x4942524F, 0x11090001, 0x08000041))
+        struct.pack_into("<Q", elf, 64 + 8, 1 << 40)          # p_offset far past the file
+        with self.assertRaisesRegex(bp.MalformedElf, "past the end"):
+            bp.lower_sdk_version(bytes(elf), "7.61")
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "eboot.bin").write_bytes(bytes(elf))
+            with self.assertRaises(bp.BackportError) as cm:
+                bp.lower_sdk_in_folder(Path(td), "7.61")
+            self.assertIn("past the end", str(cm.exception))
+
+
+class MalformedInputs(unittest.TestCase):
+    def test_a_self_segment_far_past_the_file_is_refused_before_allocating(self):
+        from backend import self_file
+        signed = bytearray(_fself(_signable_elf()))
+        img = self_file.parse_self(bytes(signed))
+        load = next(i for i, ph in enumerate(img.phdrs) if ph[0] == bp.PT_LOAD)
+        struct.pack_into("<Q", signed, img.elf_offset + 64 + load * 56 + 8, 1 << 62)
+        with self.assertRaisesRegex(self_file.MalformedSelf, "past"):
+            self_file.elf_image(bytes(signed))
+        signed = bytearray(_fself(_signable_elf()))
+        version = next(i for i, ph in enumerate(img.phdrs) if ph[0] == self_file.PT_SCE_VERSION)
+        struct.pack_into("<Q", signed, img.elf_offset + 64 + version * 56 + 32, 1 << 62)
+        with self.assertRaises(self_file.MalformedSelf):
+            self_file.elf_image(bytes(signed))
+
 
 class EncodeId(unittest.TestCase):
     def test_matches_shadps4_table(self):

@@ -326,17 +326,33 @@ def _split(name: str, is_dir: bool):
 
 
 def _free_names(sources: list, dest: Path) -> list:
-    """Target paths in *dest* that do not exist yet. The parts of one archive set get
-    the same number, so the set still opens."""
-    n = 1
-    while True:
-        names = []
-        for s in sources:
-            base, rest = _split(s.name, s.is_dir())
-            names.append(dest / (s.name if n == 1 else f"{base} ({n}){rest}"))
-        if not any(os.path.lexists(str(t)) for t in names):
-            return names
-        n += 1
+    """Target paths in *dest* that do not exist yet and differ from each other, also without
+    regard to case. The parts of one archive set get the same number, so the set still opens."""
+    groups: dict = {}
+    for i, s in enumerate(sources):
+        is_dir = s.is_dir()
+        base, _rest = _split(s.name, is_dir)
+        key = (str(_real(s.parent)), base.casefold()) if not is_dir and _VOLUME_RE.search(s.name) else i
+        groups.setdefault(key, []).append(i)
+    out: list = [None] * len(sources)
+    taken: set = set()
+    for idx in groups.values():
+        n = 1
+        while True:
+            names = []
+            for i in idx:
+                s = sources[i]
+                base, rest = _split(s.name, s.is_dir())
+                names.append(dest / (s.name if n == 1 else f"{base} ({n}){rest}"))
+            keys = [t.name.casefold() for t in names]
+            if (len(set(keys)) == len(keys) and not taken.intersection(keys)
+                    and not any(os.path.lexists(str(t)) for t in names)):
+                break
+            n += 1
+        taken.update(keys)
+        for i, t in zip(idx, names):
+            out[i] = t
+    return out
 
 
 def _copy_file(src: Path, dst: Path, tick) -> None:
@@ -360,15 +376,24 @@ def _copy_file(src: Path, dst: Path, tick) -> None:
 
 def _copy_then_remove(src: Path, dst: Path, tick) -> None:
     """Copy *src* to *dst* on another drive, check every file's size, then remove *src*.
-    A failed copy removes what it wrote and leaves *src* untouched."""
+    A failed copy removes what it wrote (nothing that was there before) and leaves *src*
+    untouched; when *src* is gone by then, the copy stays."""
+    created = False
     try:
         if src.is_symlink():
             os.symlink(os.readlink(src), dst, target_is_directory=src.is_dir())
+            created = True
         elif src.is_file():
+            os.close(os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
+            created = True
             _copy_file(src, dst, tick)
         else:
             dst.mkdir()
-            for dp, dns, fns in os.walk(src):
+            created = True
+
+            def unreadable(e: OSError):
+                raise e                                        # a folder that cannot be listed fails the copy
+            for dp, dns, fns in os.walk(src, onerror=unreadable):
                 rel = Path(dp).relative_to(src)
                 dns[:] = [d for d in dns if not _is_junk(d)]      # OS clutter is left behind
                 fns = [f for f in fns if not _is_junk(f)]
@@ -388,7 +413,7 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
                 raise OSError(f"short copy: {dst.name}")
     except BaseException:
         try:
-            if os.path.lexists(str(dst)):
+            if created and os.path.lexists(str(src)) and os.path.lexists(str(dst)):
                 _delete(dst)
         except OSError:
             pass

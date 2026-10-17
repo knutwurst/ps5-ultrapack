@@ -45,18 +45,97 @@ class RunCopyTests(unittest.TestCase):
         with mock.patch("copy_job.time.monotonic", return_value=100.1):
             self.assertEqual(copy_job.progress_line(1, 10, 1000, 100.0, "copy"), "[####] 1% copy")
 
-    def test_folder_copy_replaces_a_partial_one_left_behind(self):
-        src = self.tmp / "src" / "game"
+    def _game_dir(self, name="game"):
+        src = self.tmp / "src" / name
         (src / "sce_sys").mkdir(parents=True)
         (src / "eboot.bin").write_bytes(b"E" * 100)
+        return src
+
+    def test_folder_copy_leaves_an_old_partial_alone(self):
+        src = self._game_dir()
         dst = self.tmp / "out" / "game"
         stale = dst.with_name("game.copy-tmp")
         stale.mkdir(parents=True)
-        (stale / "half.bin").write_bytes(b"h")          # an earlier run that was cut off
+        (stale / "half.bin").write_bytes(b"h")          # an earlier run, or someone else's folder
         rc = copy_job.run_copy_tree(src, dst, mode=copy_job.KEEP, on_line=LineSink())
         self.assertEqual(rc, 0)
         self.assertEqual(sorted(p.name for p in dst.iterdir()), ["eboot.bin", "sce_sys"])
-        self.assertFalse(stale.exists())
+        self.assertEqual((stale / "half.bin").read_bytes(), b"h")
+        self.assertEqual(sorted(p.name for p in dst.parent.iterdir()), ["game", "game.copy-tmp"])
+        if os.name != "nt":
+            plain = dst.parent / "plain"; plain.mkdir()
+            self.assertEqual(dst.stat().st_mode & 0o777, plain.stat().st_mode & 0o777)
+
+    def test_file_copy_leaves_an_old_partial_alone(self):
+        src = self._make_src()
+        dst_dir = self.tmp / "dst"
+        dst_dir.mkdir()
+        (dst_dir / "game.ffpfsc.copy-tmp").write_bytes(b"someone else's")
+        with mock.patch.object(copy_job, "_same_device", return_value=False):
+            rc = copy_job.run_copy(src, dst_dir, on_line=LineSink())
+        self.assertEqual(rc, 0)
+        self.assertEqual((dst_dir / "game.ffpfsc.copy-tmp").read_bytes(), b"someone else's")
+        self.assertEqual(sorted(p.name for p in dst_dir.iterdir()), ["game.ffpfsc", "game.ffpfsc.copy-tmp"])
+        if os.name != "nt":                              # a copy is not made private by its temp file
+            plain = dst_dir / "plain"; plain.write_bytes(b"")
+            self.assertEqual((dst_dir / "game.ffpfsc").stat().st_mode & 0o777, plain.stat().st_mode & 0o777)
+
+    def test_temp_names_are_partial_for_organize(self):
+        src = self._make_src()
+        dst_dir = self.tmp / "dst"
+        seen = []
+        real_open = open
+
+        def spy(path, mode="r", *a, **k):
+            if "w" in mode:
+                seen.append(Path(path))
+            return real_open(path, mode, *a, **k)
+        copy_job.open = spy
+        try:
+            with mock.patch.object(copy_job, "_same_device", return_value=False):
+                self.assertEqual(copy_job.run_copy(src, dst_dir, on_line=LineSink()), 0)
+        finally:
+            del copy_job.open
+        import organize_lib
+        self.assertEqual(len(seen), 1)
+        self.assertNotEqual(seen[0].name, "game.ffpfsc.copy-tmp")
+        self.assertEqual(seen[0].parent, dst_dir)
+        self.assertTrue(organize_lib._skipped(seen[0].name))
+
+    @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "needs a folder this user cannot read")
+    def test_folder_that_cannot_be_listed_fails_the_copy(self):
+        src = self._game_dir()
+        (src / "locked").mkdir()
+        (src / "locked" / "b.bin").write_bytes(b"b")
+        os.chmod(src / "locked", 0)
+        dst = self.tmp / "out" / "game"
+        sink = LineSink()
+        try:
+            with mock.patch.object(copy_job, "_same_device", return_value=False):
+                rc = copy_job.run_copy_tree(src, dst, mode=copy_job.MOVE, on_line=sink)
+        finally:
+            os.chmod(src / "locked", 0o755)
+        self.assertEqual(rc, 1, sink.joined())
+        self.assertTrue((src / "locked" / "b.bin").is_file() and (src / "eboot.bin").is_file())
+        self.assertFalse(dst.exists())
+        self.assertEqual(list(dst.parent.iterdir()) if dst.parent.exists() else [], [])
+
+    def test_link_to_a_folder_stays_a_link(self):
+        src = self._game_dir()
+        (src / "data").mkdir()
+        (src / "data" / "a.bin").write_bytes(b"a")
+        try:
+            (src / "alias").symlink_to("data", target_is_directory=True)
+        except OSError:
+            self.skipTest("this system does not allow symlinks")
+        dst = self.tmp / "out" / "game"
+        with mock.patch.object(copy_job, "_same_device", return_value=False):
+            rc = copy_job.run_copy_tree(src, dst, mode=copy_job.MOVE, on_line=LineSink())
+        self.assertEqual(rc, 0)
+        self.assertTrue((dst / "alias").is_symlink())
+        self.assertEqual(os.readlink(dst / "alias"), "data")
+        self.assertEqual((dst / "alias" / "a.bin").read_bytes(), b"a")
+        self.assertFalse(src.exists())
 
     # ── same-drive fast path ─────────────────────────────────────────────────
 

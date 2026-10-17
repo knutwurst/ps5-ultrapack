@@ -494,5 +494,120 @@ class HeaderProbe(unittest.TestCase):
             m.save_settings({"archive_passwords": []})
 
 
+# ── names that collide on a case-insensitive drive ────────────────────────────
+
+class NameCollisions(_Base):
+    """Two members that differ only in letter case or Unicode form would overwrite each
+    other on APFS, NTFS or exFAT: the extraction must stop with a clear error."""
+
+    def _zip(self, name, members):
+        z = self.tmp / name
+        with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+            for arc, data in members:
+                zf.writestr(arc, data)
+        return z
+
+    def _game(self, *extra):
+        return [("GAME/sce_sys/param.json", '{"titleId": "PPSA00001"}'),
+                ("GAME/eboot.bin", b"e" * 1000), *extra]
+
+    def _assert_collision(self, archive, *names):
+        with self.assertRaises(RuntimeError) as cm:
+            AE.extract_with_passwords(archive, self.dest_root, [], log_fn=self.log)
+        msg = str(cm.exception)
+        for n in names:
+            self.assertIn(n, msg)
+        self.assertFalse(AE._is_password_error(cm.exception), msg)
+        self.assertEqual(list(self.dest_root.iterdir()), [], "nothing is left half-written")
+
+    def test_zip_members_that_differ_in_case(self):
+        z = self._zip("case.zip", self._game(("GAME/Data.bin", b"A" * 100), ("GAME/data.bin", b"B" * 50)))
+        self._assert_collision(z, "GAME/Data.bin", "GAME/data.bin")
+
+    def test_zip_members_that_differ_in_unicode_form(self):
+        nfc, nfd = "GAME/caf\u00e9.bin", "GAME/cafe\u0301.bin"
+        z = self._zip("nfd.zip", self._game((nfc, b"A"), (nfd, b"B")))
+        self._assert_collision(z, "caf")
+
+    def test_folders_that_differ_in_case_alone_are_fine(self):
+        z = self._zip("dirs.zip", self._game(("GAME/Media/a.bin", b"A"), ("GAME/media/b.bin", b"B")))
+        root = AE.extract_with_passwords(z, self.dest_root, [], log_fn=self.log)
+        self._assert_game_root(root)
+
+    def test_the_name_check_itself(self):
+        self.assertEqual(AE._name_collisions(["a/B.bin", "a/b.bin", "a/c.bin"]), [("a/B.bin", "a/b.bin")])
+        self.assertEqual(AE._name_collisions(["a/", "A/x", "a/y"]), [])
+        self.assertEqual(AE._name_collisions(["a/x", "a/x"]), [])          # one name listed twice
+        self.assertEqual(AE._name_collisions(["a/x", "A/X/y"]), [("a/x", "A/X")])
+
+    @unittest.skipUnless(py7zr is not None, "py7zr missing")
+    def test_7z_members_that_differ_in_case(self):
+        a = self.tmp / "case.7z"
+        with py7zr.SevenZipFile(str(a), "w") as sz:
+            for arc, data in self._game(("GAME/Data.bin", b"A" * 100), ("GAME/data.bin", b"B" * 50)):
+                sz.writestr(data if isinstance(data, bytes) else data.encode(), arc)
+        self._assert_collision(a, "GAME/Data.bin", "GAME/data.bin")
+
+
+# ── ZipCrypto: a wrong password can pass the one-byte check ───────────────────
+
+@unittest.skipUnless(SEVENZZ, "no 7-Zip: run FETCH_7ZIP.sh")
+class ZipCryptoLuckyPassword(_Base):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.zc = cls.archives / "zipcrypto.zip"
+        with zipfile.ZipFile(cls.zc) as zf:
+            cls.first = next(zi for zi in zf.infolist() if not zi.is_dir())
+            cls.lucky = None
+            for i in range(100000):
+                pwd = f"w{i}"
+                try:
+                    with zf.open(cls.first, pwd=pwd.encode()) as f:
+                        f.read()
+                except RuntimeError:
+                    continue                         # "Bad password": the check caught it
+                except Exception:
+                    cls.lucky = pwd                  # passed the check, then the data failed
+                    break
+        # the same zip with the first member's data damaged
+        data = bytearray(cls.zc.read_bytes())
+        start = cls.first.header_offset + 30 + len(cls.first.filename.encode()) + 12
+        with zipfile.ZipFile(cls.zc) as zf:
+            extra = len(zf.getinfo(cls.first.filename).extra)
+        start += extra
+        for i in range(start + 200, start + 400):
+            data[i] ^= 0xA5
+        cls.damaged = cls.archives / "zipcrypto_damaged.zip"
+        cls.damaged.write_bytes(data)
+
+    def test_a_lucky_wrong_password_does_not_stop_the_right_one(self):
+        self.assertIsNotNone(self.lucky)
+        with _native_7z(None):
+            root = AE.extract_with_passwords(self.zc, self.dest_root, [self.lucky, "RIGHT"], log_fn=self.log)
+        self._assert_game_root(root)
+
+    def test_damage_is_reported_once_no_password_gets_through(self):
+        with _native_7z(None):
+            with self.assertRaises(RuntimeError) as cm:
+                AE.extract_with_passwords(self.damaged, self.dest_root, ["WRONG", "RIGHT"], log_fn=self.log)
+        msg = str(cm.exception)
+        self.assertIn("damaged", msg)
+        self.assertFalse(AE._is_password_error(cm.exception), msg)
+
+    def test_only_a_lucky_wrong_password_is_not_called_a_plain_wrong_password(self):
+        with _native_7z(None):
+            with self.assertRaises(RuntimeError) as cm:
+                AE.extract_with_passwords(self.zc, self.dest_root, [self.lucky], log_fn=self.log)
+        self.assertIn("damaged", str(cm.exception))
+
+    def test_all_wrong_is_still_a_password_verdict(self):
+        with _native_7z(None):
+            with self.assertRaises(RuntimeError) as cm:
+                AE.extract_with_passwords(self.zc, self.dest_root, ["A_wrong_one"], log_fn=self.log)
+        self.assertIn("none of the 1 saved password(s) worked", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

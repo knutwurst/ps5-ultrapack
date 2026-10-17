@@ -414,32 +414,49 @@ def source_has_links(source_root: Path) -> bool:
     return False
 
 
-def consuming_space_need(source_root: Path) -> int:
-    """Free space a consuming build needs on the source's own drive: what it never frees
-    (sce_sys, small files) plus the largest file it holds twice for a moment, plus 1 % for the
-    image's own blocks."""
+def consuming_space_need(source_root: Path, block_size: int = 65536) -> int:
+    """Free space a consuming build needs on the source's own drive: the image's blocks for
+    what it never frees (sce_sys, small files), the block padding of the files it frees, the
+    largest file it holds twice for a moment, and the image's metadata."""
     from .pfs import CONSUME_MIN_SIZE
-    kept = largest = total = 0
-    for path in source_root.rglob("*"):
-        if not path.is_file():
-            continue
-        size = path.stat().st_size
-        total += size
-        rel = path.relative_to(source_root).parts
-        if (rel and rel[0].lower() == "sce_sys") or size < CONSUME_MIN_SIZE:
-            kept += size
-        else:
-            largest = max(largest, size)
-    return kept + largest + total // 100
+
+    def blocks(size: int) -> int:
+        return max(1, -(-size // block_size)) * block_size
+
+    pointers_per_block = block_size // 8
+    kept = padding = largest = 0
+    meta = 8 * block_size + (1 << 20)              # header, super root, path table, slack
+    for dirpath, dirnames, filenames in os.walk(source_root):
+        meta += block_size                          # the directory's own entries
+        for name in dirnames + filenames:
+            meta += 0x100 + ((len(name) + 17 + 7) & ~7) + 16   # inode, dirent, path table entry
+        for name in filenames:
+            path = Path(dirpath) / name
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            count = max(1, -(-size // block_size))
+            if count > consts.MAX_DIRECT_BLOCKS:      # indirect pointer blocks
+                meta += -(-count // pointers_per_block) * block_size
+            rel = path.relative_to(source_root).parts
+            if (rel and rel[0].lower() == "sce_sys") or size < CONSUME_MIN_SIZE:
+                kept += blocks(size)
+            else:
+                padding += blocks(size) - size
+                largest = max(largest, size)
+    return kept + padding + largest + meta
 
 
 def get_destination_space_error_message(*, source_root: Path, output_path: Path,
-                                        consuming: bool = False) -> str | None:
+                                        consuming: bool = False, block_size: int = 65536) -> str | None:
     """Build an insufficient-destination-space error for pack preflight.
 
     Args:
         source_root: Source directory or single source file whose raw bytes must fit.
         output_path: Requested output image destination.
+        consuming: The build frees source files the image already holds.
+        block_size: The image's block size, for the consuming estimate.
 
     Returns:
         Error text when free destination space is insufficient, otherwise
@@ -451,7 +468,7 @@ def get_destination_space_error_message(*, source_root: Path, output_path: Path,
         required_raw_size_bytes = source_root.stat().st_size
     elif consuming and source_root.stat().st_dev == probe_path.stat().st_dev:
         # the image takes the place of the files it frees on the same drive
-        required_raw_size_bytes = consuming_space_need(source_root)
+        required_raw_size_bytes = consuming_space_need(source_root, block_size=block_size)
     else:
         required_raw_size_bytes = calculate_source_raw_size_bytes(source_root=source_root)
     free_space_bytes: int = shutil.disk_usage(path=probe_path).free
@@ -1235,6 +1252,7 @@ def _run_pack_build(
             source_root=build_source_root,
             output_path=output_path,
             consuming=consuming,
+            block_size=config.block_size,
         )
         if destination_space_error is not None:
             error(destination_space_error, icon_name="error")

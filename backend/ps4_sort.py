@@ -10,9 +10,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # ultra_core next to the app
 import copy_job
 import ps4pkg
+from organize_lib import case_blind
 from ultra_core import _PS4_TID_TAG, is_fs_junk_name, ps4_layout, scan_ps4_library, strip_fs_junk
 
 _BAR = re.compile(r"^\[#+\]\s*(\d+)%")
+PART = ".ps4sort-part"           # a complete new package waiting to replace the old one (Overwrite)
 
 
 def _say(on_line, text):
@@ -28,28 +30,64 @@ def find_packages(src) -> list[Path]:
                   if p.is_file() and not any(is_fs_junk_name(part) for part in p.relative_to(src).parts))
 
 
-def _free_name(dst_dir: Path, name: str) -> str:
+def _free_name(dst_dir: Path, name: str, taken=(), key=str) -> str:
     stem, ext = os.path.splitext(name)
     n = 2
-    while (dst_dir / f"{stem} ({n}){ext}").exists():
+    while os.path.lexists(dst_dir / f"{stem} ({n}){ext}") or key(dst_dir / f"{stem} ({n}){ext}") in taken:
         n += 1
     return f"{stem} ({n}){ext}"
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _settle(part: Path, on_line) -> Path:
+    """Give a complete package left under PART a name every run sees: its own when that is
+    free, else a free '(n)' one beside it (both stay). Returns where it went."""
+    dst_dir, name = part.parent, part.name[:-len(PART)]
+    target = dst_dir / name
+    if os.path.lexists(target):
+        target = dst_dir / _free_name(dst_dir, name)
+    os.rename(part, target)
+    _say(on_line, f"[WARN] {part.name} was left by a sort that did not finish; it is now {target.name}")
+    return target
+
+
+def recover_parts(out_dir: Path, on_line=None) -> None:
+    """Packages an interrupted Overwrite left under PART in the library (title folder, DLC Pack)."""
+    for pattern in (f"*/*{PART}", f"*/*/*{PART}"):
+        for part in sorted(Path(out_dir).glob(pattern)):
+            if part.is_file() and not part.is_symlink() and not is_fs_junk_name(part.name):
+                try:
+                    _settle(part, on_line)
+                except OSError as e:
+                    _say(on_line, f"[WARN] could not restore {part.name}: {e}")
+
+
 def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "skip", on_line=None) -> int:
-    """0 when every PS4 package found is in the library (or was already there), 1 otherwise."""
+    """0 when every PS4 package found is in the library, 1 on an error, copy_job.KEPT (4) when
+    the run finished but packages stay in the source (not PS4, unreadable, or skipped)."""
     out_dir = Path(out_dir)
     _say(on_line, "[JOB] copy")
     _say(on_line, "[PHASE] Writing Final Image")
+    if out_dir.is_dir():
+        recover_parts(out_dir, on_line)
     items = []
+    kept: list[str] = []
     for p in find_packages(src):
         if not ps4pkg.is_ps4_package(p):
             _say(on_line, f"[WARN] not a PS4 package, left where it is: {p.name}")
+            kept.append(p.name)
             continue
         try:
             items.append((p, ps4pkg.read_identity(p)))
         except ps4pkg.Ps4PackageError as e:
             _say(on_line, f"[WARN] {p.name}: {e}; left where it is")
+            kept.append(p.name)
     if not items:
         _say(on_line, "[ERROR] no PS4 package found")
         return 1
@@ -104,6 +142,10 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
 
     rc_all = 0
     folders = []
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # names that differ only in case are one name on such a drive
+    key = (lambda p: str(p).casefold()) if case_blind(out_dir) else str
+    written: set[str] = set()                # key() of every target this run wrote
     for src_pkg, folder, sub, name in placements:
         size = max(1, src_pkg.stat().st_size)
         dst_dir = out_dir / folder / sub if sub else out_dir / folder
@@ -111,16 +153,42 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
             folders.append(out_dir / folder)
         rel = Path(folder, sub, name) if sub else Path(folder, name)
         target = dst_dir / name
-        if target.exists():
+        if key(target) in written:
+            # another package of this run already took the name: never replace or skip it
+            name = _free_name(dst_dir, name, written, key)
+            _say(on_line, f"[WARN] {src_pkg.name} gets the same name as another package of this source; "
+                          f"it goes in as {name}")
+            rel, target = rel.with_name(name), dst_dir / name
+        elif target.exists() and _same_file(target, src_pkg):
+            _say(on_line, f"[INFO] already in place: {rel}")
+            written.add(key(target))
+            done += size
+            continue
+        elif target.exists():
             if if_exists == "keep":
-                name = _free_name(dst_dir, name)
-                rel = rel.with_name(name)
+                name = _free_name(dst_dir, name, written, key)
+                rel, target = rel.with_name(name), dst_dir / name
             elif if_exists == "overwrite":
-                part = name + ".ps4sort-part"
-                rc = copy_job.run_copy(src_pkg, dst_dir, dst_name=part, mode=mode, on_line=relay(size, name))
+                # the old package keeps its name until the new one is complete beside it
+                part = dst_dir / (name + PART)
+                if os.path.lexists(part):
+                    _settle(part, on_line)
+                written.add(key(target))
+                rc = copy_job.run_copy(src_pkg, dst_dir, dst_name=part.name, mode=mode, on_line=relay(size, name))
                 if rc == 0:
-                    os.replace(dst_dir / part, target)
-                    _say(on_line, f"[PS4] {kinds[src_pkg]} -> {rel} (replaced)")
+                    try:
+                        os.replace(part, target)
+                        _say(on_line, f"[PS4] {kinds[src_pkg]} -> {rel} (replaced)")
+                    except OSError as e:
+                        _say(on_line, f"[ERROR] could not replace {rel}: {e}")
+                        rc_all = 1
+                        try:
+                            if src_pkg.is_file():
+                                part.unlink()              # the source is still there
+                            else:
+                                _settle(part, on_line)     # the only copy now: a name every run sees
+                        except OSError as e2:
+                            _say(on_line, f"[WARN] {part.name} stays as it is: {e2}")
                 else:
                     rc_all = 1
                 done += size
@@ -128,9 +196,11 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
             else:
                 note = " (rule Ask: a running job does not stop for each file)" if if_exists == "ask" else ""
                 _say(on_line, f"[INFO] already there, skipped{note}: {rel}")
+                kept.append(src_pkg.name)
                 done += size
                 bar(0, 0, name)
                 continue
+        written.add(key(target))
         rc = copy_job.run_copy(src_pkg, dst_dir, dst_name=name, mode=mode, on_line=relay(size, name))
         if rc in (0, 2):
             _say(on_line, f"[PS4] {kinds[src_pkg]} -> {rel}")
@@ -150,4 +220,6 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
             pass
     for f in folders:
         _say(on_line, f"[OK] PS4 sorted: {f}")
-    return rc_all
+    if kept:
+        _say(on_line, copy_job.kept_line(kept))
+    return rc_all or (copy_job.KEPT if kept else 0)
