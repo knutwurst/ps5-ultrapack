@@ -320,6 +320,7 @@ CHUNK_SIZE_FOR_TEST = copy_job.CHUNK
 
 
 class LongNames(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "Windows limits the whole path to 260 characters first")
     def test_a_long_name_still_gets_a_temp_name_within_the_limit(self):
         import tempfile as _tf
         d = Path(_tf.mkdtemp())

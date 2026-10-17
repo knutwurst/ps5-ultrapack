@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import struct
 import tempfile
+import os
 import unittest
 from pathlib import Path
 
@@ -138,6 +139,7 @@ class WalkAndWrite(unittest.TestCase):
             # The low prx bytes are unchanged.
             self.assertEqual((root / "libSceExample.prx").read_bytes(), low)
 
+    @unittest.skipIf(os.name == "nt", "chmod cannot make a file unreadable on Windows")
     def test_a_module_that_cannot_be_read_fails_the_backport(self):
         import os
         with tempfile.TemporaryDirectory() as td:

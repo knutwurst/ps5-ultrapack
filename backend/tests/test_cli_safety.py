@@ -385,6 +385,7 @@ class PackPath(Case):
         self.assertTrue(other.is_file())
         self.assertFalse((inner / f"{TITLE_ID}.ffpfs").exists())
 
+    @unittest.skipIf(os.name == "nt", "a read-only folder mode does not stop writing on Windows")
     def test_a_failed_fake_sign_fails_the_job(self):
         game = make_game(self.root)
         mod = game / "sce_module"
@@ -462,7 +463,10 @@ class TempFolders(Case):
         real = self.root / "realtmp"
         real.mkdir()
         link = self.root / "linktmp"
-        link.symlink_to(real, target_is_directory=True)
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except OSError:
+            self.skipTest("links need a right this system lacks (Windows)")
         return {"TMPDIR": str(link), "TEMP": str(link), "TMP": str(link)}
 
     def test_patch_mode_without_a_temp_dir(self):
@@ -489,7 +493,8 @@ class TempFolders(Case):
             src = self.zip_of(game) if target.stem == "Z" else game
             rc, log = run_cli(str(src), str(target), "--pack", "--temp-dir", str(self.temp), *extra)
             self.assertEqual(rc, 0, log[-2000:])
-            folders = re.findall(r"--temp-folder (\S+)", log)
+            # shlex quotes a Windows path; the quotes are not part of it
+            folders = [f.strip("'\"") for f in re.findall(r"--temp-folder ('[^']+'|\S+)", log)]
             self.assertTrue(folders, log[-1500:])
             for f in folders:
                 self.assertTrue(Path(f).is_relative_to(app), (target.name, f))
