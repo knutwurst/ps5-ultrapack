@@ -2214,6 +2214,14 @@ class CLIWorker(threading.Thread):
         "Cleaning Up":         (99, 100),
         "Complete":            (100, 100),
     }
+    RESUME_WEIGHTS = {            # a retry that compresses the image pass 1 left
+        "Scanning Files":      (0,    2),
+        "Compressing":         (2,   92),
+        "Writing Final Image": (92,  97),
+        "Verifying Output":    (97,  99),
+        "Cleaning Up":         (99, 100),
+        "Complete":            (100, 100),
+    }
     CHAIN_FFPFS_WEIGHTS = {       # uncompressed output: pass 1 writes the output itself
         "Scanning Files":      (0,    2),
         "Extracting":          (2,   40),
@@ -2280,6 +2288,9 @@ class CLIWorker(threading.Thread):
         if self._is_fpkg_extract:
             return self.FPKG_EXTRACT_WEIGHTS, self._EXTRACT_FIRST_ORDER
         to = self._cmd_value(cmd, "--to")
+        _ri = getattr(self.item, "_resume_inner", None)
+        if to == "ffpfsc" and _ri and Path(str(_ri)).is_file():
+            return self.RESUME_WEIGHTS, self._EXTRACT_FIRST_ORDER     # compression only
         if to:
             src = Path(str(getattr(self.item, "path", "") or ""))
             changes = any(f in cmd for f in ("--patch", "--backport-target", "--sign"))
@@ -4826,7 +4837,8 @@ class JobDialog(EmbeddedDialog):
                 # kept (and a removal deletes it) instead of a stranger's path in the scratch.
                 for attr in ("origin_archive", "origin_extracted_size", "origin_payload", "organize_folder",
                              "archive_games", "archive_index", "kept_extract", "bundle_siblings",
-                             "pkg_content_size", "pkg_largest_file", "extracted_size", "header_locked"):
+                             "pkg_content_size", "pkg_largest_file", "pkg_kept_bytes",
+                             "extracted_size", "header_locked"):
                     if hasattr(old, attr):
                         setattr(new, attr, getattr(old, attr))
             new.status = "Pending Extract" if getattr(new, "archive_path", None) else "Queued"
@@ -8362,8 +8374,7 @@ class App:
                      and chain_source_kind(item) == "pkg")
         same_pad = same_to and (pkg_chain or not same_rw_ok)
         full_need  = estimate_peak_space_needed(size, factor, same_pad)  # src+image+spool on temp
-        image_need = (full_need if pkg_chain                             # the package unpacks there too
-                      else estimate_image_space_needed(size))            # just the inner image on temp
+        image_need = estimate_image_space_needed(size)                   # just the inner image on temp
         out_full   = estimate_peak_space_needed(size, factor, True)      # everything on the output drive
         # Output drive must hold, in the split: the source copy extracted there (archives
         # only) + the final container (the spool only spills here if the SSD can't hold it).
@@ -8460,7 +8471,7 @@ class App:
         #    ANOTHER - keeps pass 1 SSD↔SSD when no single fast drive holds image+source.
         #    Also skipped on an estimate (same reason as option 1 - don't commit the
         #    source to an SSD until the real size is known).
-        if size > 0 and is_archive_pre and not size_is_estimate:
+        if size > 0 and is_archive_pre and not size_is_estimate and not pkg_chain:
             img_fit = [(d, f) for d, f in pool if f >= image_need and _is_ssd(d)]
             if img_fit:
                 img_dir = min(img_fit, key=lambda t: t[1])[0]    # smallest SSD that fits the image
@@ -8477,7 +8488,7 @@ class App:
         #    backend routes the spool adaptively. Reads source off one drive while writing
         #    the image to the other, so neither HDD does a same-drive read+write.
         img_fit = [(d, f) for d, f in pool if f >= image_need]
-        if size > 0 and img_fit and out_free >= out_split_need:
+        if size > 0 and img_fit and out_free >= out_split_need and not pkg_chain:
             ssd_img = [(d, f) for d, f in img_fit if _is_ssd(d)]
             img_dir = max(ssd_img or img_fit, key=lambda t: t[1])[0]  # prefer an SSD for the image
             _set(_scratch(img_dir), spread_root, True, False)   # source extracts to the big output drive
@@ -8548,6 +8559,14 @@ class App:
                 except Exception:
                     return None
         return None
+
+    def _consumable_extract(self, item) -> bool:
+        """The job's source is the app's own unpack of an archive, and no other job of the
+        queue reads from that unpack: the backend may free its files as it takes them in."""
+        own = self._extract_dir_for_item(item)
+        if own is None or not getattr(item, "origin_archive", None):
+            return False
+        return own not in self._open_extracts(exclude=item)
 
     def _open_jobs(self, exclude=None):
         """Jobs that still read or hold their extracted copy: waiting or running, failed and kept
@@ -10733,9 +10752,11 @@ class App:
                 sys.path.insert(0, str(backend))
             import fpkg as _fpkg
             doc = _fpkg.list_inner(Path(str(item.path)))
-            _sizes = [int(e.get("size") or 0) for e in doc.get("entries", []) if e.get("type") == "file"]
+            _files = [e for e in doc.get("entries", []) if e.get("type") == "file"]
+            _sizes = [int(e.get("size") or 0) for e in _files]
             content = sum(_sizes)
             item.pkg_largest_file = max(_sizes, default=0)
+            item.pkg_kept_bytes = sum(int(e.get("size") or 0) for e in _files if pkg_file_stays(e))
         except Exception as e:
             self.log("WARN", f"Could not read the size of the game in {Path(str(item.path)).name}: {e}")
             return 0
@@ -11011,7 +11032,7 @@ class App:
             # Should the job end as a plain copy (same format, nothing to change), the source
             # stays unless the job deletes it afterwards anyway: then a move is the fast way.
             cmd += ["--copy-mode", "move" if getattr(item, "after_source", None) == "delete" else "keep"]
-            if to in ("pkg", "ffpfsc") and self._extract_dir_for_item(item) is not None and not _resuming:
+            if to in ("pkg", "ffpfsc") and not _resuming and self._consumable_extract(item):
                 cmd.append("--stage-in-place")      # our own unpacked copy: taken in as it goes
             _ps = getattr(item, "patch_source", None)
             if _ps and not _resuming:
@@ -11707,6 +11728,11 @@ class App:
         # skipping pass 1 entirely. (No inner image yet = a rare pass-1 OOM → rebuild from
         # the source, which keep_source below preserves.)
         inner = getattr(item, "_inner_image", None)
+        if not (inner and Path(str(inner)).is_file()) and getattr(self.worker, "consumed", False):
+            # pass 1 had already taken files out of the unpack: a rebuild from it would miss them
+            self.log("ERROR", f"Out of memory in pass 1 after part of the unpacked copy was taken in - "
+                              f"no automatic retry for {item.name}; Retry unpacks it again.")
+            return False
         if inner and Path(str(inner)).is_file():
             item._resume_inner = str(inner)
             self.log("INFO", "Resuming from the already-built inner image - pass 1 is skipped "
@@ -12664,7 +12690,7 @@ class App:
             pass
         item.extracted_size = int(getattr(item, "origin_extracted_size", 0) or 0)
         item.pkg_content_size = 0           # read again from the package the archive yields
-        item.pkg_largest_file = 0
+        item.pkg_largest_file = item.pkg_kept_bytes = 0
         self.log("INFO", f"{getattr(item, 'display_name', None) or item.name}: the extracted copy is gone; "
                          f"the job starts again from {arc.name}.")
         return True

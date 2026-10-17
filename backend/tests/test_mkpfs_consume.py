@@ -15,6 +15,17 @@ def pack(src: Path, out: Path, *extra: str) -> subprocess.CompletedProcess:
 
 
 class Consume(unittest.TestCase):
+    def test_the_space_check_counts_what_stays(self):
+        sys.path.insert(0, str(BACKEND))
+        from mkpfs import cli as mcli
+        if self.links:
+            (self.d / "game" / "data" / "link.bin").unlink()
+        need = mcli.consuming_space_need(self.d / "game")
+        kept = (3 << 20) + len('{"titleId": "PPSA00001"}') + 1004
+        total = kept + (2 << 20) + len(b"pattern" * (500 << 10))
+        largest = max(2 << 20, len(b"pattern" * (500 << 10)))
+        self.assertEqual(need, kept + largest + total // 100)
+
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="consume_"))
         g = self.d / "game"
@@ -44,10 +55,17 @@ class Consume(unittest.TestCase):
     def test_frees_the_larger_files_and_keeps_the_rest(self):
         r = pack(self.d / "game", self.d / "img.ffpfs", "--consume-source", "--no-verify-structure")
         self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
+        if self.links:
+            # a link may point at a file freed earlier: with one in the tree nothing goes
+            self.assertNotIn("[consume] freed", r.stdout)
+            self.assertEqual(self.files(self.d / "game"), self.files(self.ref))
+            self.assertTrue((self.d / "outside.bin").exists())
+            (self.d / "game" / "data" / "link.bin").unlink(); (self.ref / "data" / "link.bin").unlink()
+            r = pack(self.d / "game", self.d / "img2.ffpfs", "--consume-source", "--no-verify-structure")
+            self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
+            (self.d / "img2.ffpfs").rename(self.d / "img.ffpfs")
         self.assertIn("[consume] freed", r.stdout)
-        self.assertEqual(self.files(self.d / "game"),
-                         (["data/link.bin"] if self.links else []) + ["eboot.bin", "sce_sys/big.dat", "sce_sys/param.json"])
-        self.assertTrue((self.d / "outside.bin").exists())
+        self.assertEqual(self.files(self.d / "game"), ["eboot.bin", "sce_sys/big.dat", "sce_sys/param.json"])
         # the image holds every file byte for byte (a full check against the untouched copy)
         v = subprocess.run([PY, "-m", "mkpfs", "verify", "--source-dir", str(self.ref), str(self.d / "img.ffpfs")],
                            cwd=BACKEND, capture_output=True, text=True)

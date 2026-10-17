@@ -405,7 +405,36 @@ def calculate_source_raw_size_bytes(*, source_root: Path) -> int:
     return total_raw_size_bytes
 
 
-def get_destination_space_error_message(*, source_root: Path, output_path: Path) -> str | None:
+def source_has_links(source_root: Path) -> bool:
+    """Whether a source tree holds a symbolic link: a link may point at a file freed earlier."""
+    for dirpath, dirnames, filenames in os.walk(source_root):
+        for name in dirnames + filenames:
+            if os.path.islink(os.path.join(dirpath, name)):
+                return True
+    return False
+
+
+def consuming_space_need(source_root: Path) -> int:
+    """Free space a consuming build needs on the source's own drive: what it never frees
+    (sce_sys, small files) plus the largest file it holds twice for a moment, plus 1 % for the
+    image's own blocks."""
+    from .pfs import CONSUME_MIN_SIZE
+    kept = largest = total = 0
+    for path in source_root.rglob("*"):
+        if not path.is_file():
+            continue
+        size = path.stat().st_size
+        total += size
+        rel = path.relative_to(source_root).parts
+        if (rel and rel[0].lower() == "sce_sys") or size < CONSUME_MIN_SIZE:
+            kept += size
+        else:
+            largest = max(largest, size)
+    return kept + largest + total // 100
+
+
+def get_destination_space_error_message(*, source_root: Path, output_path: Path,
+                                        consuming: bool = False) -> str | None:
     """Build an insufficient-destination-space error for pack preflight.
 
     Args:
@@ -417,11 +446,14 @@ def get_destination_space_error_message(*, source_root: Path, output_path: Path)
         ``None``.
     """
     required_raw_size_bytes: int
+    probe_path: Path = resolve_disk_usage_probe_path(output_path=output_path)
     if source_root.is_file():
         required_raw_size_bytes = source_root.stat().st_size
+    elif consuming and source_root.stat().st_dev == probe_path.stat().st_dev:
+        # the image takes the place of the files it frees on the same drive
+        required_raw_size_bytes = consuming_space_need(source_root)
     else:
         required_raw_size_bytes = calculate_source_raw_size_bytes(source_root=source_root)
-    probe_path: Path = resolve_disk_usage_probe_path(output_path=output_path)
     free_space_bytes: int = shutil.disk_usage(path=probe_path).free
     if free_space_bytes >= required_raw_size_bytes:
         return None
@@ -1190,10 +1222,16 @@ def _run_pack_build(
     if config.compress and _contains_direct_game_markers(build_source_root):
         _emit_game_folder_compression_warning()
 
+    consuming: bool = (bool(getattr(args, "consume_source", False)) and not config.compress
+                       and _resolve_pack_verification_mode(args) == PackVerificationMode.SKIP)
+    if consuming and source_has_links(build_source_root):
+        info("The source holds links: nothing is freed during the build (a link may point at a freed file).")
+        consuming = False
     if not args.dry_run:
         destination_space_error: str | None = get_destination_space_error_message(
             source_root=build_source_root,
             output_path=output_path,
+            consuming=consuming,
         )
         if destination_space_error is not None:
             error(destination_space_error, icon_name="error")
@@ -1235,8 +1273,7 @@ def _run_pack_build(
         min_compress_size=config.min_compress_size,
         temp_folder=temp_folder,
         # a check against the source needs the source: consuming it only when none follows
-        consume_source=bool(getattr(args, "consume_source", False))
-        and _resolve_pack_verification_mode(args) == PackVerificationMode.SKIP,
+        consume_source=consuming,
     )
 
     stats.input_path = display_source_path

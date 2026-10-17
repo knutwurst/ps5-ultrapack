@@ -894,6 +894,7 @@ try:
     (_ex / "sce_sys" / "param.json").write_text('{"titleId": "PPSA00042", "contentVersion": "01.000.000"}')
     (_ex / "eboot.bin").write_bytes(b"\x7fELF")
     _xi = m.GameItem.from_chain(_ex, to="pkg", output_path=str(OUT))
+    _xi.origin_archive = str(S / "release.7z")          # what the unpack records
     _xcmd, *_ = app.build_command(_xi)
     _pi = m.GameItem.from_chain(HBT, to="pkg", output_path=str(OUT))
     _pcmd, *_ = app.build_command(_pi)
@@ -946,8 +947,13 @@ try:
     try:
         import fpkg as _fp
         _real_li = _fp.list_inner
-        _fp.list_inner = lambda _p, **_k: {"entries": [{"type": "file", "size": 900}, {"type": "dir"},
-                                                        {"type": "file", "size": 1100}]}
+        _M = 1 << 20
+        _fp.list_inner = lambda _p, **_k: {"entries": [
+            {"type": "file", "path": "data/a.bin", "size": 900 * _M}, {"type": "dir", "path": "data"},
+            {"type": "file", "path": "data/b.bin", "size": 1000 * _M},
+            {"type": "file", "path": "sce_sys/icon0.png", "size": 60 * _M},       # stays: sce_sys
+            {"type": "file", "path": "eboot.bin", "size": 40 * _M - 1000},
+            {"type": "file", "path": "small.txt", "size": 1000}]}                 # stays: small
         _si = m.GameItem.from_chain(_cpk, to="ffpfsc")
         _got = app._probe_pkg_content(_si)
     finally:
@@ -960,9 +966,21 @@ try:
     m.save_settings({"verify_output": True})
     _f_check = m._peak_factor_for(_si)
     m.save_settings({"verify_output": _vo})
-    ok("space.pkg-game-size", _got == 2000 and _si.pkg_content_size == 2000 and _si.extracted_size == 2000
-       and _si.pkg_largest_file == 1100 and abs(_f_free - 1.65) < 1e-9
-       and _f_check == m.PKG_UNPACK_PEAK_FACTOR, f"{_got} {_si.extracted_size} {_f_free} {_f_check}")
+    _si.chain_to = "ffpfs"
+    _f_ffpfs = m._peak_factor_for(_si)                 # an uncompressed output frees nothing
+    _si.chain_to = "ffpfsc"
+    # 2000 MiB of files, the largest 1000, 60 MiB + 1000 B never freed: 1 + 0.53 + 0.1
+    ok("space.pkg-game-size", _got == 2000 * _M and _si.pkg_content_size == 2000 * _M
+       and _si.pkg_largest_file == 1000 * _M and _si.pkg_kept_bytes == 60 * _M + 1000
+       and abs(_f_free - (1.1 + (1060 * _M + 1000) / (2000 * _M))) < 1e-9
+       and _f_check == m.PKG_UNPACK_PEAK_FACTOR and _f_ffpfs == m.PKG_UNPACK_PEAK_FACTOR,
+       f"{_got} {_si.pkg_kept_bytes} {_f_free} {_f_check} {_f_ffpfs}")
+    # a retry that compresses the pass-1 image runs in the compress bands only
+    _inner = S / "resume_inner.ffpfs"; _inner.write_bytes(b"x")
+    _rj = m.GameItem.from_chain(_cpk, to="ffpfsc"); _rj._resume_inner = str(_inner)
+    _rcw = m.CLIWorker(app, _rj, ["py", "cli.py", str(_inner), str(OUT), "--to", "ffpfsc"], _pcwd, _pout, _ptmp)
+    ok("progress.resume-compress-only", _rcw._weights is m.CLIWorker.RESUME_WEIGHTS
+       and "Extracting" not in _rcw._weights, str(list(_rcw._weights)))
     app._active_item = None
     _ci = app._card_info_text(_pj)
     ok("card.info.drives", "writes to" in _ci.get("Drives", "") and "builds on" in _ci.get("Drives", ""),
@@ -1114,6 +1132,19 @@ try:
     ok("batch.frees-failed-copy-only-when-needed", _fits is False and _tight is True and not _rf.kept_extract
        and _rc.kept_extract and "make room" in _rf.status_note and not _rel.exists() and _rel2.exists(),
        f"fits={_fits} tight={_tight} rf={_rf.kept_extract} rc={_rc.kept_extract}")
+    # only the app's own unpack of an archive, read by no other job, is freed as it goes
+    _ce = _kt / "_extracted" / "Own__9" / "Game"; _ce.mkdir(parents=True, exist_ok=True)
+    _cj = m.GameItem.from_chain(_ce, to="ffpfsc", output_path=str(OUT / "job"))
+    _q4 = list(app.queue); app.queue[:] = [_cj]
+    _no_origin = app._consumable_extract(_cj)
+    _cj.origin_archive = str(S / "Own.7z")
+    _alone = app._consumable_extract(_cj)
+    _cj2 = m.GameItem.from_chain(_ce, to="pkg", output_path=str(OUT / "job")); _cj2.origin_archive = _cj.origin_archive
+    app.queue[:] = [_cj, _cj2]
+    _shared = app._consumable_extract(_cj)
+    app.queue[:] = _q4
+    ok("consume.only-own-unshared-unpack", _no_origin is False and _alone is True and _shared is False,
+       f"no_origin={_no_origin} alone={_alone} shared={_shared}")
     # two packages unpacked from one archive: cleaning up after one keeps the other's file
     _two = _kt / "_extracted" / "Two__7"; _two.mkdir(parents=True, exist_ok=True)
     for _n in ("A.pkg", "B.pkg", "notes.txt"):

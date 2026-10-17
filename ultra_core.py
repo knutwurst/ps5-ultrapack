@@ -388,18 +388,31 @@ def _is_app_tmp_dir(name: str) -> bool:
     return bool(_APP_TMP_RE.fullmatch(name))
 
 
+# What pass 1 never frees (backend/mkpfs pfs.CONSUME_MIN_SIZE and the sce_sys rule).
+PKG_CONSUME_MIN_SIZE = 1 << 20
+
+
+def pkg_file_stays(entry: dict) -> bool:
+    """A file of a package's listing that pass 1 keeps until the end: sce_sys, or small."""
+    path = str(entry.get("path") or entry.get("name") or "").replace("\\", "/").lstrip("/")
+    return path.lower().startswith("sce_sys/") or int(entry.get("size") or 0) < PKG_CONSUME_MIN_SIZE
+
+
 def pkg_peak_factor(item) -> float:
-    """Scratch peak multiple of a .pkg chain: the game plus its largest file when pass 1 frees
-    what the image holds (no check against the source), else the game twice."""
+    """Scratch peak multiple of a .pkg -> .ffpfsc chain: when pass 1 frees what the image
+    holds (no check against the source), the image plus what is never freed plus the file in
+    flight; else the game twice. Other targets never free anything."""
     content = int(getattr(item, "pkg_content_size", 0) or 0)
     largest = int(getattr(item, "pkg_largest_file", 0) or 0)
+    kept = int(getattr(item, "pkg_kept_bytes", 0) or 0)
     try:
         verifies = bool(load_settings().get("verify_output", False))
     except Exception:
         verifies = False
-    if verifies or not content or not largest:
+    if (verifies or not content or not largest
+            or (getattr(item, "chain_to", None) or "ffpfsc") != "ffpfsc"):
         return PKG_UNPACK_PEAK_FACTOR
-    return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + largest / content + PKG_CONSUME_MARGIN))
+    return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + (largest + kept) / content + PKG_CONSUME_MARGIN))
 
 
 def _peak_factor_for(item) -> float:
@@ -626,7 +639,11 @@ def _space_requirements(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, 
     same = same_drive(temp_dir, out_dir)
     # On a same-drive-OK drive (SSD) skip the extra final-image padding - matches the
     # router's leaner one-drive estimate so a single fast SSD isn't false-skipped.
-    same_pad = same and not getattr(item, "_same_drive_ok", False)
+    # a .pkg chain streams its output with no spool check behind it: a shared drive holds the
+    # image and the finished file together (see the router)
+    pkg_chain = (getattr(item, "operation", "") == "chain" and chain_needs_unpack(item)
+                 and chain_source_kind(item) == "pkg")
+    same_pad = same and (pkg_chain or not getattr(item, "_same_drive_ok", False))
     needs = [("Temp drive (whole scratch)", temp_dir,
               estimate_peak_space_needed(size, _peak_factor_for(item), same_pad))]
     if not same:
@@ -3483,6 +3500,7 @@ class GameItem:
     archive_version = ""
     pkg_content_size = 0    # .pkg source: bytes of its files, from the package's directory (0 = not read)
     pkg_largest_file = 0    # .pkg source: its largest file (pass 1 peaks at the game plus this one)
+    pkg_kept_bytes = 0      # .pkg source: bytes pass 1 never frees (sce_sys, files under 1 MiB)
     origin_archive = None   # str: the archive this job's source was extracted from (retry restarts there)
     origin_extracted_size = 0  # that archive's extracted size, read from its headers
     kept_extract = False    # cancelled after its archive was extracted: that copy stays until the job is removed
@@ -3774,6 +3792,10 @@ __all__ = [
     "INPLACE_PEAK_FACTOR",
     "PATCH_PEAK_FACTOR",
     "PKG_UNPACK_PEAK_FACTOR",
+    "PKG_CONSUME_MARGIN",
+    "PKG_CONSUME_MIN_SIZE",
+    "pkg_file_stays",
+    "pkg_peak_factor",
     "IMAGE_PEAK_FACTOR",
     "archive_set_ondisk_size",
     "archive_set_parts",
