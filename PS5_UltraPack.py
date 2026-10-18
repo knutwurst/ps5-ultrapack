@@ -12065,6 +12065,25 @@ class App:
 
     # ── Feature 5: Auto-clear temp ────────────────────────────────────────────
     @staticmethod
+    def _backup_is_users(d: Path) -> bool:
+        """A patch backup that holds a user's originals (its record names a folder outside the
+        app's scratch, present or on a drive that is away); one of the app's own copy is not."""
+        try:
+            pb = _patch_backup_module()
+            for rec in d.glob("*/restore.jsonl"):
+                game, _ops = pb._entries(rec.parent)
+                if game and "_ffpfsc_temp" not in Path(game).parts and "_extracted" not in Path(game).parts:
+                    return True
+            return False
+        except Exception:
+            return True                           # unsure: keep it
+
+    def _restore_count(self, step: int) -> None:
+        """Patch restores in flight, changed from the main thread and cleanup threads alike."""
+        with self._cleanup_lock:
+            self._restores_inflight = max(0, self._restores_inflight + step)
+
+    @staticmethod
     def _patch_backup_dirs(bases) -> set:
         """Every staged patch backup under these bases (<base>/_ffpfsc_temp/patch-backup-*), resolved:
         they hold a user's original game files, so no sweep or Clear Temp ever deletes them."""
@@ -12076,7 +12095,7 @@ class App:
             for root in {b if b.name == "_ffpfsc_temp" else b / "_ffpfsc_temp"}:
                 try:
                     for d in root.glob("patch-backup-*"):
-                        if d.is_dir() and not d.is_symlink():
+                        if d.is_dir() and not d.is_symlink() and App._backup_is_users(d):
                             out.add(d.resolve())
                 except OSError:
                     pass
@@ -12142,7 +12161,7 @@ class App:
             try:
                 self._recover_patch_backups(bases0)
             finally:
-                self._restores_inflight = max(0, self._restores_inflight - 1)   # raised before the thread
+                self._restore_count(-1)   # raised before the thread
             keep.update(self._patch_backup_dirs(bases0))   # whatever could not be restored stays
             # Drives from the history: each recorded output path is a folder we WROTE to,
             # so its parent may still hold our _ffpfsc_temp from a run that never cleaned up.
@@ -12202,7 +12221,7 @@ class App:
             if targets and total >= 64 * 1024**2 and not self._job_active():   # 64 MiB threshold
                 self.root.after(0, lambda: self._prompt_startup_sweep(targets, total))
 
-        self._restores_inflight += 1          # the scan restores interrupted patches first: Start waits
+        self._restore_count(+1)          # the scan restores interrupted patches first: Start waits
         threading.Thread(target=_scan, daemon=True).start()
 
     def _prompt_startup_sweep(self, targets, total):
@@ -13457,7 +13476,7 @@ class App:
 
     def _return_extras_aside(self, worker) -> None:
         """A run that ended without its own cleanup (a hard kill on Windows): the extras it set
-        aside next to the user's game folder go back in. A name that is there again stays."""
+        aside next to the user's game folder go back in; a name that is there again gets "(2)"."""
         raw = str(getattr(worker, "extras_aside", "") or "") if worker is not None else ""
         if " -> " not in raw:
             return
@@ -13495,13 +13514,13 @@ class App:
         if worker is not None:
             worker.patch_backup = ""
 
-        self._restores_inflight += 1
+        self._restore_count(+1)
 
         def _work(p=p, root=restore_root, name=name):
             try:
                 _restore(p, root, name)
             finally:
-                self._restores_inflight = max(0, self._restores_inflight - 1)
+                self._restore_count(-1)
 
         def _restore(p, root, name):
             if root is not None:
@@ -13627,11 +13646,20 @@ class App:
         Retry passes rearm_failed=False to run only the job it re-armed."""
         if getattr(self, "_restores_inflight", 0) and not self._batch_running:
             # a patch is still being taken back out of a source folder: a run now would read
-            # a folder half way between patched and original
-            self.status_update("Restoring", "Putting a patched source folder back first…", "Cleaning",
-                               0, 0, " - ", " - ", " - ", side=True)
-            self.root.after(500, lambda: self.start(rearm_failed=rearm_failed))
+            # a folder half way between patched and original. One waiting start, however often
+            # Start is pressed.
+            if not getattr(self, "_start_waiting", False):
+                self._start_waiting = True
+                self.status_update("Restoring", "Putting a patched source folder back first…", "Cleaning",
+                                   0, 0, " - ", " - ", " - ", side=True)
+
+                def _again():
+                    self._start_waiting = False
+                    self.start(rearm_failed=rearm_failed)
+                self.root.after(500, _again)
             return
+        if getattr(self, "_start_waiting", False):
+            return                                # the waiting start runs it
         if not self._batch_running and (getattr(self, "_add_state", None) or {}).get("total"):
             # Add job is still building jobs: start once the last one is in the queue.
             self.pending_start = True

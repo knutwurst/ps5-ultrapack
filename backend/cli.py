@@ -32,6 +32,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--mkpfs-internal":
 
 import argparse
 import contextlib
+import filecmp
 import hashlib
 import json
 import re
@@ -2639,6 +2640,21 @@ def _set_aside_unpacked_extras(root: Path, scratch: Path, scratch_root: Path) ->
     return str(holding)
 
 
+def _same_entry(a: Path, b: Path) -> bool:
+    """*b* holds exactly what *a* holds (a retry delivering the same extras again)."""
+    try:
+        if a.is_file() and b.is_file() and not a.is_symlink() and not b.is_symlink():
+            return a.stat().st_size == b.stat().st_size and filecmp.cmp(a, b, shallow=False)
+        if a.is_dir() and b.is_dir() and not a.is_symlink() and not b.is_symlink():
+            na = sorted(x.name for x in a.iterdir())
+            if na != sorted(x.name for x in b.iterdir()):
+                return False
+            return all(_same_entry(a / n, b / n) for n in na)
+    except OSError:
+        pass
+    return False
+
+
 def _deliver_chain_extras(args, out_dir: Path) -> None:
     """Move the extras _set_aside_unpacked_extras kept next to the output (free names)."""
     holding = getattr(args, "_chain_extras", None)
@@ -2648,6 +2664,9 @@ def _deliver_chain_extras(args, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     left = []
     for p in sorted(Path(holding).iterdir()):
+        if _same_entry(p, out_dir / p.name):
+            print(f"[INFO] '{p.name}' from the source is already next to the output.", flush=True)
+            continue
         target = _free_entry_name(out_dir, p.name, p.is_file())
         try:
             shutil.move(str(p), str(target))

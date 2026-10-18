@@ -551,6 +551,18 @@ class ReviewRoundTwo(unittest.TestCase):
         self.assertTrue((hold / "_DLC" / "a").exists())
         self.assertIn("[EXTRAS-LEFT]", buf.getvalue())
 
+    def test_a_retry_does_not_deliver_the_same_extras_twice(self):
+        out = self.d / "out"; (out / "_DLC").mkdir(parents=True); (out / "_DLC" / "a").write_text("x")
+        hold = self.d / "hold"; (hold / "_DLC").mkdir(parents=True); (hold / "_DLC" / "a").write_text("x")
+        (hold / "notes.txt").write_text("new")
+        (out / "notes.txt").write_text("other")
+        args = types.SimpleNamespace(_chain_extras=str(hold))
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli._deliver_chain_extras(args, out)
+        self.assertFalse((out / "_DLC (2)").exists())
+        self.assertEqual(sorted(p.name for p in out.iterdir()), ["_DLC", "notes (2).txt", "notes.txt"])
+        self.assertFalse(hold.exists())
+
     def test_an_extra_temp_drive_folder_gets_no_second_scratch_folder(self):
         base = self.d / "_ffpfsc_temp"; base.mkdir()
         self.assertEqual(cli._app_scratch_root(base), base.resolve())

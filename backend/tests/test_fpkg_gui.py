@@ -1210,19 +1210,24 @@ try:
        and not (_ug / "new.bin").exists() and not _bk.parent.exists(),
        f"a={(_ug / 'a.bin').read_bytes()!r} backup_left={_bk.parent.exists()}")
     # patch backups hold a user's originals: Clear Temp and the startup sweep keep them
-    _keepb = S / "pbtemp" / "_ffpfsc_temp" / "patch-backup-keep" / "Original files - Q"; _keepb.mkdir(parents=True)
-    ok("patch.backups-are-never-swept", _keepb.parent.resolve() in app._patch_backup_dirs([str(S / "pbtemp")]),
-       str(app._patch_backup_dirs([str(S / "pbtemp")])))
+    _keepb = S / "pbtemp" / "_ffpfsc_temp" / "patch-backup-keep" / "Original files - Q"
+    _pbm.Journal(_keepb, S / "away_drive" / "game")      # its drive is not there right now
+    _ownb = S / "pbtemp" / "_ffpfsc_temp" / "patch-backup-own" / "Original files - R"
+    _pbm.Journal(_ownb, S / "pbtemp" / "_ffpfsc_temp" / "unpack-1" / "game")   # the app's own copy
+    _kept = app._patch_backup_dirs([str(S / "pbtemp")])
+    ok("patch.backups-are-never-swept", _keepb.parent.resolve() in _kept and _ownb.parent.resolve() not in _kept,
+       str(_kept))
     # a run waits while a patch is still being taken back out of a source folder
     _later = []
     _real_after = app.root.after
     app.root.after = lambda ms, fn=None, *a: _later.append((ms, fn))     # the retry is caught, not run
-    app._restores_inflight += 1
+    app._restore_count(+1)
     try:
-        app.start()
+        app.start(); app.start()                 # pressed twice: still one waiting start
         _still_idle = not app._batch_running
     finally:
-        app._restores_inflight -= 1
+        app._restore_count(-1)
+        app._start_waiting = False
         app.root.after = _real_after
     ok("start.waits-for-a-patch-restore", _still_idle and len(_later) == 1 and _later[0][0] == 500, str(_later))
     # extras a killed run set aside next to the user's game folder go back in
