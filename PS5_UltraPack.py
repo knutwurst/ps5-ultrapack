@@ -453,24 +453,35 @@ class ThinScrollbar(tk.Canvas):
     """A plain canvas scrollbar. CTkScrollbar runs update_idletasks() on every set(), which
     lays out a whole page again for each line it scrolls or each widget a page adds."""
 
-    W = 12
-
     def __init__(self, master, command, bg="transparent", thumb=None, hover=None):
-        super().__init__(master, width=self.W, highlightthickness=0, bd=0)
+        S = ui_kit.SCALE
+        self._pad, self._min, self._lw = 6 * S, 30 * S, max(3, round(7 * S))
+        super().__init__(master, width=round(12 * S), highlightthickness=0, bd=0)
         self.command = command
         self._colors = {"bg": bg,
                         "thumb": thumb or ctk.ThemeManager.theme["CTkScrollbar"]["button_color"],
                         "hover": hover or ctk.ThemeManager.theme["CTkScrollbar"]["button_hover_color"]}
         self.span = (0.0, 1.0)
-        self._grab = None
+        self._px = None                    # (top, bottom) of the thumb as drawn
+        self._grab = None                  # pointer offset from the thumb's top while dragging
         self._hot = False
-        self.thumb = self.create_line(6, 0, 6, 0, width=7, capstyle="round")
+        self._wheel_px = 0.0
+        x = round(12 * S) / 2
+        self.thumb = self.create_line(x, 0, x, 0, width=self._lw, capstyle="round")
         self.bind("<Configure>", lambda e: self._draw(), add="+")
         self.bind("<Button-1>", self._press)
         self.bind("<B1-Motion>", self._drag)
         self.bind("<ButtonRelease-1>", lambda e: setattr(self, "_grab", None))
         self.bind("<Enter>", lambda e: self._hover(True))
         self.bind("<Leave>", lambda e: self._hover(False))
+        # the wheel over the bar scrolls what it belongs to, as CTkScrollbar did
+        self.bind("<MouseWheel>", self._wheel)
+        self.bind("<Button-4>", lambda e: self.command("scroll", -1, "units"))
+        self.bind("<Button-5>", lambda e: self.command("scroll", 1, "units"))
+        try:
+            self.bind("<TouchpadScroll>", self._touchpad)
+        except tk.TclError:
+            pass                           # Tk 8.6
         ctk.AppearanceModeTracker.add(self._recolor, self)
         self._recolor()
 
@@ -527,33 +538,64 @@ class ThinScrollbar(tk.Canvas):
     def get(self):
         return self.span
 
-    def _draw(self):
+    def _geometry(self):
+        """(track top, track length, thumb length) in pixels."""
         h = self.winfo_height()
         lo, hi = self.span
-        if hi - lo >= 0.999 or h < 20:
+        track = max(1.0, h - 2 * self._pad)
+        return self._pad, track, min(track, max(self._min, (hi - lo) * track))
+
+    def _draw(self):
+        lo, hi = self.span
+        if hi - lo >= 0.999 or self.winfo_height() < 20:
+            self._px = None
             self.itemconfigure(self.thumb, state="hidden")
             return
-        top, bottom = 6 + lo * (h - 12), 6 + hi * (h - 12)
-        if bottom - top < 30:
-            mid = (top + bottom) / 2
-            top, bottom = mid - 15, mid + 15
-        self.coords(self.thumb, 6, top, 6, bottom)
+        top0, track, length = self._geometry()
+        room = 1.0 - (hi - lo)
+        top = top0 + (lo / room if room > 0 else 0.0) * (track - length)
+        self._px = (top, top + length)
+        x, cap = float(self.cget("width")) / 2, self._lw / 2      # round caps reach past the ends
+        self.coords(self.thumb, x, top + cap, x, top + length - cap)
         self.itemconfigure(self.thumb, state="normal")
 
-    def _press(self, event):
-        h = max(1, self.winfo_height() - 12)
+    def _move_thumb_to(self, top):
+        top0, track, length = self._geometry()
         lo, hi = self.span
-        where = (event.y - 6) / h
-        if lo <= where <= hi:
-            self._grab = where - lo
+        room = 1.0 - (hi - lo)
+        free = track - length
+        frac = (top - top0) / free if free > 0 else 0.0
+        self.command("moveto", max(0.0, min(room, frac * room)))
+
+    def _press(self, event):
+        if self._px is None:
+            return
+        top, bottom = self._px
+        if top <= event.y <= bottom:
+            self._grab = event.y - top     # held where it was taken
         else:
-            self._grab = (hi - lo) / 2
-            self.command("moveto", max(0.0, where - self._grab))
+            self._grab = (bottom - top) / 2
+            self._move_thumb_to(event.y - self._grab)
 
     def _drag(self, event):
         if self._grab is not None:
-            h = max(1, self.winfo_height() - 12)
-            self.command("moveto", max(0.0, (event.y - 6) / h - self._grab))
+            self._move_thumb_to(event.y - self._grab)
+
+    def _wheel(self, event):
+        d = event.delta
+        steps = -int(d / 40) if sys.platform == "win32" else -d
+        if steps:
+            self.command("scroll", steps, "units")
+        return "break"
+
+    def _touchpad(self, event):
+        _dx, dy = unpack_touchpad_delta(event.delta)
+        self._wheel_px -= dy
+        steps = int(self._wheel_px / 20)
+        if steps:
+            self._wheel_px -= steps * 20
+            self.command("scroll", steps, "units")
+        return "break"
 
     def destroy(self):
         try:
@@ -579,16 +621,24 @@ def _skip_layout_pass(cls):
 _skip_layout_pass(ctk.CTkOptionMenu)
 
 
-def _scrollable_frame_bar(master, orientation="vertical", command=None, fg_color=None, button_color=None,
-                          button_hover_color=None, **kw):
-    if orientation != "vertical":
-        return ctk.CTkScrollbar(master, orientation=orientation, command=command, fg_color=fg_color,
-                                button_color=button_color, button_hover_color=button_hover_color, **kw)
-    return ThinScrollbar(master, command, bg=fg_color or "transparent", thumb=button_color, hover=button_hover_color)
+class _ScrollableFrameBar(ThinScrollbar):
+    """What CTkScrollableFrame builds as its scrollbar. A class, not a factory: CTk also uses
+    the name in isinstance() when it decides whether a wheel event scrolls the page."""
+
+    def __new__(cls, master=None, orientation="vertical", command=None, fg_color=None, button_color=None,
+                button_hover_color=None, **kw):
+        if orientation != "vertical":
+            return ctk.CTkScrollbar(master, orientation=orientation, command=command, fg_color=fg_color,
+                                    button_color=button_color, button_hover_color=button_hover_color, **kw)
+        return super().__new__(cls)
+
+    def __init__(self, master=None, orientation="vertical", command=None, fg_color=None, button_color=None,
+                 button_hover_color=None, **kw):
+        super().__init__(master, command, bg=fg_color or "transparent", thumb=button_color, hover=button_hover_color)
 
 
 import customtkinter.windows.widgets.ctk_scrollable_frame as _ctk_scrollable_frame  # noqa: E402
-_ctk_scrollable_frame.CTkScrollbar = _scrollable_frame_bar      # every scrollable frame gets the thin bar
+_ctk_scrollable_frame.CTkScrollbar = _ScrollableFrameBar        # every scrollable frame gets the thin bar
 
 
 class ScrollFrame(ctk.CTkScrollableFrame):

@@ -1957,6 +1957,26 @@ try:
     _thin = isinstance(_sfx._scrollbar, m.ThinScrollbar)
     _sfx._scrollbar.set(0.2, 0.5)
     ok("scroll.pages-use-thin-scrollbar", _thin and _sfx._scrollbar.get() == (0.2, 0.5), type(_sfx._scrollbar).__name__)
+    # CTk decides with isinstance() whether a wheel event over a child scrolls the page
+    _child = m.ctk.CTkLabel(_sfx, text="x"); _child.pack()
+    try:
+        _valid = _sfx._check_if_valid_scroll(_child) and not _sfx._check_if_valid_scroll(_sfx._scrollbar)
+    except Exception as e:
+        _valid = f"{type(e).__name__}: {e}"
+    ok("scroll.wheel-over-page-content", _valid is True, str(_valid))
+    # a press on the drawn thumb of a very long list holds it, it does not jump
+    _bar, _moves = _sfx._scrollbar, []
+    _bar.winfo_height = lambda: 400
+    _bar.command = lambda *a: _moves.append(a)
+    _bar.set(0.5, 0.5001)
+    _t, _b = _bar._px
+    class _P:
+        def __init__(self, y): self.y = y
+    _bar._press(_P((_t + _b) / 2))
+    _held = not _moves
+    _bar._drag(_P((_t + _b) / 2 + 10))
+    ok("scroll.thin-thumb-press-holds", _held and _b - _t >= 29 and _moves and _moves[-1][0] == "moveto"
+       and 0.5 < _moves[-1][1] < 0.6, f"px={_bar._px} moves={_moves}")
     _sfx.destroy()
     del _cv.winfo_height
     app.queue[:] = _saved; app.update_queue_box(); root.update()

@@ -18,6 +18,11 @@ SPEED
     per frame while the pointer moves. A redraw went from about 60 ms
     to about 28 ms and no longer grows with the number of jobs.
   - Wrapped help texts cache their word widths.
+  - Review fixes: the thin scrollbar is a class again, so CTk's
+    isinstance() check no longer raises and the wheel and trackpad
+    scroll over page content; a press on a long list's thumb holds it
+    instead of jumping; the wheel over the bar scrolls; the bar follows
+    the display scale.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.8
