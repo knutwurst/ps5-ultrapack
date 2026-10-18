@@ -1455,6 +1455,7 @@ class QueueList(tk.Frame):
         self.hover: int | None = None
         self.cv = Canvas(self, highlightthickness=0, bd=0, bg=kit.c(bg), yscrollincrement=1,
                             takefocus=1)
+        self._wrap_view_moves()
         self.sb = tk.Scrollbar(self, orient="vertical", command=self.cv.yview)
         self.cv.configure(yscrollcommand=self._on_yscroll)
         self.cv.grid(row=0, column=0, sticky="nsew")
@@ -1462,6 +1463,8 @@ class QueueList(tk.Frame):
         self.grid_columnconfigure(0, weight=1)
         self._sb_shown = False
         self._redraw_pending = False
+        self._in_draw = False
+        self._drawn = None                   # (first, last) rows on the canvas
         kit.register(self)
         cv = self.cv
         on_resize(cv, self._schedule, settle_ms=70)
@@ -1715,7 +1718,7 @@ class QueueList(tk.Frame):
     def _set_hover(self, i):
         if i != self.hover:
             self.hover = i
-            self._draw()
+            self._schedule()                      # one redraw per frame, however fast the pointer moves
 
     def _step(self, delta: int, extend: bool = False):
         """Select the row above (-1) or below (+1) the focus row; *extend* keeps the rows
@@ -1744,7 +1747,37 @@ class QueueList(tk.Frame):
             fn()
         return "break"
 
+    def _visible_rows(self, margin: int = 4):
+        """The rows inside the view, plus *margin* rows above and below."""
+        y0 = self.cv.canvasy(0)
+        H = max(self.cv.winfo_height(), 60)
+        first = max(0, int((y0 - 6) // self.ROW_H) - margin)
+        last = min(len(self.rows), int((y0 + H - 6) // self.ROW_H) + 1 + margin)
+        return first, last
+
+    def _fill_view(self):
+        """Only the rows in view are drawn: when the view moves past them, draw the new ones
+        before Tk paints it."""
+        drawn = getattr(self, "_drawn", None)
+        if drawn is not None and not getattr(self, "_in_draw", False) and self.rows:
+            first, last = self._visible_rows(margin=0)
+            if first < drawn[0] or last > drawn[1]:
+                self._draw()
+
+    def _wrap_view_moves(self):
+        cv = self.cv
+        for name in ("yview", "yview_moveto", "yview_scroll"):
+            real = getattr(cv, name)
+
+            def moved(*a, _real=real):
+                out = _real(*a)
+                if a:
+                    self._fill_view()
+                return out
+            setattr(cv, name, moved)
+
     def _on_yscroll(self, lo, hi):
+        self._fill_view()
         need = not (float(lo) <= 0.0 and float(hi) >= 1.0)
         if need != self._sb_shown:
             self._sb_shown = need
@@ -1760,14 +1793,29 @@ class QueueList(tk.Frame):
             self._redraw_pending = True
             self.after_idle(self._draw)
 
+    def _set_region(self, region):
+        """Setting a canvas scrollregion makes Tk lay out and paint the whole window again,
+        even when the value is the same: about 60 ms on a Retina display. Set it on change only."""
+        if region != getattr(self, "_region", None):
+            self._region = region
+            self.cv.configure(scrollregion=region)
+
     def _draw(self):
+        self._in_draw = True
+        try:
+            self._draw_rows()
+        finally:
+            self._in_draw = False
+
+    def _draw_rows(self):
         self._redraw_pending = False
         cv, k = self.cv, self.kit
         cv.delete("all")
+        self._drawn = None
         W, H = max(cv.winfo_width(), 120), max(cv.winfo_height(), 60)
         bg = k.c(self._bg)
         if not self.rows:
-            cv.configure(scrollregion=(0, 0, W, H))
+            self._set_region((0, 0, W, H))
             cy = H / 2 - 40
             draw_icon(cv, "upload", W / 2 - 16, cy - 16, 32, k.c("faint"))
             cv.create_text(W / 2, cy + 34, text=self.empty_title, fill=k.c("text"), font=k.fonts.body_bold)
@@ -1776,7 +1824,14 @@ class QueueList(tk.Frame):
             return
         f_t, f_s, f_c = k.fonts.body, k.fonts.small, k.fonts.caption
         chosen = set(self.marked_rows())
-        for i, r in enumerate(self.rows):
+        # Tk paints every item on a canvas, also the ones scrolled out of view: draw only
+        # the rows in view and a few around them; _on_yscroll draws more when they come in.
+        total = 12 + len(self.rows) * self.ROW_H
+        self._set_region((0, 0, W, max(total, H)))
+        first, last = self._visible_rows()
+        self._drawn = (first, last)
+        for i in range(first, last):
+            r = self.rows[i]
             y0 = 6 + i * self.ROW_H
             x0, x1 = 8, W - 8
             if i in chosen:
@@ -1831,8 +1886,6 @@ class QueueList(tk.Frame):
             ly = 6 + self._drop * self.ROW_H
             cv.create_line(16, ly, W - 16, ly, fill=k.c("accent"), width=2, capstyle="round")
             cv.create_oval(10, ly - 4, 18, ly + 4, outline=k.c("accent"), width=2, fill=bg)
-        total = 12 + len(self.rows) * self.ROW_H
-        cv.configure(scrollregion=(0, 0, W, max(total, H)))
 
 
 class LogText(tk.Text):

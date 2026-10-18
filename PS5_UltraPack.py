@@ -290,15 +290,33 @@ def _firmware_folder_status(raw: str) -> str:
     return "No firmware subfolders and no .sprx libraries found."
 
 
+_WORD_WIDTHS: dict = {}
+
+
 def _wrapped_line_count(font, text: str, width: int) -> int:
     """How many lines *text* takes in *font* when a Tk label wraps it at *width* pixels
-    (breaks between words, like Tk)."""
+    (breaks between words, like Tk). Word widths are cached: each measure is a round trip
+    to Tk, and a page wraps the same help texts on every resize."""
+    try:
+        fkey = tuple(sorted(font.actual().items()))   # a page makes new font objects each time it opens
+    except (tk.TclError, AttributeError, TypeError):
+        fkey = (id(font),)
+    widths = _WORD_WIDTHS.setdefault(fkey, {})
+    if len(widths) > 5000:
+        widths.clear()
+
+    def measure(word):
+        w = widths.get(word)
+        if w is None:
+            w = widths[word] = font.measure(word)
+        return w
+
     lines = 0
     for paragraph in str(text).split("\n"):
         lines += 1
-        used, space = 0, font.measure(" ")
+        used, space = 0, measure(" ")
         for word in paragraph.split():
-            w = font.measure(word)
+            w = measure(word)
             if used and used + space + w > width:
                 lines += 1
                 used = w
@@ -431,6 +449,148 @@ def set_window_appearance(win, mode: str) -> None:
         pass
 
 
+class ThinScrollbar(tk.Canvas):
+    """A plain canvas scrollbar. CTkScrollbar runs update_idletasks() on every set(), which
+    lays out a whole page again for each line it scrolls or each widget a page adds."""
+
+    W = 12
+
+    def __init__(self, master, command, bg="transparent", thumb=None, hover=None):
+        super().__init__(master, width=self.W, highlightthickness=0, bd=0)
+        self.command = command
+        self._colors = {"bg": bg,
+                        "thumb": thumb or ctk.ThemeManager.theme["CTkScrollbar"]["button_color"],
+                        "hover": hover or ctk.ThemeManager.theme["CTkScrollbar"]["button_hover_color"]}
+        self.span = (0.0, 1.0)
+        self._grab = None
+        self._hot = False
+        self.thumb = self.create_line(6, 0, 6, 0, width=7, capstyle="round")
+        self.bind("<Configure>", lambda e: self._draw(), add="+")
+        self.bind("<Button-1>", self._press)
+        self.bind("<B1-Motion>", self._drag)
+        self.bind("<ButtonRelease-1>", lambda e: setattr(self, "_grab", None))
+        self.bind("<Enter>", lambda e: self._hover(True))
+        self.bind("<Leave>", lambda e: self._hover(False))
+        ctk.AppearanceModeTracker.add(self._recolor, self)
+        self._recolor()
+
+    @staticmethod
+    def _mode_color(c):
+        if isinstance(c, (tuple, list)):
+            return c[1] if ctk.get_appearance_mode() == "Dark" else c[0]
+        return c
+
+    def _background(self):
+        c, w = self._colors["bg"], self.master
+        while (c in (None, "transparent")) and w is not None:
+            try:
+                c = w.cget("fg_color")
+            except (tk.TclError, ValueError, AttributeError):
+                try:
+                    c = w.cget("bg")
+                except (tk.TclError, AttributeError):
+                    c = None
+            w = getattr(w, "master", None)
+        return self._mode_color(c) if c not in (None, "transparent") else None
+
+    def _recolor(self, _mode=None):
+        try:
+            bg = self._background()
+            if bg:
+                tk.Canvas.configure(self, bg=bg)
+            self.itemconfigure(self.thumb, fill=self._mode_color(self._colors["hover" if self._hot else "thumb"]))
+        except tk.TclError:
+            pass
+
+    def _hover(self, hot):
+        self._hot = hot
+        self._recolor()
+
+    def configure(self, **kw):
+        for key, slot in (("fg_color", "bg"), ("button_color", "thumb"), ("button_hover_color", "hover")):
+            if key in kw:
+                self._colors[slot] = kw.pop(key)
+        if kw:
+            super().configure(**kw)
+        self._recolor()
+
+    def cget(self, key):
+        slot = {"fg_color": "bg", "button_color": "thumb", "button_hover_color": "hover"}.get(key)
+        return self._colors[slot] if slot else super().cget(key)
+
+    def set(self, lo, hi):
+        lo, hi = float(lo), float(hi)
+        if (lo, hi) != self.span:
+            self.span = (lo, hi)
+            self._draw()
+
+    def get(self):
+        return self.span
+
+    def _draw(self):
+        h = self.winfo_height()
+        lo, hi = self.span
+        if hi - lo >= 0.999 or h < 20:
+            self.itemconfigure(self.thumb, state="hidden")
+            return
+        top, bottom = 6 + lo * (h - 12), 6 + hi * (h - 12)
+        if bottom - top < 30:
+            mid = (top + bottom) / 2
+            top, bottom = mid - 15, mid + 15
+        self.coords(self.thumb, 6, top, 6, bottom)
+        self.itemconfigure(self.thumb, state="normal")
+
+    def _press(self, event):
+        h = max(1, self.winfo_height() - 12)
+        lo, hi = self.span
+        where = (event.y - 6) / h
+        if lo <= where <= hi:
+            self._grab = where - lo
+        else:
+            self._grab = (hi - lo) / 2
+            self.command("moveto", max(0.0, where - self._grab))
+
+    def _drag(self, event):
+        if self._grab is not None:
+            h = max(1, self.winfo_height() - 12)
+            self.command("moveto", max(0.0, (event.y - 6) / h - self._grab))
+
+    def destroy(self):
+        try:
+            ctk.AppearanceModeTracker.remove(self._recolor)
+        except Exception:
+            pass
+        super().destroy()
+
+
+def _skip_layout_pass(cls):
+    """CTkOptionMenu ends every _draw() with update_idletasks(): each menu a page builds
+    lays out the whole window once more. Tk paints the menu at idle time anyway."""
+    draw = cls._draw
+
+    def _draw(self, no_color_updates=False):
+        cv = getattr(self, "_canvas", None)
+        if cv is not None and "update_idletasks" not in vars(cv):
+            cv.update_idletasks = lambda: None
+        return draw(self, no_color_updates)
+    cls._draw = _draw
+
+
+_skip_layout_pass(ctk.CTkOptionMenu)
+
+
+def _scrollable_frame_bar(master, orientation="vertical", command=None, fg_color=None, button_color=None,
+                          button_hover_color=None, **kw):
+    if orientation != "vertical":
+        return ctk.CTkScrollbar(master, orientation=orientation, command=command, fg_color=fg_color,
+                                button_color=button_color, button_hover_color=button_hover_color, **kw)
+    return ThinScrollbar(master, command, bg=fg_color or "transparent", thumb=button_color, hover=button_hover_color)
+
+
+import customtkinter.windows.widgets.ctk_scrollable_frame as _ctk_scrollable_frame  # noqa: E402
+_ctk_scrollable_frame.CTkScrollbar = _scrollable_frame_bar      # every scrollable frame gets the thin bar
+
+
 class ScrollFrame(ctk.CTkScrollableFrame):
     """A CTkScrollableFrame whose scrollbar shows only while the content is taller than the frame; CustomTkinter keeps it on screen even when there is nothing to scroll."""
 
@@ -438,6 +598,10 @@ class ScrollFrame(ctk.CTkScrollableFrame):
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
+        # CTk sets the scrollregion on every <Configure> of the content; Tk then lays out and
+        # paints the window again even when the region did not change.
+        self._region = None
+        self.bind("<Configure>", lambda e: self._fit_region())
         self._sb_shown = True
         self._sb_job = None
         self._parent_canvas.bind("<Configure>", lambda e: self._queue_sb_check(), add="+")
@@ -449,6 +613,15 @@ class ScrollFrame(ctk.CTkScrollableFrame):
             self.bind_all("<TouchpadScroll>", self._touchpad_all, add=True)
         except tk.TclError:
             pass                                   # Tk 8.6: no such event
+
+    def _fit_region(self):
+        try:
+            region = self._parent_canvas.bbox("all")
+            if region != self._region:
+                self._region = region
+                self._parent_canvas.configure(scrollregion=region)
+        except tk.TclError:
+            pass
 
     def _touchpad_all(self, event):
         try:
@@ -5144,7 +5317,7 @@ class OrganizeView:
             self.tree.column(col, width=round(w * ui_kit.SCALE), minwidth=round((30 if col == "#0" else 80) * ui_kit.SCALE),
                              stretch=col != "#0", anchor="w")
         self.tree.tag_configure("stay", foreground=_pal["muted"])
-        vsb = ctk.CTkScrollbar(tframe, command=self.tree.yview)
+        vsb = ThinScrollbar(tframe, self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
         vsb.pack(side="right", fill="y", pady=6)
@@ -5389,7 +5562,7 @@ class LookInsideView:
         self.tree.column("#0", width=round(470 * ui_kit.SCALE), anchor="w")
         self.tree.column("size", width=round(110 * ui_kit.SCALE), anchor="e", stretch=False)
         self.tree.column("type", width=round(80 * ui_kit.SCALE), anchor="center", stretch=False)
-        vsb = ctk.CTkScrollbar(tframe, command=self.tree.yview)
+        vsb = ThinScrollbar(tframe, self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
         vsb.pack(side="right", fill="y", pady=6)

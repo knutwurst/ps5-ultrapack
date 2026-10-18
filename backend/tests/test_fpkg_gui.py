@@ -1906,6 +1906,20 @@ try:
     _cv._on_touchpad(_E(_pack(0, 8)))               # the other way
     _y_back = _cv.yview()[0]
     ok("scroll.touchpad-back", round((_y_tp - _y_back) * _total_px) == 8, f"{_y_tp} -> {_y_back}")
+    # only the rows in view are on the canvas; scrolling to the end draws the last one
+    _lb._draw()
+    _first_drawn, _first_items = _lb._drawn, len(_cv.find_all())
+    _lb.see(59); root.update_idletasks()
+    _end_drawn = _lb._drawn
+    ok("queue.draws-only-visible-rows", _first_drawn[0] == 0 and _first_drawn[1] < 60 and _end_drawn[1] == 60
+       and _end_drawn[0] > 0 and _first_items < 60 * 3, f"first={_first_drawn} end={_end_drawn} items={_first_items}")
+    _calls = []
+    _real_cfg = _cv.configure
+    _cv.configure = lambda *a, **k: (_calls.append(k) if "scrollregion" in k else None, _real_cfg(*a, **k))[1]
+    _lb._draw(); _lb._draw()
+    _cv.configure = _real_cfg
+    ok("queue.scrollregion-only-on-change", not any("scrollregion" in c for c in _calls), str(_calls))
+    _lb.see(0); root.update_idletasks()
     _wheel_handled = _cv.event_generate  # placeholder to keep linters calm
     _before = _cv.yview()[0]
     _r1 = _cv.bind("<MouseWheel>")                  # the binding exists on the canvas itself
@@ -1938,6 +1952,12 @@ try:
     if tk.TkVersion >= 9:
         _sf_ok = "<TouchpadScroll>" in root.bind_all()
     ok("scroll.settings-scrollframe-touchpad", _sf_ok and hasattr(m.ScrollFrame, "_touchpad_all"), str(_sf_ok))
+    # scrollable pages use the thin canvas bar (CTkScrollbar forces a layout pass per set())
+    _sfx = m.ScrollFrame(root)
+    _thin = isinstance(_sfx._scrollbar, m.ThinScrollbar)
+    _sfx._scrollbar.set(0.2, 0.5)
+    ok("scroll.pages-use-thin-scrollbar", _thin and _sfx._scrollbar.get() == (0.2, 0.5), type(_sfx._scrollbar).__name__)
+    _sfx.destroy()
     del _cv.winfo_height
     app.queue[:] = _saved; app.update_queue_box(); root.update()
 
