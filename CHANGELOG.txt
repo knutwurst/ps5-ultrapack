@@ -3,7 +3,24 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.2.8  (current)
+  v2.2.9  (current)
+────────────────────────────────────────────────────────────────────────
+
+SPEED
+
+  - Scrollable pages use a thin canvas scrollbar. CTkScrollbar ran
+    update_idletasks() on every set(), so Add job laid out the whole
+    page many times while it was built (2.3 s, now about 0.3 s).
+  - CTkOptionMenu no longer forces a layout pass after each draw.
+  - The queue and the scrollable pages set their scrollregion only
+    when it changes; each set made Tk lay out the window again.
+  - The queue draws only the rows in view and redraws at most once
+    per frame while the pointer moves. A redraw went from about 60 ms
+    to about 28 ms and no longer grows with the number of jobs.
+  - Wrapped help texts cache their word widths.
+
+────────────────────────────────────────────────────────────────────────
+  v2.2.8
 ────────────────────────────────────────────────────────────────────────
 
 APP
