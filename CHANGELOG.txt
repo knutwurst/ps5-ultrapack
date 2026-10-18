@@ -56,6 +56,9 @@ SPACE AND RETRIES
   - ZIP files whose names collide on a case-insensitive drive are
     refused; a ZipCrypto password that passes its first check but is
     wrong no longer hides the right one.
+  - A retry no longer delivers the same extras a second time as "(2)".
+  - Start waits once for a patch that is still being taken back out of
+    a source folder, however often it is pressed.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.7
