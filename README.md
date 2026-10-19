@@ -9,7 +9,7 @@ A desktop app for macOS and Windows that packs, converts, patches, backports and
 The app used to be called PS5 FFPFSC ULTRA.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS (Apple Silicon)">
+  <img src="https://img.shields.io/badge/macOS%2026+-Apple%20Silicon-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 26 or newer (Apple Silicon)">
   <a href="https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.2.8-windows-preview.1"><img src="https://img.shields.io/badge/Windows%20x64-preview-f59e0b?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64 preview"></a>
   <img src="https://img.shields.io/badge/FW%2011.60-verified-22c55e?style=for-the-badge" alt="FW 11.60 verified">
   <img src="https://img.shields.io/badge/source-MIT-3a3a3a?style=for-the-badge" alt="Source MIT">
@@ -27,7 +27,7 @@ The app used to be called PS5 FFPFSC ULTRA.
 
 Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack/releases).
 
-- **macOS** (Apple Silicon): unzip and start the app. The app is only ad-hoc signed, so if macOS refuses to open it, run this once:
+- **macOS** 26 or newer on Apple Silicon: unzip and start the app. The app is only ad-hoc signed, so if macOS refuses to open it, run this once:
   ```bash
   xattr -dr com.apple.quarantine "PS5 UltraPack.app"
   ```
