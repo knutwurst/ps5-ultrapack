@@ -34,10 +34,26 @@ def _tool_search_paths() -> list[Path]:
     return paths
 
 
+def _use_bundled_openssl(tool: Path) -> None:
+    """.NET's crypto on macOS falls back to OpenSSL for some algorithms and looks it up by
+    name. Without Homebrew's OpenSSL that ends in /usr/lib/libcrypto.dylib, and macOS aborts
+    the tool ("loading libcrypto in an unsafe way"). The app ships libcrypto/libssl next to
+    the tool; the fallback search path finds them only where no other copy is found, so no
+    other library of the app is replaced. Children of this process inherit it."""
+    if sys.platform != "darwin" or not (tool.parent / "libssl.3.dylib").is_file():
+        return
+    here = str(tool.parent)
+    cur = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+    if here not in cur.split(":"):
+        rest = cur or f"{Path.home() / 'lib'}:/usr/local/lib:/usr/lib"   # dyld's own default
+        os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = f"{here}:{rest}"
+
+
 def tool_path() -> Path:
     """Locate the bundled ffpfsc-pkg-tool binary, or raise FileNotFoundError."""
     for p in _tool_search_paths():
         if p.is_file() and os.access(p, os.X_OK):
+            _use_bundled_openssl(p)
             return p
     tried = "\n  ".join(str(p) for p in _tool_search_paths())
     raise FileNotFoundError(

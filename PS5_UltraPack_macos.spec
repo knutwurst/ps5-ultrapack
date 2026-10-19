@@ -37,6 +37,8 @@ _BACKEND_REQUIRED = [
     _os.path.join("native", "ffpfsc-pkg-tool"),
     _os.path.join("native", "Magick.Native-Q8-arm64.dll.dylib"),   # loaded from the tool's folder
     _os.path.join("native", "7zz"), _os.path.join("native", "LICENSE.7-Zip.macos"),   # FETCH_7ZIP.sh
+    _os.path.join("native", "libcrypto.3.dylib"), _os.path.join("native", "libssl.3.dylib"),   # BUILD_OPENSSL.sh
+    _os.path.join("native", "LICENSE.OpenSSL"),
     _os.path.join("native", "LICENSE.LibProsperoPkg"),
     _os.path.join("native", "LICENSE.LibOrbisPkg"),
 ]

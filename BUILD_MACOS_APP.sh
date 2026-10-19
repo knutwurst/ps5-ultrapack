@@ -15,6 +15,8 @@ fi
 ./BUILD_PKG_TOOL.sh
 # 7-Zip, pinned and checked, from 7-zip.org
 ./FETCH_7ZIP.sh
+# OpenSSL for the fPKG helper (a Mac without Homebrew has none it may load), pinned and checked
+./BUILD_OPENSSL.sh
 
 python3 -m pip install -r requirements-build.txt
 python3 -m pip install ./backend/unrar

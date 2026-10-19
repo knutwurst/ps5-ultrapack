@@ -27,7 +27,7 @@ _BACKEND_SKIP_FILES = {".gitignore", ".DS_Store", "setup.py", "pyproject.toml", 
 # The macOS build's parts share backend/ with these.
 _BACKEND_SKIP_SUFFIXES = (".pyc", ".pyo", ".md", ".so", ".dylib")
 _BACKEND_SKIP_FILES_MAC = {_os.path.join("native", "ffpfsc-pkg-tool"), _os.path.join("native", "7zz"),
-                           _os.path.join("native", "LICENSE.7-Zip.macos")}
+                           _os.path.join("native", "LICENSE.7-Zip.macos"), _os.path.join("native", "LICENSE.OpenSSL")}
 # Files every bundle must contain; a missing one is a broken build, so fail early.
 _BACKEND_REQUIRED = [
     "cli.py", "fpkg.py", "copy_job.py", "fake_sign.py", "make_fself.py",

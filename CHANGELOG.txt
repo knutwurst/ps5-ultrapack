@@ -19,6 +19,15 @@ LANGUAGE
     pass. The log stays English.
   - Sizes read 12,5 GB in German.
 
+FIXED
+
+  - The fPKG tool aborted on a Mac without Homebrew's OpenSSL ("loading
+    libcrypto in an unsafe way", rc -6) when it built or unpacked a
+    .pkg: .NET's crypto falls back to OpenSSL there. The app now ships
+    OpenSSL 3.5.9 (built for macOS 12 by BUILD_OPENSSL.sh) next to the
+    tool and points the fallback library search at it. Checked with the
+    frozen-app matrix while /opt/homebrew and /usr/local were hidden.
+
 ────────────────────────────────────────────────────────────────────────
   v2.2.9
 ────────────────────────────────────────────────────────────────────────
