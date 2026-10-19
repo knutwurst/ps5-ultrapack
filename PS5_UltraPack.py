@@ -159,6 +159,21 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import ultra_core  # noqa: E402
 from ultra_core import *  # noqa: E402,F401,F403
+import i18n  # noqa: E402
+from i18n import t as tr, plural  # noqa: E402
+# The language is read once at start; a change in Settings takes effect after a restart.
+i18n.use(str((load_settings() or {}).get("language", "en")))
+i18n.install()
+
+
+class TextVar(tk.StringVar):
+    """A StringVar that a label shows: a text set on it appears in the interface language.
+    Only for display; a variable whose value the code compares stays a plain StringVar."""
+
+    def set(self, value):
+        return super().set(tr(value) if isinstance(value, str) else value)
+
+    initialize = set
 import ui_kit  # noqa: E402
 from ui_kit import (Kit, IconButton, IconView, ArtView, ProgressBar, QueueList, TransportControl, unpack_touchpad_delta,  # noqa: E402
                     Chips, StepStrip, LogText, Tile, RoundBox, ctk_pair, apply_ctk_theme, PALETTE)
@@ -280,11 +295,11 @@ def _firmware_folder_status(raw: str) -> str:
     try:
         folders = _backport_module().firmware_folders(root)
     except Exception as e:
-        return f"Could not read the folder: {e}"
+        return tr("Could not read the folder: {e}", e=e)
     if folders:
         names = list(folders)
         span = names[0] if len(names) == 1 else f"{names[0]} … {names[-1]}"
-        return f"{len(names)} firmware folder(s) found: {span}."
+        return tr("{names} firmware folder(s) found: {span}.", names=len(names), span=span)
     if any(root.rglob("*.sprx")):
         return "No firmware subfolders: the libraries here count for every target. Name a subfolder per firmware."
     return "No firmware subfolders and no .sprx libraries found."
@@ -1026,7 +1041,7 @@ class FirstRunWizard(EmbeddedDialog):
                                        text_color=ON_ACCENT, hover_color=ACCENT_HOVER, command=self._next)
         self.next_btn.grid(row=0, column=2)
 
-        self.step_var = tk.StringVar(value="Step 1 of 4")
+        self.step_var = TextVar(value="Step 1 of 4")
         ctk.CTkLabel(nav, textvariable=self.step_var, text_color=MUTED).grid(row=0, column=1)
 
     def _clear_body(self):
@@ -1077,11 +1092,11 @@ class FirstRunWizard(EmbeddedDialog):
                 # The SSD/HDD probe may shell out (diskutil / PowerShell) for seconds, so
                 # it runs off the UI thread and fills in this label - plus the HDD
                 # warning - when done (see _probe_temp_drive_type).
-                lines.append(f"Temp drive:    {format_size(tfree)} free  ·  type: detecting…")
+                lines.append(tr("Temp drive:    {tfree} free  ·  type: detecting…", tfree=format_size(tfree)))
             if op:
                 opath = Path(op)
                 ofree = get_free_space(opath)
-                lines.append(f"Output drive:  {format_size(ofree)} free")
+                lines.append(tr("Output drive:  {ofree} free", ofree=format_size(ofree)))
             if not lines:
                 lines.append("No paths selected. Go back and select folders.")
             for line in lines:
@@ -1100,11 +1115,11 @@ class FirstRunWizard(EmbeddedDialog):
             self.sub.configure(text="Setup is complete. You can change both folders later in Settings.")
             summary = []
             if self.temp_path.get():
-                summary.append(f"Temp folder:    {self.temp_path.get()}")
+                summary.append(tr("Temp folder:    {v}", v=self.temp_path.get()))
             if self.output_path.get():
-                summary.append(f"Output folder:  {self.output_path.get()}")
+                summary.append(tr("Output folder:  {v}", v=self.output_path.get()))
             summary.append("")
-            summary.append(f"Click Finish to launch {APP_NAME}.")
+            summary.append(tr("Click Finish to launch {APP_NAME}.", APP_NAME=APP_NAME))
             for line in summary:
                 ctk.CTkLabel(self.body, text=line, text_color=WHITE, anchor="w",
                               font=ctk.CTkFont(family=MONO_FONT, size=11)).pack(anchor="w", padx=14, pady=2)
@@ -1118,7 +1133,7 @@ class FirstRunWizard(EmbeddedDialog):
             try:
                 if not (self.winfo_exists() and label.winfo_exists()):
                     return
-                label.configure(text=f"Temp drive:    {format_size(tfree)} free  ·  type: {dt}")
+                label.configure(text=tr("Temp drive:    {tfree} free  ·  type: {dt}", tfree=format_size(tfree), dt=dt))
                 if dt == "HDD":
                     ctk.CTkLabel(self.body,
                                  text="  Temp folder is on a mechanical HDD.\n  Large games may "
@@ -1207,8 +1222,8 @@ class ErrorDialog(MessageWindow):
         m = _re.search(r"['\"]([a-z]:)\\", msg, _re.I)
         drive = m.group(1).upper() if m else "the drive"
         if any(f"[winerror {n}]" in t for n in (21, 433, 1117, 1167)):
-            return (f"Windows lost {drive} during the job: it was disconnected, went to sleep or failed to "
-                    f"respond. Check the cable, wake the drive and rerun the job.")
+            return (tr("Windows lost {drive} during the job: it was disconnected, went to sleep or failed to "
+                      "respond. Check the cable, wake the drive and rerun the job.", drive=drive))
         if "[winerror 206]" in t:
             return ("A path got longer than Windows allows (260 characters). Pick a shorter temp or output "
                     "folder, or have an administrator turn on long paths in Windows.")
@@ -1241,9 +1256,8 @@ class ErrorDialog(MessageWindow):
         m = _re.search(r"permission denied[^\n]*['\"](/volumes/[^'\"]+)", msg, _re.I)
         if m:
             vol = m.group(1)
-            return (f"macOS refuses to read or write “{vol}”. The drive most likely disconnected "
-                    f"or went to sleep during the job. Check the cable, wake the drive and rerun "
-                    f"the job.")
+            return (tr("macOS refuses to read or write “{vol}”. The drive most likely disconnected or went to "
+                      "sleep during the job. Check the cable, wake the drive and rerun the job.", vol=vol))
         if "permission denied" in t:
             m = _re.search(r"permission denied[^\n]*(?::|')\s*['\"]?([^\"'\n]+)", msg, _re.I)
             path = m.group(1).strip() if m else ""
@@ -1521,12 +1535,12 @@ class SpaceDiagnosticsDialog(MessageWindow):
         # Filesystem warnings (fast - already have temp_fs / out_fs)
         if temp_fs in ("exFAT", "FAT32", "FAT"):
             ctk.CTkLabel(panel,
-                          text=f"Temp drive is {temp_fs} - no hardlink support. Slower copy mode will be used.",
+                          text=tr("Temp drive is {temp_fs} - no hardlink support. Slower copy mode will be used.", temp_fs=temp_fs),
                           text_color=YELLOW, justify="left", wraplength=460
                          ).pack(anchor="w", padx=14, pady=(0, 2))
         if out_fs in ("exFAT", "FAT32", "FAT"):
             ctk.CTkLabel(panel,
-                          text=f"Output drive is {out_fs}. NTFS recommended.",
+                          text=tr("Output drive is {out_fs}. NTFS recommended.", out_fs=out_fs),
                           text_color=YELLOW, justify="left", wraplength=460
                          ).pack(anchor="w", padx=14, pady=(0, 2))
 
@@ -1588,7 +1602,7 @@ class SpaceDiagnosticsDialog(MessageWindow):
         if self._countdown > 0:
             if self._proceed_btn:
                 self._proceed_btn.configure(
-                    text=f"Start now  (auto in {self._countdown} s)")
+                    text=tr("Start now  (auto in {countdown} s)", countdown=self._countdown))
             self._countdown -= 1
             self._auto_timer = self.after(1000, self._tick_countdown)
         else:
@@ -1766,7 +1780,7 @@ class SettingsView:
             ("Default output folder", self.app.output_var, "output_folder", "Choose the default output folder"),
             ("Default temp folder",   self.app.temp_var,   "temp_folder",   "Choose the default temp folder"),
         ]):
-            ctk.CTkLabel(fold, text=lbl + ":", text_color=MUTED, anchor="w", width=170).grid(
+            ctk.CTkLabel(fold, text=tr(lbl) + ":", text_color=MUTED, anchor="w", width=170).grid(
                 row=row_i, column=0, padx=14, pady=8, sticky="w")
             ctk.CTkEntry(fold, textvariable=var, fg_color=CARD, border_color=BORDER2,
                           text_color=WHITE).grid(row=row_i, column=1, sticky="ew", padx=(0, 8), pady=8)
@@ -1810,7 +1824,7 @@ class SettingsView:
                       hover_color=BTN_HOVER, border_width=1, border_color=BTN_BORDER,
                       command=lambda: self._browse_folder(self.app.after_move_dir_var, "after_move_dir",
                                                           "Choose the folder finished sources move to")).pack(side="left")
-        self._after_note = ctk.CTkLabel(self._after_extra, text=f"Deleted for good; it does not go to the {TRASH_NAME}.",
+        self._after_note = ctk.CTkLabel(self._after_extra, text=tr("Deleted for good; it does not go to the {TRASH_NAME}.", TRASH_NAME=TRASH_NAME),
                                         text_color=RED, font=ctk.CTkFont(size=12), anchor="w")
         ctk.CTkLabel(jd, text="The game folder, the archive with all its parts, or the container, once the "
                               "job is Done. New jobs start with this; each job keeps its own choice "
@@ -1863,6 +1877,24 @@ class SettingsView:
                                        command=lambda v: self.app._set_theme(v.lower()))
         _mode.set("Light" if self.app._theme == "light" else "Dark")
         _mode.pack(side="left")
+        lang_row = ctk.CTkFrame(ui, fg_color=PANEL)
+        lang_row.pack(fill="x", padx=14, pady=(0, 10))
+        ctk.CTkLabel(lang_row, text="Language", text_color=WHITE).pack(side="left", padx=(0, 12))
+        _names = dict(i18n.LANGUAGES)
+        _saved = str((load_settings() or {}).get("language", i18n.language()))
+        _lang_note = tk.StringVar(value="")
+
+        def _pick_language(name):
+            key = next(k for k, v in i18n.LANGUAGES if v == name)
+            save_settings({"language": key})
+            _lang_note.set(tr("Takes effect after a restart.") if key != i18n.language() else "")
+        _lang = ctk.CTkSegmentedButton(lang_row, values=list(_names.values()), command=_pick_language)
+        _lang.set(_names.get(_saved, "English"))
+        _lang.pack(side="left")
+        ctk.CTkLabel(lang_row, textvariable=_lang_note, text_color=MUTED, font=ctk.CTkFont(size=12)).pack(
+            side="left", padx=(12, 0))
+        if _saved != i18n.language():
+            _lang_note.set(tr("Takes effect after a restart."))
 
         # GAME NAMES
         self._section_label(scroll, "Game names")
@@ -2208,7 +2240,7 @@ class SettingsView:
         _fw_entry = ctk.CTkEntry(_fw_row, textvariable=self.app.fw_libs_var,
                                  placeholder_text="Folder with one subfolder per firmware…")
         _fw_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        _fw_status = tk.StringVar(value="")
+        _fw_status = TextVar(value="")
 
         def _show_fw_status():
             _fw_status.set(_firmware_folder_status((self.app.fw_libs_var.get() or "").strip()))
@@ -2262,7 +2294,7 @@ class SettingsView:
         ctk.CTkLabel(_prep_row, text="Prepare from BestPig BackPork patches:",
                       text_color=MUTED, font=ctk.CTkFont(size=12)).pack(side="left")
         for _t in ("7.61", "6.02"):
-            ctk.CTkButton(_prep_row, text=f"Prepare {_t}", width=100, height=26,
+            ctk.CTkButton(_prep_row, text=tr("Prepare {target}", target=_t), width=100, height=26,
                            fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                            command=lambda t=_t: self.app.prepare_backport_libs(t), border_width=1, border_color=BTN_BORDER).pack(side="left", padx=(8, 0))
         ctk.CTkLabel(ds, text="Downloads BackPork's current .bps patches for the target from its public GitHub "
@@ -2303,13 +2335,10 @@ class SettingsView:
     def _page_about(self, scroll):
         about = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         about.pack(fill="x", pady=(4, 12))
-        for line in [
-            f"Version   {APP_VERSION}{APP_EDITION}",
-            f"MkPFS     {MKPFS_NAME} {MKPFS_VERSION}",
-            f"Config    {SETTINGS_FILE}",
-            f"History   {HISTORY_FILE}",
-            f"Log       {RAW_LOG_FILE}",
-        ]:
+        rows = [("Version", f"{APP_VERSION}{tr(APP_EDITION)}"), ("MkPFS", f"{MKPFS_NAME} {MKPFS_VERSION}"),
+                ("Config", SETTINGS_FILE), ("History", HISTORY_FILE), ("Log", RAW_LOG_FILE)]
+        pad = max(len(tr(k)) for k, _v in rows) + 3
+        for line in [f"{tr(k):<{pad}}{v}" for k, v in rows]:
             ctk.CTkLabel(about, text=line, text_color=MUTED, anchor="w",
                          font=ctk.CTkFont(family=MONO_FONT, size=11)).pack(anchor="w", padx=14, pady=3)
         ctk.CTkLabel(about, text="By Knutwurst. The backend grew out of Bizkut's ps5-ffpfs-cli; images are built "
@@ -2348,9 +2377,9 @@ class SettingsView:
         if key == aj.DELETE and prev != aj.DELETE:
             if not messagebox.askyesno(
                     "Delete sources?",
-                    "From now on, a new job deletes its source for good once it is Done: the game folder, "
-                    f"the archive with all its parts, or the container. It does not go to the {TRASH_NAME}.\n\n"
-                    "Jobs already in the queue keep their own choice. Use Delete for new jobs?"):
+                    tr("From now on, a new job deletes its source for good once it is Done: the game folder, "
+                      "the archive with all its parts, or the container. It does not go to the "
+                      "{TRASH_NAME}.\n\nJobs already in the queue keep their own choice. Use Delete for new jobs?", TRASH_NAME=TRASH_NAME)):
                 self._after_seg.set(aj.LABELS.get(prev, aj.LABELS[aj.KEEP]))
                 return
         self.app.after_source_var.set(key)
@@ -2772,13 +2801,13 @@ class CLIWorker(threading.Thread):
                           if code == 2 else
                           "a different file already uses that name in the output folder")
                 self._write_report(True)
-                self.app.finish(True, f"Copy skipped - {reason}. Nothing was changed.",
+                self.app.finish(True, tr("Copy skipped - {reason}. Nothing was changed.", reason=reason),
                                 self.last_cmd_str)
                 return
             if code == 3 and self._is_fpkg and not self._is_copy:
                 where = getattr(self, "invalid_pkg", "") or "the output folder"
-                self.app.finish(False, f"The package was built but failed its checks (see the log): {where}. "
-                                       "It is kept so you can look at it; it is not marked as done.",
+                self.app.finish(False, tr("The package was built but failed its checks (see the log): {where}. It is kept so you "
+                                         "can look at it; it is not marked as done.", where=where),
                                 self.last_cmd_str)
                 return
             if code == 4 and self.operation == "copy":
@@ -2788,7 +2817,7 @@ class CLIWorker(threading.Thread):
                 code = 0
             if code != 0:
                 smart = smart_error_from_log()
-                msg = smart if smart else f"Backend exited with code {code}."
+                msg = smart if smart else tr("Backend exited with code {code}.", code=code)
                 # Flag an out-of-memory kill so the main thread can auto-retry with fewer
                 # cores: either a printed MemoryError, or a SIGKILL (-9 / 137) during a
                 # pack - the OS memory-pressure kill leaves mkpfs no chance to print one.
@@ -2829,7 +2858,7 @@ class CLIWorker(threading.Thread):
                 expected = {"unpack": "extracted output folder",
                             "fpkg-extract": "extracted /app0 folder",
                             "fpkg-build": "new .pkg output"}.get(self.operation, "new .ffpfsc output")
-                self.app.finish(False, f"Backend exited but no {expected} was created.", self.last_cmd_str)
+                self.app.finish(False, tr("Backend exited but no {expected} was created.", expected=expected), self.last_cmd_str)
                 return
 
             # From here on the output exists and the job IS a success: bookkeeping
@@ -3015,7 +3044,7 @@ class CLIWorker(threading.Thread):
         elapsed = format_duration(time.time() - self.start_time)
         overall = self._job_overall()
 
-        detail = label or f"{stage} is active."
+        detail = label or tr("{stage} is active.", stage=stage)
         self._detail = None   # set below, once the stage's text is final
         if stage == "Creating Temp PFS" and not label:
             # the backend meters this step in bytes; the fixed text is only a fallback
@@ -3541,26 +3570,25 @@ class CLIWorker(threading.Thread):
             return ["No output path recorded - cannot validate output."]
         p = Path(self.output_path)
         if not p.exists():
-            warns.append(f"Output file not found on disk: {p.name}")
+            warns.append(tr("Output file not found on disk: {name}", name=p.name))
             return warns
         name_lower = p.name.lower()
         if name_lower.endswith(".ffpfsc.ffpfsc"):
             warns.append(
-                f"Double extension detected: {p.name}\n"
-                "   Rename the file - remove one '.ffpfsc' suffix before mounting in ShadowMount."
+                tr("Double extension detected: {name}\n   Rename the file - remove one '.ffpfsc' suffix "
+                  "before mounting in ShadowMount.", name=p.name)
             )
         elif not name_lower.endswith(".ffpfsc"):
             warns.append(
-                f"Unexpected output extension '{p.suffix}' - expected .ffpfsc\n"
-                "   ShadowMount may not recognise this file."
+                tr("Unexpected output extension '{suffix}' - expected .ffpfsc\n   ShadowMount may not "
+                  "recognise this file.", suffix=p.suffix)
             )
         sz = p.stat().st_size
         if sz == 0:
             warns.append("Output file is 0 bytes - compression may have failed silently.")
         elif sz < 1 * 1024 * 1024:
             warns.append(
-                f"Output file is very small ({format_size(sz)}) - "
-                "the source dump may be incomplete or empty."
+                tr("Output file is very small ({sz}) - the source dump may be incomplete or empty.", sz=format_size(sz))
             )
         return warns
 
@@ -3747,13 +3775,13 @@ class JobDialog(EmbeddedDialog):
                     "<Title> [TID] [vX.Y.Z]/<Title> [TID] [vX.Y] [fwN.NN], with the firmware the "
                     "game needs read from its eboot.bin (a backport lowers it to the target). Long names are shortened to "
                     "ShadowMount's byte limit.",
-        "after":  "What happens to the source once this job is Done: the game folder, the archive with "
-                  "all its parts, or the container. Keep leaves it where it is, also when the output is a "
-                  + ("plain copy (on the same drive an APFS clone, instant and without extra space). " if IS_MAC
-                     else "plain copy. ")
-                  + f"Move to {TRASH_NAME} can be put back from the {TRASH_NAME}; Delete cannot. Nothing happens when the job fails, "
-                  "is skipped or stopped, or while another job in the queue still needs the same source. "
-                  "Settings › General sets the default.",
+        "after":  tr("What happens to the source once this job is Done: the game folder, the archive with "
+                     "all its parts, or the container. Keep leaves it where it is, also when the output is a ")
+                  + tr("plain copy (on the same drive an APFS clone, instant and without extra space). " if IS_MAC
+                       else "plain copy. ")
+                  + tr("Move to {TRASH_NAME} can be put back from the {TRASH_NAME}; Delete cannot. Nothing "
+                      "happens when the job fails, is skipped or stopped, or while another job in the queue "
+                      "still needs the same source. Settings › General sets the default.", TRASH_NAME=TRASH_NAME),
         "retail": "Keep on. Drops placeholder license files and issues a valid debug license, sets the "
                   "retail DRM type and the retail flag in every executable, rebuilds a corrupt PlayGo "
                   "set and repairs presentation images - the configuration verified on a console. Off "
@@ -3823,8 +3851,8 @@ class JobDialog(EmbeddedDialog):
         self.src_var = tk.StringVar(value=src0)
         # The folder the file / folder pickers open in: the parent of the last source.
         self._last_src_dir = native_path(str(settings.get("last_source_dir", "") or "").strip())
-        self.detect_var = tk.StringVar(value="Choose or drop a source.")
-        self.help_var = tk.StringVar(value=self._HELP_IDLE)
+        self.detect_var = TextVar(value="Choose or drop a source.")
+        self.help_var = TextVar(value=self._HELP_IDLE)
         self.sign_var = tk.BooleanVar(value=(bool(getattr(item, "chain_sign", False))
                                              or getattr(item, "operation", "") == "fake-sign") if item else False)
         self.patch_on_var = tk.BooleanVar(value=bool(getattr(item, "patch_source", None)) if item else False)
@@ -3833,8 +3861,8 @@ class JobDialog(EmbeddedDialog):
         _bt0 = (getattr(item, "backport_target", None) if item else None) or settings.get("backport_target_default") or "7.61"
         self.backport_target_var = tk.StringVar(value=_bt0 if is_backport_target(_bt0) else "7.61")
         self._hint_cache: dict[str, str] = {}
-        self.backport_hint_var = tk.StringVar(value="")
-        self.check_var = tk.StringVar(value="")
+        self.backport_hint_var = TextVar(value="")
+        self.check_var = TextVar(value="")
         self.to_var = tk.StringVar(value=self._TARGET_LABEL.get(self._target_of(item) if item else "ffpfsc", ".ffpfsc"))
         out0 = str(getattr(item, "output_path", "") or "") if item else (app.output_var.get() or "").strip()
         self.out_var = tk.StringVar(value=out0)
@@ -3871,8 +3899,8 @@ class JobDialog(EmbeddedDialog):
         self._pkg_more = bool(item and (fp.get("content_id") or fp.get("title_id")))   # identity + codec rows
         self._ident_forced = False       # shown and required: a game folder without param.json
         self._auto_ident: dict = {}      # the values filled in from param.json (cleared on a new source)
-        self.summary_var = tk.StringVar(value="")
-        self.summary_dest_var = tk.StringVar(value="")
+        self.summary_var = TextVar(value="")
+        self.summary_dest_var = TextVar(value="")
 
         self._build()
         self.src_var.trace_add("write", lambda *_: self._on_source_changed())
@@ -4016,7 +4044,7 @@ class JobDialog(EmbeddedDialog):
         self._to_seg = ctk.CTkSegmentedButton(oin, values=[self._TARGET_LABEL[k] for k in self._TARGETS],
                                               variable=self.to_var, selected_color=ACCENT, selected_hover_color=ACCENT_HOVER)
         self._to_seg.pack(side="left")
-        self._to_hint = tk.StringVar(value="")
+        self._to_hint = TextVar(value="")
         ctk.CTkLabel(oin, textvariable=self._to_hint, text_color=MUTED, font=ctk.CTkFont(size=12),
                       wraplength=420, justify="left").pack(side="left", padx=(10, 0))
         self._bind_help(self._HELP["output"], oin)
@@ -4030,18 +4058,18 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkSlider(self._comp_ffpfsc, from_=1, to=9, number_of_steps=8, variable=self.level_var, width=180,
                       height=16, fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
                       button_hover_color=ACCENT_HOVER).pack(side="left")
-        self._level_lbl = ctk.CTkLabel(self._comp_ffpfsc, text=f"level {self.level_var.get()}", text_color=WHITE,
+        self._level_lbl = ctk.CTkLabel(self._comp_ffpfsc, text=tr("level {n}", n=self.level_var.get()), text_color=WHITE,
                                        width=56, anchor="w", font=ctk.CTkFont(size=12))
         self._level_lbl.pack(side="left", padx=(8, 0))
         ctk.CTkLabel(self._comp_ffpfsc, text="higher: smaller file, slower build", text_color=MUTED,
                       font=ctk.CTkFont(size=12)).pack(side="left", padx=(4, 0))
         self.level_var.trace_add("write", lambda *_: self._level_lbl.winfo_exists()
-                                 and self._level_lbl.configure(text=f"level {self.level_var.get()}"))
+                                 and self._level_lbl.configure(text=tr("level {n}", n=self.level_var.get())))
         self._comp_pkg = ctk.CTkFrame(cr, fg_color=PANEL)
         ctk.CTkSlider(self._comp_pkg, from_=-4, to=9, number_of_steps=13, variable=self.pkg_level_var, width=180,
                       height=16, fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
                       button_hover_color=ACCENT_HOVER).pack(side="left")
-        self._pkg_level_lbl = ctk.CTkLabel(self._comp_pkg, text=f"level {self.pkg_level_var.get()}", text_color=WHITE,
+        self._pkg_level_lbl = ctk.CTkLabel(self._comp_pkg, text=tr("level {n}", n=self.pkg_level_var.get()), text_color=WHITE,
                                            width=56, anchor="w", font=ctk.CTkFont(size=12))
         self._pkg_level_lbl.pack(side="left", padx=(8, 0))
         self._pkg_level_hint = ctk.CTkLabel(self._comp_pkg, text=self._pkg_level_text(self.pkg_level_var.get()),
@@ -4055,7 +4083,7 @@ class JobDialog(EmbeddedDialog):
                 v = int(self.pkg_level_var.get())
             except (TypeError, ValueError):
                 return
-            self._pkg_level_lbl.configure(text=f"level {v}")
+            self._pkg_level_lbl.configure(text=tr("level {n}", n=v))
             self._pkg_level_hint.configure(text=self._pkg_level_text(v))
         self.pkg_level_var.trace_add("write", _pkg_level_cb)
         self._bind_help(self._HELP["compression"], cr)
@@ -4094,7 +4122,7 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkButton(self._after_dir_row, text="Folder…", width=76, fg_color=BTN, hover_color=BTN_HOVER,
                       text_color=WHITE, border_width=1, border_color=BTN_BORDER,
                       command=self._pick_after_dir).pack(side="left", padx=(6, 0))
-        self._after_note = ctk.CTkLabel(ab, text=f"Deleted for good once the job is Done; it does not go to the {TRASH_NAME}.",
+        self._after_note = ctk.CTkLabel(ab, text=tr("Deleted for good once the job is Done; it does not go to the {TRASH_NAME}.", TRASH_NAME=TRASH_NAME),
                                         text_color=RED, font=ctk.CTkFont(size=12), anchor="w")
         # .pkg options - two rows, shown only when .pkg is the output
         self._pkg_opts = ctk.CTkFrame(orow, fg_color=PANEL)
@@ -4122,7 +4150,7 @@ class JobDialog(EmbeddedDialog):
                                            anchor="w", command=self._toggle_pkg_more)
         self._pkg_more_btn.pack(side="left")
         ib = self._pkg_more_box = ctk.CTkFrame(pk, fg_color=PANEL)        # packed by _layout_pkg_more
-        self._ident_head = tk.StringVar(value=self._IDENT_OPTIONAL)
+        self._ident_head = TextVar(value=self._IDENT_OPTIONAL)
         ctk.CTkLabel(ib, textvariable=self._ident_head, text_color=WHITE, font=ctk.CTkFont(size=12), anchor="w",
                       justify="left", wraplength=600).pack(fill="x", pady=(2, 4))
         ig = ctk.CTkFrame(ib, fg_color=PANEL); ig.pack(fill="x")
@@ -4137,7 +4165,7 @@ class JobDialog(EmbeddedDialog):
         _cell(0, 2, "Title ID", self.tid_var, "PPSA12345")
         _cell(1, 0, "Title", self.title_var, "")
         _cell(1, 2, "Version", self.ver_var, "01.000.000")
-        self._ident_note = tk.StringVar(value="")
+        self._ident_note = TextVar(value="")
         ctk.CTkLabel(ib, textvariable=self._ident_note, text_color=MUTED, font=ctk.CTkFont(size=11), anchor="w",
                       justify="left", wraplength=600).pack(fill="x", pady=(2, 6))
         cr = ctk.CTkFrame(ib, fg_color=PANEL); cr.pack(fill="x", pady=(0, 4))
@@ -4187,7 +4215,7 @@ class JobDialog(EmbeddedDialog):
             try:
                 width = width or max(280, foot.winfo_width() - 8)
                 help_lbl.configure(wraplength=width)
-                lines = max(_wrapped_line_count(help_font, text, width) for text in help_texts)
+                lines = max(_wrapped_line_count(help_font, tr(text), width) for text in help_texts)
                 height = lines * help_font.metrics("linespace") + 4
                 if int(float(help_box.cget("height"))) != height:
                     help_box.configure(height=height)
@@ -4335,9 +4363,9 @@ class JobDialog(EmbeddedDialog):
                            else "no firmware libraries folder set in Settings")
             except Exception as e:
                 problem = str(e)
-            self._hint_cache[target] = (f"{target}: cannot be used, {problem}" if problem else
-                                        f"{target}: SDK values from your {target} libraries; Check shows "
-                                        f"whether patched libraries are needed")
+            self._hint_cache[target] = (tr("{target}: cannot be used, {problem}", target=target, problem=problem) if problem else
+                                        tr("{target}: SDK values from your {target} libraries; Check shows whether patched "
+                                          "libraries are needed", target=target))
         return self._hint_cache[target]
 
     def _probe_ps4_archive(self, p: Path, raw: str):
@@ -4375,7 +4403,7 @@ class JobDialog(EmbeddedDialog):
         if self.app._is_archive_path(p) and info is not None:
             i = info.get("ident")
             n = len(info.get("packages") or [])
-            bits = ["PS4 archive", f"{n} package{'s' if n != 1 else ''}"]
+            bits = ["PS4 archive", plural(n, "1 package", "{n} packages")]
             if i is not None:
                 bits += [i.title, i.title_id]
             return " · ".join(b for b in bits if b)
@@ -4444,7 +4472,7 @@ class JobDialog(EmbeddedDialog):
                 sources = self._scan_sources(p)
                 if sources:
                     self._kind = "parent"; self._games = sources
-                    self.detect_var.set(f"{self._KIND_LABEL['parent']} · {self._describe_sources(sources)} - one job each")
+                    self.detect_var.set(tr("{parent} · {v} - one job each", parent=tr(self._KIND_LABEL['parent']), v=self._describe_sources(sources)))
                 else:
                     self._kind = "folder-unknown"
                     self.detect_var.set("No game folder, archive, disk image, .ffpfs, .ffpfsc or .pkg in this folder")
@@ -4456,7 +4484,7 @@ class JobDialog(EmbeddedDialog):
                 kind = "archive"
             if kind is None:
                 self._kind = "file-unknown"
-                self.detect_var.set(f"Unsupported file type {suf or '(none)'}")
+                self.detect_var.set(tr("Unsupported file type {v}", v=suf or tr('(none)')))
                 self._update_identity_for_source(None)
                 self._refresh(); return
             self._kind = kind
@@ -4538,7 +4566,7 @@ class JobDialog(EmbeddedDialog):
         try:
             d = json.loads(pj.read_text(encoding="utf-8-sig", errors="replace"))
         except (OSError, ValueError) as e:
-            self._ident_note.set(f"param.json could not be read ({e}); the identity is used as typed.")
+            self._ident_note.set(tr("param.json could not be read ({e}); the identity is used as typed.", e=e))
             return
         d = d if isinstance(d, dict) else {}
         title = param_title(d)
@@ -4607,7 +4635,7 @@ class JobDialog(EmbeddedDialog):
             return _bad("Title ID", "Title ID must look like  PPSA12345  (4 letters + 5 digits), or stay empty to "
                         "use the game's param.json.")
         if cid and tid and tid not in cid:
-            return _bad("Mismatch", f"The title id {tid} does not appear inside the content id {cid}.")
+            return _bad("Mismatch", tr("The title id {tid} does not appear inside the content id {cid}.", tid=tid, cid=cid))
         if cid and not tid:
             tid = cid[7:16]
         if ver and not self._VER_RE.match(ver):
@@ -4650,11 +4678,12 @@ class JobDialog(EmbeddedDialog):
             counts[label] = counts.get(label, 0) + 1
         order = ["game folder", "archive", "disk image", ".ffpfs", ".ffpfsc", ".pkg"]
         parts = []
+        forms = {"game folder": ("1 game folder", "{n} game folders"), "archive": ("1 archive", "{n} archives"),
+                 "disk image": ("1 disk image", "{n} disk images")}
         for label in sorted(counts, key=lambda k: order.index(k) if k in order else 99):
             n = counts[label]
-            plural = "s" if n != 1 and not label.startswith(".") else ""
-            parts.append(f"{n} {label}{plural}")
-        return f"{len(sources)} source{'s' if len(sources) != 1 else ''}: " + ", ".join(parts)
+            parts.append(plural(n, *forms[label]) if label in forms else f"{n} {label}")
+        return plural(len(sources), "1 source: {parts}", "{n} sources: {parts}", parts=", ".join(parts))
 
     def _parent_todo(self) -> list[Path]:
         """The parent folder's sources this job setup would change: a game folder to a
@@ -4778,7 +4807,7 @@ class JobDialog(EmbeddedDialog):
         elif self._kind == "parent":
             todo = self._parent_todo()
             if todo:
-                text = chain_summary(self._stand_in(todo[0])) + f"  × {len(todo)} job{'s' if len(todo) != 1 else ''}"
+                text = chain_summary(self._stand_in(todo[0])) + plural(len(todo), "  × 1 job", "  × {n} jobs")
             else:
                 text = "Nothing to do"
             ok = bool(todo)
@@ -4861,7 +4890,7 @@ class JobDialog(EmbeddedDialog):
                 verdict = next((l[len("[verdict] "):] for l in out if l.startswith("[verdict] ")), "")
                 result["msg"] = verdict or (r.stderr or "").strip()[-300:] or "no result"
             except Exception as e:
-                result["msg"] = f"check failed: {e}"
+                result["msg"] = tr("check failed: {e}", e=e)
 
         worker = threading.Thread(target=work, daemon=True)
 
@@ -4937,7 +4966,7 @@ class JobDialog(EmbeddedDialog):
         try:
             new = make(sources[0])
         except Exception as e:
-            messagebox.showerror("Source", f"Could not read {sources[0]}:\n{e}", parent=self); return
+            messagebox.showerror("Source", tr("Could not read {v}:\n{e}", v=sources[0], e=e), parent=self); return
         try:
             app.queue[app.queue.index(self.edit_item)] = new
         except ValueError:
@@ -5075,7 +5104,7 @@ class JobDialog(EmbeddedDialog):
             try:
                 made.append(make(s))
             except Exception as e:
-                messagebox.showerror("Source", f"Could not read {s}:\n{e}", parent=self); return
+                messagebox.showerror("Source", tr("Could not read {s}:\n{e}", s=s, e=e), parent=self); return
         if not made:
             return
 
@@ -5144,10 +5173,9 @@ class ArchivePasswordPrompt(MessageWindow):
                       font=ctk.CTkFont(size=17, weight="bold"), text_color=WHITE
                       ).pack(anchor="w", padx=20, pady=(16, 2))
         ctk.CTkLabel(self,
-                      text=f"None of your saved passwords opens '{archive_name}'. Enter its "
-                           f"password so the real extracted size is known for the drive routing; "
-                           f"the password is then saved for later archives. Skip adds the job "
-                           f"anyway, and the extraction tries every saved password again.",
+                      text=tr("None of your saved passwords opens '{archive_name}'. Enter its password so the real "
+                             "extracted size is known for the drive routing; the password is then saved for later "
+                             "archives. Skip adds the job anyway, and the extraction tries every saved password again.", archive_name=archive_name),
                       text_color=MUTED, wraplength=500, justify="left"
                       ).pack(anchor="w", padx=20, pady=(0, 10))
 
@@ -5204,11 +5232,13 @@ class OutputExistsDialog(MessageWindow):
         self.after(50, self.grab_set)
         ctk.CTkLabel(self, text=head, font=ctk.CTkFont(size=17, weight="bold"), text_color=WHITE
                      ).pack(anchor="w", padx=20, pady=(16, 2))
-        ctk.CTkLabel(self, text=(f"{n} job{'s' if n != 1 else ''} would write a file that is already there. "
-                                 f"Skip leaves {'them' if n != 1 else 'it'} out of this run; Overwrite replaces "
-                                 f"the file{'s' if n != 1 else ''} once the new build is finished; Keep both "
-                                 f"gives the new build a numbered name. Settings › Interface can answer this "
-                                 f"for every start."),
+        ctk.CTkLabel(self, text=plural(
+                         n, "1 job would write a file that is already there. Skip leaves it out of this run; "
+                            "Overwrite replaces the file once the new build is finished; Keep both gives the new "
+                            "build a numbered name. Settings › Interface can answer this for every start.",
+                         "{n} jobs would write a file that is already there. Skip leaves them out of this run; "
+                         "Overwrite replaces the files once the new build is finished; Keep both gives the new "
+                         "build a numbered name. Settings › Interface can answer this for every start."),
                      text_color=MUTED, wraplength=520, justify="left").pack(anchor="w", padx=20, pady=(0, 10))
         box = ctk.CTkFrame(self, fg_color=PANEL, corner_radius=8)
         box.pack(fill="x", padx=20, pady=(0, 4))
@@ -5256,7 +5286,7 @@ class CountdownWindow(MessageWindow):
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         ctk.CTkLabel(self, text=head, font=ctk.CTkFont(size=17, weight="bold"), text_color=WHITE
                      ).pack(anchor="w", padx=20, pady=(16, 2))
-        self._msg = tk.StringVar()
+        self._msg = TextVar()
         ctk.CTkLabel(self, textvariable=self._msg, text_color=MUTED, wraplength=380, justify="left",
                      width=380, anchor="w").pack(anchor="w", padx=20, pady=(0, 6))
         btns = ctk.CTkFrame(self, fg_color=BLACK); btns.pack(fill="x", padx=20, pady=16)
@@ -5269,8 +5299,8 @@ class CountdownWindow(MessageWindow):
 
     def _text(self) -> str:
         who = "The Mac" if IS_MAC else "The computer"
-        return (f"{who} goes to sleep in {self._left} s." if self._action == "sleep"
-                else f"PS5 UltraPack quits in {self._left} s.")
+        return (tr("{who} goes to sleep in {left} s.", who=who, left=self._left) if self._action == "sleep"
+                else tr("PS5 UltraPack quits in {left} s.", left=self._left))
 
     def _tick(self):
         self._job = None
@@ -5343,7 +5373,7 @@ class OrganizeView:
         self.scan_btn = ctk.CTkButton(row, text="Scan", width=90, fg_color=BTN, hover_color=BTN_HOVER,
                                       text_color=WHITE, border_width=1, border_color=BTN_BORDER, command=self.scan)
         self.scan_btn.pack(side="left", padx=(6, 0))
-        self.status_var = tk.StringVar(value="Pick a folder and press Scan. Nothing moves before Apply.")
+        self.status_var = TextVar(value="Pick a folder and press Scan. Nothing moves before Apply.")
         ctk.CTkLabel(v, textvariable=self.status_var, text_color=MUTED, anchor="w", justify="left").grid(
             row=3, column=0, sticky="ew", padx=18, pady=(2, 6))
         style = ttk.Style(v)
@@ -5499,13 +5529,13 @@ class OrganizeView:
             self._plan = None
         if self._plan is None:
             err = next((ln for ln in reversed(lines) if ln.startswith("[ERROR]")), lines[-1] if lines else "no output")
-            self.status_var.set(f"Scan failed: {err}")
+            self.status_var.set(tr("Scan failed: {err}", err=err))
             self.app.log("ERROR", f"Organize: scan failed: {err}")
             return
         self._checked = set(range(len(self._plan["moves"])))
         moves, stays, ok = len(self._plan["moves"]), len(self._plan["stays"]), self._plan.get("in_place", 0)
-        summary = (f"{moves} to move" if moves else "Nothing to move") + f", {ok} already in place" \
-            + (f", {stays} staying (see why below)" if stays else "") + "."
+        summary = (tr("{moves} to move", moves=moves) if moves else "Nothing to move") + tr(", {ok} already in place", ok=ok) \
+            + (tr(", {stays} staying (see why below)", stays=stays) if stays else "") + "."
         self.status_var.set(" ".join(x for x in (self._then, summary) if x))
         self._render()
 
@@ -5581,9 +5611,9 @@ class LookInsideView:
                       border_width=1, border_color=BTN_BORDER, command=self._load).pack(side="left", padx=(6, 0))
         srow = ctk.CTkFrame(v, fg_color="transparent")
         srow.grid(row=3, column=0, sticky="ew", padx=18, pady=(2, 6))
-        self.status_var = tk.StringVar(value="Choose an image, or drop one on the window. Nothing is unpacked.")
+        self.status_var = TextVar(value="Choose an image, or drop one on the window. Nothing is unpacked.")
         ctk.CTkLabel(srow, textvariable=self.status_var, text_color=MUTED, anchor="w").pack(side="left")
-        self.count_var = tk.StringVar(value="")
+        self.count_var = TextVar(value="")
         ctk.CTkLabel(srow, textvariable=self.count_var, text_color=MUTED).pack(side="right")
         self.filter_var = tk.StringVar()
         # (a CTkEntry bound to a variable shows no placeholder: the label says what it is)
@@ -5657,7 +5687,7 @@ class LookInsideView:
             return
         self.image_path = Path(raw)
         kind = "  (fPKG)" if self.image_path.suffix.lower() == ".pkg" else ""
-        self._title = f"Look inside  ·  {self.image_path.name}{kind}"
+        self._title = tr("Look inside  ·  {name}{kind}", name=self.image_path.name, kind=kind)
         self.status_var.set(f"Reading {self.image_path.name}…")
         self.extract_sel_btn.configure(state="disabled"); self.extract_all_btn.configure(state="disabled")
         cmd = self.app._backend_cmd("--list-image", str(self.image_path))
@@ -5710,12 +5740,13 @@ class LookInsideView:
         try:
             data = json.loads(line.split("PFSBROWSE_JSON:", 1)[1])
         except Exception as e:
-            self.status_var.set(f"Bad listing: {e}"); return
+            self.status_var.set(tr("Bad listing: {e}", e=e)); return
         self._entries = data.get("entries", [])
         self._render()
         nf, nd = data.get("file_count", 0), data.get("dir_count", 0)
         name = self.image_path.name if self.image_path else ""
-        self.status_var.set(f"{name}: {nf} file{'' if nf == 1 else 's'}, {nd} folder{'' if nd == 1 else 's'}")
+        self.status_var.set(tr("{name}: {files}, {folders}", name=name, files=plural(nf, "1 file", "{n} files"),
+                               folders=plural(nd, "1 folder", "{n} folders")))
         self.extract_sel_btn.configure(state="normal"); self.extract_all_btn.configure(state="normal")
 
     def _render(self):
@@ -5774,7 +5805,7 @@ class LookInsideView:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write("\n".join(members))
         except Exception as e:
-            messagebox.showerror("Error", f"Could not stage the selection: {e}", parent=self.app.root); return
+            messagebox.showerror("Error", tr("Could not stage the selection: {e}", e=e), parent=self.app.root); return
         cmd = self.app._backend_cmd("--extract-from", str(self.image_path), "--dest", dest, "--members-file", mfpath)
         self.status_var.set("Extracting…"); self.progress.set(0)
         self.extract_sel_btn.pack_forget()
@@ -5808,7 +5839,7 @@ class LookInsideView:
                 pass
         self.extract_sel_btn.pack(side="right")
         self.extract_sel_btn.configure(state="normal"); self.extract_all_btn.configure(state="normal")
-        self.status_var.set("Extracted." if rc == 0 else f"Extraction failed ({rc}).")
+        self.status_var.set("Extracted." if rc == 0 else tr("Extraction failed ({rc}).", rc=rc))
         if rc == 0 and self.app._view != "look":
             self.app.log("OK", f"Look inside: extracted from {self.image_path.name if self.image_path else 'the image'}.")
 
@@ -6198,7 +6229,7 @@ class App:
 
     def _init_display_vars(self):
         """Every StringVar the worker and poll code write, plus the job card's own."""
-        S = tk.StringVar
+        S = TextVar
         self.overall_title_var = S(value="QUEUE")
         self.overall_pct_var = S(value="0%")
         self.cur_game_var = S(value="CURRENT STEP")
@@ -6254,7 +6285,7 @@ class App:
             if all(p.rstrip().endswith(" -") for p in parts):
                 self.last_result_var.set("Totals and the last jobs, newest first.")
             else:
-                self.last_result_var.set("Last result:  " + "   ·   ".join(parts))
+                self.last_result_var.set(tr("Last result:  {parts}", parts="   ·   ".join(parts)))
         for v in (self.saved_var, self.ratio_var, self.rating_var):
             v.trace_add("write", _last)
         _last()
@@ -6262,7 +6293,7 @@ class App:
         def _prog(*_):
             g = self.cur_game_var.get()
             name = g.split("·", 1)[1].strip() if "·" in g else ""
-            self.progress_title_var.set(f"Now running  ·  {name}" if name else "Progress")
+            self.progress_title_var.set(tr("Now running  ·  {name}", name=name) if name else "Progress")
         self.cur_game_var.trace_add("write", _prog)
 
         def _foot(*_):
@@ -6419,7 +6450,7 @@ class App:
         pw.add(left, minsize=280, stretch="always")
         left.grid_columnconfigure(0, weight=1)
         left.grid_rowconfigure(2, weight=1)
-        self._q_sub_var = tk.StringVar(value=self.queue_total_var.get())   # shortened when narrow
+        self._q_sub_var = TextVar(value=self.queue_total_var.get())   # shortened when narrow
         head, btns = self._column_header(left, "Queue", subtitle_var=self._q_sub_var)
         head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
         self.queue_total_var.trace_add("write", lambda *_: self._fit_queue_header())
@@ -6432,18 +6463,18 @@ class App:
                                        tooltip="Scan the last source folder for new downloads and add the ones that are not already here.")
         self._rescan_btn.grid(row=0, column=1, padx=(0, 6))
         self._add_btn = self._small(btns, "Add job", "plus", self.open_job_dialog, variant="secondary",
-                                    tooltip=f"Pick a source, what to change in it and what comes out  {SHORTCUT['add']}")
+                                    tooltip=tr("Pick a source, what to change in it and what comes out  {add}", add=SHORTCUT['add']))
         self._add_btn.grid(row=0, column=2, padx=(0, 6))
         # Start, Pause and Stop share one place of fixed size: Start while idle, Pause and Stop
         # side by side while the queue runs. Nothing beside it moves when a run starts.
         self.transport = TransportControl(
             btns, kit, on_start=self.start, on_pause=self.toggle_pause, on_stop=self.cancel,
-            start_tip=f"Run the jobs from the top  {SHORTCUT['start']}", pause_tip=self._PAUSE_TIPS[False],
-            stop_tip=f"Cancel the running job and stop the queue  {SHORTCUT['stop']}")
+            start_tip=tr("Run the jobs from the top  {start}", start=SHORTCUT['start']), pause_tip=self._PAUSE_TIPS[False],
+            stop_tip=tr("Cancel the running job and stop the queue  {stop}", stop=SHORTCUT['stop']))
         self.transport.grid(row=0, column=3)
         self.start_btn, self.pause_btn, self.stop_btn = self.transport.start, self.transport.pause, self.transport.stop
         self._details_btn = self._small(btns, "", "sidebar-right", self.toggle_inspector,
-                                        tooltip=f"Show or hide the details  {SHORTCUT['details']}")
+                                        tooltip=tr("Show or hide the details  {details}", details=SHORTCUT['details']))
         self._details_btn.grid(row=0, column=4, padx=(8, 0))
         self._q_head, self._q_title = head, head.grid_slaves(row=0, column=0)[0]
         head.bind("<Configure>", self._fit_queue_header, add="+")
@@ -6460,7 +6491,7 @@ class App:
         self._add_box = kit.frame(left)
         self._add_box.grid(row=1, column=0, sticky="ew", padx=(18, 14), pady=(0, 10))
         self._add_box.grid_columnconfigure(0, weight=1)
-        self._add_label_var = tk.StringVar(value="")
+        self._add_label_var = TextVar(value="")
         kit.label(self._add_box, fg="muted", font=kit.fonts.small, textvariable=self._add_label_var,
                   anchor="w").grid(row=0, column=0, sticky="ew")
         self._add_bar = ProgressBar(self._add_box, kit, height=4)
@@ -6473,7 +6504,7 @@ class App:
         self._all_box.grid(row=3, column=0, sticky="ew")
         self._all_box.grid_columnconfigure(0, weight=1)
         kit.rule(self._all_box).grid(row=0, column=0, columnspan=2, sticky="ew")
-        self._all_left_var, self._all_right_var = tk.StringVar(value=""), tk.StringVar(value="")
+        self._all_left_var, self._all_right_var = TextVar(value=""), TextVar(value="")
         kit.label(self._all_box, fg="text", font=kit.fonts.small, textvariable=self._all_left_var,
                   anchor="w").grid(row=1, column=0, sticky="w", padx=(18, 8), pady=(10, 0))
         kit.label(self._all_box, fg="muted", font=kit.fonts.small, textvariable=self._all_right_var,
@@ -6501,7 +6532,7 @@ class App:
         if len(marked) > 1:
             running = self._running_item()
             n = len([it for it in marked if it is not running])
-            m.add_command(label=f"Remove {n} job{'s' if n != 1 else ''}", command=self.queue_remove_selected,
+            m.add_command(label=plural(n, "Remove 1 job", "Remove {n} jobs"), command=self.queue_remove_selected,
                           state="normal" if n else "disabled")
             m.add_command(label="Select only this job", command=lambda i=idx: (
                 self.queue_listbox.selection_set(i), self._on_queue_clicked()))
@@ -6601,10 +6632,10 @@ class App:
         elif kept:
             n = len(kept)
             if not messagebox.askyesno(
-                    "Clear jobs", f"{n} of these job{'s' if n != 1 else ''} keep{'' if n != 1 else 's'} what "
-                                  f"{'they' if n != 1 else 'it'} extracted from {'their' if n != 1 else 'its'} "
-                                  f"archive{'s' if n != 1 else ''}, for a retry. Clearing deletes "
-                                  f"{'those copies' if n != 1 else 'that copy'}. Clear anyway?"):
+                    "Clear jobs", plural(n, "1 of these jobs keeps what it extracted from its archive, for a retry. "
+                             "Clearing deletes that copy. Clear anyway?",
+                             "{n} of these jobs keep what they extracted from their archives, for a retry. "
+                             "Clearing deletes those copies. Clear anyway?")):
                 return
         for it in gone:
             self._drop_kept_extract(it)
@@ -6638,7 +6669,7 @@ class App:
         tg.grid(row=2, column=1, sticky="ew", pady=(2, 0))
         self._bind_dynamic_wrap(hdr, [t, m, tg], padding=self.ART_PX + 54, min_width=160)
         self._small(hdr, "", "x", lambda: self._set_inspector(False), bg=B,
-                    tooltip=f"Hide the details  {SHORTCUT['details']}").grid(row=0, column=2, sticky="ne", padx=(8, 0))
+                    tooltip=tr("Hide the details  {details}", details=SHORTCUT['details'])).grid(row=0, column=2, sticky="ne", padx=(8, 0))
 
         self._card_chips = Chips(body, kit, bg=B)
         self._card_chips.grid(row=1, column=0, sticky="ew", pady=(14, 0))
@@ -6681,7 +6712,7 @@ class App:
         info.grid_columnconfigure(1, weight=1)
         self._card_info_rows = {}
         for r, key in enumerate(self._CARD_INFO_KEYS):
-            var = tk.StringVar(value="")
+            var = TextVar(value="")
             k = kit.label(info, bg=B, fg="faint", font=kit.fonts.small, text=key, anchor="nw")
             v = kit.label(info, bg=B, fg="muted", font=kit.fonts.small, textvariable=var, anchor="nw",
                           justify="left")
@@ -6711,13 +6742,12 @@ class App:
         acts.grid(row=6, column=0, sticky="ew", pady=(10, 0))
         acts.grid_columnconfigure(5, weight=1)
         for col, (text, icon, cmd, tip) in enumerate((
-                ("Full log", "terminal", lambda: self._show_view("log"), f"The whole log  {SHORTCUT['log']}"),
+                ("Full log", "terminal", lambda: self._show_view("log"), tr("The whole log  {log}", log=SHORTCUT['log'])),
                 ("Command", "code", self._toggle_command, "Show the backend command for this job"),
                 ("Edit", "edit", lambda: self._on_queue_double_click(None), "Change this job (or double-click it)"),
                 ("Retry", "retry", self._retry_selected, "Run this job again"),
                 ("Remove", "trash", self.queue_remove_selected,
-                 f"Take the selected jobs out of the queue ({'⌘' if IS_MAC else 'Ctrl'}-click or Shift-click "
-                 f"selects several)"))):
+                 tr("Take the selected jobs out of the queue ({v}-click or Shift-click selects several)", v='⌘' if IS_MAC else 'Ctrl')))):
             b = self._small(acts, text, icon, cmd, tooltip=tip, bg=B)
             b.grid(row=0, column=col, padx=(0, 2))
             if text == "Retry":
@@ -6733,13 +6763,13 @@ class App:
         multi = self._card_multi = kit.frame(card, bg=B)
         multi.grid_columnconfigure(0, weight=1)
         self._multi_title_var, self._multi_meta_var, self._multi_hint_var = (
-            tk.StringVar(value=""), tk.StringVar(value=""), tk.StringVar(value=""))
+            TextVar(value=""), TextVar(value=""), TextVar(value=""))
         mh = kit.frame(multi, bg=B)
         mh.grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 0))
         mh.grid_columnconfigure(0, weight=1)
         kit.label(mh, bg=B, font=kit.fonts.title, textvariable=self._multi_title_var).grid(row=0, column=0, sticky="ew")
         self._small(mh, "", "x", lambda: self._set_inspector(False), bg=B,
-                    tooltip=f"Hide the details  {SHORTCUT['details']}").grid(row=0, column=1, sticky="ne", padx=(8, 0))
+                    tooltip=tr("Hide the details  {details}", details=SHORTCUT['details'])).grid(row=0, column=1, sticky="ne", padx=(8, 0))
         mm = kit.label(multi, bg=B, fg="muted", font=kit.fonts.small, textvariable=self._multi_meta_var)
         mm.grid(row=1, column=0, sticky="ew", padx=20, pady=(4, 0))
         mt = kit.label(multi, bg=B, fg="faint", font=kit.fonts.small, textvariable=self._multi_hint_var)
@@ -6869,9 +6899,9 @@ class App:
 
     def _show_pause_state(self):
         p = bool(getattr(self, "_pause_requested", False))
-        tr = getattr(self, "transport", None)
-        if tr is not None:
-            tr.set_armed(p)                      # the Pause half stays lit orange while armed
+        tc = getattr(self, "transport", None)
+        if tc is not None:
+            tc.set_armed(p)                      # the Pause half stays lit orange while armed
             self.pause_btn.tooltip.text = self._PAUSE_TIPS[p]
         lbl = getattr(self, "_batch_counter_lbl", None)
         if lbl is not None:
@@ -6894,10 +6924,10 @@ class App:
         self.cancel_btn.configure(state="disabled")
         self._update_batch_counter()
         self.update_queue_box()
-        self.status_update("Paused", f"{jobs} left. Start runs them.", "Ready", 0, 0, "00:00", " - ", " - ")
+        self.status_update("Paused", tr("{jobs} left. Start runs them.", jobs=jobs), "Ready", 0, 0, "00:00", " - ", " - ")
         self.log("INFO", f"Queue paused after the running job: {jobs} left. Start runs them.")
         if self.notify_var.get() in ("job", "queue"):
-            _after_job_module().notify("PS5 UltraPack", f"Queue paused: {jobs} left")
+            _after_job_module().notify("PS5 UltraPack", tr("Queue paused: {jobs} left", jobs=jobs))
 
     def _sync_primary_action(self):
         """One primary button: Add job while the queue is empty, Start once it has jobs.
@@ -6946,14 +6976,14 @@ class App:
             if it is self._running_item():
                 st = "Running"
             states[st] = states.get(st, 0) + 1
-        self._multi_title_var.set(f"{n} jobs selected")
+        self._multi_title_var.set(tr("{n} jobs selected", n=n))
         parts = [format_size(size)] + [f"{c} {s.lower()}" for s, c in sorted(states.items(), key=lambda kv: -kv[1])]
         self._multi_meta_var.set("  ·  ".join(parts))
         running_in = any(it is self._running_item() for it in items)
         self._multi_hint_var.set(
             ("Remove takes them out of the queue; the running job stays. " if running_in
              else "Remove takes them out of the queue. ")
-            + f"{'⌘' if IS_MAC else 'Ctrl'}-click adds or drops a job, Shift-click a range, Escape keeps one.")
+            + tr("{v}-click adds or drops a job, Shift-click a range, Escape keeps one.", v='⌘' if IS_MAC else 'Ctrl'))
 
     # ── Details pane ─────────────────────────────────────────────────────────
     def _on_queue_clicked(self):
@@ -7018,14 +7048,14 @@ class App:
         parts = self._job_recipe_parts(item)
         if detail and parts:
             if parts[-1] == ".ffpfsc":
-                parts[-1] = f".ffpfsc, level {self._ffpfsc_level(item)}"
+                parts[-1] = tr(".ffpfsc, level {n}", n=self._ffpfsc_level(item))
             elif parts[-1] == ".pkg":
                 try:
                     _pl = int(getattr(item, "fpkg_level", None) if getattr(item, "fpkg_level", None) is not None
                               else self._pkg_level_default())
                 except (TypeError, ValueError):
                     _pl = 0
-                parts[-1] = f".pkg, level {_pl}"
+                parts[-1] = tr(".pkg, level {n}", n=_pl)
         return parts
 
     def _job_recipe_parts(self, item) -> list[str]:
@@ -7035,7 +7065,7 @@ class App:
             return [src, "Organize"]
         if op == "copy" and getattr(item, "content_kind", "") == "ps4":
             n = int(getattr(item, "ps4_count", 0) or 0)
-            return [src, "PS4 library" + (f" · {n} package{'s' if n != 1 else ''}" if n else "")]
+            return [src, tr("PS4 library") + (plural(n, " · 1 package", " · {n} packages") if n else "")]
         if op == "chain":
             ch = []
             for c in chain_changes(item):
@@ -7152,7 +7182,7 @@ class App:
             try:
                 free = get_free_space(Path(p))
             except Exception:
-                return f"{kind}: not reachable"
+                return tr("{kind}: not reachable", kind=kind)
             drive = ultra_core.drive_display_name(p, system="Mac")
             return f"{kind}: {drive}  ·  {format_size(free)} free"
 
@@ -7176,7 +7206,7 @@ class App:
         mb = tk.Menu(root)
         if IS_MAC:
             appm = tk.Menu(mb, name="apple", tearoff=0)
-            appm.add_command(label=f"About {APP_NAME}", command=guard(lambda: self._open_settings_page("about")))
+            appm.add_command(label=tr("About {app}", app=APP_NAME), command=guard(lambda: self._open_settings_page("about")))
             appm.add_separator()
             mb.add_cascade(menu=appm)
             root.createcommand("tk::mac::ShowPreferences", self.open_settings)
@@ -7222,7 +7252,7 @@ class App:
         if IS_MAC:
             mb.add_cascade(label="Window", menu=tk.Menu(mb, name="window", tearoff=0))
         hm = tk.Menu(mb, name="help", tearoff=0)
-        hm.add_command(label=f"{APP_NAME} on GitHub", command=lambda: webbrowser.open(REPO_URL))
+        hm.add_command(label=tr("{app} on GitHub", app=APP_NAME), command=lambda: webbrowser.open(REPO_URL))
         hm.add_command(label="Buy Me a Coffee…", command=lambda: webbrowser.open(DONATE_URL))
         hm.add_separator()
         hm.add_command(label="Open Log Folder", command=self._open_log_folder)
@@ -7230,7 +7260,7 @@ class App:
         hm.add_command(label="Export Diagnostics…", command=self.export_diagnostics)
         if not IS_MAC:
             hm.add_separator()
-            hm.add_command(label=f"About {APP_NAME}", command=guard(lambda: self._open_settings_page("about")))
+            hm.add_command(label=tr("About {app}", app=APP_NAME), command=guard(lambda: self._open_settings_page("about")))
         mb.add_cascade(label="Help", menu=hm)
         root.configure(menu=mb)
         self._menubar = mb
@@ -7566,10 +7596,9 @@ class App:
                     self.root.after(0, self.log, "INFO", line.rstrip())
                 proc.wait()
                 if proc.returncode == 0:
-                    self.root.after(0, self.log, "OK", f"Prepare {target} finished - the job dialog will pick up "
-                                                       f"{Path(out) / target} as Patched libraries.")
+                    self.root.after(0, self.log, "OK", tr("Prepare {target} finished - the job dialog will pick up {v} as Patched libraries.", target=target, v=Path(out) / target))
                 else:
-                    self.root.after(0, self.log, "ERROR", f"Prepare {target} finished with exit code {proc.returncode}.")
+                    self.root.after(0, self.log, "ERROR", tr("Prepare {target} finished with exit code {returncode}.", target=target, returncode=proc.returncode))
             except Exception as e:
                 self.root.after(0, self.log, "ERROR", f"Prepare {target} failed: {e}")
         threading.Thread(target=work, daemon=True).start()
@@ -7584,19 +7613,18 @@ class App:
             return
         folder = Path(path)
         if not folder.is_dir():
-            messagebox.showerror("Not a folder", f"This is not a folder:\n{folder}")
+            messagebox.showerror("Not a folder", tr("This is not a folder:\n{folder}", folder=folder))
             return
         if not messagebox.askyesno(
                 "Fake Sign - in place",
-                f"Queue a fake-sign job for:\n\n{folder}\n\n"
-                "When it runs it modifies the executables IN PLACE (already-signed files are "
-                "skipped, so it is safe to repeat). Add to queue?"):
+                tr("Queue a fake-sign job for:\n\n{folder}\n\nWhen it runs it modifies the executables IN PLACE "
+                  "(already-signed files are skipped, so it is safe to repeat). Add to queue?", folder=folder)):
             return
         item = GameItem.from_fake_sign(folder)
         self.queue.append(item)
         self.update_queue_box(select_item=item)
         self.log("OK", f"Fake-sign queued: {folder.name}.  Press ▶ START to run.")
-        self.status_update("Ready", f"Fake-sign queued: {folder.name} - press START.",
+        self.status_update("Ready", tr("Fake-sign queued: {name} - press START.", name=folder.name),
                             "Ready", 0, 0, "00:00", " - ", " - ", side=True)
 
     def fpkg_extract_dialog(self):
@@ -7609,7 +7637,7 @@ class App:
             return
         pkg = Path(path)
         if not pkg.is_file():
-            messagebox.showerror("Not a file", f"This is not a file:\n{pkg}"); return
+            messagebox.showerror("Not a file", tr("This is not a file:\n{pkg}", pkg=pkg)); return
         out = (self.output_var.get() or "").strip()
         if not out:
             out = str(pkg.parent / (pkg.stem + " [extracted]"))
@@ -8010,7 +8038,7 @@ class App:
             self.pending_start = False
             self._pending_fpkg_identity = None
             messagebox.showerror("Path not found",
-                                  f"This path does not exist:\n{src}")
+                                  tr("This path does not exist:\n{src}", src=src))
             return
         # One-shot "scan this folder for images to unpack" flag: whoever set it (the
         # Converter batch action, an image browse) meant THIS add. Consume it here so it
@@ -8038,7 +8066,7 @@ class App:
             self.update_queue_box(select_item=item)
             self.log("OK", f".ffpfs image queued for (re)packing: {src.name}  [{format_size(item.size)}]")
             self.status_update("Ready",
-                                f".ffpfs image queued for packing: {src.name}",
+                                tr(".ffpfs image queued for packing: {name}", name=src.name),
                                 "Ready", 0, 0, "00:00", " - ", " - ", side=True)
             return
 
@@ -8055,7 +8083,7 @@ class App:
                 self.update_queue_box(select_item=item)
                 self.log("OK", f".ffpfsc image queued as an fPKG build (remembered format .pkg): "
                                f"{src.name}  [{format_size(item.size)}]")
-                self.status_update("Ready", f".ffpfsc queued for fPKG build: {src.name}",
+                self.status_update("Ready", tr(".ffpfsc queued for fPKG build: {name}", name=src.name),
                                     "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                 return
             item = GameItem.from_pfs_image(src)   # carries operation="unpack" itself
@@ -8063,7 +8091,7 @@ class App:
             self.update_queue_box(select_item=item)
             self.log("OK", f".ffpfsc image queued for extraction: {src.name}  [{format_size(item.size)}]")
             self.status_update("Ready",
-                                f".ffpfsc image queued for extraction: {src.name}",
+                                tr(".ffpfsc image queued for extraction: {name}", name=src.name),
                                 "Ready", 0, 0, "00:00", " - ", " - ", side=True)
             return
 
@@ -8083,7 +8111,7 @@ class App:
         if src.is_file() and src.suffix.lower() in (".zip", ".rar", ".7z"):
             # Reading the headers of a many-volume set takes seconds on a slow drive: do it
             # on the scan thread; the main loop queues the item ("archive" message below).
-            self.status_update("Scanning", f"Reading archive headers: {src.name}…",
+            self.status_update("Scanning", tr("Reading archive headers: {name}…", name=src.name),
                                 "Scanning Files", 0, 0, "00:00", " - ", " - ", side=True)
 
             _ps4_out = (self.output_var.get() or "").strip()
@@ -8098,13 +8126,13 @@ class App:
                         return
                     self.scan_q.put(("archive", GameItem.from_archive(a)))
                 except Exception as e:
-                    self.scan_q.put(("error", f"Could not read {a.name}: {e}"))
+                    self.scan_q.put(("error", tr("Could not read {name}: {e}", name=a.name, e=e)))
             self._launch_scan(_read_archive)
             return
 
         # ── Folder of existing PFS images to unpack ──────────────────────────
         if src.is_dir() and _unpack_folder:
-            self.status_update("Scanning", f"Scanning {src.name} for PFS images…",
+            self.status_update("Scanning", tr("Scanning {name} for PFS images…", name=src.name),
                                 "Scanning Files", 0, 0, "00:00", " - ", " - ", side=True)
             self.log("INFO", f"Scanning folder for .ffpfs/.ffpfsc images: {src}")
 
@@ -8112,13 +8140,13 @@ class App:
                 try:
                     images = find_files_by_suffix(p, PFS_IMAGE_SUFFIXES)
                     if not images:
-                        self.scan_q.put(("error", f"No .ffpfs or .ffpfsc files found in:\n{p}"))
+                        self.scan_q.put(("error", tr("No .ffpfs or .ffpfsc files found in:\n{p}", p=p)))
                     elif len(images) == 1:
                         self.scan_q.put(("ok", GameItem.from_pfs_image(images[0])))
                     else:
                         self.scan_q.put(("pfs_found", images))
                 except Exception as e:
-                    self.scan_q.put(("error", f"PFS scan error: {e}"))
+                    self.scan_q.put(("error", tr("PFS scan error: {e}", e=e)))
             self._launch_scan(_scan_pfs_folder)
             return
 
@@ -8129,8 +8157,8 @@ class App:
                 msg = "\n".join(f"• {w}" for w in warns)
                 if not messagebox.askyesno(
                     "Game Structure Warning",
-                    f"Potential issues detected:\n\n{msg}\n\n"
-                    "Expected: sce_sys/param.json and eboot.bin\n\nAdd anyway?"
+                    tr("Potential issues detected:\n\n{msg}\n\nExpected: sce_sys/param.json and eboot.bin\n\nAdd "
+                      "anyway?", msg=msg)
                 ):
                     self.pending_start = False
                     self._pending_fpkg_identity = None
@@ -8176,9 +8204,9 @@ class App:
                                    and not siblings and not patch)
                 if game is not None and (siblings or patch or naked_file_game):
                     if naked_file_game:
-                        extra = f"single file game '{game.name}' - folder name mirrored to output"
+                        extra = tr("single file game '{name}' - folder name mirrored to output", name=game.name)
                     else:
-                        extra = f"1 game + {len(siblings)} extra file(s)"
+                        extra = tr("1 game + {siblings} extra file(s)", siblings=len(siblings))
                         if patch:
                             extra += f" + patch '{patch.name}' (integrated)"
                     self.log("OK", f"Folder bundle: {extra} - "
@@ -8280,11 +8308,10 @@ class App:
                     sample = ", ".join(sorted(split_parts)[:4])
                     self.scan_q.put((
                         "error",
-                        f"Found split-archive parts in:\n{p}\n\n  {sample}\n\n"
-                        "Split .7z / .zip volumes are not recombined automatically. "
-                        "Recombine them into a single .7z, .zip or .rar first "
-                        "(e.g. with 7-Zip or Keka), then add that file.\n"
-                        "(Multi-part RAR - .partN.rar or .rNN - is supported directly.)"
+                        tr("Found split-archive parts in:\n{p}\n\n  {sample}\n\nSplit .7z / .zip volumes are not "
+                          "recombined automatically. Recombine them into a single .7z, .zip or .rar first (e.g. "
+                          "with 7-Zip or Keka), then add that file.\n(Multi-part RAR - .partN.rar or .rNN - is "
+                          "supported directly.)", p=p, sample=sample)
                     ))
                     return
 
@@ -8292,15 +8319,12 @@ class App:
                 self.log("WARN", f"No games, disk images, or archives found in {p}")
                 self.scan_q.put((
                     "error",
-                    f"Nothing found in:\n{p}\n\n"
-                    "Expected either:\n"
-                    "  • Game folders containing sce_sys/ and eboot.bin\n"
-                    "  • Disk images (.exfat or .ffpkg)\n"
-                    "  • Archive files (.zip / .rar / .7z)"
+                    tr("Nothing found in:\n{p}\n\nExpected either:\n  • Game folders containing sce_sys/ and "
+                      "eboot.bin\n  • Disk images (.exfat or .ffpkg)\n  • Archive files (.zip / .rar / .7z)", p=p)
                 ))
             except Exception as e:
                 self.log("ERROR", f"Folder scan crashed: {e}")
-                self.scan_q.put(("error", f"Scan error: {e}"))
+                self.scan_q.put(("error", tr("Scan error: {e}", e=e)))
 
         self._launch_scan(_scan_folder)
 
@@ -9222,7 +9246,7 @@ class App:
 
     def _patch_prepare_failed(self, item, msg: str):
         self.log("ERROR", f"Patch prepare failed: {msg}")
-        self.status_update("Failed", f"Patch prepare failed: {msg}", "Failed", 0, 0, "00:00", " - ", " - ")
+        self.status_update("Failed", tr("Patch prepare failed: {msg}", msg=msg), "Failed", 0, 0, "00:00", " - ", " - ")
         # Keep the failed item in the queue (marked Failed, moved to the end) - only
         # successful items disappear.
         self._retire_failed(item, "Failed")
@@ -9267,7 +9291,7 @@ class App:
                 inplace = bool(getattr(item, "patch_inplace", False))
                 if game.is_file() and game.suffix.lower() in ARCH:
                     self.log("INFO", f"Extracting patch game archive: {game.name}")
-                    self.status_update("Extracting", f"Unpacking game: {game.name}…",
+                    self.status_update("Extracting", tr("Unpacking game: {name}…", name=game.name),
                                        "Extracting", 0, 0, " - ", " - ", " - ")
                     gp = ArchiveExtractor.extract_with_passwords(
                         game, Path(temp_base) / "_patch_game", pw,
@@ -9276,7 +9300,7 @@ class App:
                 pp = patch
                 if patch is not None and patch.suffix.lower() == ".7z":
                     self.log("INFO", f"Extracting .7z patch: {patch.name}")
-                    self.status_update("Extracting", f"Unpacking patch: {patch.name}…",
+                    self.status_update("Extracting", tr("Unpacking patch: {name}…", name=patch.name),
                                        "Extracting", 0, 0, " - ", " - ", " - ")
                     pp = ArchiveExtractor.extract_with_passwords(
                         patch, Path(temp_base) / "_patch_files", pw,
@@ -9381,7 +9405,7 @@ class App:
             self.log("WARN", f"Password did not unlock '{arc.name}'.")
             if not messagebox.askyesno(
                 "Wrong password",
-                f"That password did not unlock '{arc.name}'.\n\nTry again?",
+                tr("That password did not unlock '{name}'.\n\nTry again?", name=arc.name),
                 parent=self.root):
                 return
         self.log("WARN", f"Gave up on the password for '{arc.name}' - routing will use the size estimate.")
@@ -9636,13 +9660,13 @@ class App:
             else:
                 base = None
         except Exception as e:
-            messagebox.showerror("Build failed", f"Could not classify the source:\n{e}",
+            messagebox.showerror("Build failed", tr("Could not classify the source:\n{e}", e=e),
                                  parent=parent or self.root)
             return None
         if base is None:
             messagebox.showerror("Unsupported source",
-                                 f"Not a valid fPKG source:\n{src}\n\nUse a game folder, an archive, "
-                                 "or a .ffpfsc / .ffpfs / .exfat / .ffpkg image.",
+                                 tr("Not a valid fPKG source:\n{src}\n\nUse a game folder, an archive, or a .ffpfsc / .ffpfs / "
+                                   ".exfat / .ffpkg image.", src=src),
                                  parent=parent or self.root)
             return None
         self._as_fpkg_job(base, params)
@@ -9655,13 +9679,13 @@ class App:
         src = Path(src)
         if not (src.is_file() and src.suffix.lower() in (".ffpfsc", ".ffpfs", ".pkg")):
             messagebox.showerror("Wrong type",
-                                 f"Copy needs a .ffpfsc, .ffpfs or .pkg file:\n{src}",
+                                 tr("Copy needs a .ffpfsc, .ffpfs or .pkg file:\n{src}", src=src),
                                  parent=parent or self.root)
             return None
         try:
             base = GameItem.from_exfat(src)   # single-file image; we override operation below
         except Exception as e:
-            messagebox.showerror("Copy failed", f"Could not classify the source:\n{e}",
+            messagebox.showerror("Copy failed", tr("Could not classify the source:\n{e}", e=e),
                                  parent=parent or self.root)
             return None
         base.operation = "copy"
@@ -10111,7 +10135,7 @@ class App:
             return "ok", ""
         gtid, ptid = str(g.get("titleId") or "").upper(), str(pt.get("titleId") or "").upper()
         if gtid and ptid and gtid != ptid:
-            return "refuse", f"This patch is for {ptid}, but the game is {gtid}."
+            return "refuse", tr("This patch is for {ptid}, but the game is {gtid}.", ptid=ptid, gtid=gtid)
 
         def num(v):
             try:
@@ -10122,8 +10146,8 @@ class App:
         gsdk, psdk = num(g.get("sdkVersion")), num(pt.get("sdkVersion"))
         gver, pver = str(g.get("contentVersion") or ""), str(pt.get("contentVersion") or "")
         if gsdk and psdk and psdk < gsdk and gver and pver and gver != pver:
-            return "warn", (f"This patch is a backport made for version {pver}, but the game is version {gver}. "
-                            f"A backport usually works only with the version it was made for.")
+            return "warn", (tr("This patch is a backport made for version {pver}, but the game is version {gver}. A "
+                              "backport usually works only with the version it was made for.", pver=pver, gver=gver))
         return "ok", ""
 
     def _patch_fw(self, patch: Path) -> str | None:
@@ -10595,10 +10619,10 @@ class App:
         if len(items) > 1 and kept:
             n = len(kept)
             if not messagebox.askyesno(
-                    "Remove jobs", f"{n} of these job{'s' if n != 1 else ''} keep{'' if n != 1 else 's'} what "
-                                   f"{'they' if n != 1 else 'it'} extracted from {'their' if n != 1 else 'its'} "
-                                   f"archive{'s' if n != 1 else ''}, for a retry. Removing deletes "
-                                   f"{'those copies' if n != 1 else 'that copy'}. Remove anyway?"):
+                    "Remove jobs", plural(n, "1 of these jobs keeps what it extracted from its archive, for a retry. "
+                             "Removing deletes that copy. Remove anyway?",
+                             "{n} of these jobs keep what they extracted from their archives, for a retry. "
+                             "Removing deletes those copies. Remove anyway?")):
                 return
         # What to show afterwards: the first job below the removed ones, else the one above.
         after = [it for it in self.queue[rows[-1] + 1:] if it not in items]
@@ -10904,7 +10928,7 @@ class App:
                 size_txt = format_size(item.size)
             else:
                 size_txt = ""
-            sub = "  →  ".join(self._job_recipe(item))
+            sub = "  →  ".join(tr(p) for p in self._job_recipe(item))
             if size_txt:
                 sub += f"   ·   {size_txt}"
             tid = shown_title_id(item)
@@ -10918,7 +10942,7 @@ class App:
                          "progress": (max(0.0, min(1.0, self._cur_job_pct / 100.0)) if running else None)})
 
         n = len(self.queue)
-        self.queue_total_var.set(f"{n} job{'' if n == 1 else 's'}  ·  {format_size(total)}")
+        self.queue_total_var.set(plural(n, "1 job  ·  {size}", "{n} jobs  ·  {size}", size=format_size(total)))
         try:
             self._nav["queue"].configure(badge=n)
         except Exception:
@@ -10977,14 +11001,14 @@ class App:
                     ver = guess_game_version(Path(str(src)))
             except Exception:
                 ver = ""
-            size_txt = (f"~{format_size(item.extracted_size)} unpacked" if shows_extracted_size(item)
+            size_txt = (tr("~{size} unpacked", size=format_size(item.extracted_size)) if shows_extracted_size(item)
                         else format_size(getattr(item, "size", 0) or 0))
             files = getattr(item, "files", 0) or 0
             meta = [x for x in (getattr(item, "title_id", ""), f"v{ver}" if ver else "", size_txt,
-                                f"{files:,} file{'' if files == 1 else 's'}" if files else "") if x]
+                                plural(files, "1 file", "{n} files", n=i18n.number(f"{files:,}")) if files else "") if x]
             self.card_meta_var.set("   ·   ".join(meta))
             out = self._job_output_dir(item)
-            self.card_target_var.set(f"→  {out}" if out else "→  no output folder set")
+            self.card_target_var.set(f"→  {out}" if out else tr("→  no output folder set"))
             self._card_chips.set_parts(self._job_recipe(item, detail=True))
             self._fill_card_info(item)
         except Exception:
@@ -11028,7 +11052,7 @@ class App:
         if getattr(item, "kept_extract", False):
             status += "; the extracted copy is kept, so Start goes on from it (removing the job deletes it)"
         if getattr(item, "archive_problem", "") and getattr(item, "archive_path", None):
-            status += f"; the archive cannot be read: {item.archive_problem}"
+            status += tr("; the archive cannot be read: {archive_problem}", archive_problem=item.archive_problem)
         info["Status"] = status
         src = getattr(item, "archive_path", None) or getattr(item, "path", None)
         if src:
@@ -11039,13 +11063,13 @@ class App:
         changes = []
         patch = getattr(item, "patch_source", None)
         if patch:
-            changes.append(f"Integrate the patch from {patch}")
+            changes.append(tr("Integrate the patch from {patch}", patch=patch))
         bt = getattr(item, "backport_target", None)
         if bt:
             libs = getattr(item, "backport_libs_root", None) or (self.backport_libs_var.get() or "").strip()
             fw = (self.fw_libs_var.get() or "").strip()
-            line = f"Backport to {bt}"
-            line += f"; patched libraries from {libs}" if libs else "; no patched libraries set"
+            line = tr("Backport to {bt}", bt=bt)
+            line += tr("; patched libraries from {libs}", libs=libs) if libs else "; no patched libraries set"
             line += "; the functions are checked against your firmware folder" if fw else \
                     "; no function check (no firmware folder in Settings)"
             changes.append(line)
@@ -11060,46 +11084,42 @@ class App:
                 cores = int(self.cpu_count_var.get())
             except (TypeError, ValueError):
                 cores = 0
-            info["Compression"] = (f".ffpfsc, zlib level {self._ffpfsc_level(item)}, 64 KiB blocks, "
-                                   f"{'cores by game size' if cores == 0 else f'{cores} cores'}")
+            info["Compression"] = (tr(".ffpfsc, zlib level {v}, 64 KiB blocks, {v2}", v=self._ffpfsc_level(item), v2=tr('cores by game size') if cores == 0 else tr('{n} cores', n=cores)))
         elif out == ".pkg":
             p = self._fpkg_params_of(item)
-            speed = f"level {int(p.get('level', 0))}"
+            speed = tr("level {n}", n=int(p.get('level', 0)))
             try:
                 cores = int(self.cpu_count_var.get())
             except (TypeError, ValueError):
                 cores = 0
-            info["Compression"] = (f".pkg, Kraken {speed} on {'all cores' if cores <= 0 else f'{cores} cores'}, "
-                                   f"codec layer {p.get('inner', 'kraken')}; "
-                                   f"retail fixes {'on' if p.get('retail_normalize', True) else 'off'}, "
-                                   f"HDR {p.get('hdr_flag', 'auto')}")
+            info["Compression"] = (tr(".pkg, Kraken {speed} on {v}, codec layer {v2}; retail fixes {v3}, HDR {v4}", speed=speed, v=tr('all cores') if cores <= 0 else tr('{n} cores', n=cores), v2=p.get('inner', 'kraken'), v3=tr('on') if p.get('retail_normalize', True) else tr('off'), v4=p.get('hdr_flag', 'auto')))
         elif out == ".ffpfs":
-            info["Compression"] = ".ffpfs, uncompressed"
+            info["Compression"] = tr(".ffpfs, uncompressed")
         work = getattr(item, "_build_temp", None) or (self.temp_var.get() or "").strip()
         out_dir = self._job_output_dir(item)
         if getattr(item, "operation", "") == "copy" and out_dir:
             # nothing is built: an archive is unpacked on the output drive, then moved in
             arc = getattr(item, "archive_path", None) and not getattr(item, "path", None)
-            info["Drives"] = (f"unpacks and writes on {_drive_name(out_dir)} ({out_dir})" if arc
-                              else f"writes to {_drive_name(out_dir)} ({out_dir})")
+            info["Drives"] = (tr("unpacks and writes on {v} ({out_dir})", v=_drive_name(out_dir), out_dir=out_dir) if arc
+                              else tr("writes to {v} ({out_dir})", v=_drive_name(out_dir), out_dir=out_dir))
         elif out_dir and getattr(item, "operation", "") in ("chain", "pack", "fpkg-build", "patch"):
             # where the router will put this job (or has put it), not the temp setting
             plan = self._planned(item)
             bits = []
             root = getattr(plan, "_build_root", None)
             if getattr(item, "archive_path", None) and not getattr(item, "path", None) and root:
-                bits.append(f"unpacks on {_drive_name(Path(str(root)))} ({root})")
+                bits.append(tr("unpacks on {v} ({root})", v=_drive_name(Path(str(root))), root=root))
             img = getattr(plan, "_build_temp", None)
             if img and not _item_is_single_pass(plan):
-                bits.append(f"builds on {_drive_name(Path(str(img)))} ({img})")
-            bits.append(f"writes to {_drive_name(out_dir)} ({out_dir})")
+                bits.append(tr("builds on {v} ({img})", v=_drive_name(Path(str(img))), img=img))
+            bits.append(tr("writes to {v} ({out_dir})", v=_drive_name(out_dir), out_dir=out_dir))
             info["Drives"] = ", ".join(bits)
         elif work or out_dir:
             bits = []
             if work:
-                bits.append(f"works on {_drive_name(Path(str(work)))} ({work})")
+                bits.append(tr("works on {v} ({work})", v=_drive_name(Path(str(work))), work=work))
             if out_dir:
-                bits.append(f"writes to {_drive_name(out_dir)} ({out_dir})")
+                bits.append(tr("writes to {v} ({out_dir})", v=_drive_name(out_dir), out_dir=out_dir))
             info["Drives"] = ", ".join(bits)
         space = (self.temp_space_var.get() or "").strip()
         if space and not space.endswith(" -"):
@@ -11155,11 +11175,11 @@ class App:
                     self.temp_space_var.set("Same drive: renamed or cloned, no extra space")
                 else:
                     ok = all(get_free_space(d) >= n for _l, d, n in needs)
-                    self.temp_space_var.set("  |  ".join(f"{label}: ~{format_size(n)}, {format_size(get_free_space(d))} free"
-                                                         for label, d, n in needs)
-                                            + f"  |  {'fits' if ok else 'LOW, may not fit'}")
+                    self.temp_space_var.set("  |  ".join(tr("{label}: ~{need}, {free} free", label=tr(label), need=format_size(n),
+                                                            free=format_size(get_free_space(d))) for label, d, n in needs)
+                                            + "  |  " + tr("fits" if ok else "LOW, may not fit"))
             except Exception:
-                self.temp_space_var.set(f"Needs: ~{format_size(_build_size_of(item))}")
+                self.temp_space_var.set(tr("Needs: ~{size}", size=format_size(_build_size_of(item))))
             return
         if getattr(item, "operation", "pack") == "unpack":
             try:
@@ -11167,10 +11187,10 @@ class App:
                 out_dir = Path(op) if op else None
                 out_free = get_free_space(out_dir) if out_dir else 0
                 self.temp_space_var.set(
-                    f"Extract Needs: ~{format_size(item.size)}+  |  Out Free: {format_size(out_free)}"
+                    tr("Extract Needs: ~{size}+  |  Out Free: {free}", size=format_size(item.size), free=format_size(out_free))
                 )
             except Exception:
-                self.temp_space_var.set(f"Extract Needs: ~{format_size(item.size)}+")
+                self.temp_space_var.set(tr("Extract Needs: ~{size}+", size=format_size(item.size)))
             return
         out_dir = self._job_output_dir(item)
         if out_dir is not None and getattr(item, "operation", "pack") in ("chain", "pack", "fpkg-build", "patch"):
@@ -11188,11 +11208,12 @@ class App:
                              "Output drive (archive unpacked)": "Output",
                              "Output drive (copy on the same drive)": "Copy"}
                     # needs that share a drive come as one row, their labels joined by " + "
-                    _lab = lambda label: " + ".join(dict.fromkeys(short.get(x, x) for x in label.split(" + ")))
+                    _lab = lambda label: " + ".join(dict.fromkeys(tr(short.get(x, x)) for x in label.split(" + ")))
                     self.temp_space_var.set(
-                        "  |  ".join(f"{_lab(label)} on {_drive_colon(Path(str(d)))} ~{format_size(n)}, "
-                                     f"{format_size(get_free_space(d))} free" for label, d, n in needs)
-                        + f"  |  {'fits' if ok else 'LOW, may not fit'}")
+                        "  |  ".join(tr("{label} on {drive} ~{need}, {free} free", label=_lab(label),
+                                        drive=_drive_colon(Path(str(d))), need=format_size(n),
+                                        free=format_size(get_free_space(d))) for label, d, n in needs)
+                        + "  |  " + tr("fits" if ok else "LOW, may not fit"))
                     return
             except Exception:
                 pass
@@ -11201,7 +11222,7 @@ class App:
             temp_dir = Path(tp) if tp else None
             out_dir  = self._job_output_dir(item)
             if temp_dir is None:
-                self.temp_space_var.set(f"Peak Needed: ~{format_size(int(_build_size_of(item) * _peak_factor_for(item)))}")
+                self.temp_space_var.set(tr("Peak Needed: ~{size}", size=format_size(int(_build_size_of(item) * _peak_factor_for(item)))))
                 return
             same   = same_drive(temp_dir, out_dir) if out_dir else True
             size   = _build_size_of(item)
@@ -11218,13 +11239,12 @@ class App:
             # It completes if the SSD can hold the image (split - the spool auto-routes to
             # the big output drive) OR the output drive can hold the whole build.
             ok = (size > 0 and free >= image_need) or (out_dir is not None and out_free >= out_full)
-            flag = "fits" if ok else "LOW, may not fit"
-            self.temp_space_var.set(
-                f"{need_label}: ~{format_size(image_need)}  |  Temp Free: {format_size(free)}  "
-                f"|  Out Free: {format_size(out_free)}  |  {flag}"
-            )
+            flag = tr("fits" if ok else "LOW, may not fit")
+            self.temp_space_var.set(tr("{label}: ~{need}  |  Temp Free: {free}  |  Out Free: {out_free}  |  {flag}",
+                                       label=tr(need_label), need=format_size(image_need), free=format_size(free),
+                                       out_free=format_size(out_free), flag=flag))
         except Exception:
-            self.temp_space_var.set(f"Peak Needed: ~{format_size(item.size * 2.2)}")
+            self.temp_space_var.set(tr("Peak Needed: ~{size}", size=format_size(item.size * 2.2)))
 
     def _update_format_label(self):
         comp = self.output_compressed_var.get()
@@ -11259,7 +11279,7 @@ class App:
         # Archive placeholders have no path yet - show a friendly message instead
         if item and getattr(item, "archive_path", None):
             self.command_label.configure(
-                text=f"{item.name} - archive will be extracted before compression starts.")
+                text=tr("{name} - archive will be extracted before compression starts.", name=item.name))
             return
         src = self.source_var.get().strip()
         if not item and src and Path(src).exists():
@@ -12143,7 +12163,7 @@ class App:
         self.update_queue_box()
         self.log("WARN", f"Out of memory - retrying {item.name} with {new_cpu} CPU core(s) "
                          f"(attempt {tries + 1}/{MAX_RETRIES}).")
-        self.status_update("Retrying", f"Out of memory - retrying with {new_cpu} core(s)…",
+        self.status_update("Retrying", tr("Out of memory - retrying with {new_cpu} core(s)…", new_cpu=new_cpu),
                            "Retrying", 0, 0, " - ", " - ", " - ")
         self._batch_running = True   # keep the loop alive even for a single-game run
         self.root.after(800, self._batch_auto_start)
@@ -12454,8 +12474,8 @@ class App:
                 return
             n = len(targets)
             listing = "\n".join(f"  • {p}" for p in targets[:8]) + ("\n  • …" if n > 8 else "")
-            msg = (f"Found ~{format_size(total)} of leftover working data from a previous "
-                   f"run in {n} folder(s):\n\n{listing}\n\nDelete it now to reclaim the space?")
+            msg = (tr("Found ~{total} of leftover working data from a previous run in {n} "
+                     "folder(s):\n\n{listing}\n\nDelete it now to reclaim the space?", total=format_size(total), n=n, listing=listing))
             if not messagebox.askyesno("Reclaim leftover temp space?", msg):
                 return
 
@@ -12505,9 +12525,9 @@ class App:
                 freed += sz
             except Exception:
                 errors += 1
-        msg = f"Auto-cleared temp: freed {format_size(freed)}"
+        msg = tr("Auto-cleared temp: freed {freed}", freed=format_size(freed))
         if errors:
-            msg += f" ({errors} item(s) could not be removed)"
+            msg += tr(" ({errors} item(s) could not be removed)", errors=errors)
         self.log("OK", msg)
 
     # ── Feature 4: Batch auto-advance ─────────────────────────────────────────
@@ -12519,7 +12539,7 @@ class App:
         extra = "".join(f"  ·  {n} {w}" for n, w in ((self._batch_done, "done"), (self._batch_failed, "failed")) if n)
         frac, eta = getattr(self, "_all_frac", None), getattr(self, "_all_eta", None)
         if frac is not None:
-            extra += f"  ·  {int(frac * 100)} % of all" + (f", {self._fmt_left(eta)}" if eta is not None else "")
+            extra += tr("  ·  {v} % of all", v=int(frac * 100)) + (f", {self._fmt_left(eta)}" if eta is not None else "")
         line = f"Job {current} of {self._batch_total}{extra}"
         if getattr(self, "_pause_requested", False):
             line += "  ·  pauses after this job"
@@ -12550,15 +12570,14 @@ class App:
         label, folder, need, free = short
         kind = "output" if label.startswith("Output") else "temp"
         drive = _drive_name(folder)
-        item._skip_reason = f"{kind} drive full: {drive} needs ~{format_size(need)}, {format_size(free)} free"
+        item._skip_reason = tr("{kind} drive full: {drive} needs ~{need}, {free} free", kind=kind, drive=drive, need=format_size(need), free=format_size(free))
         self.log("WARN", f"{kind.capitalize()} drive full: {name} skipped, {drive} needs ~{format_size(need)} "
                          f"and has {format_size(free)} free (policy: skip).")
         to = getattr(item, "chain_to", None) or {"fpkg-build": "pkg", "copy": "copy"}.get(
             getattr(item, "operation", "pack")) or ("ffpfsc" if getattr(item, "output_compressed", True) else "ffpfs")
         what = (" for the copy" if to in ("copy", "organize") else " for the folder" if to == "folder"
-                else f" for the .{to}") if kind == "output" else ""
-        line = (f"{name} was skipped. {drive[:1].upper() + drive[1:]} needs about {format_size(need)}{what} "
-                f"and has {format_size(free)} free.")
+                else tr(" for the .{to}", to=to)) if kind == "output" else ""
+        line = (tr("{name} was skipped. {v} needs about {need}{what} and has {free} free.", name=name, v=drive[:1].upper() + drive[1:], need=format_size(need), what=what, free=format_size(free)))
         win = getattr(self, "_space_skip_win", None)
         try:
             if win is None or not win.winfo_exists():
@@ -12799,7 +12818,7 @@ class App:
         # itself; a folder as source means a single game, so the parent is what Rescan uses.
         folder = Path(last_dir) if last_dir else (Path(last).parent if Path(last).is_file() else Path(last).parent)
         if not folder.is_dir():
-            messagebox.showerror("Rescan", f"The last source folder is gone:\n{folder}")
+            messagebox.showerror("Rescan", tr("The last source folder is gone:\n{folder}", folder=folder))
             return
         tpl = (settings.get("rescan_template") or {})
         if not tpl.get("to"):
@@ -12970,10 +12989,10 @@ class App:
             return "about a minute left"
         mins = int(round(secs / 60.0))
         if mins < 60:
-            return f"about {mins} min left"
+            return tr("about {mins} min left", mins=mins)
         mins = int(round(mins / 5.0)) * 5                  # five-minute steps beyond an hour
         h, m = divmod(mins, 60)
-        return f"about {h} h {m:02d} min left" if m else f"about {h} h left"
+        return tr("about {h} h {m:02d} min left", h=h, m=m) if m else f"about {h} h left"
 
     def _all_jobs_line(self) -> str:
         frac = getattr(self, "_all_frac", None)
@@ -12981,7 +13000,7 @@ class App:
             return ""
         eta = getattr(self, "_all_eta", None)
         left = self._fmt_left(eta) if eta is not None else "estimating the time left…"
-        return f"All jobs  {int(frac * 100)} %   ·   {left}"
+        return tr("All jobs  {v} %   ·   {left}", v=int(frac * 100), left=left)
 
     def _show_all_progress(self) -> None:
         """The foot of the queue list while the queue runs: the share of the whole run that
@@ -12993,7 +13012,7 @@ class App:
                     self._all_box.grid_remove()
                 return
             eta = getattr(self, "_all_eta", None)
-            left = f"All jobs  {int(frac * 100)} %"
+            left = tr("All jobs  {v} %", v=int(frac * 100))
             right = self._fmt_left(eta) if eta is not None else "estimating the time left…"
             if self._all_left_var.get() != left:
                 self._all_left_var.set(left)
@@ -13017,7 +13036,7 @@ class App:
             n, total = st["done"], st["total"]
             last = st["made"][-1] if st["made"] else None
             name = (getattr(last, "display_name", None) or getattr(last, "name", "")) if last else ""
-            self._add_label_var.set(f"Adding jobs…  {n} of {total}" + (f"   ·   {name}" if name else ""))
+            self._add_label_var.set(tr("Adding jobs…  {n} of {total}", n=n, total=total) + (f"   ·   {name}" if name else ""))
             self._add_bar.set(n / total if total else 0)
             self._add_box.grid()
         except Exception:
@@ -13144,7 +13163,7 @@ class App:
             item.size = on_disk
         if not changed and int(getattr(item, "extracted_size", 0) or 0) > 0 and not getattr(item, "archive_problem", ""):
             return True
-        self.status_update("Reading", f"Reading the headers of {first.name}…", "Scanning Files", 0, 0,
+        self.status_update("Reading", tr("Reading the headers of {name}…", name=first.name), "Scanning Files", 0, 0,
                            "00:00", " - ", " - ", side=True)
         try:
             self.root.update_idletasks()
@@ -13169,7 +13188,7 @@ class App:
             return True
         if state == "damaged":
             item.archive_problem = problem
-            note = f"The archive cannot be read: {problem}"
+            note = tr("The archive cannot be read: {problem}", problem=problem)
             self._ensure_batch_started()        # the jobs after this one still run
             self._retire_failed(item, "Failed", note)
             self.log("ERROR", f"{name}: not started. {note}. Once the set is complete, Retry runs it.")
@@ -13182,7 +13201,7 @@ class App:
                 self._batch_running = False
                 self.start_btn.configure(state="normal")
                 self.cancel_btn.configure(state="disabled")
-                self.status_update("Ready", f"Not started: {note}", "Ready", 0, 0, "00:00", " - ", " - ")
+                self.status_update("Ready", tr("Not started: {note}", note=note), "Ready", 0, 0, "00:00", " - ", " - ")
                 self._queue_finished()
             return False
         return True                              # unknown: the extraction step reports what it finds
@@ -13317,7 +13336,7 @@ class App:
                     _sz = _build_size_of(item)
                     if getattr(item, "_image_only_on_temp", False):
                         need = estimate_image_space_needed(_sz)
-                        kind = f"image on {temp_drive_label(Path(bt))} (spool auto-routed)"
+                        kind = tr("image on {v} (spool auto-routed)", v=temp_drive_label(Path(bt)))
                     else:
                         need = estimate_peak_space_needed(_sz, _peak_factor_for(item), same_drive(Path(bt), od))
                         kind = "full scratch"
@@ -13554,20 +13573,20 @@ class App:
             pct = int(done * 100 / total) if total else 100
             if pct >= last[0] + 10:
                 last[0] = pct - pct % 10
-                results.put(("PROGRESS", f"Moving the source: {last[0]}%"))
+                results.put(("PROGRESS", tr("Moving the source: {v}%", v=last[0])))
 
         def work():
             try:
                 where = aj.apply(act, srcs, dest=dest, on_progress=progress)
                 if act == aj.TRASH:
-                    msg = (f"Moved {what} of {name} to the {TRASH_NAME} ({format_size(size)}; it frees the space once "
-                           f"the {TRASH_NAME} is emptied): {names}.")
-                    item._after_result = ("done", f"{what} was moved to the {TRASH_NAME}.")
+                    msg = (tr("Moved {what} of {name} to the {TRASH_NAME} ({size}; it frees the space once the "
+                             "{TRASH_NAME} is emptied): {names}.", what=what, name=name, TRASH_NAME=TRASH_NAME, size=format_size(size), names=names))
+                    item._after_result = ("done", tr("{what} was moved to the {TRASH_NAME}.", what=what, TRASH_NAME=TRASH_NAME))
                 elif act == aj.MOVE:
                     msg = f"Moved {what} of {name} to {dest}: " + ", ".join(Path(w).name for w in where) + "."
-                    item._after_result = ("done", f"{what} was moved to {dest}.")
+                    item._after_result = ("done", tr("{what} was moved to {dest}.", what=what, dest=dest))
                 else:
-                    msg = f"Deleted the source of {name} ({format_size(size)} freed): {names}."
+                    msg = tr("Deleted the source of {name} ({size} freed): {names}.", name=name, size=format_size(size), names=names)
                     item._after_result = ("done", "the source was deleted.")
                 results.put(("SUCCESS", msg))
                 # Nothing empty left behind: a Delete takes the release folder too when only
@@ -13576,15 +13595,14 @@ class App:
                 left = {Path(t).parent for t in srcs}
                 rel = info.get("release")
                 if act == aj.DELETE and rel is not None and aj.sweep_sidecars(rel, keep_dirs):
-                    results.put(("INFO", f"Removed the release folder {rel.name}: only notes, checksums "
-                                         f"or pictures were left in it."))
+                    results.put(("INFO", tr("Removed the release folder {name}: only notes, checksums or pictures were left in it.", name=rel.name)))
                     left.add(Path(rel).parent)
                 gone = aj.prune_empty_dirs(left, keep_dirs)
                 if gone:
                     results.put(("INFO", "Removed empty folder(s): " + ", ".join(str(g) for g in gone) + "."))
             except Exception as e:
                 item._after_result = ("failed", str(e))
-                results.put(("WARN", f"After the job: {name}: {e}. Whatever was not handled stays where it is."))
+                results.put(("WARN", tr("After the job: {name}: {e}. Whatever was not handled stays where it is.", name=name, e=e)))
             results.put(None)
 
         def poll():
@@ -13611,7 +13629,7 @@ class App:
         then = then or (lambda done: None)
         name = getattr(item, "display_name", None) or item.name
         item._output_there = True
-        note = f"Its output is already there: {hit}" if hit else (hit_note or "Its output is already there.")
+        note = tr("Its output is already there: {hit}", hit=hit) if hit else (hit_note or "Its output is already there.")
         self._retire_failed(item, "Skipped", note)
         act = getattr(item, "after_source", None) or "keep"
         if hit is None or act == "keep":
@@ -13621,14 +13639,14 @@ class App:
         def after():
             res = getattr(item, "_after_result", None) or ("failed", "")
             if res[0] == "done":
-                self._retire_failed(item, "Done", f"Its output was already there ({Path(hit).name}); {res[1]}")
+                self._retire_failed(item, "Done", tr("Its output was already there ({name}); {v}", name=Path(hit).name, v=res[1]))
                 self.log("SUCCESS", f"{name}: its output was already there; {res[1]} Marked Done.")
                 if self.auto_remove_done_var.get() and item in self.queue:
                     self.queue.remove(item)
                 self.update_queue_box()
                 then(True)
             else:
-                self._retire_failed(item, "Skipped", f"{note}; the source stays: {res[1]}")
+                self._retire_failed(item, "Skipped", tr("{note}; the source stays: {v}", note=note, v=res[1]))
                 self.update_queue_box()
                 then(False)
         import types as _t
@@ -13664,10 +13682,10 @@ class App:
                     shutil.move(str(staged), str(dest))
                     if staged.parent.name.startswith("patch-backup-"):
                         shutil.rmtree(staged.parent, ignore_errors=True)
-                    results.put(("INFO", f"Kept the original files the patch replaced, with a README, in {dest}."))
+                    results.put(("INFO", tr("Kept the original files the patch replaced, with a README, in {dest}.", dest=dest)))
             except Exception as e:
-                results.put(("WARN", f"The original files the patch replaced could not be moved beside the "
-                                     f"output ({e}); they are still in {staged}."))
+                results.put(("WARN", tr("The original files the patch replaced could not be moved beside the output ({e}); they "
+                                       "are still in {staged}.", e=e, staged=staged)))
             results.put(None)
 
         def poll():
@@ -13784,7 +13802,7 @@ class App:
         aj = _after_job_module()
         total, done, fail = self._batch_total, self._batch_done, self._batch_failed
         if self.notify_var.get() == "queue" or (self.notify_var.get() == "job" and total > 1):
-            aj.notify("PS5 UltraPack", f"Queue finished: {done} of {total} done" + (f", {fail} failed" if fail else ""))
+            aj.notify("PS5 UltraPack", tr("Queue finished: {done} of {total} done", done=done, total=total) + (f", {fail} failed" if fail else ""))
         act = self.after_queue_var.get()
         if act not in ("sleep", "quit"):
             return
@@ -13817,13 +13835,10 @@ class App:
         done  = self._batch_done
         fail  = self._batch_failed
         self.batch_counter_var.set(
-            f"Queue finished  ·  {done} of {total} done" + (f"  ·  {fail} failed" if fail else "")
+            tr("Queue finished  ·  {done} of {total} done", done=done, total=total) + (f"  ·  {fail} failed" if fail else "")
         )
         msg = (
-            f"Batch finished.\n\n"
-            f"Total items:  {total}\n"
-            f"Successful:   {done}\n"
-            f"Failed:       {fail}\n"
+            tr("Batch finished.\n\nTotal items:  {total}\nSuccessful:   {done}\nFailed:       {fail}\n", total=total, done=done, fail=fail)
         )
         if fail == 0:
             self.log("SUCCESS", f"Batch complete - all {total} item(s) processed successfully.")
@@ -14053,8 +14068,8 @@ class App:
                     if stale_size > 1024 * 1024 * 1024:
                         keep_running = messagebox.askyesno(
                             "Temporary data found",
-                            f"Found {format_size(stale_size)} of old temporary data in:\n{temp_dir}\n\n"
-                            "Continue anyway?\n\nChoose No to manually delete old temp folders first."
+                            tr("Found {stale_size} of old temporary data in:\n{temp_dir}\n\nContinue anyway?\n\nChoose No to "
+                              "manually delete old temp folders first.", stale_size=format_size(stale_size), temp_dir=temp_dir)
                         )
                         if not keep_running:
                             return
@@ -14171,7 +14186,7 @@ class App:
         try:
             targets = [q for p in temp_dir.iterdir() if _ours(p) for q in removable_parts(p, keep)]
         except Exception as e:
-            messagebox.showerror("Error", f"Cannot read the temp folder:\n{e}")
+            messagebox.showerror("Error", tr("Cannot read the temp folder:\n{e}", e=e))
             return
         size = sum(get_folder_size(p) for p in targets)
         if not targets or size == 0:
@@ -14180,26 +14195,25 @@ class App:
         listing = "\n".join(f"  • {p.name}" for p in targets[:8]) + ("\n  • …" if len(targets) > 8 else "")
         ok = messagebox.askyesno(
             "Clear Temp Files",
-            f"Delete this app's working data inside:\n{temp_dir}\n\n{listing}\n\n"
-            f"Size to free: {format_size(size)}\n\n"
-            "Other files in that folder are left alone. Continue?"
+            tr("Delete this app's working data inside:\n{temp_dir}\n\n{listing}\n\nSize to free: "
+              "{size}\n\nOther files in that folder are left alone. Continue?", temp_dir=temp_dir, listing=listing, size=format_size(size))
         )
         if not ok:
             return
         try:
             for p in targets:
                 shutil.rmtree(str(p), ignore_errors=True)
-            messagebox.showinfo("Clear Temp", f"Temp folder cleared. Freed {format_size(size)}.")
+            messagebox.showinfo("Clear Temp", tr("Temp folder cleared. Freed {size}.", size=format_size(size)))
             self.log("OK", f"Temp folder cleared: {temp_dir} ({format_size(size)} freed)")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to clear temp folder:\n{e}")
+            messagebox.showerror("Error", tr("Failed to clear temp folder:\n{e}", e=e))
 
     def export_diagnostics(self):
         zip_path = export_diagnostic_zip(last_cmd=self._last_cmd_str)
         if zip_path and zip_path.exists():
             ok = messagebox.askyesno(
                 "Diagnostic Package",
-                f"Diagnostic ZIP saved to:\n{zip_path}\n\nOpen folder?"
+                tr("Diagnostic ZIP saved to:\n{zip_path}\n\nOpen folder?", zip_path=zip_path)
             )
             if ok:
                 open_path(APP_DIR)
@@ -14371,7 +14385,8 @@ class App:
             total_gb = mem.total / 1024**3
             pct = mem.percent
             tok = "faint" if pct < 70 else "warning" if pct < 85 else "danger"
-            self.ram_var.set(f"RAM: {avail_gb:.1f} of {total_gb:.0f} GB free")
+            self.ram_var.set(tr("RAM: {avail} of {total} GB free", avail=i18n.number(f"{avail_gb:.1f}"),
+                                  total=f"{total_gb:.0f}"))
             try:
                 self._ram_label.configure(fg=self.kit.c(tok))
             except Exception:
@@ -14429,10 +14444,10 @@ class App:
                 if status == "rescan-found":
                     folder = payload["folder"]; sources = payload["sources"]; tpl = payload["tpl"]
                     scanned, skipped = payload.get("scanned", 0), payload.get("skipped", 0)
-                    tail = (f" ({skipped} already queued, done or in the output folder)" if skipped else "")
+                    tail = (tr(" ({skipped} already queued, done or in the output folder)", skipped=skipped) if skipped else "")
                     if not sources:
-                        msg = (f"Nothing new in {folder}{tail}." if scanned
-                               else f"Rescan found no sources in {folder}.")
+                        msg = (tr("Nothing new in {folder}{tail}.", folder=folder, tail=tail) if scanned
+                               else tr("Rescan found no sources in {folder}.", folder=folder))
                         self.log("INFO", msg)
                         self.status_update("Ready", msg, "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                     else:
@@ -14441,7 +14456,7 @@ class App:
                     continue
                 if status == "rescan-error":
                     self.log("ERROR", f"Rescan failed: {payload}")
-                    self.status_update("Error", f"Rescan failed: {payload}", "Error", 0, 0, "00:00", " - ", " - ", side=True)
+                    self.status_update("Error", tr("Rescan failed: {payload}", payload=payload), "Error", 0, 0, "00:00", " - ", " - ", side=True)
                     continue
                 if status == "archive":
                     item = payload
@@ -14449,7 +14464,7 @@ class App:
                     self.update_queue_box(select_item=item)
                     self.log("OK", f"Archive queued: {item.archive_path.name}  [{format_size(item.size)}]")
                     self.status_update("Ready",
-                                        f"Archive queued - will extract when compression starts: {item.archive_path.name}",
+                                        tr("Archive queued - will extract when compression starts: {name}", name=item.archive_path.name),
                                         "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                     # If the header is encrypted and no saved password worked, ask now - so
                     # the auto routing knows the real extracted size and can use the SSD.
@@ -14462,7 +14477,7 @@ class App:
                     item = payload
                     self.queue.append(item)
                     self.update_queue_box(select_item=item)   # applies the remembered format (may make it an fPKG job)
-                    self.status_update("Ready", f"{item.title_id} added to queue.",
+                    self.status_update("Ready", tr("{title_id} added to queue.", title_id=item.title_id),
                                         "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                     _as = "  → fPKG (.pkg)" if getattr(item, "operation", "pack") == "fpkg-build" else ""
                     self.log("OK", f"Added {item.title_id} | {item.name} | {format_size(item.size)}{_as}")
@@ -14479,16 +14494,15 @@ class App:
                         preview += f"\n  … and {count - 12} more"
                     proceed = count == 1 or messagebox.askyesno(
                         f"Found {count} Games",
-                        f"Found {count} game folder(s):\n\n{preview}\n\n"
-                        f"Convert all {count}? Each keeps its own folder at the destination, "
-                        "with any extras/DLCs next to the .ffpfsc."
+                        tr("Found {count} game folder(s):\n\n{preview}\n\nConvert all {count}? Each keeps its own "
+                          "folder at the destination, with any extras/DLCs next to the .ffpfsc.", count=count, preview=preview)
                     )
                     if proceed:
                         for it in items:
                             self.queue.append(it)
                         self.update_queue_box(select_item=items[0] if items else None)
                         self.log("OK", f"Queued {count} game folder(s) - each mirrored at the destination.")
-                        self.status_update("Ready", f"{count} game(s) added to queue.",
+                        self.status_update("Ready", tr("{count} game(s) added to queue.", count=count),
                                             "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                         if self.pending_start:
                             self.pending_start = False
@@ -14506,12 +14520,11 @@ class App:
                         preview += f"\n  … and {count - 10} more"
                     ok = messagebox.askyesno(
                         f"Found {count} Games",
-                        f"Found {count} PS5 game folder(s):\n\n{preview}\n\n"
-                        f"Add all {count} to the queue?"
+                        tr("Found {count} PS5 game folder(s):\n\n{preview}\n\nAdd all {count} to the queue?", count=count, preview=preview)
                     )
                     if ok:
                         self.log("INFO", f"Queuing {count} games…")
-                        self.status_update("Scanning", f"Adding {count} games to queue…",
+                        self.status_update("Scanning", tr("Adding {count} games to queue…", count=count),
                                             "Scanning Files", 0, 0, "00:00", " - ", " - ", side=True)
                         def _add_all(paths=games):
                             for gpath in paths:
@@ -14533,9 +14546,8 @@ class App:
                         preview += f"\n  … and {count - 10} more"
                     ok = messagebox.askyesno(
                         f"Found {count} Disk Image{'s' if count > 1 else ''}",
-                        f"Found {count} disk image(s) (.exfat / .ffpkg):\n\n{preview}\n\n"
-                        f"Add all {count} to the queue?\n"
-                        "(Each image will be compressed directly - no extraction needed.)"
+                        tr("Found {count} disk image(s) (.exfat / .ffpkg):\n\n{preview}\n\nAdd all {count} to the "
+                          "queue?\n(Each image will be compressed directly - no extraction needed.)", count=count, preview=preview)
                     )
                     if ok:
                         for img in image_list:
@@ -14544,7 +14556,7 @@ class App:
                             lbl = "exFAT" if img.suffix.lower() == ".exfat" else "ffpkg"
                             self.log("OK", f"{lbl} image queued: {img.name}")
                         self.update_queue_box()
-                        self.status_update("Ready", f"{count} disk image(s) added to queue.",
+                        self.status_update("Ready", tr("{count} disk image(s) added to queue.", count=count),
                                             "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                         if self.pending_start:
                             self.pending_start = False
@@ -14562,9 +14574,8 @@ class App:
                         preview += f"\n  … and {count - 10} more"
                     ok = messagebox.askyesno(
                         f"Found {count} Archive{'s' if count > 1 else ''}",
-                        f"Found {count} archive file(s):\n\n{preview}\n\n"
-                        f"Add all {count} to the queue?\n"
-                        "(Each archive will be extracted when it is its turn.)"
+                        tr("Found {count} archive file(s):\n\n{preview}\n\nAdd all {count} to the queue?\n(Each archive "
+                          "will be extracted when it is its turn.)", count=count, preview=preview)
                     )
                     if ok:
                         added = []
@@ -14580,7 +14591,7 @@ class App:
                         for it in added:
                             self._resolve_archive_password(it)
                         self.update_queue_box()
-                        self.status_update("Ready", f"{count} archive(s) added to queue.",
+                        self.status_update("Ready", tr("{count} archive(s) added to queue.", count=count),
                                             "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                         if self.pending_start:
                             self.pending_start = False
@@ -14597,8 +14608,8 @@ class App:
                         preview += f"\n  … and {count - 10} more"
                     ok = messagebox.askyesno(
                         f"Found {count} PFS Image{'s' if count > 1 else ''}",
-                        f"Found {count} .ffpfs/.ffpfsc image(s):\n\n{preview}\n\n"
-                        f"Add all {count} to the queue for extraction?"
+                        tr("Found {count} .ffpfs/.ffpfsc image(s):\n\n{preview}\n\nAdd all {count} to the queue for "
+                          "extraction?", count=count, preview=preview)
                     )
                     if ok:
                         for image in images:
@@ -14606,7 +14617,7 @@ class App:
                             self.queue.append(item)
                             self.log("OK", f"PFS image queued for extraction: {image.name}")
                         self.update_queue_box()
-                        self.status_update("Ready", f"{count} PFS image(s) added to queue.",
+                        self.status_update("Ready", tr("{count} PFS image(s) added to queue.", count=count),
                                             "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                         if self.pending_start:
                             self.pending_start = False

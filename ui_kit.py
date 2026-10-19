@@ -9,6 +9,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from collections import OrderedDict
 from types import SimpleNamespace
+from i18n import t as _t  # canvas texts are measured in the interface language
 
 # ── Palette ──────────────────────────────────────────────────────────────────────────
 # A PlayStation-like blue carries the one primary action and the selection. Green means
@@ -156,7 +157,7 @@ class _Font(tkfont.Font):
     """A font sized in device pixels that measures in logical ones, like the canvases."""
 
     def measure(self, text, displayof=None):
-        w = super().measure(text, displayof)
+        w = super().measure(_t(text) if isinstance(text, str) else text, displayof)   # as Tk will show it
         return w if SCALE == 1 else round(w / SCALE)
 
     def metrics(self, *options, **kw):
@@ -713,6 +714,7 @@ def truncate(font: tkfont.Font, text: str, max_w: int) -> str:
     """*text* shortened with an ellipsis so it fits into *max_w* points."""
     if max_w <= 0:
         return ""
+    text = _t(text)
     if font.measure(text) <= max_w:
         return text
     lo, hi = 0, len(text)

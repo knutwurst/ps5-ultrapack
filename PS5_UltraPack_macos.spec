@@ -88,6 +88,8 @@ a = Analysis(
     hiddenimports=cryptography_hiddenimports + [
         "ultra_core",   # the Tk-free core next to the app script
         "ui_kit",       # the main window widgets next to the app script
+        "i18n",         # the interface language
+        "i18n_de",      # German texts (imported when German is chosen)
         "py7zr",
         "py7zr.helpers",
         "py7zr.compressor",

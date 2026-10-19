@@ -17,6 +17,7 @@ import zipfile
 import zlib
 from pathlib import Path
 from typing import NamedTuple
+from i18n import t as tr, number  # interface texts (English unless German is chosen)
 
 
 def _bundled_backend_dir() -> Path:
@@ -97,7 +98,7 @@ def format_size(num) -> str:
         return " - "
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if num < 1024 or unit == "TB":
-            return f"{num:.2f} {unit}" if unit != "B" else f"{num:.0f} {unit}"
+            return number(f"{num:.2f} {unit}" if unit != "B" else f"{num:.0f} {unit}")
         num /= 1024
 
 
@@ -192,7 +193,7 @@ def drive_display_name(path, system: str = "the system drive") -> str:
             pass
         return f"{letter} ({label})" if label else letter
     parts = p.parts
-    return parts[2] if len(parts) > 2 and parts[1] == "Volumes" else system
+    return parts[2] if len(parts) > 2 and parts[1] == "Volumes" else tr(system)
 
 
 def _existing_ancestor(path: Path) -> Path:
@@ -582,20 +583,20 @@ def chain_summary(item) -> str:
     parts: list[str] = []
     for c in chain_changes(item):
         if c.startswith("backport "):
-            parts.append("backport to " + c.split(" ", 1)[1])
+            parts.append(tr("backport to {target}", target=c.split(" ", 1)[1]))
         else:
-            parts.append({"patch": "integrate patch", "sign": "sign"}.get(c, c))
+            parts.append(tr({"patch": "integrate patch", "sign": "sign"}.get(c, c)))
     if not parts:
         if kind == to == "folder":
             return "Nothing to do"
         if kind == to:
             return "Copy or move (same format)"
-        return "Unpack to folder" if to == "folder" else f"Build {label}"
+        return "Unpack to folder" if to == "folder" else tr("Build {label}", label=label)
     head = ", ".join(parts)
     head = head[0].upper() + head[1:]
     if to == "folder":
-        return f"{head} in place" if kind == "folder" else f"{head}, then unpack to folder"
-    return f"{head}, then build {label}"
+        return tr("{head} in place", head=head) if kind == "folder" else tr("{head}, then unpack to folder", head=head)
+    return tr("{head}, then build {label}", head=head, label=label)
 
 
 def estimate_peak_space_needed(extracted_size: int, factor: float = ARCHIVE_PEAK_FACTOR,
@@ -813,7 +814,7 @@ def _space_report(item, temp_dir, out_dir, temp_fs="", out_fs=""):
     rows.append(("Output Filesystem", out_fs or " - ", _fs_status(out_fs)))
     if short is None:
         return rows, True, "✓  Enough space to proceed."
-    return rows, False, f"⚠  {short}: not enough free space - the run would fail."
+    return rows, False, tr("⚠  {short}: not enough free space - the run would fail.", short=short)
 
 
 def get_folder_size(path: Path) -> int:
@@ -2658,9 +2659,9 @@ class ArchiveExtractor:
         when the set has a gap. Empty when *msg* is no known damage code."""
         gaps = ArchiveExtractor.volume_gaps(archive) if archive is not None else []
         if gaps:
-            return (f"{len(gaps)} part{'s' if len(gaps) != 1 else ''} of the set "
-                    f"{'are' if len(gaps) != 1 else 'is'} missing ({', '.join(gaps[:3])}"
-                    f"{', …' if len(gaps) > 3 else ''})")
+            names = ", ".join(gaps[:3]) + (", …" if len(gaps) > 3 else "")
+            return tr("1 part of the set is missing ({names})" if len(gaps) == 1 else
+                     "{n} parts of the set are missing ({names})", n=len(gaps), names=names)
         m = re.search(r"\berror (\d+)\b", msg or "", re.I)
         code = int(m.group(1)) if m else None
         return ArchiveExtractor._RAR_DAMAGE.get(code, "")
@@ -2693,7 +2694,7 @@ class ArchiveExtractor:
                     with zipfile.ZipFile(archive, "r") as zf:
                         return "open", sum(int(getattr(zi, "file_size", 0) or 0) for zi in zf.infolist()), ""
                 except zipfile.BadZipFile as e:
-                    return "damaged", 0, f"it is not a readable ZIP ({e}): damaged or incomplete"
+                    return "damaged", 0, tr("it is not a readable ZIP ({e}): damaged or incomplete", e=e)
             if suffix == ".rar":
                 resolved = ArchiveExtractor._first_volume(archive)
                 backend_dir = backend_base_dir()
@@ -3047,7 +3048,7 @@ class ArchiveExtractor:
                     "(error 22 = no password given, 24 = wrong password)")
         damage = ArchiveExtractor.rar_damage_reason(msg, archive)
         if damage:
-            return f"{damage} - download the set again, or check that every part is complete"
+            return tr("{damage} - download the set again, or check that every part is complete", damage=damage)
         if ("read header failed" in low or "failed to open" in low or "missing" in low or "volume" in low):
             return ("a volume of this multi-part RAR is missing, incomplete, or it was "
                     "opened on the wrong part - make sure every .partN.rar (or .rNN) file "
@@ -3284,7 +3285,7 @@ class ArchiveExtractor:
                                     pass
                         pct = min(99, int(100 * total / expected_total))
                         gb = total / (1024 ** 3)
-                        progress_fn(pct, f"  ({gb:.1f} GB extracted)")
+                        progress_fn(pct, tr("  ({gb:.1f} GB extracted)", gb=gb))
                     except Exception:
                         pass
                     if stop_evt.wait(5):

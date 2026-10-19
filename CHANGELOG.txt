@@ -3,6 +3,23 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.2.10  (in progress)
+────────────────────────────────────────────────────────────────────────
+
+LANGUAGE
+
+  - The interface speaks English and German. Settings › General ›
+    Interface › Language picks it; it takes effect after a restart.
+  - i18n.py looks texts up (tr, plural) and translates every static
+    text where it reaches Tk (labels, buttons, menus, canvas text,
+    window titles, message boxes, file dialogs), so English words the
+    code also uses as values keep working. i18n_de.py holds the German
+    texts; backend/tests/test_i18n.py checks that every translated text
+    has an entry and that no entry asks for a value the code does not
+    pass. The log stays English.
+  - Sizes read 12,5 GB in German.
+
+────────────────────────────────────────────────────────────────────────
   v2.2.9  (current)
 ────────────────────────────────────────────────────────────────────────
 
