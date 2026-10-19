@@ -467,8 +467,11 @@ def _peak_factor_for(item) -> float:
 
 
 # ── chain job helpers (Tk-free; the job dialog and the queue row both use them) ──
-CHAIN_TARGETS = ("folder", "ffpfs", "ffpfsc", "pkg")
-CHAIN_TARGET_LABEL = {"folder": "folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "pkg": ".pkg"}
+CHAIN_TARGETS = ("folder", "ffpfs", "ffpfsc", "pkg", "exfat")
+CHAIN_TARGET_LABEL = {"folder": "folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "pkg": ".pkg", "exfat": ".exfat"}
+# LZ4 asset packs (ampr_emu) go into these outputs only: an .ffpfsc compresses them again and
+# reads slower, a .ffpfs on USB mounts without the fast path, a .pkg uses Kraken anyway
+LZ4_TARGETS = ("folder", "exfat")
 # "Organize": the source goes into the library in its own format (a copy job, see
 # GameItem.content_kind); not a chain target, the job dialog offers it beside them.
 ORGANIZE_TARGET = "organize"
@@ -544,7 +547,7 @@ def is_backport_target(name) -> bool:
 
 
 def chain_changes(item) -> list[str]:
-    """The content changes a chain job applies, in backend order: patch → backport → sign."""
+    """The content changes a chain job applies, in backend order: patch → backport → sign → lz4."""
     out: list[str] = []
     if getattr(item, "patch_source", None):
         out.append("patch")
@@ -552,6 +555,8 @@ def chain_changes(item) -> list[str]:
         out.append(f"backport {item.backport_target}")
     if getattr(item, "chain_sign", False):
         out.append("sign")
+    if getattr(item, "chain_lz4", False):
+        out.append("lz4")
     return out
 
 
@@ -565,7 +570,7 @@ def chain_needs_unpack(item) -> bool:
     if chain_changes(item):
         return True
     native = {"ffpfs": {"exfat", "ffpkg", "ffpfs"}, "ffpfsc": {"exfat", "ffpkg", "ffpfs"},
-              "pkg": {"ffpfs", "ffpfsc", "exfat", "ffpkg"}}
+              "pkg": {"ffpfs", "ffpfsc", "exfat", "ffpkg"}, "exfat": set()}
     return kind not in native.get(to, set())
 
 
@@ -585,7 +590,7 @@ def chain_summary(item) -> str:
         if c.startswith("backport "):
             parts.append(tr("backport to {target}", target=c.split(" ", 1)[1]))
         else:
-            parts.append(tr({"patch": "integrate patch", "sign": "sign"}.get(c, c)))
+            parts.append(tr({"patch": "integrate patch", "sign": "sign", "lz4": "pack with LZ4"}.get(c, c)))
     if not parts:
         if kind == to == "folder":
             return "Nothing to do"
@@ -739,6 +744,16 @@ def _space_needs(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, i
             return [("Output drive (copy on the same drive)", out_dir, int(size * 1.02))]
         # Streamed through a .copy-tmp then os.replace (no doubling); 1.02x slack.
         return [("Output drive", out_dir, int(size * 1.02))]
+    if getattr(item, "operation", "") == "chain" and getattr(item, "chain_to", None) == "exfat":
+        # the game is unpacked (a container) or copied (LZ4 never changes the user's folder)
+        # into scratch first; LZ4 packs sit beside the originals until they are checked.
+        # The image is about the size of what goes in.
+        lz4 = bool(getattr(item, "chain_lz4", False))
+        work = 0
+        if chain_needs_unpack(item) or lz4 or getattr(item, "archive_path", None):
+            work = int(size * (2.0 if lz4 else 1.02))
+        image = int(size * 1.02) + (64 << 20)
+        return ([("Temp drive (whole scratch)", temp_dir, work)] if work else []) + [("Output drive", out_dir, image)]
     if _item_is_single_pass(item):
         return [("Output drive", out_dir, out_final)]
     if getattr(item, "_extract_on_pool", False):
@@ -3814,6 +3829,8 @@ class GameItem:
     backport_libs_root = None  # str: folder of user-supplied patched sprx dropped into fakelib/
     chain_to = None         # chain job: "folder" | "ffpfs" | "ffpfsc" | "pkg"
     chain_sign = False      # chain job: fake-sign executables (after patch and backport)
+    chain_lz4 = False       # chain job: LZ4 asset packs for an AMPR game (last; folder/.exfat only)
+    lz4_profile = None      # str: an ampr_pack TOML profile; None = the conservative default
     header_locked = False   # archive: no saved password opened its header when it was added
     archive_problem = ""    # archive: why it cannot be read (damaged, a part missing); no password helps
     archive_title = ""      # archive: the game read from the param.json inside, before extraction
@@ -4004,8 +4021,9 @@ class GameItem:
     @classmethod
     def from_chain(cls, source: Path, *, to: str, output_path=None,
                    sign: bool = False, patch_source=None,
-                   backport_target=None, backport_libs_root=None) -> "GameItem":
-        """The one job the job dialog produces: source → [patch → backport → sign] → *to*."""
+                   backport_target=None, backport_libs_root=None,
+                   lz4: bool = False, lz4_profile=None) -> "GameItem":
+        """The one job the job dialog produces: source → [patch → backport → sign → lz4] → *to*."""
         src = Path(source)
         suf = src.suffix.lower() if src.is_file() else ""
         if src.is_dir():
@@ -4030,6 +4048,8 @@ class GameItem:
         obj.status             = "Pending Extract" if getattr(obj, "archive_path", None) else "Queued"
         obj.chain_to           = to if to in CHAIN_TARGETS else "ffpfsc"
         obj.chain_sign         = bool(sign)
+        obj.chain_lz4          = bool(lz4) and obj.chain_to in LZ4_TARGETS
+        obj.lz4_profile        = str(lz4_profile) if (lz4_profile and obj.chain_lz4) else None
         obj.patch_source       = Path(patch_source) if patch_source else None
         obj.backport_target    = backport_target if is_backport_target(backport_target) else None
         obj.backport_libs_root = str(backport_libs_root) if backport_libs_root else None

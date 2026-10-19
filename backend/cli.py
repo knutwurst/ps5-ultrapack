@@ -2700,6 +2700,13 @@ def _chain_transforms(root: Path, args, scratch_root: Path, restorable: bool = F
     done: list[str] = []
     if args.patch or args.backport_target or getattr(args, "chain_sign", False):
         _phase("Reading Game")
+    if getattr(args, "chain_lz4", False):
+        # the packs are checked against the files: refuse a game that cannot use them before
+        # any other change is made
+        import lz4_packs
+        if lz4_packs.uses_ampr(root) is False:
+            raise RuntimeError("this game does not load through AMPR (its eboot.bin does not import "
+                               "libSceAmpr), so LZ4 asset packs cannot be used for it")
     if args.patch:
         patch_arg = Path(args.patch).resolve()
         if not patch_arg.exists():
@@ -2726,6 +2733,14 @@ def _chain_transforms(root: Path, args, scratch_root: Path, restorable: bool = F
             if counts.get("failed"):
                 raise RuntimeError(f"fake-sign reported {counts['failed']} failure(s)")
             done.append("sign")
+        if getattr(args, "chain_lz4", False):
+            import lz4_packs
+            _phase("Compressing")
+            prof = getattr(args, "lz4_profile", None)
+            lz4_packs.pack_game(root, profile=Path(prof).resolve() if prof else None,
+                                workers=int(getattr(args, "cpu_count", 0) or 0),
+                                log=lambda line: print(line, flush=True))
+            done.append("lz4")
     except Exception:
         if restorable and "patch" in done:
             # the user's folder: a later step failed, so the patch comes back out too
@@ -2738,6 +2753,50 @@ def _chain_transforms(root: Path, args, scratch_root: Path, restorable: bool = F
                       flush=True)
         raise
     return done
+
+
+def _chain_working_copy(folder: Path, scratch_root: Path) -> tuple[Path, Path]:
+    """A copy of the user's game folder in the app's scratch, for a change that must not touch
+    the original. Returns (copy, scratch folder to remove)."""
+    scratch = Path(tempfile.mkdtemp(prefix="chain-copy-", dir=str(scratch_root)))
+    dest = scratch / "game"
+    total = _tree_bytes(folder)
+    _phase("Reading Game")
+    print(f"[INFO] Copying {folder.name} to {scratch} ({_describe_drive(scratch)}) first: the source "
+          f"folder itself is not changed.", flush=True)
+    try:
+        _run_with_folder_progress(
+            lambda: shutil.copytree(folder, dest, ignore=shutil.ignore_patterns(*_JUNK_GLOBS)),
+            dest, total, "copy {done}/{total} GB")
+    except BaseException:
+        shutil.rmtree(scratch, ignore_errors=True)
+        raise
+    return dest, scratch
+
+
+def _chain_write_exfat(root: Path, out: Path, src: Path, args) -> Path:
+    """Write *root* as an exFAT image (64 KiB clusters, the size ShadowMountPlus reads fastest).
+    *out* is the image path, or a folder that gets '<source name>.exfat'. The image is written
+    next to its place first and renamed when complete."""
+    from mkpfs.exfat_writer import write_exfat_image
+    target = out if out.suffix.lower() == ".exfat" else out / f"{src.stem if src.is_file() else src.name}.exfat"
+    if target.exists() and not args.overwrite:
+        raise RuntimeError(f"Output already exists: {target}  (use --overwrite)")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.stem[:60]}.partial.exfat")
+    total = _tree_bytes(root)
+    _phase("Writing Final Image")
+    print(f"[INFO] Writing the exFAT image {target.name} on {_describe_drive(target.parent)}...", flush=True)
+    try:
+        _run_with_folder_progress(
+            lambda: write_exfat_image(root, tmp, cluster_size=65536),
+            target.parent, total, "write {done}/{total} GB",
+            measure=lambda: tmp.stat().st_size if tmp.exists() else 0)
+        os.replace(tmp, target)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return target
 
 
 @contextlib.contextmanager
@@ -2952,13 +3011,20 @@ def main() -> None:
                              "libraries are in --fw-libs-root (the words are read from them). "
                              "With --fw-libs-root the game's functions are checked first; if the "
                              "target lacks some, --backport-libs is required.")
-    parser.add_argument("--to", dest="chain_to", choices=("folder", "ffpfs", "ffpfsc", "pkg"), default=None,
+    parser.add_argument("--to", dest="chain_to", choices=("folder", "ffpfs", "ffpfsc", "pkg", "exfat"), default=None,
                         help="CHAIN: turn the SOURCE positional (folder, .zip/.rar, .exfat/.ffpkg, .ffpfs, "
                              ".ffpfsc or .pkg) into this output, applying --patch, --backport-target and "
                              "--sign on the way (in that order). One job for e.g. "
                              "'.ffpfsc → backport 7.61 → .ffpfsc'. Same format without changes = copy.")
     parser.add_argument("--sign", dest="chain_sign", action="store_true",
                         help="CHAIN: fake-sign eboot/prx/sprx after --patch and --backport-target.")
+    parser.add_argument("--lz4", dest="chain_lz4", action="store_true",
+                        help="CHAIN: put the game's data into LZ4 asset packs read by ampr_emu (games "
+                             "whose eboot.bin imports libSceAmpr), last after the other changes. Only "
+                             "with --to folder or --to exfat.")
+    parser.add_argument("--lz4-profile", type=str, default=None, metavar="TOML",
+                        help="CHAIN: ampr_pack profile choosing the packed files (default: data in "
+                             "subfolders packed; executables, modules, configs, media stay loose).")
     parser.add_argument("--backport-libs", type=str, default=None, metavar="DIR",
                         help="BACKPORT: folder holding user-supplied, PATCHED Sony system "
                              "libraries for the selected --backport-target (never bundled "
@@ -3216,12 +3282,18 @@ def main() -> None:
         kind = _chain_source_kind(src)
         wanted = [n for flag, n in ((args.patch, "patch"),
                                     (args.backport_target, f"backport {args.backport_target}"),
-                                    (args.chain_sign, "sign")) if flag]
+                                    (args.chain_sign, "sign"),
+                                    (getattr(args, "chain_lz4", False), "lz4")) if flag]
         scratch_root = _app_scratch_root(args.temp_dir)
         print(f"[INFO] CHAIN: {src.name} ({kind}) → {', '.join(wanted) or 'no changes'} → {to}", flush=True)
 
         if not wanted and kind == to == "folder":
             print("[ERROR] Nothing to do: a folder to a folder with no changes.", flush=True); sys.exit(1)
+        if getattr(args, "chain_lz4", False) and to not in ("folder", "exfat"):
+            print("[ERROR] LZ4 asset packs go into a folder or an .exfat: an .ffpfsc would compress them "
+                  "a second time and read them slower, a .ffpfs mounts from USB without the fast path, "
+                  "and an installed .pkg uses Kraken anyway.", flush=True)
+            sys.exit(2)
         if not wanted and kind == to:
             # Same container format, nothing to change: the copy job (rename on the same
             # drive, chunked copy across drives). Same switches as --copy.
@@ -3234,7 +3306,8 @@ def main() -> None:
         # An .exfat/.ffpkg holds no PFS image: for a .ffpfs it is unpacked to a folder first.
         native = {"ffpfs": {"folder", "ffpfs", "zip", "rar"},
                   "ffpfsc": {"folder", "exfat", "ffpkg", "ffpfs", "zip", "rar"},
-                  "pkg": {"folder", "ffpfs", "ffpfsc", "exfat", "ffpkg"}}
+                  "pkg": {"folder", "ffpfs", "ffpfsc", "exfat", "ffpkg"},
+                  "exfat": {"folder"}}
         root, owned = src, None
         if args.backport_target and src.is_file() and kind in ("pkg", "ffpfs", "ffpfsc"):
             # Check the backport on the executables alone before the whole game is
@@ -3259,6 +3332,9 @@ def main() -> None:
         if wanted or kind not in native.get(to, set()):
             try:
                 root, owned = _chain_materialize(src, scratch_root, args)
+                if owned is None and getattr(args, "chain_lz4", False):
+                    # the packs replace files: never in the user's own folder, always in a copy
+                    root, owned = _chain_working_copy(root, scratch_root)
                 if owned is not None:
                     args._chain_extras = _set_aside_unpacked_extras(root, owned, scratch_root)
                 if owned is None and wanted:
@@ -3273,6 +3349,18 @@ def main() -> None:
             except Exception as e:
                 _drop_chain_scratch(owned, args)
                 print(f"[ERROR] {e}", flush=True); sys.exit(1)
+
+        if to == "exfat":
+            try:
+                image = _chain_write_exfat(root, out, src, args)
+            except Exception as e:
+                _drop_chain_scratch(owned, args)
+                print(f"[ERROR] Could not write the .exfat: {e}", flush=True); sys.exit(1)
+            if owned is not None:
+                shutil.rmtree(owned, ignore_errors=True)
+            print(f"[OK] exFAT image ready: {image}", flush=True)
+            _deliver_chain_extras(args, image.parent)
+            print("\n[SUCCESS] All operations completed successfully!", flush=True); return
 
         if to == "folder":
             if owned is None:

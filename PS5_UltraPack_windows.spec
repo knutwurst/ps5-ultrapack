@@ -33,6 +33,9 @@ _BACKEND_REQUIRED = [
     "cli.py", "fpkg.py", "copy_job.py", "fake_sign.py", "make_fself.py",
     "backport.py", "self_file.py", "backport_libs.py", "bps_patch.py",
     "organize_lib.py", "ps4pkg.py", "ps4_sort.py", "after_job.py", "title_db.py", "patch_backup.py",
+    "lz4_packs.py", _os.path.join("ampr_pack", "ampr_pack.py"), _os.path.join("ampr_pack", "ampr_pack_format.py"),
+    _os.path.join("ampr_pack", "build_ampr_index.py"), _os.path.join("ampr_pack", "LICENSE"),
+    _os.path.join("native", "ampr", "libSceAmpr.sprx"), _os.path.join("native", "ampr", "LICENSE.ampr_emu"),   # FETCH_AMPR_EMU.sh
     _os.path.join("mkpfs", "cli.py"), _os.path.join("mkpfs", "pfs.py"),
     _os.path.join("unrar", "__init__.py"), _os.path.join("unrar", "rarfile.py"),
     _os.path.join("native", "ffpfsc-pkg-tool.exe"),
@@ -104,6 +107,9 @@ a = Analysis(
         "PIL._tkinter_finder",
         "cryptography",
         "cryptography.hazmat.primitives.ciphers",
+        # LZ4 asset packs: drakmor's packer (backend/ampr_pack) imports these only at run time
+        "lz4", "lz4.block", "tomllib", "ftplib", "statistics", "fnmatch", "bisect", "heapq",
+        "concurrent.futures", "urllib.parse",
         "mkpfs",
         "mkpfs.cli",
         "mkpfs.pfs",

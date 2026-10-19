@@ -59,3 +59,4 @@ backend/tests/_backpork_*.bps
 /backend/native/7za.exe
 /backend/native/LICENSE.7-Zip.*
 /backend/native/LICENSE.OpenSSL
+/backend/native/ampr/

@@ -17,6 +17,8 @@ fi
 ./FETCH_7ZIP.sh
 # OpenSSL for the fPKG helper (a Mac without Homebrew has none it may load), pinned and checked
 ./BUILD_OPENSSL.sh
+# ampr_emu's runtime for LZ4 asset packs (GPL-3, pinned and checked); its packer is in backend/ampr_pack
+./FETCH_AMPR_EMU.sh
 
 python3 -m pip install -r requirements-build.txt
 python3 -m pip install ./backend/unrar

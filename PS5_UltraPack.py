@@ -121,7 +121,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.2.10"
+APP_VERSION = "2.2.11"
 # Windows builds are a preview for now: the title, sidebar and About say so.
 APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
 # For archive sources, the GUI extraction occupies the first slice of a game's overall
@@ -2492,6 +2492,23 @@ class CLIWorker(threading.Thread):
         "Cleaning Up":         (99, 100),
         "Complete":            (100, 100),
     }
+    CHAIN_EXFAT_WEIGHTS = {       # unpack or copy, change, LZ4 packs ("Compressing"), write the image
+        "Scanning Files":      (0,    2),
+        "Extracting":          (2,   25),
+        "Reading Game":        (25,  35),
+        "Compressing":         (35,  80),
+        "Writing Final Image": (80,  98),
+        "Cleaning Up":         (98, 100),
+        "Complete":            (100, 100),
+    }
+    CHAIN_EXFAT_PLAIN_WEIGHTS = { # unpack (and change), then write the image
+        "Scanning Files":      (0,    2),
+        "Extracting":          (2,   45),
+        "Reading Game":        (45,  50),
+        "Writing Final Image": (50,  98),
+        "Cleaning Up":         (98, 100),
+        "Complete":            (100, 100),
+    }
     CHAIN_FOLDER_WEIGHTS = {      # unpack (and change) into a folder
         "Scanning Files":      (0,    2),
         "Extracting":          (2,   90),
@@ -2514,7 +2531,8 @@ class CLIWorker(threading.Thread):
         "Compressing", "Writing Final Image", "Verifying Output", "Cleaning Up", "Complete",
     ]
     # Container suffixes a chain target reads without unpacking (cli.py `native`).
-    _CHAIN_NATIVE = {"ffpfs": {".exfat", ".ffpkg", ".ffpfs", ".zip", ".rar"},
+    _CHAIN_NATIVE = {"exfat": set(),
+                     "ffpfs": {".exfat", ".ffpkg", ".ffpfs", ".zip", ".rar"},
                      "ffpfsc": {".exfat", ".ffpkg", ".ffpfs", ".zip", ".rar"},
                      "pkg": {".ffpfs", ".ffpfsc", ".exfat", ".ffpkg"}}
 
@@ -2554,7 +2572,7 @@ class CLIWorker(threading.Thread):
             return self.RESUME_WEIGHTS, self._EXTRACT_FIRST_ORDER     # compression only
         if to:
             src = Path(str(getattr(self.item, "path", "") or ""))
-            changes = any(f in cmd for f in ("--patch", "--backport-target", "--sign"))
+            changes = any(f in cmd for f in ("--patch", "--backport-target", "--sign", "--lz4"))
             unpacks = src.is_file() and (changes or src.suffix.lower() not in self._CHAIN_NATIVE.get(to, set()))
             if to == "pkg":
                 # the fPKG builder unwraps an image source itself, behind the same marker
@@ -2564,6 +2582,8 @@ class CLIWorker(threading.Thread):
                 w = self.CHAIN_FOLDER_WEIGHTS
             elif to == "ffpfs":
                 w = self.CHAIN_FFPFS_WEIGHTS
+            elif to == "exfat":
+                w = self.CHAIN_EXFAT_WEIGHTS if "--lz4" in cmd else self.CHAIN_EXFAT_PLAIN_WEIGHTS
             else:
                 w = self.CHAIN_WEIGHTS
             return (w if unpacks else self._without_extract(w)), self._EXTRACT_FIRST_ORDER
@@ -2858,6 +2878,8 @@ class CLIWorker(threading.Thread):
                 expected = {"unpack": "extracted output folder",
                             "fpkg-extract": "extracted /app0 folder",
                             "fpkg-build": "new .pkg output"}.get(self.operation, "new .ffpfsc output")
+                if self._chain_to() == "exfat":
+                    expected = "new .exfat output"
                 self.app.finish(False, tr("Backend exited but no {expected} was created.", expected=expected), self.last_cmd_str)
                 return
 
@@ -3236,6 +3258,10 @@ class CLIWorker(threading.Thread):
             self.output_path = line.split("Compression complete:", 1)[-1].strip()
         if "fPKG complete:" in line:
             self.output_path = line.split("fPKG complete:", 1)[-1].strip()
+        if line.startswith("[OK] exFAT image ready: "):
+            self.output_path = line[len("[OK] exFAT image ready: "):].strip()
+        elif line.startswith("[OK] Folder ready: "):
+            self.output_path = line[len("[OK] Folder ready: "):].strip()
         if line.startswith("[OK] Organized: "):
             self.output_path = line[len("[OK] Organized: "):].split(" (replaced)")[0].strip()
             self._written.append(self.output_path)
@@ -3728,8 +3754,9 @@ class JobDialog(EmbeddedDialog):
     """One job, three groups: 1."""
     LARGE = True
 
-    _TARGET_LABEL = {"folder": "Folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "pkg": ".pkg", "organize": "Organize"}
-    _TARGETS = ("folder", "ffpfs", "ffpfsc", "pkg", "organize")
+    _TARGET_LABEL = {"folder": "Folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "exfat": ".exfat", "pkg": ".pkg",
+                     "organize": "Organize"}
+    _TARGETS = ("folder", "ffpfs", "ffpfsc", "exfat", "pkg", "organize")
     _TARGET_KEY = {v: k for k, v in _TARGET_LABEL.items()}
     _SOURCE_HINT = ("Game folder, parent folder of games, archive (.zip/.rar/.7z), disk image "
                     "(.exfat/.ffpkg), .ffpfs, .ffpfsc or .pkg")
@@ -3765,10 +3792,17 @@ class JobDialog(EmbeddedDialog):
         "sign":   "Fake-signs eboot.bin and every prx/sprx so a jailbroken console loads them. Needed "
                   "when a dump's executables are still plain ELFs. Already-signed files are skipped, "
                   "so leaving it on costs nothing. A .pkg is always signed by its builder.",
+        "lz4":    "Packs the game's data into LZ4 asset packs that ampr_emu (drakmor) reads while the game "
+                  "runs, about half the size and quicker to load from USB. Only for games that load through "
+                  "AMPR (their eboot.bin imports libSceAmpr); executables, modules, configs, pictures, video "
+                  "and audio stay loose. Every packed file is checked against the original before the job "
+                  "finishes. Goes into an .exfat or a folder. Keep the original until the game ran on the "
+                  "console: the default profile is a careful guess, a profile from a trace is more reliable.",
         "output": "Folder: a plain /app0 folder (a folder source is changed in place). .ffpfs: "
                   "uncompressed image, fastest to build and mount, full size. .ffpfsc: compressed "
                   "image for ShadowMount, built with the 64 KiB block size verified on a console. "
-                  ".pkg: installable package.",
+                  ".exfat: exFAT image with 64 KiB clusters, the format ShadowMountPlus reads fastest from "
+                  "USB; full size, or smaller with LZ4 packs. .pkg: installable package.",
         "saveto": "Where the result lands. With auto-organize it gets its own folder there, named "
                   "from the game.",
         "organize": "Names the folder and the file from the game's own metadata: "
@@ -3855,6 +3889,10 @@ class JobDialog(EmbeddedDialog):
         self.help_var = TextVar(value=self._HELP_IDLE)
         self.sign_var = tk.BooleanVar(value=(bool(getattr(item, "chain_sign", False))
                                              or getattr(item, "operation", "") == "fake-sign") if item else False)
+        self.lz4_var = tk.BooleanVar(value=bool(getattr(item, "chain_lz4", False)) if item else False)
+        self.lz4_profile_var = tk.StringVar(value=str(getattr(item, "lz4_profile", "") or "") if item else "")
+        self.lz4_note_var = TextVar(value="")
+        self._lz4_seen: dict[str, object] = {}     # folder → uses AMPR (True/False/None)
         self.patch_on_var = tk.BooleanVar(value=bool(getattr(item, "patch_source", None)) if item else False)
         self.patch_var = tk.StringVar(value=str(getattr(item, "patch_source", "") or "") if item else "")
         self.backport_on_var = tk.BooleanVar(value=bool(getattr(item, "backport_target", None)) if item else False)
@@ -3904,9 +3942,13 @@ class JobDialog(EmbeddedDialog):
 
         self._build()
         self.src_var.trace_add("write", lambda *_: self._on_source_changed())
+        # LZ4 packs go into an .exfat or a folder: switching LZ4 on moves the output there,
+        # another output switches LZ4 off (both before the refresh below)
+        self.lz4_var.trace_add("write", lambda *_: self._lz4_toggled())
+        self.to_var.trace_add("write", lambda *_: self._lz4_output_changed())
         for v in (self.sign_var, self.patch_on_var, self.patch_var, self.backport_on_var,
                   self.backport_target_var, self.to_var, self.out_var,
-                  self.organize_var, self.after_var):
+                  self.organize_var, self.after_var, self.lz4_var, self.lz4_profile_var):
             v.trace_add("write", lambda *_: self._refresh())
         self.bind("<Return>", lambda e: self._add())
         self.bind("<Escape>", lambda e: self.destroy())
@@ -4037,6 +4079,19 @@ class JobDialog(EmbeddedDialog):
         self._sign_cb, self._sign_note_lbl, self._sign_line = so.cb, so.note, so.line
         self._sign_fixed = ctk.CTkLabel(so.line, text="Signed by the package builder - every executable in a .pkg is fake-signed",
                                         text_color=MUTED, font=ctk.CTkFont(size=12))
+
+        # LZ4 asset packs (AMPR games) - last, after the other changes
+        lo = option(self.lz4_var, "LZ4 asset packs", "smaller and quicker from USB, for games that use AMPR", "lz4")
+        self._lz4_opts, self._lz4_cb = lo.opts, lo.cb
+        l1 = ctk.CTkFrame(lo.inner, fg_color=PANEL); l1.pack(fill="x", pady=(2, 2))
+        ctk.CTkLabel(l1, text="Profile:", text_color=MUTED, width=120, anchor="w", font=ctk.CTkFont(size=12)).pack(side="left")
+        ctk.CTkEntry(l1, textvariable=self.lz4_profile_var, fg_color=CARD2, text_color=WHITE,
+                     placeholder_text=tr("empty: the careful default")).pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(l1, text="File…", width=64, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      command=self._pick_lz4_profile, border_width=1, border_color=BTN_BORDER).pack(side="left", padx=(6, 0))
+        ctk.CTkLabel(lo.inner, textvariable=self.lz4_note_var, text_color=MUTED, font=ctk.CTkFont(size=12),
+                     wraplength=560, justify="left", anchor="w").pack(fill="x", pady=(0, 4))
+        self._bind_help(self._HELP["lz4"], l1)
 
         # 3 · Output
         orow = self._orow = self._group("3", "Output")
@@ -4300,6 +4355,35 @@ class JobDialog(EmbeddedDialog):
                                        filetypes=[("Patch archives", "*.zip *.rar"), ("All files", "*.*")])
         if p:
             self.patch_var.set(p)
+
+    def _pick_lz4_profile(self):
+        p = filedialog.askopenfilename(parent=self, title="Choose an LZ4 pack profile",
+                                       filetypes=[("Pack profiles", "*.toml"), ("All files", "*.*")])
+        if p:
+            self.lz4_profile_var.set(p)
+
+    def _lz4_toggled(self):
+        if self.lz4_var.get() and self._to_key() not in ultra_core.LZ4_TARGETS:
+            self.to_var.set(self._TARGET_LABEL["exfat"])
+
+    def _lz4_output_changed(self):
+        if self.lz4_var.get() and self._to_key() not in ultra_core.LZ4_TARGETS:
+            self.lz4_var.set(False)
+
+    def _lz4_state(self) -> object:
+        """Whether the chosen source can take LZ4 packs: True/False for a game folder (read
+        from its eboot.bin), None when only the job can tell (a container, an archive)."""
+        raw = (self.src_var.get() or "").strip()
+        if self._kind != "folder" or not raw:
+            return None
+        if raw not in self._lz4_seen:
+            try:
+                _backport_module()
+                import lz4_packs
+                self._lz4_seen[raw] = lz4_packs.uses_ampr(Path(raw))
+            except Exception:
+                self._lz4_seen[raw] = None
+        return self._lz4_seen[raw]
 
     def _pick_patch_folder(self):
         p = filedialog.askdirectory(parent=self, title="Choose the patch folder")
@@ -4706,6 +4790,7 @@ class JobDialog(EmbeddedDialog):
         return types.SimpleNamespace(
             path=p, archive_path=(p if is_archive else None),
             chain_to=self._to_key(), chain_sign=bool(self.sign_var.get()) and self._to_key() != "pkg",
+            chain_lz4=bool(self.lz4_var.get()) and self._to_key() in ultra_core.LZ4_TARGETS,
             patch_source=(self.patch_var.get().strip() if self.patch_on_var.get() else None),
             backport_target=(self.backport_target_var.get() if self.backport_on_var.get() else None))
 
@@ -4723,7 +4808,7 @@ class JobDialog(EmbeddedDialog):
             if seg is not None:
                 seg.configure(values=[self._TARGET_LABEL[k] for k in allowed])
                 seg.set(self.to_var.get())
-            for v in (self.patch_on_var, self.backport_on_var, self.sign_var):
+            for v in (self.patch_on_var, self.backport_on_var, self.sign_var, self.lz4_var):
                 v.set(False)
         crow, orow = getattr(self, "_crow", None), getattr(self, "_orow", None)
         org = not ps4 and self._to_key() == ORGANIZE_TARGET     # the source goes over as it is
@@ -4739,6 +4824,16 @@ class JobDialog(EmbeddedDialog):
         # progressive disclosure
         (self._patch_opts.pack(fill="x", pady=(2, 2)) if self.patch_on_var.get() else self._patch_opts.pack_forget())
         (self._backport_opts.pack(fill="x", pady=(2, 2)) if self.backport_on_var.get() else self._backport_opts.pack_forget())
+        ampr = self._lz4_state()
+        if ampr is False:
+            if self.lz4_var.get():
+                self.lz4_var.set(False)
+            self._lz4_cb.configure(state="disabled")
+            self.lz4_note_var.set("")
+        else:
+            self._lz4_cb.configure(state="normal")
+            self.lz4_note_var.set("" if ampr else tr("Checked when the job runs: only a game that loads through AMPR can use LZ4 packs."))
+        (self._lz4_opts.pack(fill="x", pady=(2, 2)) if self.lz4_var.get() else self._lz4_opts.pack_forget())
         (self._pkg_opts.pack(fill="x", pady=(2, 0)) if to == "pkg" and not ps4 else self._pkg_opts.pack_forget())
         if to in ("ffpfsc", "pkg") and not ps4:
             show, hide = (self._comp_pkg, self._comp_ffpfsc) if to == "pkg" else (self._comp_ffpfsc, self._comp_pkg)
@@ -5079,13 +5174,19 @@ class JobDialog(EmbeddedDialog):
         # the folder picked here stays when sources are moved or cleaned up after their jobs
         root = str(p if (p.is_dir() and not ultra_core.is_game_folder(p)) else p.parent)
         sign = bool(self.sign_var.get()) and to != "pkg"     # a .pkg is always signed by its builder
+        lz4 = bool(self.lz4_var.get()) and to in ultra_core.LZ4_TARGETS
+        lz4_profile = (self.lz4_profile_var.get() or "").strip() if lz4 else ""
+        if lz4_profile and not Path(lz4_profile).is_file():
+            messagebox.showerror("LZ4 asset packs", tr("The profile does not exist:\n{p}", p=lz4_profile), parent=self)
+            return
         app = self.app
 
         def make(s):
             # Tk-free: runs on the add thread for a new job (archive headers are read here)
             it = GameItem.from_chain(s, to=to, output_path=out or None, sign=sign,
                                      patch_source=patch or None, backport_target=target,
-                                     backport_libs_root=libs or None)
+                                     backport_libs_root=libs or None, lz4=lz4,
+                                     lz4_profile=lz4_profile or None)
             if to == "pkg":
                 app._apply_fpkg_params(it, pkg_params)
             it.compression_level = ff_level if to == "ffpfsc" else None
@@ -7069,7 +7170,7 @@ class App:
         if op == "chain":
             ch = []
             for c in chain_changes(item):
-                ch.append("Patch" if c == "patch" else "Sign" if c == "sign"
+                ch.append("Patch" if c == "patch" else "Sign" if c == "sign" else "LZ4" if c == "lz4"
                           else ("Backport " + c.split(" ", 1)[1]) if c.startswith("backport") else c)
             to = getattr(item, "chain_to", None) or "ffpfsc"
             return [src, *ch, "Folder" if to == "folder" else CHAIN_TARGET_LABEL.get(to, to)]
@@ -9535,6 +9636,8 @@ class App:
         extra.operation = "chain"
         extra.chain_to = getattr(tpl, "chain_to", None) or "ffpfsc"
         extra.chain_sign = bool(getattr(tpl, "chain_sign", False))
+        extra.chain_lz4 = bool(getattr(tpl, "chain_lz4", False))
+        extra.lz4_profile = getattr(tpl, "lz4_profile", None)
         extra.patch_source = None
         extra.backport_target = getattr(tpl, "backport_target", None)
         extra.backport_libs_root = getattr(tpl, "backport_libs_root", None)
@@ -10255,6 +10358,9 @@ class App:
                 # a container unpacked to '<name> [extracted]': there when an earlier one left files
                 src = Path(str(getattr(item, "path", "") or ""))
                 _od = self._job_output_dir(item)
+                if _od and src.is_dir() and getattr(item, "chain_lz4", False):
+                    folder = _od / f"{sanitize_filename(src.name)} [LZ4]"
+                    return folder if self._folder_taken(folder) else None
                 if not _od or not src.is_file():
                     return None                   # a folder changed in place writes nothing new
                 folder = _od if _od.name.endswith(" [extracted]") else _od / f"{sanitize_filename(src.stem)} [extracted]"
@@ -10273,12 +10379,12 @@ class App:
             to = "pkg"
         else:
             return None
-        if to not in ("ffpfs", "ffpfsc", "pkg"):
+        if to not in ("ffpfs", "ffpfsc", "pkg", "exfat"):
             return None
         out = self._job_output_dir(item)
         if out is None:
             return None
-        if out.suffix.lower() in (".ffpfs", ".ffpfsc", ".pkg"):
+        if out.suffix.lower() in (".ffpfs", ".ffpfsc", ".pkg", ".exfat"):
             return out                                   # an explicit file
         ext = "." + to
         unread_archive = bool(getattr(item, "archive_path", None)) and not getattr(item, "path", None)
@@ -11076,6 +11182,10 @@ class App:
         out = self._job_recipe_parts(item)[-1] if self._job_recipe_parts(item) else ""
         if getattr(item, "chain_sign", False) or getattr(item, "operation", "") == "fake-sign":
             changes.append("Fake-sign the executables")
+        if getattr(item, "chain_lz4", False):
+            prof = getattr(item, "lz4_profile", None)
+            changes.append(tr("LZ4 asset packs, profile {p}", p=Path(str(prof)).name) if prof
+                           else tr("LZ4 asset packs, careful default profile"))
         elif out == ".pkg":
             changes.append("Executables signed by the package builder")
         info["Changes"] = "\n".join(changes) if changes else "None"
@@ -11376,7 +11486,9 @@ class App:
             src = Path(item.path)
             item._organized_pkg_name = None
             if to == "folder":
-                if src.is_dir():
+                if src.is_dir() and getattr(item, "chain_lz4", False):
+                    out = out / f"{sanitize_filename(src.name)} [LZ4]"   # the packs never go into the source
+                elif src.is_dir():
                     out = src                                   # changes in place; nothing is written elsewhere
                 elif not out.name.endswith(" [extracted]"):
                     out = out / f"{sanitize_filename(src.stem)} [extracted]"
@@ -11399,7 +11511,7 @@ class App:
                         out = self._mirror_base(item, out, sub)
                 run_dir = out
             else:
-                ext = ".ffpfs" if to == "ffpfs" else ".ffpfsc"
+                ext = {"ffpfs": ".ffpfs", "exfat": ".exfat"}.get(to, ".ffpfsc")
                 if not explicit_file:
                     base = out
                     organized_name = None
@@ -11415,7 +11527,7 @@ class App:
                         out = self._keep_both_name(item, base / (organized_name or descriptive_ffpfsc_name(item, ext=ext)))
                     except Exception:
                         out = base
-                run_dir = out.parent if out.suffix.lower() in (".ffpfsc", ".ffpfs") else out
+                run_dir = out.parent if out.suffix.lower() in (".ffpfsc", ".ffpfs", ".exfat") else out
             self._cmd_uncompressed = (to == "ffpfs")
             try:
                 (out if to in ("folder", "pkg") or not out.suffix else out.parent).mkdir(parents=True, exist_ok=True)
@@ -11443,6 +11555,10 @@ class App:
                 cmd += self._backport_args(item)
             if getattr(item, "chain_sign", False) and not _resuming:
                 cmd.append("--sign")
+            if getattr(item, "chain_lz4", False) and not _resuming:
+                cmd.append("--lz4")
+                if getattr(item, "lz4_profile", None):
+                    cmd += ["--lz4-profile", str(item.lz4_profile)]
             if getattr(item, "_build_temp", None) is None:
                 try:
                     self._resolve_extract_root(item)
@@ -11452,8 +11568,9 @@ class App:
             tstr = str(Path(bt)) if bt else str(temp)
             if tstr:
                 cmd += ["--temp-dir", tstr]
-            if to in ("ffpfs", "ffpfsc", "pkg"):
-                # the CPU cores setting: mkpfs workers for an image, Kraken workers for a .pkg
+            if to in ("ffpfs", "ffpfsc", "pkg") or getattr(item, "chain_lz4", False):
+                # the CPU cores setting: mkpfs workers for an image, Kraken workers for a .pkg,
+                # LZ4 workers for the packs
                 _cpu = getattr(item, "_cpu_retry_override", None)
                 if _cpu is None:
                     _cpu = self.cpu_count_var.get()
@@ -12794,7 +12911,7 @@ class App:
                 if p.is_dir() and not p.suffix:
                     try:
                         for q in p.iterdir():
-                            if tag in q.name.lower() and q.suffix.lower() in (".ffpfs", ".ffpfsc", ".pkg"):
+                            if tag in q.name.lower() and q.suffix.lower() in (".ffpfs", ".ffpfsc", ".pkg", ".exfat"):
                                 return True
                     except OSError:
                         continue

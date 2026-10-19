@@ -168,6 +168,39 @@ try:
     ok("dialog.add.remembered", app.fpkg_defaults["inner"] == "kraken" and app.fpkg_defaults["level"] == -4, str(app.fpkg_defaults))
     cmdq, *_ = app.build_command(q)
     ok("build_command.fast-preset", "--compression-level" in cmdq and cmdq[cmdq.index("--compression-level")+1] == "-4", " ".join(cmdq[-8:]))
+    # 3a) LZ4 asset packs: only for an AMPR game, into .exfat or a folder, never the source folder
+    from test_backport import _elf_with_imports as _ampr_elf
+    _ag = S / "ampr_game"
+    if _ag.exists(): shutil.rmtree(_ag)
+    shutil.copytree(HBT, _ag)
+    (_ag / "eboot.bin").write_bytes(_ampr_elf([("mc36MRb8k1w", 0, "libSceAmpr", 0, "libSceAmpr")]))
+    dz = m.JobDialog(app, init_src=str(HBT), init_to="ffpfsc"); root.update()
+    ok("lz4.off-for-a-game-without-ampr", dz._lz4_cb.cget("state") == "disabled" and not dz.lz4_var.get(),
+       dz._lz4_cb.cget("state"))
+    dz.destroy(); root.update()
+    dz = m.JobDialog(app, init_src=str(_ag), init_to="ffpfsc"); root.update()
+    _enabled = dz._lz4_cb.cget("state") == "normal"
+    dz.lz4_var.set(True); root.update()
+    _moved = dz._to_key() == "exfat" and bool(dz._lz4_opts.winfo_manager())
+    dz.to_var.set(m.JobDialog._TARGET_LABEL["ffpfsc"]); root.update()
+    _dropped = not dz.lz4_var.get()
+    dz.to_var.set(m.JobDialog._TARGET_LABEL["exfat"]); dz.lz4_var.set(True); dz.out_var.set(str(OUT)); root.update()
+    ok("lz4.option-and-output-follow-each-other", _enabled and _moved and _dropped and dz.lz4_var.get(),
+       f"enabled={_enabled} moved={_moved} dropped={_dropped}")
+    n0 = len(app.queue); dz._add(); settle()
+    qz = app.queue[-1] if len(app.queue) > n0 else None
+    _cz = app.build_command(qz)[0] if qz else []
+    ok("lz4.job-and-command", qz is not None and qz.chain_lz4 and qz.chain_to == "exfat" and "--lz4" in _cz
+       and _cz[_cz.index("--to") + 1] == "exfat" and any(str(a).endswith(".exfat") for a in _cz),
+       " ".join(map(str, _cz[-12:])))
+    _fz = m.GameItem.from_chain(_ag, to="folder", output_path=str(OUT), lz4=True)
+    _cf = app.build_command(_fz)[0]
+    _dest = next((a for a in _cf if str(a).endswith("[LZ4]")), "")
+    ok("lz4.folder-output-is-not-the-source", _dest and Path(_dest) != _ag and Path(_dest).parent == OUT, _dest)
+    _nz = m.GameItem.from_chain(_ag, to="ffpfsc", output_path=str(OUT), lz4=True)
+    ok("lz4.dropped-for-other-outputs", not _nz.chain_lz4 and "--lz4" not in app.build_command(_nz)[0], "")
+    if qz is not None:
+        app.queue.remove(qz)
     # 3b) After the job: the row is there for a build, its choice lands on the job and in the Rescan recipe
     dla = m.JobDialog(app, init_src=str(HBT), init_to="ffpfsc"); root.update()
     _ab_shown = bool(dla._after_box.winfo_manager())

@@ -177,6 +177,7 @@ This isn't a fork, but it builds on a lot of other people's work. Thanks to:
 - The authors of ShadowMountPlus and MicroMount, which load the `.ffpfsc` containers.
 - EchoStretch for kstuff-lite, and Drakmor and ArkSama for the fpkg launch fixes. Without them fPKG on 11.60 wouldn't launch at all.
 - [BestPig](https://github.com/BestPig/BackPork) for the BackPork library patches.
+- [drakmor](https://github.com/drakmor/ampr_emu) for ampr_emu, whose packer and runtime the LZ4 asset packs use (GPL-3), and Nazky and the other Lazy_AMPR authors for showing what it can do.
 - titoum-be, who got it running on Windows and sent the launcher and build script the Windows version is based on ([#1](https://github.com/knutwurst/ps5-ultrapack/issues/1)).
 
 Python libraries: customtkinter, py7zr, rarfile, tkinterdnd2, Pillow, psutil, cryptography.
@@ -189,6 +190,7 @@ The details, including trademark notes, are in [`NOTICES.md`](NOTICES.md). Short
 - MkPFS 1.0.0 is **GPL-3.0-or-later** ([`backend/mkpfs/LICENSE`](backend/mkpfs/LICENSE)).
 - LibProsperoPkg 1.2.0 is **GPL-3.0-or-later** ([`backend/native/LICENSE.LibProsperoPkg`](backend/native/LICENSE.LibProsperoPkg)).
 - The UnRAR sources are under the **UnRAR license**: free for extraction, but they may not be used to build a RAR-compatible compressor ([`backend/unrar/license.txt`](backend/unrar/license.txt)).
+- ampr_emu's packer (`backend/ampr_pack/`) and its runtime `libSceAmpr.sprx` are **GPL-3.0** (drakmor).
 - `make_fself.py` is **BSD-3-Clause**, attribution in the file header.
 - Bizkut's ps5-ffpfs-cli has no license file. `backend/cli.py` started from it and has been mostly rewritten. I don't claim a license for what's left of the original code; MIT covers my changes. See `NOTICES.md`.
 

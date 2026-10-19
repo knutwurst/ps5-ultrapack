@@ -3,7 +3,28 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.2.10  (current, not released)
+  v2.2.11  (in progress)
+────────────────────────────────────────────────────────────────────────
+
+LZ4 ASSET PACKS AND .EXFAT
+
+  - New output .exfat: an exFAT image with 64 KiB clusters, the format
+    ShadowMountPlus reads fastest from USB (MkPFS's exFAT writer, the
+    image is written beside its place and renamed when complete).
+  - New change "LZ4 asset packs" for games whose eboot.bin imports
+    libSceAmpr: drakmor's ampr_pack (vendored in backend/ampr_pack from
+    ampr_emu 0.4.2.1, GPL-3) packs the data in subfolders into LZ4 packs
+    that ampr_emu reads at run time; executables, modules, system
+    folders, configs, pictures, video and audio stay loose. The job
+    builds ampr_emu.index, packs, checks every block and every packed
+    file against the original, removes the packed originals and puts
+    the pack-capable libSceAmpr.sprx (FETCH_AMPR_EMU.sh, shipped with the
+    app) into fakelib/. Only into an .exfat or a folder; a game folder
+    is copied first, the source never changes. A TOML profile from
+    Lazy_AMPR, ps5-dump-forge or LZ4 Compression can replace the default.
+
+────────────────────────────────────────────────────────────────────────
+  v2.2.10
 ────────────────────────────────────────────────────────────────────────
 
 LANGUAGE

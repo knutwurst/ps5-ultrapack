@@ -1,0 +1,10 @@
+ampr_pack: drakmor's packer for AMPR LZ4 asset packs
+
+Copied from https://github.com/drakmor/ampr_emu, tools/, at commit (only the line endings
+normalised to LF) e0b24bdfc344e37e8aced99a22e6f9f5c65d9152 (release 0.4.2.1, 2026-09-06):
+ampr_pack.py, ampr_pack_format.py, ampr_pack_profile.py, parse_ampr_command_log.py,
+build_ampr_index.py. License: GNU GPL v3 (LICENSE in this folder).
+
+The runtime that reads the packs on the console, libSceAmpr.sprx from the same release, is
+fetched by FETCH_AMPR_EMU.sh into backend/native/ampr/ and ships with the app. Its source is the
+archive of that commit, kept next to each PS5 UltraPack release.

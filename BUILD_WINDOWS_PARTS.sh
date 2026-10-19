@@ -36,4 +36,5 @@ for s in "${SOURCES[@]}"; do FILES+=("backend/unrar/src/${s}.cpp"); done
     -o "backend/unrar/_unrar.${TAG}-win_amd64.pyd" \
     -static -static-libgcc -static-libstdc++ -ladvapi32 -lshell32 -lole32 -luuid -lpowrprof
 ./FETCH_7ZIP.sh
+./FETCH_AMPR_EMU.sh       # ampr_emu runtime for LZ4 asset packs (same file on both systems)
 ls -l backend/native/ffpfsc-pkg-tool.exe backend/native/Magick.Native-Q8-x64.dll "backend/unrar/_unrar.${TAG}-win_amd64.pyd"
