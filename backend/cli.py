@@ -2698,6 +2698,12 @@ def _chain_transforms(root: Path, args, scratch_root: Path, restorable: bool = F
     lowered too, and fake-signing turns raw ELFs into SELFs the backport pass skips.
     Returns the list of changes applied (for the log)."""
     done: list[str] = []
+    if getattr(args, "chain_lz4_unpack", False):
+        # first: the other changes see the plain game files
+        import lz4_packs
+        _phase("Extracting")
+        lz4_packs.unpack_game(root, log=lambda line: print(line, flush=True))
+        done.append("lz4 unpack")
     if args.patch or args.backport_target or getattr(args, "chain_sign", False):
         _phase("Reading Game")
     if getattr(args, "chain_lz4", False):
@@ -3022,6 +3028,10 @@ def main() -> None:
                         help="CHAIN: put the game's data into LZ4 asset packs read by ampr_emu (games "
                              "whose eboot.bin imports libSceAmpr), last after the other changes. Only "
                              "with --to folder or --to exfat.")
+    parser.add_argument("--lz4-unpack", dest="chain_lz4_unpack", action="store_true",
+                        help="CHAIN: the way back from --lz4: restore every file of the game's LZ4 asset "
+                             "packs, remove the packs and rebuild ampr_emu.index (first, before the "
+                             "other changes). Any output.")
     parser.add_argument("--lz4-profile", type=str, default=None, metavar="TOML",
                         help="CHAIN: ampr_pack profile choosing the packed files (default: data in "
                              "subfolders packed; executables, modules, configs, media stay loose).")
@@ -3283,12 +3293,15 @@ def main() -> None:
         wanted = [n for flag, n in ((args.patch, "patch"),
                                     (args.backport_target, f"backport {args.backport_target}"),
                                     (args.chain_sign, "sign"),
-                                    (getattr(args, "chain_lz4", False), "lz4")) if flag]
+                                    (getattr(args, "chain_lz4", False), "lz4"),
+                                    (getattr(args, "chain_lz4_unpack", False), "lz4 unpack")) if flag]
         scratch_root = _app_scratch_root(args.temp_dir)
         print(f"[INFO] CHAIN: {src.name} ({kind}) → {', '.join(wanted) or 'no changes'} → {to}", flush=True)
 
         if not wanted and kind == to == "folder":
             print("[ERROR] Nothing to do: a folder to a folder with no changes.", flush=True); sys.exit(1)
+        if getattr(args, "chain_lz4", False) and getattr(args, "chain_lz4_unpack", False):
+            print("[ERROR] --lz4 and --lz4-unpack exclude each other.", flush=True); sys.exit(2)
         if getattr(args, "chain_lz4", False) and to not in ("folder", "exfat"):
             print("[ERROR] LZ4 asset packs go into a folder or an .exfat: an .ffpfsc would compress them "
                   "a second time and read them slower, a .ffpfs mounts from USB without the fast path, "
@@ -3332,7 +3345,7 @@ def main() -> None:
         if wanted or kind not in native.get(to, set()):
             try:
                 root, owned = _chain_materialize(src, scratch_root, args)
-                if owned is None and getattr(args, "chain_lz4", False):
+                if owned is None and (getattr(args, "chain_lz4", False) or getattr(args, "chain_lz4_unpack", False)):
                     # the packs replace files: never in the user's own folder, always in a copy
                     root, owned = _chain_working_copy(root, scratch_root)
                 if owned is not None:

@@ -549,6 +549,8 @@ def is_backport_target(name) -> bool:
 def chain_changes(item) -> list[str]:
     """The content changes a chain job applies, in backend order: patch → backport → sign → lz4."""
     out: list[str] = []
+    if getattr(item, "chain_lz4_unpack", False):
+        out.append("lz4 unpack")                 # first: the other changes see plain files
     if getattr(item, "patch_source", None):
         out.append("patch")
     if getattr(item, "backport_target", None):
@@ -590,7 +592,8 @@ def chain_summary(item) -> str:
         if c.startswith("backport "):
             parts.append(tr("backport to {target}", target=c.split(" ", 1)[1]))
         else:
-            parts.append(tr({"patch": "integrate patch", "sign": "sign", "lz4": "pack with LZ4"}.get(c, c)))
+            parts.append(tr({"patch": "integrate patch", "sign": "sign", "lz4": "pack with LZ4",
+                             "lz4 unpack": "unpack the LZ4 packs"}.get(c, c)))
     if not parts:
         if kind == to == "folder":
             return "Nothing to do"
@@ -3831,6 +3834,7 @@ class GameItem:
     chain_sign = False      # chain job: fake-sign executables (after patch and backport)
     chain_lz4 = False       # chain job: LZ4 asset packs for an AMPR game (last; folder/.exfat only)
     lz4_profile = None      # str: an ampr_pack TOML profile; None = the conservative default
+    chain_lz4_unpack = False  # chain job: the way back, the LZ4 packs restored to plain files (first)
     header_locked = False   # archive: no saved password opened its header when it was added
     archive_problem = ""    # archive: why it cannot be read (damaged, a part missing); no password helps
     archive_title = ""      # archive: the game read from the param.json inside, before extraction
@@ -4022,7 +4026,7 @@ class GameItem:
     def from_chain(cls, source: Path, *, to: str, output_path=None,
                    sign: bool = False, patch_source=None,
                    backport_target=None, backport_libs_root=None,
-                   lz4: bool = False, lz4_profile=None) -> "GameItem":
+                   lz4: bool = False, lz4_profile=None, lz4_unpack: bool = False) -> "GameItem":
         """The one job the job dialog produces: source → [patch → backport → sign → lz4] → *to*."""
         src = Path(source)
         suf = src.suffix.lower() if src.is_file() else ""
@@ -4050,6 +4054,7 @@ class GameItem:
         obj.chain_sign         = bool(sign)
         obj.chain_lz4          = bool(lz4) and obj.chain_to in LZ4_TARGETS
         obj.lz4_profile        = str(lz4_profile) if (lz4_profile and obj.chain_lz4) else None
+        obj.chain_lz4_unpack   = bool(lz4_unpack) and not obj.chain_lz4
         obj.patch_source       = Path(patch_source) if patch_source else None
         obj.backport_target    = backport_target if is_backport_target(backport_target) else None
         obj.backport_libs_root = str(backport_libs_root) if backport_libs_root else None

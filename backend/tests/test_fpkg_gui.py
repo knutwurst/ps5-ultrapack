@@ -201,6 +201,26 @@ try:
     ok("lz4.dropped-for-other-outputs", not _nz.chain_lz4 and "--lz4" not in app.build_command(_nz)[0], "")
     if qz is not None:
         app.queue.remove(qz)
+    # 3a') the way back: a packed game folder offers Unpack, into any output (here .ffpfsc)
+    import lz4_packs as _lz4m, io as _io, contextlib as _cl
+    _pk = S / "ampr_packed"
+    if _pk.exists(): shutil.rmtree(_pk)
+    shutil.copytree(_ag, _pk)
+    (_pk / "data").mkdir(exist_ok=True); (_pk / "data" / "l.bin").write_bytes(b"mesh vertex " * 50000)
+    with _cl.redirect_stdout(_io.StringIO()):
+        _lz4m.pack_game(_pk, workers=2)
+    du = m.JobDialog(app, init_src=str(_pk), init_to="ffpfsc"); root.update()
+    _mode = du.lz4_mode_var.get()
+    du.lz4_var.set(True); root.update()
+    _kept_out = du._to_key() == "ffpfsc" and du.lz4_var.get() and not du._lz4_profile_row.winfo_manager()
+    du.out_var.set(str(OUT)); root.update()
+    n0 = len(app.queue); du._add(); settle()
+    qu = app.queue[-1] if len(app.queue) > n0 else None
+    _cu = app.build_command(qu)[0] if qu else []
+    ok("lz4.unpack-for-a-packed-game", _mode == "unpack" and _kept_out and qu is not None and qu.chain_lz4_unpack
+       and not qu.chain_lz4 and "--lz4-unpack" in _cu and "--lz4" not in _cu, f"mode={_mode} kept={_kept_out} {_cu[-6:]}")
+    if qu is not None:
+        app.queue.remove(qu)
     # 3b) After the job: the row is there for a build, its choice lands on the job and in the Rescan recipe
     dla = m.JobDialog(app, init_src=str(HBT), init_to="ffpfsc"); root.update()
     _ab_shown = bool(dla._after_box.winfo_manager())

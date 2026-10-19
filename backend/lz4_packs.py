@@ -219,3 +219,46 @@ def pack_game(root: Path, *, profile: Path | None = None, workers: int = 0, log=
     log(f"[OK] LZ4: {stats.logical_bytes / 1024 ** 3:.2f} GB of game data packed into "
         f"{stats.stored_bytes / 1024 ** 3:.2f} GB ({saved / 1024 ** 3:.2f} GB smaller).")
     return {"logical_bytes": stats.logical_bytes, "stored_bytes": stats.stored_bytes}
+
+
+def is_packed(root: Path) -> bool:
+    return (Path(root) / ASSETS_INDEX).is_file()
+
+
+def unpack_game(root: Path, *, log=print) -> dict:
+    """The way back: put every file of the LZ4 packs in *root* back where it was, remove the
+    packs and rebuild ampr_emu.index for the files now there. *root* must be a copy the app
+    may change. The ampr_emu runtime stays: it reads loose files as well."""
+    import ampr_pack
+    import build_ampr_index
+
+    root = Path(root)
+    index = root / ASSETS_INDEX
+    if not index.is_file():
+        raise Lz4Error(f"this game holds no LZ4 asset packs (no {ASSETS_INDEX})")
+    if Path(str(index) + ".crc").is_file():
+        log("[INFO] LZ4: checking every block of the packs before unpacking…")
+        try:
+            ampr_pack.verify_packs(index, ())
+        except ampr_pack.PackError as e:
+            raise Lz4Error(f"the LZ4 packs are damaged: {e}") from e
+    else:
+        log(f"[WARN] LZ4: {ASSETS_INDEX}.crc is missing, so the packs are not checked first; "
+            "every block is still decoded with its size checked.")
+    try:
+        manifest = ampr_pack.load_manifest(index)
+        volumes = [manifest.pack_name(i) for i in range(len(manifest.packs))]
+        got = ampr_pack.extract_packs(index, root, (), False, True)
+    except (ampr_pack.PackError, ValueError, OSError) as e:
+        raise Lz4Error(f"LZ4 unpacking failed: {e}") from e
+    for name in volumes:                      # the volumes the manifest names, wherever they sit
+        vol = (index.parent / name).resolve()
+        if vol.is_file() and root.resolve() in vol.parents:
+            vol.unlink()
+    for p in list(root.iterdir()):
+        if p.is_file() and p.name.startswith(ASSETS_INDEX):
+            p.unlink()
+    if build_ampr_index.build_index_local(root, root / INDEX_NAME, False) != 0:
+        raise Lz4Error("could not rebuild ampr_emu.index for the unpacked game")
+    log(f"[OK] LZ4: unpacked {got['files']} file(s), {got['bytes'] / 1024 ** 3:.2f} GB, back to plain files.")
+    return got

@@ -84,6 +84,26 @@ class PackGame(unittest.TestCase):
         for rel in ("data/levels/l0.bin", "data/levels/l2.bin", "data/[odd] name.bin"):
             self.assertTrue(filecmp.cmp(out / rel, original / rel, shallow=False), rel)
 
+    def test_unpack_brings_the_plain_game_back(self):
+        game = _game(self.d / "app0")
+        original = self.d / "original"
+        shutil.copytree(game, original)
+        with contextlib.redirect_stdout(io.StringIO()):
+            lz4_packs.pack_game(game, workers=4)
+            self.assertTrue(lz4_packs.is_packed(game))
+            got = lz4_packs.unpack_game(game)
+        self.assertEqual(got["files"], 4)
+        self.assertFalse(lz4_packs.is_packed(game))
+        self.assertEqual([n for n in _files(game) if n.startswith("ampr_assets")], [])
+        extra = {"fakelib/libSceAmpr.sprx", "ampr_emu.index"}
+        self.assertEqual(_files(game) - extra, _files(original))
+        for rel in _files(original):
+            self.assertTrue(filecmp.cmp(game / rel, original / rel, shallow=False), rel)
+
+    def test_unpack_refuses_a_game_without_packs(self):
+        with self.assertRaises(lz4_packs.Lz4Error):
+            lz4_packs.unpack_game(_game(self.d / "app0"))
+
     def test_refuses_a_game_without_ampr(self):
         game = _game(self.d / "app0", ampr=False)
         with self.assertRaises(lz4_packs.Lz4Error):
@@ -129,6 +149,17 @@ class ChainLz4(unittest.TestCase):
         self.assertNotIn("data/levels/l0.bin", inside)
         self.assertIn("root.dat", inside)
         self.assertEqual([p.name for p in (self.d / "tmp").rglob("chain-*")], [])
+
+    def test_a_packed_exfat_unpacks_into_a_folder(self):
+        game = _game(self.d / "Game")
+        (self.d / "tmp").mkdir()
+        r = self._run(game, self.d / "out" / "Game.exfat", "--to", "exfat", "--lz4")
+        self.assertEqual(r.returncode, 0, r.stdout[-800:])
+        r = self._run(self.d / "out" / "Game.exfat", self.d / "back" / "Game [unpacked]", "--to", "folder", "--lz4-unpack")
+        self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-500:])
+        back = self.d / "back" / "Game [unpacked]"
+        self.assertEqual(_files(back) - {"fakelib/libSceAmpr.sprx", "ampr_emu.index"}, _files(game))
+        self.assertTrue(filecmp.cmp(back / "data" / "levels" / "l1.bin", game / "data" / "levels" / "l1.bin", shallow=False))
 
     def test_lz4_refuses_an_ffpfsc_output(self):
         game = _game(self.d / "Game")

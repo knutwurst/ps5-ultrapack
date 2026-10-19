@@ -22,6 +22,10 @@ LZ4 ASSET PACKS AND .EXFAT
     app) into fakelib/. Only into an .exfat or a folder; a game folder
     is copied first, the source never changes. A TOML profile from
     Lazy_AMPR, ps5-dump-forge or LZ4 Compression can replace the default.
+  - The way back: "Unpack" in the same row (--lz4-unpack) checks the packs
+    block by block, restores every packed file, removes the packs and
+    rebuilds ampr_emu.index, into any output. A packed game folder offers
+    it by itself.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.10
