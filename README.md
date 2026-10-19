@@ -27,7 +27,7 @@ The app used to be called PS5 FFPFSC ULTRA.
 
 Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack/releases).
 
-- **macOS** 26 or newer on Apple Silicon: unzip and start the app. The app is only ad-hoc signed, so if macOS refuses to open it, run this once:
+- **macOS** 26 or newer on Apple Silicon (every M1 or later Mac can update to it for free): unzip and start the app. The app is only ad-hoc signed, so if macOS refuses to open it, run this once:
   ```bash
   xattr -dr com.apple.quarantine "PS5 UltraPack.app"
   ```
@@ -140,7 +140,7 @@ Look inside opens a `.ffpfs`, `.ffpfsc` or `.pkg` and shows the file tree. You c
 
 ## Running from source
 
-You need Python 3.10 or newer.
+You need Python 3.10 or newer. This is also the way to run the app on a macOS older than 26: the release builds need macOS 26, but a source run uses whatever your Python is built for. I don't test or support older systems, though.
 
 ```bash
 python3 -m pip install customtkinter pillow tkinterdnd2 py7zr rarfile psutil cryptography
@@ -148,7 +148,7 @@ python3 -m pip install ./backend/unrar
 python3 PS5_UltraPack.py
 ```
 
-The RAR module needs a C++ compiler (Xcode Command Line Tools on macOS). For `.pkg` features build the fPKG helper once with `./BUILD_PKG_TOOL.sh` (needs the [.NET SDK](https://dotnet.microsoft.com/download) 9+). Without the bundled 7-Zip, the app uses an installed 7-Zip or falls back to a slower Python path for `.7z`. AES and Deflate64 ZIPs need 7-Zip in any case.
+The RAR module needs a C++ compiler (Xcode Command Line Tools on macOS). For `.pkg` features build the fPKG helper once with `./BUILD_PKG_TOOL.sh` (needs the [.NET SDK](https://dotnet.microsoft.com/download) 9+) and its OpenSSL with `./BUILD_OPENSSL.sh`. Without the bundled 7-Zip, the app uses an installed 7-Zip or falls back to a slower Python path for `.7z`. AES and Deflate64 ZIPs need 7-Zip in any case.
 
 On Windows, `run.bat` installs the packages from `requirements-build.txt` and starts the app. Build the fPKG helper with `BUILD_PKG_TOOL.ps1`. `run.bat` doesn't build the RAR module, so RAR needs 7-Zip or WinRAR installed. Windows has a 260-character path limit unless long paths are enabled, so keep temp and output folders short (e.g. `D:\ps5`).
 

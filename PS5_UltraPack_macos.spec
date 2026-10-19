@@ -175,6 +175,27 @@ coll = COLLECT(
     name="PS5 UltraPack",
 )
 
+def _min_macos() -> str:
+    """The oldest macOS the bundle runs on: the highest minimum among the Python it is built
+    with and the bundled tools (a Homebrew build follows the Mac it was built on)."""
+    import subprocess, sys
+    found = []
+    for binary in (sys.executable, _os.path.join("backend", "native", "7zz")):
+        try:
+            out = subprocess.run(["otool", "-l", _os.path.realpath(binary)], capture_output=True,
+                                 text=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        m = _re.search(r"LC_BUILD_VERSION.*?minos (\d+(?:\.\d+)*)", out, _re.S)
+        if m:
+            found.append(tuple(int(x) for x in m.group(1).split(".")))
+    best = max(found) if found else (26, 0)
+    return ".".join(str(x) for x in (best + (0,))[:2])
+
+
+_MIN_MACOS = _min_macos()
+print(f"Minimum macOS: {_MIN_MACOS}")
+
 app = BUNDLE(
     coll,
     name="PS5 UltraPack.app",
@@ -187,7 +208,7 @@ app = BUNDLE(
         "CFBundleName": "PS5 UltraPack",
         "CFBundleShortVersionString": APP_VERSION,
         "CFBundleVersion": APP_VERSION,
-        "LSMinimumSystemVersion": "12.0",
+        "LSMinimumSystemVersion": _MIN_MACOS,   # Finder explains it on an older macOS
         "NSHighResolutionCapable": True,
         # Double-click a .ffpfsc / .ffpfs in Finder -> the app opens the PFS browser for
         # it (a cold launch shows ONLY the browser; see _wire_open_document in the GUI).

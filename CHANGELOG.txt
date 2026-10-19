@@ -27,6 +27,12 @@ FIXED
     OpenSSL 3.5.9 (built for macOS 12 by BUILD_OPENSSL.sh) next to the
     tool and points the fallback library search at it. Checked with the
     frozen-app matrix while /opt/homebrew and /usr/local were hidden.
+  - The app's Info.plist named macOS 12 as its minimum, but the bundle
+    needs macOS 26 (Homebrew Python/Tk and 7-Zip 26.04 are built for
+    it), so an older macOS just failed to launch it. The build now reads
+    the minimum from those binaries; Finder then says which macOS the app
+    needs. README: macOS 26 or newer (every Apple silicon Mac can update),
+    or run from source on an older one.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.9
