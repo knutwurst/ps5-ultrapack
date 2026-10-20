@@ -22,6 +22,7 @@ RUNTIME_NAME = "libSceAmpr.sprx"
 INDEX_NAME = "ampr_emu.index"
 ASSETS_INDEX = "ampr_assets.index"
 RUNTIME_VERSION = "0.4.2.1"
+MIN_GAIN_PERCENT = 5
 
 # Packed: game data below the game's own folder. Loose, whatever a rule above said: the files
 # a game or the console opens before AMPR runs or reads past it, as ps5-dump-forge and the
@@ -31,6 +32,7 @@ RUNTIME_VERSION = "0.4.2.1"
 _LOOSE_DIRS = ("sce_sys", "sce_module", "fakelib", "system", "save", "mods")
 _LOOSE_EXT = ("prx", "sprx", "elf", "self", "pak", "utoc", "ucas", "rpkg",
               "ini", "json", "xml", "txt", "cfg", "toml", "yaml", "yml",
+              "srt", "vtt", "ass", "ssa", "smi",
               "uproject", "uplugin", "upluginmanifest",
               "png", "jpg", "jpeg", "dds", "bmp", "gif", "at9",
               "bik", "bk2", "mp4", "mpg", "mpeg", "m2v", "webm", "usm",
@@ -201,6 +203,11 @@ def pack_game(root: Path, *, profile: Path | None = None, workers: int = 0, log=
             log(f"[WARN] LZ4: {w}")
         if not stats.logical_bytes:
             raise Lz4Error("the profile put no file of this game into a pack; nothing to gain")
+        gain = stats.logical_bytes - stats.stored_bytes
+        if gain * 100 < stats.logical_bytes * MIN_GAIN_PERCENT:
+            raise Lz4Error(f"the packs would save only {gain / 1024 ** 2:.1f} MB of "
+                           f"{stats.logical_bytes / 1024 ** 2:.1f} MB packed data; not worth it, "
+                           "so the game stays as it is")
 
         log("[INFO] LZ4: checking every block and every packed file against the original…")
         ampr_pack.verify_packs(index_path, ())

@@ -40,6 +40,7 @@ def _game(root: Path, ampr: bool = True) -> Path:
     (root / "data" / "config.json").write_text('{"a": 1}')
     (root / "movies").mkdir()
     (root / "movies" / "intro.bik").write_bytes(os.urandom(50000))
+    (root / "movies" / "intro_de.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nHallo\n" * 200)
     (root / "root.dat").write_bytes(b"r" * 50000)
     return root
 
@@ -72,7 +73,8 @@ class PackGame(unittest.TestCase):
         now = _files(game)
         for packed in ("data/levels/l0.bin", "data/levels/l1.bin", "data/levels/l2.bin", "data/[odd] name.bin"):
             self.assertNotIn(packed, now)
-        for loose in ("eboot.bin", "root.dat", "data/config.json", "movies/intro.bik", "sce_sys/param.json",
+        for loose in ("eboot.bin", "root.dat", "data/config.json", "movies/intro.bik", "movies/intro_de.srt",
+                      "sce_sys/param.json",
                       "fakelib/libSceAmpr.sprx", "ampr_emu.index", "ampr_assets.index"):
             self.assertIn(loose, now)
         self.assertTrue(any(n.startswith("ampr_assets-") and n.endswith(".pak") for n in now))
@@ -109,6 +111,17 @@ class PackGame(unittest.TestCase):
         with self.assertRaises(lz4_packs.Lz4Error):
             lz4_packs.pack_game(game)
         self.assertFalse((game / "fakelib").exists())
+
+    def test_refuses_packs_that_save_almost_nothing(self):
+        game = _game(self.d / "app0")
+        for p in (game / "data").rglob("*.bin"):
+            p.write_bytes(os.urandom(p.stat().st_size))
+        before = _files(game)
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(lz4_packs.Lz4Error) as e:
+            lz4_packs.pack_game(game, workers=4)
+        self.assertIn("not worth it", str(e.exception))
+        self.assertTrue(before <= _files(game))
+        self.assertFalse(any(n.startswith("ampr_assets") for n in _files(game)))
 
     def test_refuses_a_game_that_is_packed_already(self):
         game = _game(self.d / "app0")
