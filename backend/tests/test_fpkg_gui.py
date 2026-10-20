@@ -221,6 +221,72 @@ try:
        and not qu.chain_lz4 and "--lz4-unpack" in _cu and "--lz4" not in _cu, f"mode={_mode} kept={_kept_out} {_cu[-6:]}")
     if qu is not None:
         app.queue.remove(qu)
+    # 3a'') Output Auto: every source takes the output Settings sets for its kind; an archive
+    #       counts as what it holds, read from its member names before the unpack
+    _seed_pkg = next((S / "c1_pkg").glob("*.pkg"), None)
+    _auto_src = S / "auto_sources"
+    if _auto_src.exists(): shutil.rmtree(_auto_src)
+    _auto_src.mkdir()
+    shutil.copytree(HBT, _auto_src / "Folder Game")
+    _apkg = _auto_src / "Package Game.pkg"
+    shutil.copyfile(_seed_pkg, _apkg)
+    _azip = _auto_src / "Zipped Package.zip"
+    with zipfile.ZipFile(_azip, "w") as z:
+        z.write(_seed_pkg, "Zipped Package/Zipped Package.pkg")
+    m.save_settings({"auto_actions": {}})
+
+    _fit = []
+
+    def _auto_add(src):
+        d = m.JobDialog(app, init_src=str(src), init_to="auto"); root.update()
+        d.out_var.set(str(OUT)); root.update()
+        pump(lambda: not str(src).endswith(".zip") or str(src) in d._archive_content, 10)
+        root.update()
+        info = (d._to_key(), d.detect_var.get(), d._to_hint.get())
+        _fit.append((d._to_seg.winfo_reqwidth(), d._oin.winfo_width()))
+        n0 = len(app.queue); d._add(); settle()
+        return info, app.queue[n0:]
+    (_k, _det, _hint), _new = _auto_add(HBT)
+    _fa = _new[0] if _new else None
+    ok("auto.folder-builds-ffpfsc", _k == "auto" and "→" in _hint and _fa is not None and _fa.operation == "chain"
+       and _fa.chain_to == "ffpfsc" and _fa.auto_output, f"{_k} {_hint[:60]} {_fa and (_fa.operation, _fa.chain_to)}")
+    (_k, _det, _hint), _new = _auto_add(_apkg)
+    _fp = _new[0] if _new else None
+    ok("auto.pkg-is-organized", _fp is not None and _fp.content_kind == m.ORGANIZE_TARGET and _fp.operation == "copy",
+       f"{_fp and (_fp.operation, _fp.content_kind)}")
+    (_k, _det, _hint), _new = _auto_add(_azip)
+    _fz = _new[0] if _new else None
+    ok("auto.archive-shows-and-uses-its-content", _det.startswith(".pkg") and _fz is not None
+       and _fz.archive_content == "pkg" and _fz.content_kind == m.ORGANIZE_TARGET
+       and m.source_label(_fz) == ".pkg", f"detect={_det!r} {_fz and (_fz.archive_content, _fz.content_kind)}")
+    # what came out of the unpack decides: a game folder after all → the folder's output
+    if _fz is not None:
+        app._auto_resolve_unpacked(_fz, "game", [HBT])
+        _flip = (_fz.operation, _fz.chain_to, _fz.content_kind, _fz.archive_content)
+        app._auto_resolve_unpacked(_fz, "pkg", [_apkg])
+        ok("auto.the-unpacked-content-decides", _flip == ("chain", "ffpfsc", "", "folder")
+           and _fz.content_kind == m.ORGANIZE_TARGET and _fz.archive_content == "pkg", f"{_flip} → {_fz.content_kind}")
+    m.save_settings({"auto_actions": {"pkg": "ffpfsc"}})
+    _, _new = _auto_add(_apkg)
+    _fs = _new[0] if _new else None
+    ok("auto.settings-table-decides", _fs is not None and _fs.operation == "chain" and _fs.chain_to == "ffpfsc",
+       f"{_fs and (_fs.operation, _fs.chain_to)}")
+    m.save_settings({"auto_actions": {}})
+    # a parent folder with one of each: one job each, each with its own output
+    _, _new = _auto_add(_auto_src)
+    _by = {Path(str(getattr(i, "archive_path", None) or i.path)).name: (i.operation, i.chain_to) for i in _new}
+    ok("auto.parent-folder-one-output-per-kind", len(_new) == 3 and _by.get("Folder Game") == ("chain", "ffpfsc")
+       and _by.get("Package Game.pkg", ("",))[0] == "copy" and _by.get("Zipped Package.zip", ("",))[0] == "copy", str(_by))
+    for _it in [x for x in app.queue if getattr(x, "auto_output", False)]:
+        app.queue.remove(_it)
+    ok("auto.output-row-fits", all(seg < oin for seg, oin in _fit), str(_fit[:2]))
+    # every queued archive shows what it holds, whatever added it
+    _qa = m.GameItem.from_archive(ZP)
+    app.queue.append(_qa); app.update_queue_box()
+    pump(lambda: bool(_qa.archive_content), 10)
+    ok("auto.queue-reads-each-archive", _qa.archive_content == "folder" and m.source_label(_qa) == "Folder",
+       f"{_qa.archive_content!r} {m.source_label(_qa)}")
+    app.queue.remove(_qa); app.update_queue_box()
     # 3b) After the job: the row is there for a build, its choice lands on the job and in the Rescan recipe
     dla = m.JobDialog(app, init_src=str(HBT), init_to="ffpfsc"); root.update()
     _ab_shown = bool(dla._after_box.winfo_manager())
@@ -307,7 +373,9 @@ try:
     app.queue.pop()   # keep the fixture queue clean for later tests
     # 7) ARCHIVE source with .pkg → an archive placeholder that keeps its job (target, identity) through extraction
     dlg6 = m.JobDialog(app, init_src=str(ZP), init_to="pkg"); root.update()
-    ok("dialog.archive.hint", dlg6._kind == "archive" and "Archive" in dlg6.detect_var.get(), dlg6.detect_var.get())
+    pump(lambda: str(ZP) in dlg6._archive_content, 10); root.update()
+    ok("dialog.archive.hint", dlg6._kind == "archive" and dlg6.detect_var.get().startswith("Game folder"),
+       dlg6.detect_var.get())
     dlg6.cid_var.set(CID); dlg6.tid_var.set("PPSA99099")
     dlg6.out_var.set(str(OUT)); n4 = len(app.queue); dlg6._add(); settle()
     arc = app.queue[-1]

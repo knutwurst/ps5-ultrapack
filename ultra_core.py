@@ -476,6 +476,53 @@ LZ4_TARGETS = ("folder", "exfat")
 # GameItem.content_kind); not a chain target, the job dialog offers it beside them.
 ORGANIZE_TARGET = "organize"
 ARCHIVE_SUFFIXES = (".zip", ".rar", ".7z", ".r00")
+# "Automatic": each source takes the output Settings › Compression sets for its kind (an
+# archive the kind of what it holds). Not a chain target either; resolved per job.
+AUTO_TARGET = "auto"
+AUTO_SOURCE_KINDS = ("folder", "exfat", "ffpkg", "ffpfs", "ffpfsc", "pkg")
+AUTO_CHOICES = ("folder", "ffpfs", "ffpfsc", "exfat", "pkg", ORGANIZE_TARGET)
+DEFAULT_AUTO_ACTIONS = {"folder": "ffpfsc", "exfat": "ffpfsc", "ffpkg": "ffpfsc", "ffpfs": "ffpfsc",
+                        "ffpfsc": ORGANIZE_TARGET, "pkg": ORGANIZE_TARGET}
+
+
+def auto_actions(table=None) -> dict:
+    """The Automatic table: Settings' choices over the defaults, unknown values dropped."""
+    out = dict(DEFAULT_AUTO_ACTIONS)
+    for k, v in dict(table or {}).items():
+        if k in out and v in AUTO_CHOICES:
+            out[k] = v
+    return out
+
+
+def auto_target(kind: str, table=None) -> str:
+    """The output Automatic picks for a source of *kind* (see AUTO_SOURCE_KINDS); a kind
+    the table does not know is packed as a folder would be."""
+    acts = auto_actions(table)
+    return acts.get(kind) or acts["folder"]
+
+
+def content_kind_from_members(names) -> str:
+    """What an archive holds, from its member names alone: 'ffpfsc' | 'ffpfs' | 'exfat' |
+    'ffpkg' | 'folder' (a game folder) | 'pkg', or '' when none of these. The order is the
+    one the unpacked archive is classified in (App._classify_extracted_payload)."""
+    files = []
+    for n in names or ():
+        n = str(n).replace("\\", "/")
+        if n.endswith("/") or any(is_fs_junk_name(part) for part in n.split("/") if part):
+            continue
+        files.append(n)
+    low = [n.lower() for n in files]
+    for group in ((".ffpfsc", ".ffpfs"), (".exfat", ".ffpkg")):
+        hits = [suf for suf in group if any(n.endswith(suf) for n in low)]
+        if hits:
+            return hits[0].lstrip(".")
+    ebooted = {n[:-len("eboot.bin")] for n in low if n == "eboot.bin" or n.endswith("/eboot.bin")}
+    for n in low:
+        if n.endswith("sce_sys/param.json") and n[:-len("sce_sys/param.json")] in ebooted:
+            return "folder"
+    if any(n.endswith(".pkg") for n in low):
+        return "pkg"
+    return ""
 
 
 def chain_source_kind(item) -> str:
@@ -512,6 +559,9 @@ def source_label(item) -> str:
     """What the job's source was, for the queue row: the archive's kind ('.rar', '.7z', '.zip'), 'Folder' or a container's suffix."""
     arc = getattr(item, "archive_path", None) or getattr(item, "origin_archive", None)
     if arc or getattr(item, "source_kind", "") == "archive":
+        content = getattr(item, "archive_content", "")
+        if content:                      # what the archive holds says more than .rar or .7z
+            return "Folder" if content == "folder" else "." + content
         return archive_label(arc)
     raw = str(getattr(item, "path", "") or "").strip()
     if not raw:                          # Path("") would be ".", the working folder
@@ -2582,6 +2632,15 @@ class ArchiveExtractor:
         return []
 
     @staticmethod
+    def content_kind(archive: Path, passwords=None) -> str:
+        """What *archive* holds (see content_kind_from_members), '' when its names cannot be
+        read (a header no known password opens) or it holds nothing the app takes."""
+        try:
+            return content_kind_from_members(ArchiveExtractor.member_entries(Path(archive), passwords))
+        except Exception:
+            return ""
+
+    @staticmethod
     def member_entries(archive: Path, passwords=None) -> list[str]:
         """Member names like list_members, with a trailing '/' on folders (RAR and 7z list
         folders without one): what the name check needs to tell a folder from a file."""
@@ -3840,6 +3899,8 @@ class GameItem:
     archive_title = ""      # archive: the game read from the param.json inside, before extraction
     archive_title_id = ""
     archive_version = ""
+    archive_content = ""    # archive: what it holds ('pkg', 'exfat', 'folder', ...), read from its member names
+    auto_output = False     # added with the output Automatic: the unpacked archive's content may change it
     pkg_content_size = 0    # .pkg source: bytes of its files, from the package's directory (0 = not read)
     pkg_largest_file = 0    # .pkg source: its largest file (pass 1 peaks at the game plus this one)
     pkg_kept_bytes = 0      # .pkg source: bytes pass 1 never frees (sce_sys, files under 1 MiB)
@@ -4228,6 +4289,13 @@ __all__ = [
     "CHAIN_TARGETS",
     "CHAIN_TARGET_LABEL",
     "ORGANIZE_TARGET",
+    "AUTO_TARGET",
+    "AUTO_SOURCE_KINDS",
+    "AUTO_CHOICES",
+    "DEFAULT_AUTO_ACTIONS",
+    "auto_actions",
+    "auto_target",
+    "content_kind_from_members",
     "LibItem",
     "library_layout",
     "ARCHIVE_SUFFIXES",

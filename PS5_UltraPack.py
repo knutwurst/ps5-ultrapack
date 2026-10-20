@@ -2006,6 +2006,37 @@ class SettingsView:
                       text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left").pack(
             anchor="w", padx=14, pady=(0, 10))
 
+        # The output Auto (Add job › Output) picks per kind of source; an archive counts as
+        # what it holds.
+        self._section_label(scroll, "Auto output")
+        auto = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
+        auto.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(auto, text="With Auto as the output, every source gets the output set here for its kind. "
+                                "An archive is opened briefly and counts as what is inside it.",
+                     text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
+                     wraplength=600).pack(anchor="w", padx=14, pady=(10, 4))
+        labels = JobDialog._TARGET_LABEL
+        names = {"folder": "Game folder", "exfat": ".exfat image", "ffpkg": ".ffpkg image",
+                 "ffpfs": ".ffpfs image", "ffpfsc": ".ffpfsc image", "pkg": ".pkg package"}
+        acts = auto_actions(load_settings().get("auto_actions"))
+
+        def _pick(kind, disp, rev):
+            table = auto_actions(load_settings().get("auto_actions"))
+            table[kind] = rev.get(disp, table[kind])
+            save_settings({"auto_actions": table})
+        for kind in AUTO_SOURCE_KINDS:
+            row = ctk.CTkFrame(auto, fg_color=PANEL)
+            row.pack(fill="x", padx=14, pady=4)
+            ctk.CTkLabel(row, text=names[kind], text_color=WHITE, width=180, anchor="w").pack(side="left")
+            # a game folder into a folder has nothing to do; Organize keeps any format as it is
+            choices = [c for c in AUTO_CHOICES if not (kind == "folder" and c == "folder")]
+            disp = {labels[c]: c for c in choices}
+            menu = ctk.CTkOptionMenu(row, values=list(disp), width=200,
+                                     command=lambda d, k=kind, r=disp: _pick(k, d, r))
+            menu.set(labels[acts[kind]])
+            menu.pack(side="left")
+        ctk.CTkFrame(auto, fg_color=PANEL, height=6).pack()
+
 
     def _page_archives(self, scroll):
         comp = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
@@ -3755,8 +3786,8 @@ class JobDialog(EmbeddedDialog):
     LARGE = True
 
     _TARGET_LABEL = {"folder": "Folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "exfat": ".exfat", "pkg": ".pkg",
-                     "organize": "Organize"}
-    _TARGETS = ("folder", "ffpfs", "ffpfsc", "exfat", "pkg", "organize")
+                     "organize": "Organize", "auto": "Auto"}
+    _TARGETS = ("folder", "ffpfs", "ffpfsc", "exfat", "pkg", "organize", "auto")
     _TARGET_KEY = {v: k for k, v in _TARGET_LABEL.items()}
     _SOURCE_HINT = ("Game folder, parent folder of games, archive (.zip/.rar/.7z), disk image "
                     "(.exfat/.ffpkg), .ffpfs, .ffpfsc or .pkg")
@@ -3895,6 +3926,9 @@ class JobDialog(EmbeddedDialog):
         self.lz4_note_var = TextVar(value="")
         self.lz4_mode_var = tk.StringVar(value="unpack" if (item and getattr(item, "chain_lz4_unpack", False)) else "pack")
         self._lz4_seen: dict[str, object] = {}     # folder → uses AMPR (True/False/None)
+        self._archive_content: dict[str, str] = {}  # archive → what it holds (see ultra_core.content_kind_from_members)
+        self._detect_rest: tuple = ()
+        self._auto_table = auto_actions(settings.get("auto_actions"))    # the output Automatic picks per source kind
         self.patch_on_var = tk.BooleanVar(value=bool(getattr(item, "patch_source", None)) if item else False)
         self.patch_var = tk.StringVar(value=str(getattr(item, "patch_source", "") or "") if item else "")
         self.backport_on_var = tk.BooleanVar(value=bool(getattr(item, "backport_target", None)) if item else False)
@@ -4421,6 +4455,13 @@ class JobDialog(EmbeddedDialog):
             self.app.open_pfs_browser(str(p))      # a view: this panel closes
 
     # ── detection ────────────────────────────────────────────────────────────
+    def _auto_hint(self) -> str:
+        """'each source as Settings sets it: Folder → .ffpfsc, .pkg → Organize, …'"""
+        acts = self._auto_table
+        name = {"folder": tr("Folder")}
+        pairs = ", ".join(f"{name.get(k, '.' + k)} → {tr(self._TARGET_LABEL.get(v, v))}" for k, v in acts.items())
+        return tr("each source as Settings › Compression sets it: {pairs}", pairs=pairs)
+
     def _to_key(self) -> str:
         return self._TARGET_KEY.get(self.to_var.get(), "ffpfsc")
 
@@ -4483,6 +4524,8 @@ class JobDialog(EmbeddedDialog):
                 box["info"] = ArchiveExtractor.ps4_archive_info(p, pw)
             except Exception:
                 box["info"] = None
+            if box["info"] is None:
+                box["content"] = ArchiveExtractor.content_kind(p, pw)
 
         def poll():                       # Tk is touched on the main thread only
             try:
@@ -4494,6 +4537,12 @@ class JobDialog(EmbeddedDialog):
                 self.after(80, poll); return
             info = box["info"]
             if info is None:
+                content = box.get("content", "")
+                self._archive_content[raw] = content
+                head = (self._KIND_LABEL["folder"] if content == "folder" else "." + content) if content \
+                    else tr("Archive, content not readable before unpacking")
+                self.detect_var.set(" · ".join(x for x in (tr(head), *self._detect_rest) if x))
+                self._refresh()
                 return
             self._ps4_info = info
             self._kind = "ps4"; self._games = [p]
@@ -4600,6 +4649,7 @@ class JobDialog(EmbeddedDialog):
                 size = format_size(p.stat().st_size)
             except Exception:
                 size = ""
+            self._detect_rest = (tid, size)
             self.detect_var.set(" · ".join(x for x in (self._KIND_LABEL[kind], tid, size) if x))
             if kind in ("ffpfs", "ffpfsc", "pkg"):
                 self._look_btn.pack(side="left", padx=(10, 0))
@@ -4803,14 +4853,31 @@ class JobDialog(EmbeddedDialog):
             return True
         return self._kind == "parent" and bool(self._games) and all(s.is_dir() for s in self._games)
 
+    def _auto_guess(self, p: Path | None, is_archive: bool) -> str:
+        """The output Automatic will most likely pick for *p*, for the dialog's sentences;
+        an archive whose content is not read yet counts as a game folder."""
+        if p is None:
+            kind = "folder"
+        elif is_archive:
+            kind = self._archive_content.get(str(p)) or "folder"
+        elif p.is_dir():
+            kind = "folder"
+        else:
+            kind = chain_source_kind(types.SimpleNamespace(path=p))
+        return auto_target(kind, self._auto_table)
+
     def _stand_in(self, p: Path | None):
         """A lightweight object with the attributes chain_summary reads - no folder walk."""
         kind = self._kind
         is_archive = kind == "archive" or (kind == "parent" and p is not None and p.is_file() and is_archive_file(p))
+        to = self._to_key()
+        if to == AUTO_TARGET:
+            to = self._auto_guess(p, is_archive)
         return types.SimpleNamespace(
             path=p, archive_path=(p if is_archive else None),
-            chain_to=self._to_key(), chain_sign=bool(self.sign_var.get()) and self._to_key() != "pkg",
-            chain_lz4=self._lz4_packs() and self._to_key() in ultra_core.LZ4_TARGETS,
+            content_kind=ORGANIZE_TARGET if to == ORGANIZE_TARGET else "",
+            chain_to=to, chain_sign=bool(self.sign_var.get()) and to != "pkg",
+            chain_lz4=self._lz4_packs() and to in ultra_core.LZ4_TARGETS,
             chain_lz4_unpack=bool(self.lz4_var.get()) and self.lz4_mode_var.get() == "unpack",
             patch_source=(self.patch_var.get().strip() if self.patch_on_var.get() else None),
             backport_target=(self.backport_target_var.get() if self.backport_on_var.get() else None))
@@ -4902,7 +4969,8 @@ class JobDialog(EmbeddedDialog):
                            "ffpfsc": "compressed image - mounts with ShadowMount",
                            "pkg": "installable package",
                            "organize": "into the library as it is: '<Title> [ID] [vX]/…', the same format, "
-                                       "joining a title folder that is already there"}.get(to, "") if not ps4 else
+                                       "joining a title folder that is already there",
+                           "auto": self._auto_hint()}.get(to, "") if not ps4 else
                           {"pkg": "into the library: '<Title> [CUSA…] [vX]', UPDATE and DLC named, 'DLC Pack' from 4 DLCs",
                            "folder": "the package's files in a folder"}.get(to, ""))
         in_place = self._in_place(to)
@@ -5211,25 +5279,34 @@ class JobDialog(EmbeddedDialog):
                    else self._games if self._kind == "folder" else [p])
         # the folder picked here stays when sources are moved or cleaned up after their jobs
         root = str(p if (p.is_dir() and not ultra_core.is_game_folder(p)) else p.parent)
-        sign = bool(self.sign_var.get()) and to != "pkg"     # a .pkg is always signed by its builder
-        lz4 = self._lz4_packs() and to in ultra_core.LZ4_TARGETS
+        sign_on, lz4_on = bool(self.sign_var.get()), self._lz4_packs()
         lz4_unpack = bool(self.lz4_var.get()) and self.lz4_mode_var.get() == "unpack"
-        lz4_profile = (self.lz4_profile_var.get() or "").strip() if lz4 else ""
+        lz4_profile = (self.lz4_profile_var.get() or "").strip() if lz4_on else ""
         if lz4_profile and not Path(lz4_profile).is_file():
             messagebox.showerror("LZ4 asset packs", tr("The profile does not exist:\n{p}", p=lz4_profile), parent=self)
             return
         app = self.app
+        auto = to == AUTO_TARGET
+        table = self._auto_table if auto else None
+        passwords = app._candidate_passwords() if auto else None
 
-        def make(s):
-            # Tk-free: runs on the add thread for a new job (archive headers are read here)
-            it = GameItem.from_chain(s, to=to, output_path=out or None, sign=sign,
+        def build(s, to):
+            lz4 = lz4_on and to in ultra_core.LZ4_TARGETS
+            it = GameItem.from_chain(s, to=to, output_path=out or None,
+                                     sign=sign_on and to != "pkg",     # a .pkg is always signed by its builder
                                      patch_source=patch or None, backport_target=target,
                                      backport_libs_root=libs or None, lz4=lz4,
-                                     lz4_profile=lz4_profile or None, lz4_unpack=lz4_unpack)
+                                     lz4_profile=(lz4_profile or None) if lz4 else None, lz4_unpack=lz4_unpack)
             if to == "pkg":
                 app._apply_fpkg_params(it, pkg_params)
             it.compression_level = ff_level if to == "ffpfsc" else None
             it.auto_organize = organize
+            return it
+
+        def make(s):
+            # Tk-free: runs on the add thread for a new job (archive headers are read here)
+            it = (app._auto_item_for(s, table, build, output_path=out or None, passwords=passwords)
+                  if auto else build(s, to))
             it.after_source, it.after_move_to = after, after_dir or None
             it.source_root = root
             return it
@@ -9274,6 +9351,9 @@ class App:
                 if self.cancel_requested:
                     raise ArchiveExtractionCancelled("Archive extraction cancelled by user.")
                 kind, paths = self._classify_extracted_payload(extracted_root, archive.name)
+                item.archive_content = self._content_of_payload(kind, paths) or getattr(item, "archive_content", "")
+                if getattr(item, "auto_output", False):
+                    self._auto_resolve_unpacked(item, kind, paths)
                 if getattr(item, "content_kind", "") == ORGANIZE_TARGET:
                     # The whole extraction goes into the library, each item in its own format.
                     item.origin_archive = str(archive)
@@ -9868,6 +9948,82 @@ class App:
         item.chain_to = ORGANIZE_TARGET
         item.copy_mode = "move" if getattr(item, "archive_path", None) else "keep"
         return item
+
+    @staticmethod
+    def _make_organize(item):
+        """Turn a job built by GameItem.from_chain into an Organize job (see _organize_item_for)."""
+        item.operation = "copy"
+        item.content_kind = ORGANIZE_TARGET
+        item.chain_to = ORGANIZE_TARGET
+        item.copy_mode = "move" if getattr(item, "archive_path", None) else "keep"
+        return item
+
+    def _auto_item_for(self, src, table, build, *, output_path=None, passwords=None):
+        """A job with the output Automatic: the output Settings sets for the source's kind,
+        an archive's kind read from its member names. build(src, to) makes a chain job; an
+        Organize result is that job turned into a copy, so its changes stay for a later
+        switch. PS4 packages always go to the library. Tk-free (passwords come in)."""
+        src = Path(src)
+        content = ""
+        if self._is_archive_path(src):
+            info = ArchiveExtractor.ps4_archive_info(src, passwords)
+            if info is not None:
+                return self._ps4_archive_item(src, info, output_path=output_path)
+            content = ArchiveExtractor.content_kind(src, passwords)
+            kind = content or "folder"
+        elif _is_ps4_source(src):
+            return self._ps4_item_for(src, output_path=output_path)
+        elif src.is_dir():
+            kind = "folder"
+        else:
+            kind = chain_source_kind(types.SimpleNamespace(path=src))
+        to = auto_target(kind, table)
+        it = build(src, "ffpfsc" if to == ORGANIZE_TARGET else to)
+        if to == ORGANIZE_TARGET:
+            self._make_organize(it)
+        it.auto_output = True
+        if content:
+            it.archive_content = content
+        return it
+
+    @staticmethod
+    def _content_of_payload(kind: str, paths) -> str:
+        """An unpacked archive's payload (see _classify_extracted_payload) as an
+        archive_content value: 'folder', 'pkg', 'exfat', 'ffpfsc', ...; '' for PS4 packages."""
+        if kind == "ps4":
+            return ""
+        return {"game": "folder", "pkg": "pkg"}.get(kind) or (Path(paths[0]).suffix.lower().lstrip(".") if paths else "")
+
+    def _auto_resolve_unpacked(self, item, kind: str, paths) -> None:
+        """An Automatic archive job after the unpack: what came out decides the output
+        (the names read at add time can be missing or wrong). Runs on the extract worker."""
+        content = self._content_of_payload(kind, paths)
+        if not content:
+            return
+        item.archive_content = content
+        to = auto_target(content, (load_settings() or {}).get("auto_actions"))
+        if to == ORGANIZE_TARGET:
+            if getattr(item, "content_kind", "") != ORGANIZE_TARGET:
+                self._make_organize(item)
+                self.log("INFO", tr("{name} holds {what}: Auto organizes it into the library",
+                                    name=Path(str(item.archive_path or item.path)).name, what=source_label(item)))
+            return
+        if getattr(item, "content_kind", "") == ORGANIZE_TARGET:
+            item.content_kind, item.copy_mode = "", None
+        before = getattr(item, "chain_to", None)
+        if before != to:
+            self.log("INFO", tr("{name} holds {what}: Auto builds {to}",
+                                name=Path(str(item.archive_path or item.path)).name, what=source_label(item),
+                                to=CHAIN_TARGET_LABEL.get(to, to)))
+        item.operation, item.chain_to = "chain", to
+        if to not in ultra_core.LZ4_TARGETS:
+            item.chain_lz4 = False
+        if to == "pkg":
+            item.chain_sign = False
+            if before != "pkg":
+                self._apply_fpkg_params(item, self.fpkg_defaults)
+        elif to != "ffpfsc":
+            item.compression_level = None
 
     def _ps4_archive_item(self, archive, info: dict, *, output_path=None):
         """A sorting job for an archive of PS4 packages (see _ps4_item_for), named from the
@@ -10956,6 +11112,46 @@ class App:
         if skipped:
             self.log("WARN", f"Saved queue: {skipped} item(s) skipped (source path missing/invalid).")
 
+    def _probe_archive_contents(self) -> None:
+        """Read, in the background, what each queued archive holds (its member names only)
+        so the queue's source says '.pkg' or 'Folder' instead of '.rar'. Each archive once."""
+        if getattr(self, "_content_probe_busy", False):
+            return
+        todo = [it for it in self.queue if getattr(it, "archive_path", None)
+                and not getattr(it, "archive_content", "") and not getattr(it, "_content_probed", False)
+                and getattr(it, "content_kind", "") != "ps4"]
+        if not todo:
+            return
+        for it in todo:
+            it._content_probed = True
+        self._content_probe_busy = True
+        pw = self._candidate_passwords()
+        found: list = []
+        done = threading.Event()
+
+        def work():
+            try:
+                for it in todo:
+                    own = [getattr(it, "password", None) or ""]
+                    c = ArchiveExtractor.content_kind(Path(it.archive_path), [x for x in own if x] + pw)
+                    if c:
+                        found.append((it, c))
+            finally:
+                done.set()
+
+        def poll():
+            if not done.is_set():
+                self.root.after(200, poll); return
+            self._content_probe_busy = False
+            changed = False
+            for it, c in found:
+                if not getattr(it, "archive_content", "") and getattr(it, "archive_path", None):
+                    it.archive_content, changed = c, True
+            if changed:
+                self.update_queue_box()
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(200, poll)
+
     def update_queue_box(self, select_item=None):
         """Rebuild the listbox."""
         # Per-job output: snapshot the current global Output onto any pack/convert item
@@ -10986,6 +11182,7 @@ class App:
             if _op in ("pack", "fpkg-build", "chain") and getattr(_it, "auto_organize", None) is None:
                 _it.auto_organize = bool(self.auto_organize_var.get())
         self._save_queue()   # persist the (just-mutated) queue across restarts
+        self._probe_archive_contents()
         # Decide which item to keep selected. A plain refresh keeps the job in focus (found by
         # its key, so a reorder or a removal above it does not move the focus to another job)
         # and every other marked job; an explicit select_item replaces the selection.
@@ -13025,7 +13222,7 @@ class App:
         Add job settings): produces a chain job + fPKG params + compression + organize."""
         to = str(tpl.get("to") or "ffpfsc")
         out = str(tpl.get("output") or "")
-        sign = bool(tpl.get("sign")) and to != "pkg"
+        sign = bool(tpl.get("sign"))
         target = tpl.get("backport_target") or None
         patch = tpl.get("patch_source") or None
         pkg_params = tpl.get("pkg_params") or {}
@@ -13035,19 +13232,26 @@ class App:
         after_dir = tpl.get("after_move_to") or None
         root = str(tpl.get("_rescan_root") or "") or None
 
+        table = auto_actions((load_settings() or {}).get("auto_actions")) if to == AUTO_TARGET else None
+        passwords = self._candidate_passwords() if to == AUTO_TARGET else None
+
+        def build(src, to):
+            it = GameItem.from_chain(src, to=to, output_path=out or None, sign=sign and to != "pkg",
+                                     patch_source=patch, backport_target=target,
+                                     backport_libs_root=None)
+            if to == "pkg":
+                self._apply_fpkg_params(it, pkg_params or self.fpkg_defaults)
+            it.compression_level = ff_level if to == "ffpfsc" else None
+            it.auto_organize = organize
+            return it
+
         def make(src):
             if to == ORGANIZE_TARGET:
                 it = self._organize_item_for(src, output_path=out or None)
-                it.after_source, it.after_move_to = after, after_dir
-                it.source_root = root
-                return it
-            it = GameItem.from_chain(src, to=to, output_path=out or None, sign=sign,
-                                     patch_source=patch, backport_target=target,
-                                     backport_libs_root=None)
-            if to == "pkg" and pkg_params:
-                self._apply_fpkg_params(it, pkg_params)
-            it.compression_level = ff_level if to == "ffpfsc" else None
-            it.auto_organize = organize
+            elif to == AUTO_TARGET:
+                it = self._auto_item_for(src, table, build, output_path=out or None, passwords=passwords)
+            else:
+                it = build(src, to)
             it.after_source, it.after_move_to = after, after_dir
             it.source_root = root
             return it

@@ -26,6 +26,22 @@ LZ4 ASSET PACKS AND .EXFAT
     block by block, restores every packed file, removes the packs and
     rebuilds ampr_emu.index, into any output. A packed game folder offers
     it by itself.
+  - Subtitle files stay loose, and packs that would save less than 5 %
+    are refused before the game changes.
+
+ARCHIVE CONTENT AND THE OUTPUT AUTO
+
+  - Every queued archive is opened briefly in the background (its file
+    list only, with the saved passwords): the queue shows what it holds,
+    .pkg, Folder, .exfat or .ffpfsc, instead of .rar or .7z. Add job shows
+    the same for a single archive.
+  - New output "Auto": each source gets the output set for its kind in
+    Settings > Compression > Auto output (game folder, .exfat, .ffpkg,
+    .ffpfs, .ffpfsc, .pkg). The defaults: folders and images become an
+    .ffpfsc, a .pkg or an .ffpfsc is organized into the library. An archive
+    counts as what it holds; after the unpack, what came out decides once
+    more. A parent folder of mixed downloads gives each job its own
+    output, and Rescan keeps Auto.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.10
