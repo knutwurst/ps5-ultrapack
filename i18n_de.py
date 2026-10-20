@@ -1025,4 +1025,5 @@ GERMAN: dict[str, str] = {
     "Archive, content not readable before unpacking": "Archiv, Inhalt erst nach dem Entpacken lesbar",
     "{name} holds {what}: Auto builds {to}": "{name} enthält {what}: Auto erstellt {to}",
     "{name} holds {what}: Auto organizes it into the library": "{name} enthält {what}: Auto sortiert es in die Bibliothek",
+    "Organize leaves a source as it is: the changes above apply to the sources that are built.": "Organisieren lässt eine Quelle, wie sie ist: Die Änderungen oben gelten für die Quellen, die gebaut werden.",
 }

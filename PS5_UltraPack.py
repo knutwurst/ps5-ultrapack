@@ -4460,7 +4460,10 @@ class JobDialog(EmbeddedDialog):
         acts = self._auto_table
         name = {"folder": tr("Folder")}
         pairs = ", ".join(f"{name.get(k, '.' + k)} → {tr(self._TARGET_LABEL.get(v, v))}" for k, v in acts.items())
-        return tr("each source as Settings › Compression sets it: {pairs}", pairs=pairs)
+        text = tr("each source as Settings › Compression sets it: {pairs}", pairs=pairs)
+        if ORGANIZE_TARGET in acts.values():
+            text += " " + tr("Organize leaves a source as it is: the changes above apply to the sources that are built.")
+        return text
 
     def _to_key(self) -> str:
         return self._TARGET_KEY.get(self.to_var.get(), "ffpfsc")
@@ -4538,7 +4541,7 @@ class JobDialog(EmbeddedDialog):
             info = box["info"]
             if info is None:
                 content = box.get("content", "")
-                self._archive_content[raw] = content
+                self._archive_content[str(p)] = content
                 head = (self._KIND_LABEL["folder"] if content == "folder" else "." + content) if content \
                     else tr("Archive, content not readable before unpacking")
                 self.detect_var.set(" · ".join(x for x in (tr(head), *self._detect_rest) if x))
@@ -5307,6 +5310,9 @@ class JobDialog(EmbeddedDialog):
             # Tk-free: runs on the add thread for a new job (archive headers are read here)
             it = (app._auto_item_for(s, table, build, output_path=out or None, passwords=passwords)
                   if auto else build(s, to))
+            if auto:      # what was asked for, should the unpacked content pick another output
+                it.auto_sign, it.auto_lz4 = sign_on, lz4_on
+                it.auto_lz4_profile = lz4_profile or None
             it.after_source, it.after_move_to = after, after_dir or None
             it.source_root = root
             return it
@@ -9755,6 +9761,7 @@ class App:
         for a .pkg only the compression settings are, the identity comes from each game."""
         extra.operation = "chain"
         extra.chain_to = getattr(tpl, "chain_to", None) or "ffpfsc"
+        extra.archive_content = getattr(tpl, "archive_content", "") or getattr(extra, "archive_content", "")
         extra.chain_sign = bool(getattr(tpl, "chain_sign", False))
         extra.chain_lz4 = bool(getattr(tpl, "chain_lz4", False))
         extra.lz4_profile = getattr(tpl, "lz4_profile", None)
@@ -10016,10 +10023,11 @@ class App:
                                 name=Path(str(item.archive_path or item.path)).name, what=source_label(item),
                                 to=CHAIN_TARGET_LABEL.get(to, to)))
         item.operation, item.chain_to = "chain", to
-        if to not in ultra_core.LZ4_TARGETS:
-            item.chain_lz4 = False
+        item.chain_sign = bool(getattr(item, "auto_sign", item.chain_sign)) and to != "pkg"
+        item.chain_lz4 = (bool(getattr(item, "auto_lz4", item.chain_lz4)) and to in ultra_core.LZ4_TARGETS
+                          and not getattr(item, "chain_lz4_unpack", False))
+        item.lz4_profile = getattr(item, "auto_lz4_profile", item.lz4_profile) if item.chain_lz4 else None
         if to == "pkg":
-            item.chain_sign = False
             if before != "pkg":
                 self._apply_fpkg_params(item, self.fpkg_defaults)
         elif to != "ffpfsc":
@@ -11129,11 +11137,14 @@ class App:
         found: list = []
         done = threading.Event()
 
+        # paths and passwords taken now: a job that starts meanwhile clears archive_path
+        jobs = [(it, Path(it.archive_path), [x for x in [getattr(it, "password", None) or ""] if x] + pw)
+                for it in todo]
+
         def work():
             try:
-                for it in todo:
-                    own = [getattr(it, "password", None) or ""]
-                    c = ArchiveExtractor.content_kind(Path(it.archive_path), [x for x in own if x] + pw)
+                for it, arc, cands in jobs:
+                    c = ArchiveExtractor.content_kind(arc, cands)
                     if c:
                         found.append((it, c))
             finally:
@@ -11145,7 +11156,7 @@ class App:
             self._content_probe_busy = False
             changed = False
             for it, c in found:
-                if not getattr(it, "archive_content", "") and getattr(it, "archive_path", None):
+                if not getattr(it, "archive_content", ""):
                     it.archive_content, changed = c, True
             if changed:
                 self.update_queue_box()
@@ -13250,6 +13261,7 @@ class App:
                 it = self._organize_item_for(src, output_path=out or None)
             elif to == AUTO_TARGET:
                 it = self._auto_item_for(src, table, build, output_path=out or None, passwords=passwords)
+                it.auto_sign = sign
             else:
                 it = build(src, to)
             it.after_source, it.after_move_to = after, after_dir

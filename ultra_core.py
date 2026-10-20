@@ -489,7 +489,7 @@ def auto_actions(table=None) -> dict:
     """The Automatic table: Settings' choices over the defaults, unknown values dropped."""
     out = dict(DEFAULT_AUTO_ACTIONS)
     for k, v in dict(table or {}).items():
-        if k in out and v in AUTO_CHOICES:
+        if k in out and v in AUTO_CHOICES and not (k == v == "folder"):    # a folder to a folder does nothing
             out[k] = v
     return out
 
@@ -3900,7 +3900,10 @@ class GameItem:
     archive_title_id = ""
     archive_version = ""
     archive_content = ""    # archive: what it holds ('pkg', 'exfat', 'folder', ...), read from its member names
-    auto_output = False     # added with the output Automatic: the unpacked archive's content may change it
+    auto_output = False     # added with the output Auto: the unpacked archive's content may change it
+    auto_sign = False       # Auto: sign and LZ4 as asked for, for the output the unpacked content picks
+    auto_lz4 = False
+    auto_lz4_profile = None
     pkg_content_size = 0    # .pkg source: bytes of its files, from the package's directory (0 = not read)
     pkg_largest_file = 0    # .pkg source: its largest file (pass 1 peaks at the game plus this one)
     pkg_kept_bytes = 0      # .pkg source: bytes pass 1 never frees (sce_sys, files under 1 MiB)

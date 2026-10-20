@@ -65,6 +65,9 @@ class Table(unittest.TestCase):
         self.assertEqual(a["exfat"], "ffpfsc")
         self.assertNotIn("zzz", a)
 
+    def test_a_folder_never_goes_to_a_folder(self):
+        self.assertEqual(ultra_core.auto_actions({"folder": "folder"})["folder"], "ffpfsc")
+
     def test_unknown_kind_is_treated_as_a_folder(self):
         self.assertEqual(ultra_core.auto_target("weird", {"folder": "exfat"}), "exfat")
 

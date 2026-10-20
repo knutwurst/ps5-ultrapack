@@ -240,7 +240,7 @@ try:
     def _auto_add(src):
         d = m.JobDialog(app, init_src=str(src), init_to="auto"); root.update()
         d.out_var.set(str(OUT)); root.update()
-        pump(lambda: not str(src).endswith(".zip") or str(src) in d._archive_content, 10)
+        pump(lambda: not str(src).endswith(".zip") or str(Path(src)) in d._archive_content, 10)
         root.update()
         info = (d._to_key(), d.detect_var.get(), d._to_hint.get())
         _fit.append((d._to_seg.winfo_reqwidth(), d._oin.winfo_width()))
@@ -266,6 +266,9 @@ try:
         app._auto_resolve_unpacked(_fz, "pkg", [_apkg])
         ok("auto.the-unpacked-content-decides", _flip == ("chain", "ffpfsc", "", "folder")
            and _fz.content_kind == m.ORGANIZE_TARGET and _fz.archive_content == "pkg", f"{_flip} → {_fz.content_kind}")
+        _fz.auto_sign = True; _fz.chain_sign = False      # asked for, dropped by the guess
+        app._auto_resolve_unpacked(_fz, "game", [HBT])
+        ok("auto.asked-changes-come-back", _fz.chain_to == "ffpfsc" and _fz.chain_sign, f"sign={_fz.chain_sign}")
     m.save_settings({"auto_actions": {"pkg": "ffpfsc"}})
     _, _new = _auto_add(_apkg)
     _fs = _new[0] if _new else None
@@ -373,7 +376,7 @@ try:
     app.queue.pop()   # keep the fixture queue clean for later tests
     # 7) ARCHIVE source with .pkg → an archive placeholder that keeps its job (target, identity) through extraction
     dlg6 = m.JobDialog(app, init_src=str(ZP), init_to="pkg"); root.update()
-    pump(lambda: str(ZP) in dlg6._archive_content, 10); root.update()
+    pump(lambda: str(Path(ZP)) in dlg6._archive_content, 10); root.update()
     ok("dialog.archive.hint", dlg6._kind == "archive" and dlg6.detect_var.get().startswith("Game folder"),
        dlg6.detect_var.get())
     dlg6.cid_var.set(CID); dlg6.tid_var.set("PPSA99099")
