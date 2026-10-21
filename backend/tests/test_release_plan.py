@@ -171,7 +171,7 @@ class PackageHeaders(unittest.TestCase):
 
     def test_loose_packages(self):
         for data, want in ((_ps5_pkg(32), "game"), (_ps5_pkg(33), "addon"), (_ps5_pkg(34), "addon"),
-                           (_ps5_pkg(7), ""), (_ps4_pkg(0x1A), "game"), (_ps4_pkg(0x1B), "addon"),
+                           (_ps5_pkg(7), ""), (_ps4_pkg(0x1A), ""), (_ps4_pkg(0x1B), "addon"),
                            (_ps4_pkg(0x1E), "addon"), (b"nope", "")):
             f = self.d / "x.pkg"
             f.write_bytes(data)

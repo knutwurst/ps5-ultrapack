@@ -1264,7 +1264,8 @@ _GAME_CONTENT = ("folder", "exfat", "ffpkg", "ffpfs", "ffpfsc")
 # from inside an archive only up to this far; add-on packages keep it within the first MBs.
 PKG_HEADER_BUDGET = 64 * 1024 * 1024
 _PS5_GAME, _PS5_ADDON = (32,), (33, 34)
-_PS4_GAME, _PS4_ADDON = (0x1A,), (0x1B, 0x1C, 0x1E)       # game data; add-on, license, patch
+# PS4 game data (0x1A) is a game or an update (its SFO category tells): not told from the header
+_PS4_GAME, _PS4_ADDON = (), (0x1B, 0x1C, 0x1E)            # add-on, license, delta patch
 
 
 def package_role_from(read) -> str:

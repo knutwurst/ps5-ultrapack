@@ -3567,6 +3567,7 @@ class CLIWorker(threading.Thread):
         fa = files(a)
         if fa != files(b):
             return False
+        filecmp.clear_cache()      # a file rewritten with the same size and time must be read again
         return all(filecmp.cmp(a / f, b / f, shallow=False) for f in fa)
 
     _TITLE_FOLDER_RE = re.compile(r"\[(?:PPSA|CUSA)\d{5}\]", re.I)
@@ -3611,15 +3612,29 @@ class CLIWorker(threading.Thread):
         dest_dir = self._extras_dest()
         library = dest_dir.parent if self._TITLE_FOLDER_RE.search(dest_dir.name) else dest_dir
         staging = Path(self.temp_dir) / f"_addons-{os.getpid()}-{id(self.item)}"
+        _bd = str(backend_base_dir())
+        if _bd not in sys.path:
+            sys.path.insert(0, _bd)
+        import organize_lib
         failed = 0
         try:
             for sib in mixed:
+                if self.app.cancel_requested:
+                    failed += 1                             # what is left stays in the source
+                    break
                 files = [sib] if sib.is_file() else sorted(q for q in sib.rglob("*")
                                                             if q.is_file() and not is_fs_junk_name(q.name))
                 seen_sets: set = set()
                 for f in files:
+                    if self.app.cancel_requested:
+                        failed += 1
+                        break
+                    dest_dir = self._extras_dest()          # Organize may have renamed the title folder
                     rel = Path(sib.name) / f.relative_to(sib) if sib.is_dir() else Path(f.name)
-                    if f.suffix.lower() == ".pkg":
+                    # a folder that names the role (a backport for one firmware, updates) keeps
+                    # the package where it is: sorted alone, it would pass for the game
+                    by_folder = sib.is_dir() and organize_lib.role_folder(f, sib)
+                    if f.suffix.lower() == ".pkg" and not by_folder:
                         ok = self._organize_addon(f, library, "keep")
                     elif is_archive_file(f):
                         first = ArchiveExtractor._first_volume(f)
@@ -3658,10 +3673,16 @@ class CLIWorker(threading.Thread):
             library.mkdir(parents=True, exist_ok=True)
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                     text=True, encoding="utf-8", errors="replace", env=env,
-                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                                    start_new_session=(os.name != "nt"))
+            self.proc = proc
+            self.app.current_process = proc                 # Cancel stops it like the job itself
             placed = False
             for line in proc.stdout or ():
                 line = line.rstrip()
+                m_ren = re.match(r"\[ORGANIZE\] renamed (.+) -> (.+)$", line)
+                if m_ren:
+                    self._title_folder_renamed(library / m_ren.group(1), library / m_ren.group(2))
                 if line.startswith(("[OK] Organized: ", "[OK] Came along: ", "[INFO] already there")):
                     placed = True
                     self.app.log("INFO", f"Add-on: {line[5:] if line.startswith('[OK] ') else line[7:]}")
@@ -3675,6 +3696,20 @@ class CLIWorker(threading.Thread):
             self.app.log("WARN", f"Could not sort the add-on {src.name}: {e}")
             return False
 
+    def _title_folder_renamed(self, old: Path, new: Path) -> None:
+        """Organize gave the game's title folder a newer version's name: what this job wrote
+        is there now, its output included."""
+        def moved(x: str) -> str:
+            try:
+                return str(new / Path(x).relative_to(old))
+            except ValueError:
+                return x
+        self.output_path = moved(str(self.output_path or "").strip('"'))
+        self._written = [moved(x) for x in self._written]
+        if Path(self.output_dir) == old or old in Path(self.output_dir).parents:
+            self.output_dir = Path(moved(str(self.output_dir)))
+        self.app.log("INFO", f"The title folder took the newer version's name: {new.name}")
+
     def _sort_archive_addon(self, archive: Path, library: Path, staging: Path, rest_dir: Path) -> bool:
         """Unpack an add-on archive into the job's scratch, sort its packages into the library
         and copy what is left of it (pictures, tools) to *rest_dir*/<archive name>. False when
@@ -3686,23 +3721,37 @@ class CLIWorker(threading.Thread):
         try:
             shutil.rmtree(dest, ignore_errors=True)
             dest.mkdir(parents=True)
-            root = Path(ArchiveExtractor.extract_with_passwords(archive, dest, self._addon_passwords,
-                                                                log_fn=lambda *_a: None))
+            ArchiveExtractor.extract_with_passwords(archive, dest, self._addon_passwords, log_fn=lambda *_a: None,
+                                                    cancel_event=self.app.extract_cancel_event)
         except Exception as e:
             self.app.log("WARN", f"Could not unpack the add-on {archive.name}: {e}; it is copied as it is")
             shutil.rmtree(dest, ignore_errors=True)
             return False
-        pkgs = sorted(q for q in root.rglob("*.pkg") if q.is_file() and not is_fs_junk_name(q.name))
+        # the whole extraction, not only the game-like folder the unpack picks; one folder that
+        # wraps everything is left out of the names
+        tops = [q for q in dest.iterdir() if not is_fs_junk_name(q.name)]
+        base = tops[0] if len(tops) == 1 and tops[0].is_dir() else dest
+        _bd = str(backend_base_dir())
+        if _bd not in sys.path:
+            sys.path.insert(0, _bd)
+        import organize_lib
+        pkgs = sorted(q for q in dest.rglob("*.pkg") if q.is_file() and not is_fs_junk_name(q.name))
         if not pkgs:
             shutil.rmtree(dest, ignore_errors=True)
             return False
         ok = True
         for pkg in pkgs:
-            if not self._organize_addon(pkg, library, "move"):
-                ok = self._copy_extra(pkg, rest_dir / archive_label_stem(archive) / pkg.relative_to(root)) and ok
-        left = [q for q in root.rglob("*") if q.is_file() and not is_fs_junk_name(q.name)]
+            if self.app.cancel_requested:
+                ok = False
+                break
+            # a folder in the archive that names the role keeps its package where it is
+            if organize_lib.role_folder(pkg, dest) or not self._organize_addon(pkg, library, "move"):
+                ok = self._copy_extra(pkg, rest_dir / archive_label_stem(archive) / pkg.relative_to(base)) and ok
+        left = [q for q in dest.rglob("*") if q.is_file() and not is_fs_junk_name(q.name)]
         for q in left:                                     # everything else the archive held, pictures too
-            ok = self._copy_extra(q, rest_dir / archive_label_stem(archive) / q.relative_to(root)) and ok
+            if q.suffix.lower() == ".pkg" and not q.exists():
+                continue
+            ok = self._copy_extra(q, rest_dir / archive_label_stem(archive) / q.relative_to(base)) and ok
         shutil.rmtree(dest, ignore_errors=True)
         return ok
 
@@ -10146,9 +10195,17 @@ class App:
         if _bd not in sys.path:
             sys.path.insert(0, _bd)
         import organize_lib
-        if organize_lib._name_role(path.stem):            # named an update, a patch or a backport
+        # named an update, a patch or a backport, itself or by the folder it sits in
+        if organize_lib._name_role(path.stem) or any(organize_lib._name_role(d.name) for d in path.parents[:2]):
             return "addon"
-        return package_role(path) or "unknown"           # the content type in its own header
+        role = package_role(path)                         # the content type in its own header
+        if not role and _ps4pkg_module().is_ps4_package(path):
+            try:                                          # PS4 game data: game or update by its SFO
+                kind = _ps4pkg_module().read_identity(path).kind
+                role = "game" if kind == "game" else "addon" if kind in ("update", "dlc") else ""
+            except Exception:
+                role = ""
+        return role or "unknown"
 
     def _release_planner(self, root, passwords):
         """plan(sources) for _add_jobs_async: one game per download folder takes the rest of

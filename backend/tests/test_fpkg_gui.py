@@ -306,7 +306,11 @@ try:
     with zipfile.ZipFile(_brel / "Addon" / "dlc.zip", "w") as z:
         z.writestr("dlc/content.pkg", bytes(_dlcb))
         z.writestr("dlc/art/cover.png", b"x" * 64)
+        z.writestr("cover.png", b"y" * 64)              # beside the folder: the unpack does not return it
     (_brel / "Addon" / "Folder Game update.pkg").write_bytes(b"p" * 64)     # named an update: an add-on
+    # a real game package in a folder that names its role: it stays a backport, not a second game
+    (_brel / "Addon" / "Backport 4.xx").mkdir()
+    shutil.copyfile(_seed_pkg, _brel / "Addon" / "Backport 4.xx" / "Folder Game 4xx.pkg")
     _prel = _bs / "Package Game [PPSA99099]"; (_prel / "Addon").mkdir(parents=True)
     shutil.copyfile(_seed_pkg, _prel / "Package Game.pkg")
     with zipfile.ZipFile(_prel / "Addon" / "bonus.zip", "w") as z:
@@ -356,7 +360,10 @@ try:
         ok("bundle.dlc-sorted-into-the-title-folder", _bf.status == "Done" and _ffo is not None and len(_dlc_in) == 1,
            f"{_bf.status} {_tree[:10]}")
         ok("bundle.rest-of-the-addons-beside-the-output", _ffo is not None
-           and (_ffo.parent / "Addon" / "dlc" / "art" / "cover.png").is_file()
+           and (_ffo.parent / "Addon" / "dlc" / "dlc" / "art" / "cover.png").is_file()
+           and (_ffo.parent / "Addon" / "dlc" / "cover.png").is_file()
+           and (_ffo.parent / "Addon" / "Backport 4.xx" / "Folder Game 4xx.pkg").is_file()
+           and len([x for x in _ffo.parent.glob("*.pkg") if " DLC " not in x.name]) == 0
            and (_ffo.parent / "Addon" / "Folder Game update.pkg").is_file()
            and not (_ffo.parent / "Addon" / "dlc.zip").exists(), str(_tree[:12]))
         ok("bundle.download-folder-moves-whole", not _brel.exists() and (_bdone / _brel.name / "Addon" / "dlc.zip").is_file()
