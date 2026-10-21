@@ -214,5 +214,31 @@ class PackageHeaders(unittest.TestCase):
         self.assertEqual(addons, ["R/dlc.zip"])
 
 
+class AddonOnlyTitleFolder(unittest.TestCase):
+    """DLC organized without their game: the title folder takes the game's name."""
+    def _dlc(self, title, version="01.000.000"):
+        return ultra_core.LibItem(Path(f"/x/{title}.pkg"), "pkg", "dlc", title, "PPSA10621", version, "", None)
+
+    def test_named_after_the_game_from_the_title_list(self):
+        got = ultra_core.library_layout([self._dlc("Some Game - Costume Pack")], title_of=lambda t: "Some Game")
+        self.assertEqual(got[0][1], "Some Game [PPSA10621] [v01.000.000]")
+        self.assertEqual(got[0][3], "Some Game DLC Costume Pack [PPSA10621] [v01.000].pkg")
+
+    def test_an_existing_title_folder_keeps_its_name(self):
+        lib = ultra_core.Ps4Library("Some Game [PPSA10621] [v01.012.000]", "01.012.000", False)
+        got = ultra_core.library_layout([self._dlc("Some Game - Costume Pack")], {"PPSA10621": lib},
+                                        title_of=lambda t: "Elsewhere")
+        self.assertEqual(got[0][1], "Some Game [PPSA10621] [v01.012.000]")
+
+    def test_without_the_list_the_package_names_it(self):
+        got = ultra_core.library_layout([self._dlc("Some Game - Costume Pack")], title_of=lambda t: None)
+        self.assertEqual(got[0][1], "Some Game - Costume Pack [PPSA10621] [v01.000.000]")
+
+    def test_the_game_itself_decides_when_it_is_there(self):
+        game = ultra_core.LibItem(Path("/x/g.pkg"), "pkg", "game", "Some Game", "PPSA10621", "01.012.000", "", None)
+        got = ultra_core.library_layout([self._dlc("Some Game - Costume Pack"), game], title_of=lambda t: "Other")
+        self.assertEqual({g[1] for g in got}, {"Some Game [PPSA10621] [v01.012.000]"})
+
+
 if __name__ == "__main__":
     unittest.main()

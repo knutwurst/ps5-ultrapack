@@ -66,6 +66,9 @@ ONE GAME PER DOWNLOAD FOLDER
   - After the job, Move and Trash take the whole download folder, Delete
     too once every add-on reached the library. A file that arrived in the
     folder since the job was added keeps the folder where it is.
+  - DLC organized without their game get a title folder named after the
+    game (from the title list), not after the first DLC. A title folder
+    already there keeps its name.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.10

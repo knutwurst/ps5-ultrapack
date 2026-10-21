@@ -2142,8 +2142,10 @@ def _lib_version_tag(folder: str) -> str:
     return v.group(1) if v else ""
 
 
-def library_layout(items, known: dict | None = None):
-    """Where each recognised item belongs in a library: [(key, title folder, subdir, name)]."""
+def library_layout(items, known: dict | None = None, title_of=None):
+    """Where each recognised item belongs in a library: [(key, title folder, subdir, name)].
+    *title_of(title_id)* gives a game's name (the title list) for a title that comes without
+    its game, only add-ons: its folder is named after the game, not after the first DLC."""
     known = known or {}
     groups: dict[str, list] = {}
     for it in items:
@@ -2169,11 +2171,23 @@ def library_layout(items, known: dict | None = None):
         main = max((it for it in members if it.role == "game"), key=lambda it: _ver_key(it.version), default=None) \
             or (base[0] if base else members[0])
         title = canonical_game_title(main.title) or tid
+        if not base:
+            # only add-ons: the game's name, from its title folder already there or the list
+            if lib:
+                title = canonical_game_title(re.sub(r"\s*\[[^\]]*\]", "", lib.folder).strip()) or title
+            else:
+                try:
+                    named = title_of(tid) if title_of and tid else None
+                except Exception:
+                    named = None
+                title = canonical_game_title(named) or title if named else title
         set_ver = max((it.version for it in base if it.version), key=_ver_key, default="")
         top = set_ver or max((it.version for it in members if it.version), key=_ver_key, default="")
         if lib and lib.version and _ver_key(lib.version) > _ver_key(top or "0"):
             top = lib.version
         folder = organized_names({"title": title, "title_id": tid, "version": top}, "")[0]
+        if not base and lib:
+            folder = lib.folder                  # add-ons alone never rename the game's folder
         dlcs = sum(1 for it in members if it.role == "dlc" and it.kind == "pkg")
         dlc_sub = PS4_DLC_PACK if dlcs >= PS4_DLC_PACK_FROM or (lib and lib.has_dlc_pack) else ""
         for it in members:

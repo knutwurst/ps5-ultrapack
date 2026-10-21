@@ -236,6 +236,15 @@ def _known_folder(d: Path, tid: str):
     return uc.Ps4Library(d.name, uc._lib_version_tag(d.name), (d / uc.PS4_DLC_PACK).is_dir())
 
 
+def _game_name(tid: str):
+    """The game's name from the title list on disk (no download here), or None."""
+    try:
+        import title_db
+        return title_db.lookup(tid, Path(uc.APP_DIR) / "titles", online=False)
+    except Exception:
+        return None
+
+
 def _lib_item(e: Entry) -> uc.LibItem:
     return uc.LibItem(e.path, e.kind, e.role or "game", e.title, e.title_id, e.version, e.fw, e.ps4)
 
@@ -272,7 +281,8 @@ def plan(root, entries: list[Entry], companions: list[Path]) -> Plan:
                                                d.name.lower()))[0]
         known = _known_folder(home, tid) if home is not None and home.parent == root else None
         placed = {p: (f, s, n) for p, f, s, n in uc.library_layout([_lib_item(e) for e in group],
-                                                                   {tid: known} if known else None)}
+                                                                   {tid: known} if known else None,
+                                                                   title_of=_game_name)}
         title_dir = title_dirs[tid] = root / next(iter(placed.values()))[0]
         label = labels[tid] = next((e.title for e in group if e.role == "game" and e.title), group[0].title) or tid
         # str(): Windows compares paths without case, and a new spelling is a rename
@@ -783,7 +793,8 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
     ok.sort(key=lambda e: (e.role != "game", -sizes[e.path]))
     # library_layout groups by title: match its answers to the entries by source path, not order
     _by_key = {Path(k): (k, f, sb, n) for k, f, sb, n in
-               uc.library_layout([_lib_item(e) for e in ok], {t: k for t, k in known.items() if k})}
+               uc.library_layout([_lib_item(e) for e in ok], {t: k for t, k in known.items() if k},
+                                 title_of=_game_name)}
     placed = [_by_key[e.path] for e in ok]
     for _folder in {(f, sb) for _k, f, sb, _n in placed}:
         for _d in {out / _folder[0], out / _folder[0] / _folder[1]} if _folder[1] else {out / _folder[0]}:
