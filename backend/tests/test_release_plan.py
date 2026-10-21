@@ -65,11 +65,11 @@ class OneGamePerFolder(unittest.TestCase):
                                   "Some Game [PPSA00001]/Addon/dlc.zip"])
 
     def test_the_folder_picked_itself_can_be_the_release(self):
-        rel = self.root / "Only Game"
-        _zip(rel / "g.zip", GAME)
+        rel = self.root / "Only Game [PPSA00002]"
+        _zip(rel / "PPSA00002-game.zip", GAME)
         _zip(rel / "Extras" / "bonus.zip", {"art/cover.png": b"x"})
         jobs, addons = plan(rel)
-        self.assertEqual(list(jobs), ["g.zip"])
+        self.assertEqual(list(jobs), ["PPSA00002-game.zip"])
         self.assertEqual(addons, ["Extras/bonus.zip"])
 
     def test_two_games_each_get_a_job_and_the_addons_stay(self):
@@ -101,15 +101,34 @@ class OneGamePerFolder(unittest.TestCase):
         self.assertEqual(sorted(jobs), ["Locked/Addon/x.zip", "Locked/g.zip"])
 
     def test_many_release_folders_side_by_side(self):
-        for n in ("A", "B"):
+        for n in ("Alpha", "Bravo"):
             _zip(self.root / n / f"{n}.zip", GAME)
             _zip(self.root / n / "Addon" / "d.zip", {"d.pkg": b"p"})
-        _zip(self.root / "C" / "C.zip", GAME)                  # nothing else: a plain job
+        _zip(self.root / "Charlie" / "Charlie.zip", GAME)      # nothing else: a plain job
         jobs, addons = plan(self.root)
-        self.assertEqual(sorted(jobs), ["A/A.zip", "B/B.zip", "C/C.zip"])
-        self.assertIsNotNone(jobs["A/A.zip"])
-        self.assertIsNone(jobs["C/C.zip"])
-        self.assertEqual(addons, ["A/Addon/d.zip", "B/Addon/d.zip"])
+        self.assertEqual(sorted(jobs), ["Alpha/Alpha.zip", "Bravo/Bravo.zip", "Charlie/Charlie.zip"])
+        self.assertIsNotNone(jobs["Alpha/Alpha.zip"])
+        self.assertIsNone(jobs["Charlie/Charlie.zip"])
+        self.assertEqual(addons, ["Alpha/Addon/d.zip", "Bravo/Addon/d.zip"])
+
+    def test_the_title_id_inside_the_archive_names_the_folder(self):
+        rel = self.root / "Some Title [PPSA00012] [v01.000]"
+        _zip(rel / "release-part.zip", {"PPSA00012-app0/eboot.bin": b"e", "PPSA00012-app0/sce_sys/param.json": b"{}"})
+        _zip(rel / "Addon" / "dlc.zip", {"d.pkg": b"p"})
+        jobs, addons = plan(self.root)
+        self.assertEqual(list(jobs), ["Some Title [PPSA00012] [v01.000]/release-part.zip"])
+        self.assertIsNotNone(jobs["Some Title [PPSA00012] [v01.000]/release-part.zip"])
+        self.assertEqual(addons, ["Some Title [PPSA00012] [v01.000]/Addon/dlc.zip"])
+
+    def test_a_folder_not_named_after_the_game_takes_nothing(self):
+        # a drive or a collection: one loose game beside a series folder is no download folder
+        drive = self.root / "Drive"
+        _zip(drive / "PPSA00009-game.zip", GAME)
+        (drive / "Some Series S01").mkdir(parents=True)
+        (drive / "Some Series S01" / "e01.mkv").write_bytes(b"v")
+        jobs, addons = plan(drive)
+        self.assertEqual(jobs, {"PPSA00009-game.zip": None})
+        self.assertEqual(addons, [])
 
     def test_a_package_archive_beside_the_game_may_be_a_game(self):
         rel = self.root / "Pkg Beside"
@@ -121,13 +140,13 @@ class OneGamePerFolder(unittest.TestCase):
         self.assertEqual(addons, ["Pkg Beside/Addon/dlc.zip"])
 
     def test_a_package_release_takes_its_addon_folder_along(self):
-        rel = self.root / "Pkg Release"
-        _zip(rel / "game.zip", {"Game.pkg": b"p"})
+        rel = self.root / "Pkg Release [PPSA00003]"
+        _zip(rel / "PPSA00003.zip", {"Game.pkg": b"p"})
         _zip(rel / "Addon" / "dlc.zip", {"dlc.pkg": b"p"})
         jobs, addons = plan(self.root)
-        self.assertEqual(list(jobs), ["Pkg Release/game.zip"])
-        self.assertEqual([Path(e).name for e in jobs["Pkg Release/game.zip"]["extras"]], ["Addon"])
-        self.assertEqual(addons, ["Pkg Release/Addon/dlc.zip"])
+        self.assertEqual(list(jobs), ["Pkg Release [PPSA00003]/PPSA00003.zip"])
+        self.assertEqual([Path(e).name for e in jobs["Pkg Release [PPSA00003]/PPSA00003.zip"]["extras"]], ["Addon"])
+        self.assertEqual(addons, ["Pkg Release [PPSA00003]/Addon/dlc.zip"])
 
     def test_no_bundle_below_a_release_with_several_games(self):
         rel = self.root / "Multi"

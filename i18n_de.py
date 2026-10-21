@@ -1029,4 +1029,5 @@ GERMAN: dict[str, str] = {
     "Could not sort the sources by download folder ({e}); each source gets a job of its own.": "Die Quellen ließen sich nicht nach Download-Ordnern ordnen ({e}); jede Quelle bekommt einen eigenen Job.",
     "{n} add-on(s) go along with their game instead of a job of their own: {names}": "{n} Add-on(s) gehen mit ihrem Spiel mit statt als eigener Job: {names}",
     "{n} add-on item(s) could not be placed": "{n} Add-on-Element(e) konnten nicht abgelegt werden",
+    "{n} add-on(s) were already in the library and were skipped; the source keeps them": "{n} Add-on(s) waren schon in der Bibliothek und wurden übersprungen; die Quelle behält sie",
 }

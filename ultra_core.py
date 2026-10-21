@@ -1325,6 +1325,16 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
     'extras': [paths]}; addons = the sources that go along with a game instead."""
     root = Path(root)
     roles: dict = {}
+    listed: dict = {}
+
+    def members(src: Path) -> list:
+        key = str(src)
+        if key not in listed:
+            try:
+                listed[key] = ArchiveExtractor.member_entries(src, passwords)
+            except Exception:
+                listed[key] = []
+        return listed[key]
 
     def role(src: Path) -> str:
         key = str(src)
@@ -1337,10 +1347,7 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
                 except Exception:
                     roles[key] = "unknown"
             else:
-                try:
-                    names = ArchiveExtractor.member_entries(src, passwords)
-                except Exception:
-                    names = []
+                names = members(src)
                 kind = content_kind_from_members(names) if names else None
                 if kind == "pkg":
                     # the packages' own headers say game or add-on when they can be read in
@@ -1357,6 +1364,24 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
         add-on only in a subfolder (the 'Addon' folder beside the game), never beside it."""
         r = role(src)
         return r == "addon" or (r == "pkg-archive" and src.parent != folder)
+
+    def named_after(folder: Path, game: Path) -> bool:
+        """The folder carries the game's title id or the name of its archive set or folder,
+        as a download folder does (after_job.release_folder asks the same)."""
+        def norm(text):
+            return re.sub(r"[^0-9a-z]+", "", str(text).lower())
+        name = norm(folder.name)
+        keys = {norm(m) for m in re.findall(r"(?:PPSA|CUSA)\d{5}", game.name.upper())}   # also in 'PPSA01494_01
+        base = archive_label_stem(game) if game.is_file() and is_archive_file(game) else (
+            game.name if game.is_dir() else game.stem)
+        if len(norm(base)) >= 4:
+            keys.add(norm(base))
+        if name and any(k and k in name for k in keys):
+            return True
+        if game.is_file() and is_archive_file(game):      # the title id inside: 'PPSA12345-app0/…'
+            ids = {norm(m) for n in members(game) for m in re.findall(r"(?:PPSA|CUSA)\d{5}", n.upper())}
+            return bool(name) and any(i in name for i in ids)
+        return False
 
     def own_files(game: Path) -> set:
         if game.is_file() and is_archive_file(game):
@@ -1381,6 +1406,8 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
             if len(cands) != 1 or cands[0].parent != folder:
                 return None
             game = cands[0]
+        if not named_after(folder, game):
+            return None                          # a collection or a drive, not this game's download
         mine = own_files(game)
         extras = []
         try:

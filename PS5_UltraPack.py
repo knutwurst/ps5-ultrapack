@@ -2904,7 +2904,7 @@ class CLIWorker(threading.Thread):
             # sniff (we didn't repack anything). Exit 0 with a printed [SUCCESS] line is
             # the success signal.
             if self.operation == "copy":
-                if getattr(self.item, "bundle_release", None) and getattr(self.item, "content_kind", "") == ORGANIZE_TARGET:
+                if getattr(self.item, "bundle_release", None) and getattr(self.item, "content_kind", "") in (ORGANIZE_TARGET, "ps4"):
                     try:
                         self._place_bundle_siblings()     # the add-ons of its download folder
                     except Exception as e:
@@ -3576,9 +3576,12 @@ class CLIWorker(threading.Thread):
         """Beside the output file itself (a title folder Organize or auto-organize made), else
         the job's output folder."""
         try:
-            out_file = Path(str(self.output_path or "").strip('"'))
-            if str(out_file) and out_file.is_file():
-                return out_file.parent
+            out = Path(str(self.output_path or "").strip('"'))
+            if str(out) and out.is_file():
+                return out.parent
+            # a game folder Organize placed in its title folder: beside it, not inside it
+            if str(out) and out.is_dir() and Path(self.output_dir) in out.parents:
+                return out.parent
         except OSError:
             pass
         return self.output_dir
@@ -3633,15 +3636,24 @@ class CLIWorker(threading.Thread):
                     rel = Path(sib.name) / f.relative_to(sib) if sib.is_dir() else Path(f.name)
                     # a folder that names the role (a backport for one firmware, updates) keeps
                     # the package where it is: sorted alone, it would pass for the game
-                    by_folder = sib.is_dir() and organize_lib.role_folder(f, sib)
+                    by_folder = sib.is_dir() and organize_lib.role_folder(f, sib.parent)
                     if f.suffix.lower() == ".pkg" and not by_folder:
                         ok = self._organize_addon(f, library, "keep")
+                    elif is_archive_file(f) and by_folder:
+                        first = ArchiveExtractor._first_volume(f)
+                        if str(first) in seen_sets:
+                            continue
+                        seen_sets.add(str(first))
+                        ok = all(self._copy_extra(q, dest_dir / rel.parent / q.name)
+                                 for q in archive_set_parts(first))   # its role is the folder's: as it is
+                        failed += 0 if ok else 1
+                        continue
                     elif is_archive_file(f):
                         first = ArchiveExtractor._first_volume(f)
                         if str(first) in seen_sets:
                             continue                       # a later part of a set already handled
                         seen_sets.add(str(first))
-                        ok = self._sort_archive_addon(first, library, staging, dest_dir / rel.parent)
+                        ok = self._sort_archive_addon(first, library, staging, rel.parent)
                         if not ok:                         # copied as it is, every part
                             ok = all(self._copy_extra(q, dest_dir / rel.parent / q.name)
                                      for q in archive_set_parts(first))
@@ -3654,7 +3666,11 @@ class CLIWorker(threading.Thread):
                     failed += 0 if ok else 1
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        self.extras_copied = plain_ok and failed == 0 and bool(siblings)
+        self.extras_copied = (plain_ok and failed == 0 and bool(siblings)
+                              and not getattr(self, "_addons_skipped", 0))
+        if getattr(self, "_addons_skipped", 0):
+            self.extras_left.append(tr("{n} add-on(s) were already in the library and were skipped; "
+                                       "the source keeps them", n=self._addons_skipped))
         if failed:
             self.extras_left.append(tr("{n} add-on item(s) could not be placed", n=failed))
 
@@ -3685,6 +3701,10 @@ class CLIWorker(threading.Thread):
                     self._title_folder_renamed(library / m_ren.group(1), library / m_ren.group(2))
                 if line.startswith(("[OK] Organized: ", "[OK] Came along: ", "[INFO] already there")):
                     placed = True
+                    if line.startswith("[INFO] already there"):
+                        # a file of that name is in the library: maybe another version, so the
+                        # source must not be deleted on the strength of it
+                        self._addons_skipped = getattr(self, "_addons_skipped", 0) + 1
                     self.app.log("INFO", f"Add-on: {line[5:] if line.startswith('[OK] ') else line[7:]}")
                     if line.startswith("[OK] Organized: "):
                         self._written.append(line[len("[OK] Organized: "):].split(" (replaced)")[0].strip())
@@ -3710,10 +3730,11 @@ class CLIWorker(threading.Thread):
             self.output_dir = Path(moved(str(self.output_dir)))
         self.app.log("INFO", f"The title folder took the newer version's name: {new.name}")
 
-    def _sort_archive_addon(self, archive: Path, library: Path, staging: Path, rest_dir: Path) -> bool:
+    def _sort_archive_addon(self, archive: Path, library: Path, staging: Path, rest_rel: Path) -> bool:
         """Unpack an add-on archive into the job's scratch, sort its packages into the library
-        and copy what is left of it (pictures, tools) to *rest_dir*/<archive name>. False when
-        it cannot be unpacked or holds no package: the caller copies the archive as it is."""
+        and copy what is left of it (pictures, tools) to <extras folder>/*rest_rel*/<archive
+        name>. False when it cannot be unpacked or holds no package: the caller copies the
+        archive as it is."""
         names = ArchiveExtractor.member_entries(archive, self._addon_passwords)
         if names and not any(n.lower().endswith(".pkg") for n in names):
             return False                                   # nothing to sort: it goes as it is
@@ -3746,12 +3767,12 @@ class CLIWorker(threading.Thread):
                 break
             # a folder in the archive that names the role keeps its package where it is
             if organize_lib.role_folder(pkg, dest) or not self._organize_addon(pkg, library, "move"):
-                ok = self._copy_extra(pkg, rest_dir / archive_label_stem(archive) / pkg.relative_to(base)) and ok
+                ok = self._copy_extra(pkg, self._extras_dest() / rest_rel / archive_label_stem(archive)
+                                      / pkg.relative_to(base)) and ok
         left = [q for q in dest.rglob("*") if q.is_file() and not is_fs_junk_name(q.name)]
+        rest_dir = self._extras_dest() / rest_rel / archive_label_stem(archive)   # after any rename
         for q in left:                                     # everything else the archive held, pictures too
-            if q.suffix.lower() == ".pkg" and not q.exists():
-                continue
-            ok = self._copy_extra(q, rest_dir / archive_label_stem(archive) / q.relative_to(base)) and ok
+            ok = self._copy_extra(q, rest_dir / q.relative_to(base)) and ok
         shutil.rmtree(dest, ignore_errors=True)
         return ok
 
@@ -5387,6 +5408,11 @@ class JobDialog(EmbeddedDialog):
             new = make(sources[0])
         except Exception as e:
             messagebox.showerror("Source", tr("Could not read {v}:\n{e}", v=sources[0], e=e), parent=self); return
+        _old_src = getattr(self.edit_item, "archive_path", None) or getattr(self.edit_item, "path", None)
+        if _old_src is not None and str(_old_src) == str(sources[0]):
+            for attr in ("bundle_siblings", "bundle_release"):     # its add-ons stay with it
+                if getattr(self.edit_item, attr, None):
+                    setattr(new, attr, getattr(self.edit_item, attr))
         try:
             app.queue[app.queue.index(self.edit_item)] = new
         except ValueError:
@@ -14198,10 +14224,12 @@ class App:
         if game:
             title = re.sub(r"\s*\[[^\]]*\]", "", str(getattr(item, "archive_title", "") or
                                                     getattr(item, "display_name", "") or "")).strip()
-            rel = aj.release_folder(game, list_sources=find_job_sources, title_id=self._item_title_id(item) or "",
-                                    title=title, protected=keep_dirs, may_be=getattr(item, "source_root", None))
-            if rel is None:
+            if getattr(item, "bundle_release", None):
+                # a game with add-ons: its download folder, and only while it holds what was planned
                 rel = self._bundle_release(item, game, keep_dirs)
+            else:
+                rel = aj.release_folder(game, list_sources=find_job_sources, title_id=self._item_title_id(item) or "",
+                                        title=title, protected=keep_dirs, may_be=getattr(item, "source_root", None))
         whole = rel is not None and act in (aj.TRASH, aj.MOVE)
         if (rel is not None and act == aj.DELETE and getattr(item, "bundle_release", None)
                 and getattr(worker, "extras_copied", False) and not getattr(worker, "extras_left", None)):

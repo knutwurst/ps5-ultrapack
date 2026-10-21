@@ -101,11 +101,15 @@ def pump(cond, timeout=20.0):
         if cond(): return True
         time.sleep(0.05)
     return cond()
+_settle_timeouts, _settle_secs = [], []
 def settle(timeout=60.0):
     """Add job builds new jobs on a worker and hands them to the queue one by one: wait
     until the last one is in."""
     root.update()
-    pump(lambda: not (getattr(app, "_add_state", None) or {}).get("total"), timeout=timeout)
+    t0 = time.monotonic()
+    if not pump(lambda: not (getattr(app, "_add_state", None) or {}).get("total"), timeout=timeout):
+        _settle_timeouts.append(f"{traceback.extract_stack()[-2].lineno}")   # the jobs came in late
+    _settle_secs.append(round(time.monotonic() - t0, 1))
     root.update()
 def close_toplevels():
     # Work dialogs are panels of the main window since 2.0.0 (app._panels.stack); messages
@@ -376,6 +380,15 @@ try:
         ok("bundle.organize-job", _bp is not None and len(app.queue) == _bn0 + 1
            and [Path(x).name for x in _bp.bundle_siblings] == ["Addon"], str(_bp and _bp.bundle_siblings))
         if _bp is not None:
+            # editing the Organize job keeps its add-ons
+            _beo = m.JobDialog(app, item=_bp); root.update()
+            _beo.out_var.set(str(_bout / "lib")); root.update(); _beo._add(); settle()
+            _bp2 = app.queue[-1] if app.queue else None
+            ok("bundle.organize-edit-keeps-the-addons", _bp2 is not None and _bp2 is not _bp
+               and getattr(_bp2, "bundle_release", None) == getattr(_bp, "bundle_release", None)
+               and [Path(x).name for x in _bp2.bundle_siblings] == ["Addon"], str(_bp2 and _bp2.bundle_siblings))
+            if _bp2 is not None:
+                _bp = _bp2
             app.queue[:] = [_bp]; app._active_item = None
             app.start()
             pump(lambda: _bp.status in ("Done", "Failed", "Skipped", "Cancelled") and not app._batch_running
@@ -3350,6 +3363,8 @@ finally:
     try: root.destroy()
     except Exception: pass
 ok("driver.no-unexpected-password-prompt", not _unexpected_prompts, str(_unexpected_prompts[:5]))
+ok("driver.adds-settle-in-time", not _settle_timeouts,
+   f"timeouts at lines {_settle_timeouts}; slowest settles {sorted(_settle_secs)[-3:]}")
 bad = 0
 for name, okv, det in res:
     print(("PASS " if okv else "FAIL ") + f"{name:34s} {det}"[:200]); bad += (not okv)
