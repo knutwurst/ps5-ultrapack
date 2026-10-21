@@ -2663,6 +2663,11 @@ class CLIWorker(threading.Thread):
             self.copy_siblings = bool(app.copy_siblings_var.get())
         except Exception:
             self.copy_siblings = True
+        try:    # for unpacking and sorting the add-ons (see _place_bundle_siblings)
+            self._addon_passwords = app._candidate_passwords(item)
+            self._if_exists = app.output_exists_var.get() or "skip"
+        except Exception:
+            self._addon_passwords, self._if_exists = [], "skip"
         self.output_path = ""
         self.final_size = 0
         self.speed = " - "
@@ -2901,7 +2906,7 @@ class CLIWorker(threading.Thread):
             if self.operation == "copy":
                 if getattr(self.item, "bundle_release", None) and getattr(self.item, "content_kind", "") == ORGANIZE_TARGET:
                     try:
-                        self._copy_bundle_siblings()      # the add-ons of its download folder
+                        self._place_bundle_siblings()     # the add-ons of its download folder
                     except Exception as e:
                         self.app.log("WARN", f"Bundle copy failed: {e}")
                 self._strip_written_clutter()
@@ -2925,7 +2930,7 @@ class CLIWorker(threading.Thread):
             # Bundle: copy the extra files (DLCs etc.) next to the new .ffpfsc / .pkg.
             try:
                 if self.operation not in ("unpack", "fpkg-extract"):
-                    self._copy_bundle_siblings()
+                    self._place_bundle_siblings()
             except Exception as e:
                 self.app.log("WARN", f"Bundle copy failed: {e}")
             self._strip_written_clutter()
@@ -3564,6 +3569,161 @@ class CLIWorker(threading.Thread):
             return False
         return all(filecmp.cmp(a / f, b / f, shallow=False) for f in fa)
 
+    _TITLE_FOLDER_RE = re.compile(r"\[(?:PPSA|CUSA)\d{5}\]", re.I)
+
+    def _extras_dest(self) -> Path:
+        """Beside the output file itself (a title folder Organize or auto-organize made), else
+        the job's output folder."""
+        try:
+            out_file = Path(str(self.output_path or "").strip('"'))
+            if str(out_file) and out_file.is_file():
+                return out_file.parent
+        except OSError:
+            pass
+        return self.output_dir
+
+    def _place_bundle_siblings(self) -> None:
+        """The extras of the job: packages go into the library by their own role (DLC and
+        updates into the game's title folder, a game into a title folder of its own), archives
+        among them are unpacked for that first; everything else is copied next to the output
+        as it was (_copy_bundle_siblings). A package or archive that cannot be sorted is
+        copied as it is, so nothing is left out."""
+        siblings = [Path(x) for x in (getattr(self.item, "bundle_siblings", None) or [])]
+        if not siblings or not getattr(self, "copy_siblings", True):
+            return self._copy_bundle_siblings()
+
+        def sortable(q: Path) -> bool:
+            return q.is_file() and (q.suffix.lower() == ".pkg" or is_archive_file(q))
+        plain, mixed = [], []
+        for sib in siblings:
+            try:
+                has = sortable(sib) or (sib.is_dir() and any(sortable(q) for q in sib.rglob("*")
+                                                             if not is_fs_junk_name(q.name)))
+            except OSError:
+                has = False
+            (mixed if has else plain).append(sib)
+        self.item.bundle_siblings = plain
+        try:
+            self._copy_bundle_siblings()
+        finally:
+            self.item.bundle_siblings = siblings
+        plain_ok = getattr(self, "extras_copied", False) or not plain
+        dest_dir = self._extras_dest()
+        library = dest_dir.parent if self._TITLE_FOLDER_RE.search(dest_dir.name) else dest_dir
+        staging = Path(self.temp_dir) / f"_addons-{os.getpid()}-{id(self.item)}"
+        failed = 0
+        try:
+            for sib in mixed:
+                files = [sib] if sib.is_file() else sorted(q for q in sib.rglob("*")
+                                                            if q.is_file() and not is_fs_junk_name(q.name))
+                seen_sets: set = set()
+                for f in files:
+                    rel = Path(sib.name) / f.relative_to(sib) if sib.is_dir() else Path(f.name)
+                    if f.suffix.lower() == ".pkg":
+                        ok = self._organize_addon(f, library, "keep")
+                    elif is_archive_file(f):
+                        first = ArchiveExtractor._first_volume(f)
+                        if str(first) in seen_sets:
+                            continue                       # a later part of a set already handled
+                        seen_sets.add(str(first))
+                        ok = self._sort_archive_addon(first, library, staging, dest_dir / rel.parent)
+                        if not ok:                         # copied as it is, every part
+                            ok = all(self._copy_extra(q, dest_dir / rel.parent / q.name)
+                                     for q in archive_set_parts(first))
+                            failed += 0 if ok else 1
+                        continue
+                    else:
+                        ok = self._copy_extra(f, dest_dir / rel)
+                    if not ok and f.suffix.lower() == ".pkg":
+                        ok = self._copy_extra(f, dest_dir / rel)
+                    failed += 0 if ok else 1
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        self.extras_copied = plain_ok and failed == 0 and bool(siblings)
+        if failed:
+            self.extras_left.append(tr("{n} add-on item(s) could not be placed", n=failed))
+
+    def _organize_addon(self, src: Path, library: Path, mode: str) -> bool:
+        """Sort one package (or an unpacked add-on folder) into the library through the
+        backend's Organize, the way an Organize job does. True when it went through."""
+        pycmd = get_backend_python_command()
+        if not pycmd:
+            return False
+        head = pycmd if getattr(sys, "frozen", False) else pycmd + ["-u", str(backend_base_dir() / "cli.py")]
+        argv = head + ["placeholder", str(library), "--organize-into", str(src), "--copy-mode", mode,
+                       "--if-exists", self._if_exists if self._if_exists in ("skip", "ask", "overwrite", "keep") else "skip"]
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        try:
+            library.mkdir(parents=True, exist_ok=True)
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                    text=True, encoding="utf-8", errors="replace", env=env,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            placed = False
+            for line in proc.stdout or ():
+                line = line.rstrip()
+                if line.startswith(("[OK] Organized: ", "[OK] Came along: ", "[INFO] already there")):
+                    placed = True
+                    self.app.log("INFO", f"Add-on: {line[5:] if line.startswith('[OK] ') else line[7:]}")
+                    if line.startswith("[OK] Organized: "):
+                        self._written.append(line[len("[OK] Organized: "):].split(" (replaced)")[0].strip())
+                elif line.startswith(("[WARN]", "[ERROR]")):
+                    self.app.log("WARN", f"Add-on {src.name}: {line.split('] ', 1)[-1]}")
+            proc.wait()
+            return proc.returncode in (0, 2) and placed
+        except Exception as e:
+            self.app.log("WARN", f"Could not sort the add-on {src.name}: {e}")
+            return False
+
+    def _sort_archive_addon(self, archive: Path, library: Path, staging: Path, rest_dir: Path) -> bool:
+        """Unpack an add-on archive into the job's scratch, sort its packages into the library
+        and copy what is left of it (pictures, tools) to *rest_dir*/<archive name>. False when
+        it cannot be unpacked or holds no package: the caller copies the archive as it is."""
+        names = ArchiveExtractor.member_entries(archive, self._addon_passwords)
+        if names and not any(n.lower().endswith(".pkg") for n in names):
+            return False                                   # nothing to sort: it goes as it is
+        dest = staging / re.sub(r"[^\w.-]+", "_", archive.stem)[:60]
+        try:
+            shutil.rmtree(dest, ignore_errors=True)
+            dest.mkdir(parents=True)
+            root = Path(ArchiveExtractor.extract_with_passwords(archive, dest, self._addon_passwords,
+                                                                log_fn=lambda *_a: None))
+        except Exception as e:
+            self.app.log("WARN", f"Could not unpack the add-on {archive.name}: {e}; it is copied as it is")
+            shutil.rmtree(dest, ignore_errors=True)
+            return False
+        pkgs = sorted(q for q in root.rglob("*.pkg") if q.is_file() and not is_fs_junk_name(q.name))
+        if not pkgs:
+            shutil.rmtree(dest, ignore_errors=True)
+            return False
+        ok = True
+        for pkg in pkgs:
+            if not self._organize_addon(pkg, library, "move"):
+                ok = self._copy_extra(pkg, rest_dir / archive_label_stem(archive) / pkg.relative_to(root)) and ok
+        left = [q for q in root.rglob("*") if q.is_file() and not is_fs_junk_name(q.name)]
+        for q in left:                                     # everything else the archive held, pictures too
+            ok = self._copy_extra(q, rest_dir / archive_label_stem(archive) / q.relative_to(root)) and ok
+        shutil.rmtree(dest, ignore_errors=True)
+        return ok
+
+    def _copy_extra(self, src: Path, target: Path) -> bool:
+        """Copy one file next to the output; another file of that name there stays too."""
+        try:
+            if target.exists():
+                if filecmp.cmp(src, target, shallow=False):
+                    return True
+                n = 2
+                while (target.parent / f"{target.stem} ({n}){target.suffix}").exists():
+                    n += 1
+                target = target.parent / f"{target.stem} ({n}){target.suffix}"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
+            self._written.append(str(target))
+            return True
+        except Exception as e:
+            self.app.log("WARN", f"Could not copy extra '{src.name}': {e}")
+            return False
+
     def _copy_bundle_siblings(self) -> None:
         """Copy the extra files AND folders (DLCs etc.) next to the packed .ffpfsc.
         Handles both loose files and whole subfolders (e.g. an '[ ALL DLC ]' wrapper),
@@ -3576,13 +3736,7 @@ class CLIWorker(threading.Thread):
             self.app.log("INFO", "Copy extras is off - leaving DLC/extra files in the source folder.")
             self.extras_left += [Path(x).name for x in siblings if Path(x).exists()]
             return
-        dest_dir = self.output_dir
-        try:
-            out_file = Path(str(self.output_path or "").strip('"'))
-            if str(out_file) and out_file.is_file():
-                dest_dir = out_file.parent             # beside the .ffpfsc / .pkg, wherever it landed
-        except OSError:
-            pass
+        dest_dir = self._extras_dest()
         copied = 0
         for src in siblings:
             try:
@@ -9985,20 +10139,16 @@ class App:
         return item
 
     def _pkg_role(self, path) -> str:
-        """'addon' for a PS5 package that is an update or additional content, 'game' for a
-        game, 'unknown' when that cannot be told (PS4 packages too). Tk-free."""
+        """'addon' for a package that is an update or additional content, 'game' for a game,
+        'unknown' when that cannot be told. Tk-free, reads only the package's headers."""
         path = Path(path)
-        if _ps4pkg_module().is_ps4_package(path):
-            return "unknown"
         _bd = str(backend_base_dir())
         if _bd not in sys.path:
             sys.path.insert(0, _bd)
-        import fpkg
         import organize_lib
         if organize_lib._name_role(path.stem):            # named an update, a patch or a backport
             return "addon"
-        ct = fpkg.inspect_json(path).get("content_type")
-        return "addon" if ct in (33, 34) else "game" if ct == 32 else "unknown"
+        return package_role(path) or "unknown"           # the content type in its own header
 
     def _release_planner(self, root, passwords):
         """plan(sources) for _add_jobs_async: one game per download folder takes the rest of

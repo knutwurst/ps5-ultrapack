@@ -549,6 +549,15 @@ _ARCHIVE_KINDS = ((re.compile(r"\.(part\d+\.rar|rar|r\d{2,})$", re.I), ".rar"),
                   (re.compile(r"\.(zip|z\d{2}|zip\.\d{3})$", re.I), ".zip"))
 
 
+def archive_label_stem(path) -> str:
+    """An archive set's name without its volume and archive suffixes ('Game.part01.rar' → 'Game')."""
+    name = Path(str(path or "")).name
+    for rx, _label in _ARCHIVE_KINDS:
+        if rx.search(name):
+            return rx.sub("", name) or name
+    return Path(name).stem
+
+
 def archive_label(path) -> str:
     """'.rar', '.7z' or '.zip' for an archive or any volume of a set; 'Archive' otherwise."""
     name = Path(str(path or "")).name
@@ -1250,6 +1259,53 @@ def is_archive_file(path: Path) -> bool:
 
 
 _GAME_CONTENT = ("folder", "exfat", "ffpkg", "ffpfs", "ffpfsc")
+# A package's role is in its content header (\x7FCNT, the content type at 0x74): at the start
+# of a PS4 package, behind the PS5 one (its offset at 0x58 of the outer \x7FFIH header). Read
+# from inside an archive only up to this far; add-on packages keep it within the first MBs.
+PKG_HEADER_BUDGET = 64 * 1024 * 1024
+_PS5_GAME, _PS5_ADDON = (32,), (33, 34)
+_PS4_GAME, _PS4_ADDON = (0x1A,), (0x1B, 0x1C, 0x1E)       # game data; add-on, license, patch
+
+
+def package_role_from(read) -> str:
+    """'game' | 'addon' | '' (not to tell) from a package's headers. read(n) returns the first
+    n bytes of the package, or None."""
+    head = read(0x400)
+    if not head or len(head) < 0x78:
+        return ""
+    if head[:4] == b"\x7fCNT":                              # PS4: the content header leads
+        ct = int.from_bytes(head[0x74:0x78], "big")
+        return "game" if ct in _PS4_GAME else "addon" if ct in _PS4_ADDON else ""
+    if head[:4] != b"\x7fFIH":
+        return ""
+    cnt = int.from_bytes(head[0x58:0x60], "little")
+    if not 0x400 <= cnt <= PKG_HEADER_BUDGET:
+        return ""
+    data = read(cnt + 0x80)
+    if not data or len(data) < cnt + 0x78 or data[cnt:cnt + 4] != b"\x7fCNT":
+        return ""
+    ct = int.from_bytes(data[cnt + 0x74:cnt + 0x78], "big")
+    return "game" if ct in _PS5_GAME else "addon" if ct in _PS5_ADDON else ""
+
+
+def package_role(path: Path) -> str:
+    """package_role_from for a package file on disk, wherever its content header sits."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(0x400)
+            if head[:4] != b"\x7fFIH" or len(head) < 0x60:
+                return package_role_from(lambda n, _h=head: _h[:n])       # PS4, or not a package
+            cnt = int.from_bytes(head[0x58:0x60], "little")
+            if cnt < 0x400:
+                return ""
+            f.seek(cnt)
+            tail = f.read(0x80)
+    except OSError:
+        return ""
+    if tail[:4] != b"\x7fCNT" or len(tail) < 0x78:
+        return ""
+    ct = int.from_bytes(tail[0x74:0x78], "big")
+    return "game" if ct in _PS5_GAME else "addon" if ct in _PS5_ADDON else ""
 
 
 def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=None):
@@ -1285,9 +1341,14 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
                 except Exception:
                     names = []
                 kind = content_kind_from_members(names) if names else None
-                # packages inside an archive cannot be told apart by name: game or DLC
-                roles[key] = ("unknown" if kind is None else "game" if kind in _GAME_CONTENT
-                              else "pkg-archive" if kind == "pkg" else "addon")
+                if kind == "pkg":
+                    # the packages' own headers say game or add-on when they can be read in
+                    # place; otherwise where the archive sits decides (see is_addon)
+                    r = ArchiveExtractor.package_role(src, names, passwords)
+                    roles[key] = r or "pkg-archive"
+                else:
+                    roles[key] = ("unknown" if kind is None else "game" if kind in _GAME_CONTENT
+                                  else "addon")
         return roles[key]
 
     def is_addon(src: Path, folder: Path) -> bool:
@@ -2754,6 +2815,27 @@ class ArchiveExtractor:
                     continue
             return []
         return []
+
+    @staticmethod
+    def package_role(archive: Path, names=None, passwords=None) -> str:
+        """'game' when a package in *archive* is a game, 'addon' when every package in it is
+        an add-on (DLC, license, patch), '' when that cannot be read in place (7z, a later
+        member of a solid RAR, a content header far into a big package)."""
+        names = names if names is not None else ArchiveExtractor.member_entries(Path(archive), passwords)
+        pkgs = [n for n in names if n.lower().endswith(".pkg") and not n.endswith("/")
+                and not any(is_fs_junk_name(part) for part in n.split("/") if part)]
+        if not pkgs:
+            return ""
+        roles = []
+        for n in pkgs[:8]:
+            try:
+                r = package_role_from(lambda k, _n=n: ArchiveExtractor.read_member_prefix(archive, _n, k, passwords))
+            except Exception:
+                r = ""
+            if r == "game":
+                return "game"
+            roles.append(r)
+        return "addon" if len(roles) == len(pkgs) and all(r == "addon" for r in roles) else ""
 
     @staticmethod
     def content_kind(archive: Path, passwords=None) -> str:
@@ -4425,6 +4507,9 @@ __all__ = [
     "auto_target",
     "content_kind_from_members",
     "plan_releases",
+    "archive_label_stem",
+    "package_role",
+    "package_role_from",
     "LibItem",
     "library_layout",
     "ARCHIVE_SUFFIXES",

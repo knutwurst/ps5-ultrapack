@@ -2,6 +2,9 @@
 import sys, os, importlib.util, traceback, argparse, shutil, subprocess, tempfile, time, zipfile, json, re, types
 from pathlib import Path
 import tkinter as tk
+import faulthandler, signal
+if hasattr(signal, "SIGUSR1"):        # kill -USR1 <pid>: every thread's stack, when a run hangs
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE)); sys.path.insert(0, str(REPO / "backend"))
@@ -71,6 +74,12 @@ _tdb.FETCH = _no_network
     "titleId\tconceptId\tname\tcontentId\tregion\tpublisherId\n", encoding="utf-8")
 root = m._CTkDnD(); root.withdraw()
 app = m.App(root)
+# A password prompt is modal: one the driver did not ask for would wait for a click forever.
+# It is answered with "skip" at once, and the run reports it (driver.no-unexpected-password-prompt).
+_REAL_PW_PROMPT, _unexpected_prompts = m.ArchivePasswordPrompt, []
+class _NoPrompt:
+    def __init__(self, _app, name): _unexpected_prompts.append(name); self.password = ""
+m.ArchivePasswordPrompt = _NoPrompt
 app.queue.clear()
 res = []   # (re-initialised below; this early copy only carries the wizard check)
 _no_wizard = not app._is_first_run
@@ -80,6 +89,7 @@ app.temp_var.set(str(S / "temp")); app.output_var.set(str(OUT))
 res = []
 def ok(name, cond, detail=""):
     res.append((name, bool(cond), detail))
+    print(f"... {'pass' if cond else 'FAIL'} {name}", file=sys.stderr, flush=True)    # progress, for a run that hangs
 ok("driver.no-first-run-wizard", _no_wizard, "the isolated profile is a finished setup, so no wizard window opens")
 ok("driver.silent", not app.sound_complete_var.get() and not app.sound_error_var.get() and app.notify_var.get() == "off",
    "no done/failed sounds and no notifications while the driver runs jobs")
@@ -289,8 +299,13 @@ try:
     with zipfile.ZipFile(_brel / "Folder Game.zip", "w") as z:
         for f in HBT.rglob("*"):
             if f.is_file(): z.write(f, f"Folder Game/{f.relative_to(HBT)}")
+    # a DLC package: the seed package with the content type of additional content (33)
+    _dlcb = bytearray(_seed_pkg.read_bytes())
+    _cnt = int.from_bytes(_dlcb[0x58:0x60], "little")
+    _dlcb[_cnt + 0x74:_cnt + 0x78] = (33).to_bytes(4, "big")
     with zipfile.ZipFile(_brel / "Addon" / "dlc.zip", "w") as z:
-        z.writestr("dlc/content.pkg", b"p" * 64)
+        z.writestr("dlc/content.pkg", bytes(_dlcb))
+        z.writestr("dlc/art/cover.png", b"x" * 64)
     (_brel / "Addon" / "Folder Game update.pkg").write_bytes(b"p" * 64)     # named an update: an add-on
     _prel = _bs / "Package Game [PPSA99099]"; (_prel / "Addon").mkdir(parents=True)
     shutil.copyfile(_seed_pkg, _prel / "Package Game.pkg")
@@ -334,9 +349,16 @@ try:
         pump(lambda: _bf.status in ("Done", "Failed", "Skipped", "Cancelled") and not app._batch_running
              and not getattr(app, "_after_busy", False), timeout=300.0)
         _ffo = next(iter(_bout.rglob("*.ffpfsc")), None)
-        ok("bundle.addons-next-to-the-output", _bf.status == "Done" and _ffo is not None
-           and (_ffo.parent / "Addon" / "dlc.zip").is_file() and (_ffo.parent / "Addon" / "Folder Game update.pkg").is_file(),
-           f"{_bf.status} {_ffo} {sorted(x.relative_to(_bout).as_posix() for x in _bout.rglob('*'))[:8]}")
+        _tree = sorted(x.relative_to(_bout).as_posix() for x in _bout.rglob("*") if x.is_file())
+        # the DLC sorted by its own header into the game's title folder, the rest of its
+        # archive beside the output, and a package nothing can read copied as it is
+        _dlc_in = [x for x in (_ffo.parent.iterdir() if _ffo else []) if " DLC " in x.name and x.suffix == ".pkg"]
+        ok("bundle.dlc-sorted-into-the-title-folder", _bf.status == "Done" and _ffo is not None and len(_dlc_in) == 1,
+           f"{_bf.status} {_tree[:10]}")
+        ok("bundle.rest-of-the-addons-beside-the-output", _ffo is not None
+           and (_ffo.parent / "Addon" / "dlc" / "art" / "cover.png").is_file()
+           and (_ffo.parent / "Addon" / "Folder Game update.pkg").is_file()
+           and not (_ffo.parent / "Addon" / "dlc.zip").exists(), str(_tree[:12]))
         ok("bundle.download-folder-moves-whole", not _brel.exists() and (_bdone / _brel.name / "Addon" / "dlc.zip").is_file()
            and (_bdone / _brel.name / "Folder Game.zip").is_file(), str(sorted(x.name for x in _bdone.iterdir()) if _bdone.exists() else []))
         # Organize: the package goes into the library, its add-ons beside it
@@ -915,7 +937,7 @@ try:
     ok("archive.payload.backport-alone-is-the-job", len(_alone) == 1 and _none == [], f"{_alone} {_none}")
     # J6f) the archive password prompt: sized to its content, and shown only when no
     # saved password opens the header (an odd size is no password problem)
-    _dlg = m.ArchivePasswordPrompt(app, "Example.part1.rar"); root.update_idletasks()
+    _dlg = _REAL_PW_PROMPT(app, "Example.part1.rar"); root.update_idletasks()
     ok("password.prompt.fits-its-content", _dlg._size is None and _dlg.winfo_reqheight() > 230,
        f"size={_dlg._size} req={_dlg.winfo_reqheight()}")
     _dlg.destroy()
@@ -2532,7 +2554,7 @@ try:
     ok("message.waits-for-main-window", not sd.winfo_viewable() and not ed.winfo_viewable(),
        "the driver's main window is withdrawn, so no message may appear on screen")
     ok("message.prompts-own-window", all(issubclass(c, m.MessageWindow) for c in
-       (m.SpaceDiagnosticsDialog, m.ArchivePasswordPrompt)), "")
+       (m.SpaceDiagnosticsDialog, _REAL_PW_PROMPT)), "")
     ok("work-surface.panels", all(issubclass(c, m.EmbeddedDialog) for c in
        (m.JobDialog, m.FirstRunWizard)) and not hasattr(m, "PfsBrowserDialog"), "")
     sd.destroy(); ed.destroy(); root.update()
@@ -3320,6 +3342,7 @@ finally:
         print("WARN could not restore settings backup:", e)
     try: root.destroy()
     except Exception: pass
+ok("driver.no-unexpected-password-prompt", not _unexpected_prompts, str(_unexpected_prompts[:5]))
 bad = 0
 for name, okv, det in res:
     print(("PASS " if okv else "FAIL ") + f"{name:34s} {det}"[:200]); bad += (not okv)

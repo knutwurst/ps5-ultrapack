@@ -47,20 +47,25 @@ ONE GAME PER DOWNLOAD FOLDER
 
   - A download folder with one game and its add-ons (a folder such as
     "Addon" with packages and archives, whatever it is called) gives one
-    job: the game is converted, and everything else in the folder, its
-    subfolders included, is copied next to the output as it is. The
-    add-ons do not become jobs of their own. Added on their own, they
-    still do.
-  - Counted as add-ons: archives whose file list shows no game folder or
-    image, packages that are updates or additional content, and archives
-    of packages in a subfolder. An archive of packages right beside the
-    game may be a game itself and keeps its own job.
+    job. The add-ons do not become jobs of their own; added on their
+    own, they still do.
+  - After the game, its add-ons are sorted into the library like an
+    Organize job does it: archives are unpacked, each package goes where
+    its own header says, DLC and updates into the game's title folder, a
+    full game into a title folder of its own. What is no package
+    (pictures, tools) is copied next to the output as it was, and so is
+    a package or archive that cannot be read. Packages that came inside
+    the game's own archive are sorted the same way.
+  - Game or add-on is read from the package's content header: right away
+    for loose packages, and inside ZIP and RAR archives for add-on sized
+    packages. When that is not possible (7z, solid RAR, very large
+    packages), an archive of packages in a subfolder counts as an add-on
+    and one right beside the game keeps its own job.
   - A folder with two games or more gives each game a job; its add-ons
     are neither queued nor copied.
   - After the job, Move and Trash take the whole download folder, Delete
-    too once every add-on reached the output. A file that arrived in the
+    too once every add-on reached the library. A file that arrived in the
     folder since the job was added keeps the folder where it is.
-  - Organize copies the add-ons into the game's title folder as well.
 
 ────────────────────────────────────────────────────────────────────────
   v2.2.10

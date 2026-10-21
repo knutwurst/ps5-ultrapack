@@ -149,5 +149,51 @@ class OneGamePerFolder(unittest.TestCase):
         self.assertTrue(all(b is None for b in jobs.values()))
 
 
+def _ps5_pkg(ct: int, cnt: int = 0x1000) -> bytes:
+    b = bytearray(cnt + 0x100)
+    b[:4] = b"\x7fFIH"
+    b[0x58:0x60] = cnt.to_bytes(8, "little")
+    b[cnt:cnt + 4] = b"\x7fCNT"
+    b[cnt + 0x74:cnt + 0x78] = ct.to_bytes(4, "big")
+    return bytes(b)
+
+
+def _ps4_pkg(ct: int) -> bytes:
+    b = bytearray(0x400)
+    b[:4] = b"\x7fCNT"
+    b[0x74:0x78] = ct.to_bytes(4, "big")
+    return bytes(b)
+
+
+class PackageHeaders(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(dir=_SCRATCH))
+
+    def test_loose_packages(self):
+        for data, want in ((_ps5_pkg(32), "game"), (_ps5_pkg(33), "addon"), (_ps5_pkg(34), "addon"),
+                           (_ps5_pkg(7), ""), (_ps4_pkg(0x1A), "game"), (_ps4_pkg(0x1B), "addon"),
+                           (_ps4_pkg(0x1E), "addon"), (b"nope", "")):
+            f = self.d / "x.pkg"
+            f.write_bytes(data)
+            self.assertEqual(ultra_core.package_role(f), want, data[:4])
+
+    def test_packages_inside_a_zip(self):
+        dlc = _zip(self.d / "dlc.zip", {"a/one.pkg": _ps5_pkg(33), "a/two.pkg": _ps5_pkg(34)})
+        mix = _zip(self.d / "mix.zip", {"g.pkg": _ps5_pkg(32), "d.pkg": _ps5_pkg(33)})
+        far = _zip(self.d / "far.zip", {"big.pkg": _ps5_pkg(33, cnt=ultra_core.PKG_HEADER_BUDGET + 0x1000)[:0x400]})
+        self.assertEqual(ultra_core.ArchiveExtractor.package_role(dlc), "addon")
+        self.assertEqual(ultra_core.ArchiveExtractor.package_role(mix), "game")
+        self.assertEqual(ultra_core.ArchiveExtractor.package_role(far), "")
+
+    def test_a_dlc_archive_beside_the_game_goes_along(self):
+        rel = self.d / "R"
+        _zip(rel / "g.zip", GAME)
+        _zip(rel / "dlc.zip", {"d.pkg": _ps5_pkg(33)})        # read from its header: an add-on
+        _zip(rel / "full.zip", {"f.pkg": _ps5_pkg(32)})       # a game
+        jobs, addons = plan(self.d)
+        self.assertEqual(sorted(jobs), ["R/full.zip", "R/g.zip"])
+        self.assertEqual(addons, ["R/dlc.zip"])
+
+
 if __name__ == "__main__":
     unittest.main()
