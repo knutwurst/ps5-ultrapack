@@ -2899,6 +2899,11 @@ class CLIWorker(threading.Thread):
             # sniff (we didn't repack anything). Exit 0 with a printed [SUCCESS] line is
             # the success signal.
             if self.operation == "copy":
+                if getattr(self.item, "bundle_release", None) and getattr(self.item, "content_kind", "") == ORGANIZE_TARGET:
+                    try:
+                        self._copy_bundle_siblings()      # the add-ons of its download folder
+                    except Exception as e:
+                        self.app.log("WARN", f"Bundle copy failed: {e}")
                 self._strip_written_clutter()
                 self._write_report(True)
                 self.app.finish(True, "Copy completed successfully.", self.last_cmd_str)
@@ -3572,6 +3577,12 @@ class CLIWorker(threading.Thread):
             self.extras_left += [Path(x).name for x in siblings if Path(x).exists()]
             return
         dest_dir = self.output_dir
+        try:
+            out_file = Path(str(self.output_path or "").strip('"'))
+            if str(out_file) and out_file.is_file():
+                dest_dir = out_file.parent             # beside the .ffpfsc / .pkg, wherever it landed
+        except OSError:
+            pass
         copied = 0
         for src in siblings:
             try:
@@ -3618,6 +3629,7 @@ class CLIWorker(threading.Thread):
                 self.extras_left.append(Path(src).name)
         if copied:
             self.app.log("OK", f"Copied {copied} extra item(s) next to the .ffpfsc.")
+        self.extras_copied = copied == len([x for x in siblings if Path(x).exists()]) and copied > 0
 
     def _validate_shadowmount(self) -> list:
         """Post-compression ShadowMount compatibility checks.
@@ -5165,7 +5177,8 @@ class JobDialog(EmbeddedDialog):
             return it
 
         if self.edit_item is None:
-            app._add_jobs_async(list(sources), make)
+            plan = app._release_planner(p, app._candidate_passwords()) if self._kind == "parent" else None
+            app._add_jobs_async(list(sources), make, plan=plan)
             self.destroy(); return
         try:
             new = make(sources[0])
@@ -5319,8 +5332,10 @@ class JobDialog(EmbeddedDialog):
 
         if self.edit_item is None:
             # New jobs: built one by one on a worker, each joins the queue as it is ready,
-            # with a progress line above the list. The editor closes right away.
-            app._add_jobs_async(list(sources), make)
+            # with a progress line above the list. The editor closes right away. A parent
+            # folder is sorted by download folder first: one game takes its add-ons along.
+            plan = app._release_planner(p, app._candidate_passwords()) if self._kind == "parent" else None
+            app._add_jobs_async(list(sources), make, plan=plan)
             self.destroy(); return
         made = []
         for s in sources:
@@ -5342,7 +5357,7 @@ class JobDialog(EmbeddedDialog):
                 # Same source: keep where it came from, so a retry runs from the copy the job
                 # kept (and a removal deletes it) instead of a stranger's path in the scratch.
                 for attr in ("origin_archive", "origin_extracted_size", "origin_payload", "organize_folder",
-                             "archive_games", "archive_index", "kept_extract", "bundle_siblings",
+                             "archive_games", "archive_index", "kept_extract", "bundle_siblings", "bundle_release",
                              "pkg_content_size", "pkg_largest_file", "pkg_kept_bytes",
                              "extracted_size", "header_locked"):
                     if hasattr(old, attr):
@@ -8173,6 +8188,17 @@ class App:
         visit(Path(root))
         return out
 
+    @staticmethod
+    def _download_extras(item) -> list:
+        """The extras planned from the job's download folder (bundle_release), without what
+        an earlier unpack of the archive added."""
+        rel = getattr(item, "bundle_release", None)
+        if not rel:
+            return []
+        root = os.path.realpath(rel) + os.sep
+        return [Path(x) for x in (getattr(item, "bundle_siblings", None) or [])
+                if os.path.realpath(x).startswith(root)]
+
     def _sibling_extras(self, parent: Path, game_paths) -> list:
         """Extra items (DLC subfolders, loose non-junk files) sitting BESIDE the game in an
         extracted archive tree, to copy next to the .ffpfsc. Excludes the detected game
@@ -9430,18 +9456,20 @@ class App:
                 # Carry extra subfolders/files that sit BESIDE the game in the archive
                 # (e.g. an '[ ALL DLC ]' wrapper) so they're copied next to the .ffpfsc.
                 # Skipped when the archive root IS the game (no wrapper → no siblings).
+                # what sits beside the archive in its download folder stays on the list
+                planned = self._download_extras(item)
                 if kind == "pkg":
                     # a package release: backports, checksums and the rest all go along
                     try:
-                        item.bundle_siblings = self._release_extras(Path(extracted_root), paths)
+                        item.bundle_siblings = planned + self._release_extras(Path(extracted_root), paths)
                     except Exception:
-                        item.bundle_siblings = []
+                        item.bundle_siblings = planned
                 elif kind == "game" and not (len(paths) == 1
                         and Path(paths[0]).resolve() == Path(extracted_root).resolve()):
                     try:
-                        item.bundle_siblings = self._sibling_extras(Path(primary.path).parent, paths)
+                        item.bundle_siblings = planned + self._sibling_extras(Path(primary.path).parent, paths)
                     except Exception:
-                        item.bundle_siblings = []
+                        item.bundle_siblings = planned
                 self._extract_q.put(("ok", (item, payload_items[1:])))
             except ArchiveExtractionCancelled as exc:
                 self.log("WARN", str(exc))
@@ -9955,6 +9983,31 @@ class App:
         item.chain_to = ORGANIZE_TARGET
         item.copy_mode = "move" if getattr(item, "archive_path", None) else "keep"
         return item
+
+    def _pkg_role(self, path) -> str:
+        """'addon' for a PS5 package that is an update or additional content, 'game' for a
+        game, 'unknown' when that cannot be told (PS4 packages too). Tk-free."""
+        path = Path(path)
+        if _ps4pkg_module().is_ps4_package(path):
+            return "unknown"
+        _bd = str(backend_base_dir())
+        if _bd not in sys.path:
+            sys.path.insert(0, _bd)
+        import fpkg
+        import organize_lib
+        if organize_lib._name_role(path.stem):            # named an update, a patch or a backport
+            return "addon"
+        ct = fpkg.inspect_json(path).get("content_type")
+        return "addon" if ct in (33, 34) else "game" if ct == 32 else "unknown"
+
+    def _release_planner(self, root, passwords):
+        """plan(sources) for _add_jobs_async: one game per download folder takes the rest of
+        that folder along (see ultra_core.plan_releases). Runs on the add worker."""
+        root = Path(root)
+
+        def plan(sources):
+            return plan_releases(root, sources, passwords=passwords, pkg_role=self._pkg_role, log_fn=self.log)
+        return plan
 
     @staticmethod
     def _make_organize(item):
@@ -11047,7 +11100,7 @@ class App:
                 if (_org and not _holds and not getattr(obj, "archive_path", None) and _src
                         and (_rearm or not Path(str(_src)).exists()) and Path(_org).exists()):
                     obj.archive_path, obj.path = Path(_org), None
-                    obj.source_kind, obj.files, obj.bundle_siblings = "archive", 0, []
+                    obj.source_kind, obj.files, obj.bundle_siblings = "archive", 0, self._download_extras(obj)
                     obj.extracted_size = int(getattr(obj, "origin_extracted_size", 0) or 0)
                     try:
                         obj.size = archive_set_ondisk_size(Path(_org))
@@ -13208,14 +13261,23 @@ class App:
         self.status_update("Scanning", f"Rescan: reading {folder}…", "Scanning Files",
                            0, 0, "00:00", " - ", " - ", side=True)
 
+        passwords = self._candidate_passwords()
+
         def work():
             try:
                 found = find_job_sources(folder)
             except Exception as e:
                 self.scan_q.put(("rescan-error", str(e)))
                 return
+            # add-ons of a game go along with it: planned on everything found, so an add-on
+            # never turns up as new on its own once its game is queued or done
+            try:
+                pairs, _addons = plan_releases(folder, found, passwords=passwords, pkg_role=self._pkg_role)
+            except Exception:
+                pairs = [(p, None) for p in found]
+            bundles = {str(p): b for p, b in pairs if b}
             new, skipped = [], 0
-            for p in found:
+            for p, _b in pairs:
                 if self._source_key(p) in known_paths:
                     skipped += 1
                     continue
@@ -13225,7 +13287,9 @@ class App:
                     continue
                 new.append(p)
             self.scan_q.put(("rescan-found", {"folder": str(folder), "sources": new, "tpl": tpl,
-                                              "scanned": len(found), "skipped": skipped}))
+                                              "scanned": len(found), "skipped": skipped,
+                                              "bundles": {k: v for k, v in bundles.items()
+                                                          if k in {str(x) for x in new}}}))
         self._launch_scan(work)
 
     def _rescan_make(self, tpl: dict):
@@ -13269,7 +13333,7 @@ class App:
             return it
         return make
 
-    def _add_jobs_async(self, sources, make) -> None:
+    def _add_jobs_async(self, sources, make, plan=None) -> None:
         """Build the jobs for *sources* on a worker thread and hand them to the main loop one at a time (_drain_add_q): each appears in the queue as soon as it is ready, a line and a bar above the list count them, and Start waits until the last one is in."""
         if not sources:
             return
@@ -13281,9 +13345,22 @@ class App:
 
         def work():
             try:
-                for s in sources:
+                pairs = [(s, None) for s in sources]
+                if plan is not None:
                     try:
-                        q.put(("item", make(s), s, ""))
+                        pairs, addons = plan(list(sources))
+                        if addons:
+                            q.put(("addons", None, addons, ""))
+                    except Exception as e:
+                        q.put(("note", None, None, tr("Could not sort the sources by download folder ({e}); "
+                                                      "each source gets a job of its own.", e=e)))
+                for s, bundle in pairs:
+                    try:
+                        it = make(s)
+                        if bundle:
+                            it.bundle_siblings = [Path(e) for e in bundle["extras"]]
+                            it.bundle_release = bundle["release"]
+                        q.put(("item", it, s, ""))
                     except Exception as e:
                         q.put(("error", None, s, str(e)))
             finally:
@@ -13453,6 +13530,13 @@ class App:
                 st["done"] += 1
                 st["errors"] += 1
                 self.log("WARN", f"Could not add {Path(str(src)).name}: {err}")
+            elif kind == "addons":
+                st["done"] += len(src)
+                names = ", ".join(Path(str(x)).name for x in src[:6]) + (" …" if len(src) > 6 else "")
+                self.log("INFO", tr("{n} add-on(s) go along with their game instead of a job of their own: {names}",
+                                    n=len(src), names=names))
+            elif kind == "note":
+                self.log("WARN", err)
             else:                                   # one worker finished
                 with self._scan_lock:
                     self._scan_in_flight = max(0, self._scan_in_flight - 1)
@@ -13621,7 +13705,7 @@ class App:
         item.path = None
         item.source_kind = "archive"
         item.files = 0
-        item.bundle_siblings = []
+        item.bundle_siblings = self._download_extras(item)
         try:
             item.size = archive_set_ondisk_size(arc)
         except Exception:
@@ -13909,13 +13993,48 @@ class App:
                                                     getattr(item, "display_name", "") or "")).strip()
             rel = aj.release_folder(game, list_sources=find_job_sources, title_id=self._item_title_id(item) or "",
                                     title=title, protected=keep_dirs, may_be=getattr(item, "source_root", None))
+            if rel is None:
+                rel = self._bundle_release(item, game, keep_dirs)
         whole = rel is not None and act in (aj.TRASH, aj.MOVE)
+        if (rel is not None and act == aj.DELETE and getattr(item, "bundle_release", None)
+                and getattr(worker, "extras_copied", False) and not getattr(worker, "extras_left", None)):
+            whole = True                         # the add-ons reached the output: the folder goes
         targets = ([rel] if whole else game) + [p for p in patch
                                                 if not (whole and str(os.path.realpath(p)).startswith(
                                                     str(os.path.realpath(rel)) + os.sep))]
         item._after_info = {"release": rel, "whole": whole, "keep_dirs": keep_dirs}
         return act, targets, dest, aj.refusal(targets, output=out, dest=dest, protected=self._app_folders(),
                                               others=others)
+
+    def _bundle_release(self, item, game, keep_dirs):
+        """The download folder of a game whose add-ons went along with it (see
+        ultra_core.plan_releases): every part of the game sits directly in it, and it is
+        none of the app's or the job's own folders. None otherwise."""
+        rel = getattr(item, "bundle_release", None)
+        if not rel or not game:
+            return None
+        aj = _after_job_module()
+        folder = Path(rel)
+        try:
+            if not folder.is_dir() or {os.path.realpath(Path(g).parent) for g in game} != {os.path.realpath(folder)}:
+                return None
+        except OSError:
+            return None
+        picked = getattr(item, "source_root", None)       # the folder the job was added from may go
+        prot = [q for q in keep_dirs if q and (not picked or os.path.realpath(q) != os.path.realpath(picked))]
+        if aj._is_protected_dir(folder, prot):
+            return None
+        # only while it holds what was planned: a download that arrived since stays put
+        known = {os.path.realpath(g) for g in game} | {os.path.realpath(x) for x in self._download_extras(item)}
+        try:
+            for e in folder.iterdir():
+                if (os.path.realpath(e) in known or is_fs_junk_name(e.name) or e.name.startswith(".")
+                        or (e.is_file() and e.suffix.lower() in EXTRA_JUNK_EXTS)):
+                    continue
+                return None
+        except OSError:
+            return None
+        return folder
 
     def _run_after_job(self, item, worker, then) -> None:
         """Keep, trash, move or delete *item*'s source as the job says, then call *then*
@@ -14832,7 +14951,9 @@ class App:
                         self.status_update("Ready", msg, "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                     else:
                         self.log("OK", f"Rescan: {len(sources)} new source(s) in {folder}{tail}.")
-                        self._add_jobs_async(list(sources), self._rescan_make(dict(tpl, _rescan_root=folder)))
+                        _bmap = payload.get("bundles") or {}
+                        self._add_jobs_async(list(sources), self._rescan_make(dict(tpl, _rescan_root=folder)),
+                                             plan=lambda srcs, _b=_bmap: ([(x, _b.get(str(x))) for x in srcs], []))
                     continue
                 if status == "rescan-error":
                     self.log("ERROR", f"Rescan failed: {payload}")

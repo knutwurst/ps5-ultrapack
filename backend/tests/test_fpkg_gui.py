@@ -283,6 +283,81 @@ try:
     for _it in [x for x in app.queue if getattr(x, "auto_output", False)]:
         app.queue.remove(_it)
     ok("auto.output-row-fits", all(seg < oin for seg, oin in _fit), str(_fit[:2]))
+    # One game per download folder: its add-ons go along instead of becoming jobs
+    _bs = S / "bundle_src"; shutil.rmtree(_bs, ignore_errors=True)
+    _brel = _bs / "Folder Game [PPSA99099]"; (_brel / "Addon").mkdir(parents=True)
+    with zipfile.ZipFile(_brel / "Folder Game.zip", "w") as z:
+        for f in HBT.rglob("*"):
+            if f.is_file(): z.write(f, f"Folder Game/{f.relative_to(HBT)}")
+    with zipfile.ZipFile(_brel / "Addon" / "dlc.zip", "w") as z:
+        z.writestr("dlc/content.pkg", b"p" * 64)
+    (_brel / "Addon" / "Folder Game update.pkg").write_bytes(b"p" * 64)     # named an update: an add-on
+    _prel = _bs / "Package Game [PPSA99099]"; (_prel / "Addon").mkdir(parents=True)
+    shutil.copyfile(_seed_pkg, _prel / "Package Game.pkg")
+    with zipfile.ZipFile(_prel / "Addon" / "bonus.zip", "w") as z:
+        z.writestr("art/cover.png", b"x")
+    _bout, _bdone = S / "bundle_out", S / "bundle_done"
+    shutil.rmtree(_bout, ignore_errors=True); shutil.rmtree(_bdone, ignore_errors=True)
+    _bd = m.JobDialog(app, init_src=str(_bs), init_to="ffpfsc"); root.update()
+    _bd.out_var.set(str(_bout)); _bd.after_var.set("move"); _bd.after_dir_var.set(str(_bdone)); root.update()
+    _bn0 = len(app.queue); _bd._add(); settle()
+    _bnew = app.queue[_bn0:]
+    _bnames = sorted(Path(str(getattr(i, "archive_path", None) or i.path)).name for i in _bnew)
+    _bf = next((i for i in _bnew if getattr(i, "archive_path", None)), None)
+    ok("bundle.one-job-per-download-folder", _bnames == ["Folder Game.zip", "Package Game.pkg"] and _bf is not None
+       and [Path(x).name for x in _bf.bundle_siblings] == ["Addon"] and _bf.bundle_release == str(_brel),
+       f"{_bnames} {_bf and (_bf.bundle_siblings, _bf.bundle_release)}")
+    for _it in _bnew:
+        app.queue.remove(_it)
+    # the folder goes whole only while it holds what was planned
+    _bgame = app._after_game_sources(_bf)
+    _whole_before = app._bundle_release(_bf, _bgame, []) is not None
+    (_brel / "new download.zip").write_bytes(b"x")
+    _whole_after = app._bundle_release(_bf, _bgame, []) is not None
+    (_brel / "new download.zip").unlink()
+    ok("bundle.new-file-keeps-the-folder", _whole_before and not _whole_after, f"{_whole_before} {_whole_after}")
+    # editing the job keeps its download folder
+    _be = m.JobDialog(app, item=_bf); root.update()
+    app.queue.append(_bf); _be._add(); settle()
+    _bf2 = app.queue[-1] if app.queue else None
+    ok("bundle.edit-keeps-the-folder", _bf2 is not None and getattr(_bf2, "bundle_release", None) == str(_brel)
+       and [Path(x).name for x in _bf2.bundle_siblings] == ["Addon"], str(_bf2 and _bf2.bundle_siblings))
+    if _bf2 is not None and _bf2 in app.queue:
+        app.queue.remove(_bf2)
+        _bf = _bf2
+    _q0b, _act0b = list(app.queue), app._active_item
+    _inflb = getattr(app, "_cleanup_inflight", 0)
+    try:
+        app._cleanup_inflight = 0; app.cancel_requested = False; app.extract_cancel_event.clear()
+        app.queue[:] = [_bf]; app._active_item = None
+        app.start()
+        pump(lambda: _bf.status in ("Done", "Failed", "Skipped", "Cancelled") and not app._batch_running
+             and not getattr(app, "_after_busy", False), timeout=300.0)
+        _ffo = next(iter(_bout.rglob("*.ffpfsc")), None)
+        ok("bundle.addons-next-to-the-output", _bf.status == "Done" and _ffo is not None
+           and (_ffo.parent / "Addon" / "dlc.zip").is_file() and (_ffo.parent / "Addon" / "Folder Game update.pkg").is_file(),
+           f"{_bf.status} {_ffo} {sorted(x.relative_to(_bout).as_posix() for x in _bout.rglob('*'))[:8]}")
+        ok("bundle.download-folder-moves-whole", not _brel.exists() and (_bdone / _brel.name / "Addon" / "dlc.zip").is_file()
+           and (_bdone / _brel.name / "Folder Game.zip").is_file(), str(sorted(x.name for x in _bdone.iterdir()) if _bdone.exists() else []))
+        # Organize: the package goes into the library, its add-ons beside it
+        _bo = m.JobDialog(app, init_src=str(_bs), init_to="organize"); root.update()
+        _bo.out_var.set(str(_bout / "lib")); _bo.after_var.set("keep"); root.update()
+        _bn0 = len(app.queue); _bo._add(); settle()
+        _bp = next((i for i in app.queue[_bn0:]), None)
+        ok("bundle.organize-job", _bp is not None and len(app.queue) == _bn0 + 1
+           and [Path(x).name for x in _bp.bundle_siblings] == ["Addon"], str(_bp and _bp.bundle_siblings))
+        if _bp is not None:
+            app.queue[:] = [_bp]; app._active_item = None
+            app.start()
+            pump(lambda: _bp.status in ("Done", "Failed", "Skipped", "Cancelled") and not app._batch_running
+                 and not getattr(app, "_after_busy", False), timeout=300.0)
+            _pk_out = next(iter((_bout / "lib").rglob("*.pkg")), None)
+            ok("bundle.organize-addons-beside-the-package", _bp.status == "Done" and _pk_out is not None
+               and (_pk_out.parent / "Addon" / "bonus.zip").is_file(),
+               f"{_bp.status} {sorted(x.relative_to(_bout).as_posix() for x in (_bout / 'lib').rglob('*'))[:8]}")
+    finally:
+        app._batch_running = False; app._cleanup_inflight = _inflb
+        app.queue[:] = _q0b; app._active_item = _act0b; app.update_queue_box()
     # every queued archive shows what it holds, whatever added it
     _qa = m.GameItem.from_archive(ZP)
     app.queue.append(_qa); app.update_queue_box()

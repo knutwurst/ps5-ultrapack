@@ -1026,4 +1026,6 @@ GERMAN: dict[str, str] = {
     "{name} holds {what}: Auto builds {to}": "{name} enthält {what}: Auto erstellt {to}",
     "{name} holds {what}: Auto organizes it into the library": "{name} enthält {what}: Auto sortiert es in die Bibliothek",
     "Organize leaves a source as it is: the changes above apply to the sources that are built.": "Organisieren lässt eine Quelle, wie sie ist: Die Änderungen oben gelten für die Quellen, die gebaut werden.",
+    "Could not sort the sources by download folder ({e}); each source gets a job of its own.": "Die Quellen ließen sich nicht nach Download-Ordnern ordnen ({e}); jede Quelle bekommt einen eigenen Job.",
+    "{n} add-on(s) go along with their game instead of a job of their own: {names}": "{n} Add-on(s) gehen mit ihrem Spiel mit statt als eigener Job: {names}",
 }

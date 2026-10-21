@@ -1249,6 +1249,130 @@ def is_archive_file(path: Path) -> bool:
     return suf in (".zip", ".rar", ".7z") or bool(re.match(r"^\.r\d{2,}$", suf))
 
 
+_GAME_CONTENT = ("folder", "exfat", "ffpkg", "ffpfs", "ffpfsc")
+
+
+def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=None):
+    """Turn the job sources found under *root* (find_job_sources) into jobs, folder by folder.
+
+    A folder whose sources hold exactly one game, sitting directly in it, while every other
+    source is definitely not a game (an archive whose names show no game folder or image, a
+    package pkg_role calls 'addon', an archive of packages in a subfolder) becomes ONE job: the game, with everything else in the
+    folder, files and subfolders, copied next to its output (notes and checksums excepted).
+    The add-on sources are not queued. A folder with two games or more gives each game its
+    job; its add-ons are neither queued nor copied. Anything less certain stays as it was:
+    one job per source. Archives are only listed, never unpacked; pkg_role(path) -> 'game' | 'addon' |
+    'unknown' reads a loose package (without it a package counts as unknown).
+
+    Returns (jobs, addons): jobs = [(source, bundle)], bundle None or {'release': folder,
+    'extras': [paths]}; addons = the sources that go along with a game instead."""
+    root = Path(root)
+    roles: dict = {}
+
+    def role(src: Path) -> str:
+        key = str(src)
+        if key not in roles:
+            if src.is_dir() or src.suffix.lower() in (".exfat", ".ffpkg", ".ffpfs", ".ffpfsc"):
+                roles[key] = "game"
+            elif src.suffix.lower() == ".pkg":
+                try:
+                    roles[key] = pkg_role(src) if pkg_role else "unknown"
+                except Exception:
+                    roles[key] = "unknown"
+            else:
+                try:
+                    names = ArchiveExtractor.member_entries(src, passwords)
+                except Exception:
+                    names = []
+                kind = content_kind_from_members(names) if names else None
+                # packages inside an archive cannot be told apart by name: game or DLC
+                roles[key] = ("unknown" if kind is None else "game" if kind in _GAME_CONTENT
+                              else "pkg-archive" if kind == "pkg" else "addon")
+        return roles[key]
+
+    def is_addon(src: Path, folder: Path) -> bool:
+        """Definitely not a game, seen from *folder*: an archive of packages counts as an
+        add-on only in a subfolder (the 'Addon' folder beside the game), never beside it."""
+        r = role(src)
+        return r == "addon" or (r == "pkg-archive" and src.parent != folder)
+
+    def own_files(game: Path) -> set:
+        if game.is_file() and is_archive_file(game):
+            return {str(q.resolve()) for q in archive_set_parts(game)}
+        return {str(game.resolve())}
+
+    def bundle(folder: Path, srcs: list):
+        """(game, extras, the other sources) for a folder with one game, "multi" for one
+        with two or more, None otherwise."""
+        direct = [x for x in srcs if x.parent == folder]
+        if not direct:
+            return None
+        if len(srcs) == 1:
+            game = srcs[0]                       # the one source here: the game by structure
+        else:
+            cands = []
+            for x in direct + [x for x in srcs if x not in direct]:
+                if not is_addon(x, folder):
+                    cands.append(x)
+                    if len(cands) > 1:
+                        return "multi"
+            if len(cands) != 1 or cands[0].parent != folder:
+                return None
+            game = cands[0]
+        mine = own_files(game)
+        extras = []
+        try:
+            entries = sorted(folder.iterdir(), key=lambda q: q.name.lower())
+        except OSError:
+            return None
+        for e in entries:
+            if (is_fs_junk_name(e.name) or e.name.startswith(".") or e.name in _JOB_SCAN_SKIP_DIRS
+                    or str(e.resolve()) in mine or (e.is_file() and e.suffix.lower() in EXTRA_JUNK_EXTS)):
+                continue
+            extras.append(e)
+        if not extras:
+            return None
+        return game, extras, [x for x in srcs if x != game]
+
+    jobs: list = []
+    addons: list = []
+
+    def walk(folder: Path, srcs: list, drop: bool = False, top: Path = None) -> None:
+        top = top or folder
+        b = None if drop else bundle(folder, srcs)   # below a release with several games: no bundles
+        if b == "multi":
+            drop, top = True, folder             # the add-ons belong to no one game here
+            b = None
+        if b is not None:
+            game, extras, rest = b
+            jobs.append((game, {"release": str(folder), "extras": [str(e) for e in extras]}))
+            addons.extend(rest)
+            if log_fn:
+                log_fn("INFO", f"{folder.name}: one game ({game.name}); {len(extras)} other item(s) "
+                               f"go along with it, {len(rest)} of them not queued on their own")
+            return
+        groups: dict = {}
+        for x in srcs:
+            try:
+                head = x.relative_to(folder).parts[0]
+            except (ValueError, IndexError):
+                jobs.append((x, None)); continue
+            if x == folder / head:
+                if drop and is_addon(x, top):
+                    addons.append(x)
+                else:
+                    jobs.append((x, None))       # sits directly in this folder
+            else:
+                groups.setdefault(head, []).append(x)
+        for head in sorted(groups, key=str.lower):
+            walk(folder / head, groups[head], drop, top if drop else None)
+
+    walk(root, [Path(x) for x in sources])
+    order = {str(Path(x)): i for i, x in enumerate(sources)}
+    jobs.sort(key=lambda j: order.get(str(j[0]), 0))
+    return jobs, addons
+
+
 def find_job_sources(root: Path, max_depth: int = 6) -> list[Path]:
     """Every source a job can start from under *root*, one entry each: game folders (not
     entered), containers (.ffpfs/.ffpfsc/.pkg/.exfat/.ffpkg) and archives (.zip/.rar/.7z;
@@ -3900,6 +4024,7 @@ class GameItem:
     archive_title_id = ""
     archive_version = ""
     archive_content = ""    # archive: what it holds ('pkg', 'exfat', 'folder', ...), read from its member names
+    bundle_release = None   # str: the download folder whose add-ons go along with this game (plan_releases)
     auto_output = False     # added with the output Auto: the unpacked archive's content may change it
     auto_sign = False       # Auto: sign and LZ4 as asked for, for the output the unpacked content picks
     auto_lz4 = False
@@ -4299,6 +4424,7 @@ __all__ = [
     "auto_actions",
     "auto_target",
     "content_kind_from_members",
+    "plan_releases",
     "LibItem",
     "library_layout",
     "ARCHIVE_SUFFIXES",
