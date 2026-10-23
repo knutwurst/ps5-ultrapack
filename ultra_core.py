@@ -641,7 +641,22 @@ def chain_summary(item) -> str:
     'Copy or move (same format)' · 'Sign in place' · 'Nothing to do'."""
     if getattr(item, "operation", "") == "ps4-keystone":
         n = len([u for u in (getattr(item, "ps4_rebind", "") or "").splitlines() if u.strip()])
-        return tr("Replace the keystone") + (plural(n, ", bind 1 update", ", bind {n} updates") if n else "")
+        parts = (([tr("replace the keystone")] if getattr(item, "ps4_keystone", None) else [])
+                 + ([tr("fix the version")] if getattr(item, "ps4_fix_version", False) else [])
+                 + ([plural(n, "bind 1 update", "bind {n} updates")] if n else []))
+        s = ", ".join(parts) or tr("nothing to do")
+        return s[:1].upper() + s[1:]
+    if getattr(item, "ps5_repair", False):
+        parts = (([tr("replace the keystone")] if getattr(item, "fpkg_keystone", None) else [])
+                 + ([tr("regenerate PlayGo")] if getattr(item, "fpkg_regen_playgo", False) else [])
+                 + ([tr("make it a standalone game")] if getattr(item, "ps5_standalone", False) else [])
+                 + ([tr("write the trophy checksums")] if getattr(item, "ps5_trophies", False) else [])
+                 + ([tr("backport to {target}", target=item.backport_target)]
+                    if getattr(item, "backport_target", None) else []))
+        if not parts:
+            return "Rebuild the package"
+        head = ", ".join(parts)
+        return tr("{head}, then rebuild the package", head=head[0].upper() + head[1:])
     if getattr(item, "content_kind", "") == "ps4":
         if getattr(item, "ps4_keystone", None):
             return "Sort into the PS4 library, then replace the keystone"
@@ -4172,6 +4187,12 @@ class GameItem:
     ps4_keystone = None     # str: PS4 job: a keystone file written into the sorted game package;
                             # ps4-keystone job: the keystone as 192 hex digits
     ps4_rebind = ""         # ps4-keystone job: the update packages to bind, one path per line
+    ps4_fix_version = False  # ps4-keystone job: a full game with an update merged in gets the update's app version
+    ps5_repair = False      # chain job made by PS5 repair: the package is unpacked and built again
+    chain_rebuild = False   # chain job: build the output even when the source has its format and nothing changes
+    fpkg_keystone = None    # str: .pkg build: the keystone (192 hex digits) that goes in as sce_sys/keystone
+    ps5_standalone = False  # PS5 repair: no update URL, no patch markers in param.json
+    ps5_trophies = False    # PS5 repair: write the SHA-1 of trophy and activity archives that do not match
     ps4_default_keystone = None  # PS4 game package: True when it carries the builder's default keystone
 
     def __init__(self, path: Path):
@@ -4274,9 +4295,9 @@ class GameItem:
         return obj
 
     @classmethod
-    def from_ps4_keystone(cls, base: Path, keystone_hex: str, updates) -> "GameItem":
-        """Job that writes a keystone into the PS4 game package *base* in place and binds the
-        *updates* (paths) to the changed package."""
+    def from_ps4_keystone(cls, base: Path, keystone_hex: str, updates, fix_version: bool = False) -> "GameItem":
+        """Job that repairs the PS4 game package *base* in place: writes a keystone (none when
+        *keystone_hex* is empty), fixes its version, and binds the *updates* (paths) to it."""
         obj              = cls.__new__(cls)
         obj.path         = base
         obj.archive_path = None
@@ -4291,6 +4312,7 @@ class GameItem:
         obj.extracted_size = 0
         obj.ps4_keystone = keystone_hex
         obj.ps4_rebind   = "\n".join(str(u) for u in updates)   # one path per line (the queue saves plain values)
+        obj.ps4_fix_version = bool(fix_version)
         return obj
 
     @classmethod

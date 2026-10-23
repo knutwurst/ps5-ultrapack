@@ -32,6 +32,14 @@ we wrote:
 - `Ps4Rebind.cs` — `ps4-rebind <update> <base>` points a PS4 update at a changed base package: an
   update records the base's content digest (general digest slot 10) and game digest (slot 12);
   both are rewritten and the entry digest, the header hashes and the fake signature recomputed.
+- `build --keystone FILE` puts FILE (96 bytes) into the stage as `sce_sys/keystone` instead of the
+  source's. LibProsperoPkg keeps a present keystone and makes one from the passcode only when
+  there is none; that one depends on the passcode alone, not on the content id.
+- `Ps4Sfo.cs` — `ps4-sfo <pkg> --set KEY=VALUE [--set ...] [--undo FILE]` changes values of a PS4
+  package's param.sfo entry in place (strings that fit their field, integers) and rewrites the param
+  digest, the entry digests, the header hashes and the fake signature. The five values the major
+  param digest covers are refused, and so is a package with a param.sfo inside its image. Its
+  `CntEdit` is the in-place header edit `ps4-rebind` uses too.
 
 Every `--json` document is serialized through the source-generated `PkgToolJsonContext` at
 the end of `Program.cs`. It dates from when the binary was published trimmed (which switches

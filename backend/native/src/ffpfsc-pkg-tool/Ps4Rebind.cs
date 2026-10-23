@@ -61,74 +61,30 @@ internal static partial class Program
         }
         long gdOff = gd.meta.DataOffset;
 
-        using var f = new FileStream(updPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
-        byte[] Read(long off, int len) { var b = new byte[len]; f.Position = off; f.ReadExactly(b); return b; }
-        var oldContent = Read(gdOff + 32 * BaseContentSlot, 32);
-        var oldGame = Read(gdOff + 32 * BaseGameSlot, 32);
+        byte[] oldContent = new byte[32], oldGame = new byte[32];
+        using (var f = File.OpenRead(updPath))
+        {
+            f.Position = gdOff + 32 * BaseContentSlot; f.ReadExactly(oldContent);
+            f.Position = gdOff + 32 * BaseGameSlot; f.ReadExactly(oldGame);
+        }
         Console.WriteLine($"[rebind] base content {Convert.ToHexString(oldContent)[..16]} -> {Convert.ToHexString(bContent)[..16]}");
         Console.WriteLine($"[rebind] base game    {Convert.ToHexString(oldGame)[..16]} -> {Convert.ToHexString(bGame)[..16]}");
         if (oldContent.SequenceEqual(bContent) && oldGame.SequenceEqual(bGame)) { Console.WriteLine("[ok] the update already points at this base"); return 0; }
 
-        // what was right before stays right after
-        var metas = pkg.Metas.Metas;
-        var digMeta = metas.First(m => m.id == Orbis.PKG.EntryId.DIGESTS);
-        int gdIndex = metas.FindIndex(m => m.id == Orbis.PKG.EntryId.GENERAL_DIGESTS);
-        bool gdEntryOk = Read(digMeta.DataOffset + 32 * gdIndex, 32).SequenceEqual(Orbis.Util.Crypto.Sha256(f, gd.meta.DataOffset, gd.meta.DataSize));
-        bool bodyOk = pkg.Header.body_digest.SequenceEqual(Orbis.Util.Crypto.Sha256(f, (long)pkg.Header.body_offset, (long)pkg.Header.body_size));
-
-        var saved = new List<(long off, byte[] data)>();
-        using var undo = undoPath == null ? null : new BinaryWriter(File.Create(undoPath));
-        if (undo != null)
+        using (var e = new CntEdit(updPath, undoPath, UndoMagic, new[] { Orbis.PKG.EntryId.GENERAL_DIGESTS }))
         {
-            undo.Write(UndoMagic);
-            undo.Write(System.Text.Encoding.ASCII.GetBytes(pkg.Header.content_id.PadRight(36, '\0')[..36]));
-            undo.Write(f.Length);
-            undo.Flush();
-        }
-        void Put(long off, byte[] b)
-        {
-            var old = Read(off, b.Length);
-            saved.Add((off, old));
-            if (undo != null) { undo.Write(off); undo.Write(old.Length); undo.Write(old); undo.Flush(); }
-            f.Position = off; f.Write(b);
-        }
-        try
-        {
-            Put(gdOff + 32 * BaseContentSlot, bContent);
-            Put(gdOff + 32 * BaseGameSlot, bGame);
-            f.Flush();
-            if (gdEntryOk) Put(digMeta.DataOffset + 32 * gdIndex, Orbis.Util.Crypto.Sha256(f, gd.meta.DataOffset, gd.meta.DataSize));
-            f.Flush();
-            f.Position = 0;
-            pkg = new Orbis.PKG.PkgReader(f).ReadPkg();
-            byte[] Cat(bool sc2)
+            try
             {
-                var ms = new MemoryStream();
-                var parts = new List<Orbis.PKG.Entry> { pkg.EntryKeys, pkg.ImageKey, pkg.GeneralDigests, pkg.Metas };
-                if (!sc2) parts.Add(pkg.Digests);
-                foreach (var e in parts)
-                {
-                    long size = sc2 && e.Id == Orbis.PKG.EntryId.METAS ? pkg.Header.sc_entry_count * 0x20 : e.meta.DataSize;
-                    new Orbis.Util.SubStream(f, e.meta.DataOffset, size).CopyTo(ms);
-                }
-                return Orbis.Util.Crypto.Sha256(ms);
+                e.Put(gdOff + 32 * BaseContentSlot, bContent);
+                e.Put(gdOff + 32 * BaseGameSlot, bGame);
+                e.Reseal();
             }
-            Put(0x100, Cat(false));
-            Put(0x120, Cat(true));
-            Put(0x140, Orbis.Util.Crypto.Sha256(pkg.Digests.FileData));
-            if (bodyOk) Put(0x160, Orbis.Util.Crypto.Sha256(f, (long)pkg.Header.body_offset, (long)pkg.Header.body_size));
-            f.Flush();
-            Put(0xFE0, Orbis.Util.Crypto.Sha256(f, 0, 0xFE0));
-            f.Flush();
-            Put(0x1000, Orbis.Util.Crypto.RSA2048EncryptKey(Orbis.Util.Keys.PkgSignKey, Orbis.Util.Crypto.Sha256(f, 0, 0x1000)));
-            f.Flush();
-        }
-        catch
-        {
-            for (int i = saved.Count - 1; i >= 0; i--) { f.Position = saved[i].off; f.Write(saved[i].data); }
-            f.Flush();
-            Console.Error.WriteLine("[ERROR] the package was restored to its state before the run");
-            throw;
+            catch
+            {
+                e.RollBack();
+                Console.Error.WriteLine("[ERROR] the package was restored to its state before the run");
+                throw;
+            }
         }
         Console.WriteLine("[ok] update bound to the base");
         return 0;

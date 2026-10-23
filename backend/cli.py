@@ -2730,6 +2730,11 @@ def _chain_transforms(root: Path, args, scratch_root: Path, restorable: bool = F
             raise RuntimeError("the patch contained no files to overlay")
         print(f"[OK] Applied {applied} patch file(s).", flush=True)
         done.append("patch")
+    if getattr(args, "ps5_standalone", False) or getattr(args, "ps5_trophies", False):
+        import ps5_repair
+        done += ps5_repair.repair_folder(root, log=lambda line: print(line, flush=True),
+                                         standalone=getattr(args, "ps5_standalone", False),
+                                         trophies=getattr(args, "ps5_trophies", False))
     try:
         if args.backport_target:
             _apply_backport(root, args.backport_target, *_backport_dirs(args), own_copy=not restorable)
@@ -2901,8 +2906,12 @@ def main() -> None:
                              "DLCs on; a title folder already in OUTPUT is joined). --copy-mode says "
                              "what happens to each source package.")
     parser.add_argument("--ps4-keystone-set", type=str, default=None, metavar="BASE",
-                        help="PS4 KEYSTONE MODE: write --ps4-keystone into the game package BASE in place and "
-                             "bind every --ps4-rebind update to the changed package. Undo data goes to the app folder.")
+                        help="PS4 REPAIR MODE: repair the game package BASE in place: --ps4-keystone, --ps4-fix-version, and "
+                             "every --ps4-rebind update bound to the changed package (its save folder set to the "
+                             "game's). Undo data goes to the app folder.")
+    parser.add_argument("--ps4-fix-version", action="store_true",
+                        help="With --ps4-keystone-set: a full game with an update merged in gets the update's app "
+                             "version, so the console stops downloading the official update.")
     parser.add_argument("--ps4-rebind", type=str, action="append", default=[], metavar="UPDATE",
                         help="With --ps4-keystone-set: an update package of the game to bind to the changed package "
                              "(repeat for each).")
@@ -3000,6 +3009,10 @@ def main() -> None:
                              "(default) keeps what the source declares; 'on' sets it, 'off' "
                              "clears it. A console on 'HDR when supported' switches to HDR "
                              "output for the title only when the bit is set.")
+    parser.add_argument("--fpkg-keystone", type=str, default=None,
+                        help="fPKG build: the keystone (a 96-byte file or its 192 hex digits) that goes into "
+                             "the package as sce_sys/keystone instead of the source's, e.g. the one from the "
+                             "game's own dump, so its saves load.")
     parser.add_argument("--fpkg-regen-playgo", action="store_true",
                         help="fPKG build: discard the source's sce_sys/playgo-*.dat even when "
                              "they look valid and let the builder regenerate them. A corrupt "
@@ -3034,6 +3047,16 @@ def main() -> None:
                              ".ffpfsc or .pkg) into this output, applying --patch, --backport-target and "
                              "--sign on the way (in that order). One job for e.g. "
                              "'.ffpfsc → backport 7.61 → .ffpfsc'. Same format without changes = copy.")
+    parser.add_argument("--rebuild", dest="chain_rebuild", action="store_true",
+                        help="CHAIN: build the output again even when the source already has that format and "
+                             "nothing changes in it (repairs a package: images, licence, PlayGo, keystone).")
+    parser.add_argument("--ps5-standalone", dest="ps5_standalone", action="store_true",
+                        help="CHAIN: a standalone game: clear param.json's update URL (versionFileUri), the patch "
+                             "markers (originContentVersion, targetContentVersion) and addcont.serviceIdForSharing. "
+                             "Only ever in the app's own unpacked copy.")
+    parser.add_argument("--ps5-trophies", dest="ps5_trophies", action="store_true",
+                        help="CHAIN: write the SHA-1 of the trophy and activity archives (sce_sys/trophy2/*.ucp, "
+                             "sce_sys/uds/*.ucp) whose checksum does not match. Only in the app's own copy.")
     parser.add_argument("--sign", dest="chain_sign", action="store_true",
                         help="CHAIN: fake-sign eboot/prx/sprx after --patch and --backport-target.")
     parser.add_argument("--lz4", dest="chain_lz4", action="store_true",
@@ -3277,11 +3300,8 @@ def main() -> None:
                 print("[ERROR] no keystone change to undo", flush=True)
                 sys.exit(1)
             sys.exit(_ksjob.undo(_j))
-        if not args.ps4_keystone:
-            print("[ERROR] --ps4-keystone-set needs --ps4-keystone (a file or the hex digits)", flush=True)
-            sys.exit(2)
         sys.exit(_ksjob.run(Path(args.ps4_keystone_set), args.ps4_keystone, [Path(u) for u in args.ps4_rebind],
-                            _undo_root))
+                            _undo_root, fix_version=args.ps4_fix_version))
 
     if args.ps4_sort:
         import ps4_sort as _ps4_sort
@@ -3325,9 +3345,13 @@ def main() -> None:
                                     (args.backport_target, f"backport {args.backport_target}"),
                                     (args.chain_sign, "sign"),
                                     (getattr(args, "chain_lz4", False), "lz4"),
-                                    (getattr(args, "chain_lz4_unpack", False), "lz4 unpack")) if flag]
+                                    (getattr(args, "chain_lz4_unpack", False), "lz4 unpack"),
+                                    (getattr(args, "ps5_standalone", False), "standalone"),
+                                    (getattr(args, "ps5_trophies", False), "trophies")) if flag]
         scratch_root = _app_scratch_root(args.temp_dir)
-        print(f"[INFO] CHAIN: {src.name} ({kind}) → {', '.join(wanted) or 'no changes'} → {to}", flush=True)
+        rebuild = bool(getattr(args, "chain_rebuild", False))
+        print(f"[INFO] CHAIN: {src.name} ({kind}) → {', '.join(wanted + (['rebuild'] if rebuild else [])) or 'no changes'}"
+              f" → {to}", flush=True)
 
         if not wanted and kind == to == "folder":
             print("[ERROR] Nothing to do: a folder to a folder with no changes.", flush=True); sys.exit(1)
@@ -3338,7 +3362,7 @@ def main() -> None:
                   "a second time and read them slower, a .ffpfs mounts from USB without the fast path, "
                   "and an installed .pkg uses Kraken anyway.", flush=True)
             sys.exit(2)
-        if not wanted and kind == to:
+        if not wanted and kind == to and not rebuild:
             # Same container format, nothing to change: the copy job (rename on the same
             # drive, chunked copy across drives). Same switches as --copy.
             import copy_job as _copy_job
@@ -3373,10 +3397,11 @@ def main() -> None:
                 print(f"[ERROR] {e}", flush=True); sys.exit(1)
             finally:
                 shutil.rmtree(probe, ignore_errors=True)
-        if wanted or kind not in native.get(to, set()):
+        if wanted or rebuild or kind not in native.get(to, set()):
             try:
                 root, owned = _chain_materialize(src, scratch_root, args)
-                if owned is None and (getattr(args, "chain_lz4", False) or getattr(args, "chain_lz4_unpack", False)):
+                if owned is None and any(getattr(args, a, False) for a in ("chain_lz4", "chain_lz4_unpack",
+                                                                            "ps5_standalone", "ps5_trophies")):
                     # the packs replace files: never in the user's own folder, always in a copy
                     root, owned = _chain_working_copy(root, scratch_root)
                 if owned is not None:
@@ -3640,6 +3665,14 @@ def main() -> None:
                       "holds it. A build that fails is unpacked again on Retry.", flush=True)
             # what is in the output folder before: the validation looks at this build's package only
             _pkgs_before = {q.name: q.stat().st_mtime_ns for q in out_dir.glob("*.pkg")}
+            _ks = None
+            if args.fpkg_keystone:
+                if re.fullmatch(r"[0-9A-Fa-f]{192}", args.fpkg_keystone.strip()):
+                    _ks = build_temp / "keystone"
+                    build_temp.mkdir(parents=True, exist_ok=True)
+                    _ks.write_bytes(bytes.fromhex(args.fpkg_keystone.strip()))
+                else:
+                    _ks = Path(args.fpkg_keystone)
             try:
                 rc = _fpkg.build(build_src, out_dir,
                                  content_id=_cid,
@@ -3661,6 +3694,7 @@ def main() -> None:
                                  regen_playgo=bool(args.fpkg_regen_playgo),
                                  fake_sign=not args.fpkg_no_fake_sign,
                                  ampr_index=not (args.fpkg_no_ampr_index or getattr(args, "_no_ampr_index", False)),
+                                 keystone=str(_ks) if _ks else None,
                                  on_line=_gui_line)
             finally:
                 shutil.rmtree(build_temp, ignore_errors=True)

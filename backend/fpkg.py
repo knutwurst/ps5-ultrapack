@@ -192,6 +192,17 @@ def ps4_rebind(update: Path, base: Path, *, undo: Optional[Path] = None, on_line
     return _run(argv, on_line=on_line)
 
 
+def ps4_sfo(pkg: Path, values: dict, *, undo: Optional[Path] = None, on_line=None) -> int:
+    """Change param.sfo values of the PS4 package *pkg* in place (strings that fit, integers),
+    resealing the package. *undo* keeps the overwritten bytes (ps4_keystone_restore reads it)."""
+    argv = [str(tool_path()), "ps4-sfo", str(pkg)]
+    for k, v in values.items():
+        argv += ["--set", f"{k}={v}"]
+    if undo is not None:
+        argv += ["--undo", str(undo)]
+    return _run(argv, on_line=on_line)
+
+
 def ps4_keystone_restore(pkg: Path, undo: Path, *, on_line=None) -> int:
     """Put back the bytes a ps4_keystone run saved to *undo*."""
     return _run([str(tool_path()), "ps4-keystone", str(pkg), "--restore", str(undo)], on_line=on_line)
@@ -246,8 +257,10 @@ def build(src_dir: Path, out_dir: Path,
           stage_in_place: bool = False,
           consume_source: bool = False,
           parallelism: int = 0,
+          keystone: Optional[str] = None,
           on_line=None) -> int:
-    """Build a debug fPKG from a prepared /app0-style source folder."""
+    """Build a debug fPKG from a prepared /app0-style source folder. *keystone*: a 96-byte
+    keystone file that goes in as sce_sys/keystone instead of the source's."""
     src_dir = Path(src_dir); out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     argv = [
         str(tool_path()), "build", str(src_dir), str(out_dir),
@@ -290,6 +303,8 @@ def build(src_dir: Path, out_dir: Path,
         argv += ["--consume-source"]
     if parallelism and int(parallelism) > 0:
         argv += ["--parallelism", str(int(parallelism))]
+    if keystone:
+        argv += ["--keystone", str(keystone)]
     return _run(argv, on_line=on_line)
 
 

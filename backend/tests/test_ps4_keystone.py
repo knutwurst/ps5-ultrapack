@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fpkg  # noqa: E402
 import ps4pkg  # noqa: E402
 import ps4_sort  # noqa: E402
-from ps4_fixture import make_keystone, make_default_keystone  # noqa: E402
+from ps4_fixture import make_keystone, make_default_keystone, make_pkg  # noqa: E402
 
 
 def _sample(kind: str):
@@ -193,6 +193,36 @@ class ToolOnARealPackage(unittest.TestCase):
         self.assertFalse(undo.exists(), "an undo file stayed")
         self.assertTrue(filecmp.cmp(pkg, GAME, shallow=False))
 
+    def test_sfo_values_change_in_place_and_restore(self):
+        pkg, undo = self.tmp / "sfo.pkg", self.tmp / "sfo.undo"
+        _clone(GAME, pkg)
+        old = ps4pkg.read_sfo(GAME)
+        rc, out = _run("ps4-sfo", pkg, "--set", f"APP_VER={old['VERSION']}", "--set", f"VERSION={old['APP_VER']}",
+                       "--undo", undo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"[sfo] APP_VER: {old['APP_VER']} -> {old['VERSION']}", out)
+        new = ps4pkg.read_sfo(pkg)
+        self.assertEqual((new["APP_VER"], new["VERSION"]), (old["VERSION"], old["APP_VER"]))
+        self.assertEqual({k: v for k, v in new.items() if k not in ("APP_VER", "VERSION")},
+                         {k: v for k, v in old.items() if k not in ("APP_VER", "VERSION")})
+        # the param digest follows the new param.sfo, the digests that hang on the image stay valid
+        h = ps4pkg.read_header(pkg)
+        self.assertEqual(ps4pkg.general_digests(pkg)[6],
+                         hashlib.sha256(ps4pkg._read_entry(pkg, h, ps4pkg.ENTRY_PARAM_SFO)).digest())
+        self.assertEqual({k: a == b for k, (a, b) in _general_digests(pkg).items()},
+                         {"content": True, "game": True, "header": True, "playgo": True})
+        self.assertEqual(fpkg.ps4_keystone_restore(pkg, undo, on_line=lambda _l: None), 0)
+        self.assertTrue(filecmp.cmp(pkg, GAME, shallow=False))
+
+    def test_sfo_refuses_what_it_cannot_reseal(self):
+        pkg, undo = self.tmp / "sfo-bad.pkg", self.tmp / "sfo-bad.undo"
+        _clone(GAME, pkg)
+        for args in (["--set", "CATEGORY=gp"], ["--set", "APP_VER=" + "9" * 40], ["--set", "NO_SUCH_KEY=1"]):
+            rc, out = _run("ps4-sfo", pkg, *args, "--undo", undo)
+            self.assertEqual(rc, 1, out)
+            self.assertFalse(undo.exists(), f"{args}: an undo file stayed")
+        self.assertTrue(filecmp.cmp(pkg, GAME, shallow=False))
+
     @unittest.skipUnless(UPDATE, "no real PS4 update package in unzipped/ps4/")
     def test_an_update_has_no_keystone(self):
         rc, out = _run("ps4-keystone", UPDATE)
@@ -243,6 +273,40 @@ class KeystoneText(unittest.TestCase):
         self.assertIn("checksum", ps4pkg.keystone_from_text((make_keystone()[:-1] + b"\0").hex())[1])
 
 
+class VersionAndSaveFolder(unittest.TestCase):
+    def test_a_merged_game_is_named_by_its_file(self):
+        merged = {"CATEGORY": "gd", "APP_VER": "01.00", "VERSION": "01.81"}
+        self.assertEqual(ps4pkg.version_problem(Path("/x/Game [CUSA00001] [v01.81].pkg"), merged),
+                         {"app_ver": "01.00", "version": "01.81", "named": True})
+        self.assertTrue(ps4pkg.version_problem(Path("/x/Game v1.81/game.pkg"), merged)["named"])
+        self.assertFalse(ps4pkg.version_problem(Path("/x/game.pkg"), merged)["named"])
+        self.assertFalse(ps4pkg.version_problem(Path("/x/Game [v01.81] [v01.00].pkg"), merged)["named"])
+
+    def test_no_problem_without_a_higher_master_version(self):
+        for sfo in ({"CATEGORY": "gd", "APP_VER": "01.81", "VERSION": "01.00"},
+                    {"CATEGORY": "gd", "APP_VER": "01.00", "VERSION": "01.00"},
+                    {"CATEGORY": "gp", "APP_VER": "01.00", "VERSION": "01.81"},
+                    {"CATEGORY": "gd", "APP_VER": "01.00"}):
+            self.assertIsNone(ps4pkg.version_problem(Path("/x/Game [v01.81].pkg"), sfo), sfo)
+
+    def test_an_update_saving_elsewhere_gets_the_games_folder(self):
+        import ps4_keystone_job
+        with tempfile.TemporaryDirectory() as d:
+            cid = "UP0000-CUSA00001_00-SAMPLEGAME000000"
+            other = make_pkg(Path(d) / "a.pkg", content_id=cid, content_type=0x1A,
+                             sfo={"TITLE_ID": "CUSA00001", "CATEGORY": "gp", "INSTALL_DIR_SAVEDATA": "CUSA00002"})
+            same = make_pkg(Path(d) / "b.pkg", content_id=cid, content_type=0x1A,
+                            sfo={"TITLE_ID": "CUSA00001", "CATEGORY": "gp", "INSTALL_DIR_SAVEDATA": "CUSA00001"})
+            none = make_pkg(Path(d) / "c.pkg", content_id=cid, content_type=0x1A,
+                            sfo={"TITLE_ID": "CUSA00001", "CATEGORY": "gp"})
+            game = {"TITLE_ID": "CUSA00001", "CATEGORY": "gd"}
+            self.assertEqual(ps4pkg.save_folder(game), "CUSA00001")
+            self.assertEqual(ps4pkg.save_folder(dict(game, INSTALL_DIR_SAVEDATA="CUSA00003")), "CUSA00003")
+            self.assertEqual(ps4_keystone_job.plan_update(other, game), {"save_folder": ("CUSA00002", "CUSA00001")})
+            self.assertEqual(ps4_keystone_job.plan_update(same, game), {})
+            self.assertEqual(ps4_keystone_job.plan_update(none, game), {})
+
+
 @unittest.skipUnless(GAME and UPDATE, "no real PS4 game and update in unzipped/ps4/")
 class KeystoneJob(unittest.TestCase):
     def setUp(self):
@@ -276,6 +340,22 @@ class KeystoneJob(unittest.TestCase):
         self.assertTrue(filecmp.cmp(self.upd, UPDATE, shallow=False))
         self.assertIsNone(self.job.last_journal(self.tmp / "undo"))
 
+    @unittest.skipUnless(GAME and ps4pkg.version_problem(GAME), "the sample game has no higher master version")
+    def test_version_fix_alone_and_undo(self):
+        old = ps4pkg.read_sfo(GAME)
+        lines = []
+        rc = self.job.run(self.base, None, [], self.tmp / "undo", on_line=lines.append, fix_version=True)
+        self.assertEqual(rc, 0, "\n".join(lines))
+        new = ps4pkg.read_sfo(self.base)
+        self.assertEqual((new["APP_VER"], new["VERSION"]), (old["VERSION"], old["APP_VER"]))
+        self.assertIsNone(ps4pkg.version_problem(self.base))
+        # a retry once the version is right goes on with the other steps
+        self.assertEqual(self.job.run(self.base, None, [self.upd], self.tmp / "undo2", on_line=lines.append,
+                                      fix_version=True), 0, "\n".join(lines))
+        self.assertEqual(fpkg.ps4_keystone_info(self.base), fpkg.ps4_keystone_info(GAME))
+        self.assertEqual(self.job.undo(self.job.last_journal(self.tmp / "undo"), on_line=lambda _l: None), 0)
+        self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
+
     def test_wrong_inputs_change_nothing(self):
         lines = []
         self.assertEqual(self.job.run(self.upd, make_keystone().hex(), [], self.tmp / "u", on_line=lines.append), 1)
@@ -283,5 +363,8 @@ class KeystoneJob(unittest.TestCase):
         self.assertEqual(self.job.run(self.base, make_keystone().hex(), [self.base], self.tmp / "u", on_line=lines.append), 1)
         self.assertIn("records no base package", "\n".join(lines))
         self.assertEqual(self.job.run(self.base, "rubbish", [], self.tmp / "u", on_line=lines.append), 1)
+        self.assertEqual(self.job.run(self.base, "", [], self.tmp / "u", on_line=lines.append), 1)
+        self.assertIn("nothing to do", "\n".join(lines))
+        self.assertEqual(self.job.run(self.upd, None, [], self.tmp / "u", on_line=lines.append, fix_version=True), 1)
         self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
         self.assertTrue(filecmp.cmp(self.upd, UPDATE, shallow=False))

@@ -281,6 +281,40 @@ def keystone_from_text(text: str) -> tuple[bytes | None, str | None]:
     return data, None
 
 
+def read_sfo(path) -> dict:
+    """The param.sfo values of the package (from its header, a few KB)."""
+    h = read_header(path)
+    return parse_sfo(_read_entry(path, h, ENTRY_PARAM_SFO))
+
+
+def _ver(v) -> tuple:
+    try:
+        return tuple(int(x) for x in str(v or "").split("."))
+    except ValueError:
+        return ()
+
+
+def version_problem(path, sfo: dict | None = None) -> dict | None:
+    """A full game whose master version (VERSION) is above its app version (APP_VER): an update
+    merged into the game. The console then still downloads the official update. Returns
+    {'app_ver', 'version', 'named'}: 'named' when the file or folder name gives the master version
+    as the package version, which marks a merged release (a re-released master looks the same in
+    the param.sfo, so that alone is no proof)."""
+    sfo = sfo if sfo is not None else read_sfo(path)
+    app, ver = str(sfo.get("APP_VER") or ""), str(sfo.get("VERSION") or "")
+    if str(sfo.get("CATEGORY") or "") != "gd" or not app or not ver or not _ver(ver) > _ver(app):
+        return None
+    names = " ".join([Path(path).name] + [q.name for q in Path(path).parents][:2]).lower()
+    short = ver.lstrip("0") or ver
+    named = any(f"v{x}" in names for x in (ver, short)) and not any(f"v{x}" in names for x in (app, app.lstrip("0") or app))
+    return {"app_ver": app, "version": ver, "named": named}
+
+
+def save_folder(sfo: dict) -> str:
+    """The title id a game's or update's saves live under."""
+    return str(sfo.get("INSTALL_DIR_SAVEDATA") or sfo.get("TITLE_ID") or "")
+
+
 ENTRY_GENERAL_DIGESTS = 0x80
 BASE_CONTENT_SLOT, BASE_GAME_SLOT = 10, 12      # an update's record of its base package
 

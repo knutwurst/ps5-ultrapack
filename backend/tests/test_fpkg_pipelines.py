@@ -652,6 +652,90 @@ def test_gui_progress_translation(r: Runner):
     r.check("gui.bars", len(bars) >= 4, f"{len(bars)} progress bars", f"only {len(bars)} bars: {bars[:3]}")
 
 
+def test_ps5_repair_rebuild(r: Runner):
+    """PS5 repair: the checks find the default keystone and the update URL; the rebuild (--to pkg
+    --rebuild) clears the URL and puts the given keystone in. The builder itself drops patch markers
+    and a param.sfo of the source."""
+    sys.path.insert(0, str(BACKEND))
+    import ps5_repair
+    src = r.work / "p5_src"; built = r.work / "p5_built"; fixed = r.work / "p5_fixed"; tmp = r.work / "p5_tmp"
+    for d in (src, built, fixed, tmp):
+        shutil.rmtree(d, ignore_errors=True)
+    shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    pj = src / "sce_sys" / "param.json"
+    param = json.loads(pj.read_text(encoding="utf-8"))
+    param.update({"originContentVersion": "01.000.000", "targetContentVersion": "01.010.000",
+                  "versionFileUri": "http://example.invalid/version.xml"})
+    pj.write_text(json.dumps(param, indent=2), encoding="utf-8")
+    (src / "sce_sys" / "param.sfo").write_bytes(b"\0PSF" + bytes(60))
+    rc, log = r.run_cli([str(src), str(built), "--fpkg-build", str(src)])
+    pkgs = list(built.glob("*.pkg"))
+    if not r.check("ps5repair.build", rc == 0 and len(pkgs) == 1, "built", log[-400:]):
+        return
+    rows = ps5_repair.findings(ps5_repair.examine(pkgs[0]), "7.61")
+    found = {x["check"]: x for x in rows if x["level"] != "pass"}
+    r.check("ps5repair.finds-default-keystone", found.get("image.keystone", {}).get("fix") == "keystone",
+            "default keystone found", str(found.get("image.keystone")))
+    r.check("ps5repair.finds-update-url", found.get("param.versionFileUri", {}).get("fix") == "standalone",
+            "update URL found", str(sorted(found)))
+    r.check("ps5repair.builder-drops-markers-and-sfo", "param.patch" not in found and "image.param.sfo" not in found,
+            "dropped by the build", str(sorted(found)))
+    ks = r.work / "p5.keystone"
+    fp = bytes(range(64, 96))
+    ks.write_bytes(b"keystone" + bytes([3, 0, 1, 0]) + bytes(20) + fp + bytes(32))
+    rc, log = r.run_cli([str(pkgs[0]), str(fixed), "--to", "pkg", "--rebuild", "--ps5-standalone",
+                         "--fpkg-regen-playgo", "--fpkg-keystone", str(ks), "--temp-dir", str(tmp), "--overwrite"])
+    out = list(fixed.glob("*.pkg"))
+    if not r.check("ps5repair.rebuild", rc == 0 and len(out) == 1, "rebuilt", log[-600:]):
+        return
+    info = ps5_repair.examine(out[0])
+    after = {x["check"]: x for x in ps5_repair.findings(info, "7.61") if x["level"] != "pass"}
+    p2 = info.get("param") or {}
+    r.check("ps5repair.keystone-replaced", info.get("keystone_fp") == fp.hex().upper(), "keystone in",
+            info.get("keystone_fp", ""))
+    r.check("ps5repair.standalone", not any(k in p2 for k in ("originContentVersion", "targetContentVersion"))
+            and not str(p2.get("versionFileUri") or "").strip(), "markers and URL gone",
+            str({k: p2.get(k) for k in ("originContentVersion", "targetContentVersion", "versionFileUri")}))
+    r.check("ps5repair.clean", not after and info.get("sfo") is False, "no problem left", str(after))
+    r.check("ps5repair.source-kept", pkgs[0].is_file() and (src / "sce_sys" / "param.sfo").is_file(),
+            "source untouched", "source changed")
+
+
+def test_ps5_repair_trophies_and_ampr(r: Runner):
+    """PS5 repair: a trophy archive with a wrong checksum and a missing AMPR index are found; the
+    rebuild (--ps5-trophies) writes the checksum and the builder writes the index."""
+    sys.path.insert(0, str(BACKEND)); sys.path.insert(0, str(HERE))
+    import ps5_repair
+    from test_ps5_repair import _ucp
+    src = r.work / "p6_src"; built = r.work / "p6_built"; fixed = r.work / "p6_fixed"; tmp = r.work / "p6_tmp"
+    for d in (src, built, fixed, tmp):
+        shutil.rmtree(d, ignore_errors=True)
+    shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    (src / "sce_sys" / "trophy2").mkdir()
+    (src / "sce_sys" / "trophy2" / "trophy00.ucp").write_bytes(_ucp([("trophy.json", b"{}")], good=False))
+    (src / "fakelib").mkdir()
+    (src / "fakelib" / "libSceAmpr.sprx").write_bytes(b"x")
+    rc, log = r.run_cli([str(src), str(built), "--fpkg-build", str(src), "--fpkg-no-ampr-index"])
+    pkgs = list(built.glob("*.pkg"))
+    if not r.check("ps5repair2.build", rc == 0 and len(pkgs) == 1, "built", log[-400:]):
+        return
+    found = {x["check"]: x for x in ps5_repair.findings(ps5_repair.examine(pkgs[0])) if x["level"] != "pass"}
+    r.check("ps5repair2.finds-trophy-checksum", found.get("ucp.trophy00.ucp", {}).get("fix") == "trophy",
+            "wrong checksum found", str(sorted(found)))
+    r.check("ps5repair2.finds-missing-ampr-index", found.get("ampr.index", {}).get("fix") == "rebuild",
+            "missing index found", str(sorted(found)))
+    rc, log = r.run_cli([str(pkgs[0]), str(fixed), "--to", "pkg", "--rebuild", "--ps5-trophies",
+                         "--temp-dir", str(tmp), "--overwrite"])
+    out = list(fixed.glob("*.pkg"))
+    if not r.check("ps5repair2.rebuild", rc == 0 and len(out) == 1, "rebuilt", log[-600:]):
+        return
+    after = {x["check"]: x for x in ps5_repair.findings(ps5_repair.examine(out[0]))}
+    r.check("ps5repair2.trophy-checksum-written", after.get("ucp.trophy00.ucp", {}).get("level") == "pass",
+            "checksum matches", str(after.get("ucp.trophy00.ucp")))
+    r.check("ps5repair2.ampr-index-written", after.get("ampr.index", {}).get("level") == "pass",
+            "index matches", str(after.get("ampr.index")))
+
+
 def test_build_temp_is_contained(r: Runner):
     """The package tool's intermediates (libprospero-publisher-*.pfs_image.dat and friends)
     must live in a run-owned tmpXXXXXXXX subfolder of --temp-dir, never loose in the temp
@@ -1161,6 +1245,8 @@ def main():
         ("ampr index rebuilt in staging",   test_ampr_index_rebuilt),
         ("publishing rules in staging",     test_publishing_rules),
         ("build temp contained",            test_build_temp_is_contained),
+        ("ps5 repair: check and rebuild",   test_ps5_repair_rebuild),
+        ("ps5 repair: trophies and AMPR",   test_ps5_repair_trophies_and_ampr),
     ]:
         if args.only and args.only.lower() not in name.lower():
             continue

@@ -207,6 +207,15 @@ def _ps4pkg_module():
     return ps4pkg
 
 
+def version_note(vp: dict) -> str:
+    """Why the PS4 game package with version_problem() *vp* makes the console offer the official update."""
+    if vp["named"]:
+        return tr("An update (v{ver}) is merged into this full game, but its app version is still {app}: the "
+                  "console will offer the official update.", ver=vp["version"], app=vp["app_ver"])
+    return tr("Its master version {ver} is above its app version {app}: if an update is merged in, the console "
+              "will offer the official one.", ver=vp["version"], app=vp["app_ver"])
+
+
 def _ks_job_module():
     """backend/ps4_keystone_job.py: the keystone job and its undo journal (Tk-free)."""
     _bd = str(backend_base_dir())
@@ -217,7 +226,9 @@ def _ks_job_module():
 
 
 def _is_ps4_source(p) -> bool:
-    """A PS4 package, or a folder (not a game folder) whose packages are all PS4 ones."""
+    """A PS4 package, or a folder (not a game folder) that holds PS4 packages and nothing else a
+    job starts from: a PS5 game folder, image, package or an archive next to them makes it a
+    folder of mixed sources, one job each (see _ps4_route)."""
     try:
         p = Path(p)
         m = _ps4pkg_module()
@@ -225,8 +236,9 @@ def _is_ps4_source(p) -> bool:
             return p.suffix.lower() == ".pkg" and m.is_ps4_package(p)
         if not p.is_dir() or is_game_folder(p):
             return False
-        pkgs = [x for x in p.rglob("*.pkg") if x.is_file() and not is_fs_junk_name(x.name)]
-        return bool(pkgs) and all(m.is_ps4_package(x) for x in pkgs)
+        sources = find_job_sources(p)
+        return bool(sources) and all(s.is_file() and s.suffix.lower() == ".pkg" and m.is_ps4_package(s)
+                                     for s in sources)
     except Exception:
         return False
 
@@ -1201,7 +1213,7 @@ class ErrorDialog(MessageWindow):
         "fpkg-extract": "fPKG extraction failed",
         "fpkg-build":   "fPKG build failed",
         "fake-sign":    "Fake-signing failed",
-        "ps4-keystone": "Keystone change failed",
+        "ps4-keystone": "PS4 repair failed",
         "chain":        "Job failed",
     }
 
@@ -2737,7 +2749,7 @@ class CLIWorker(threading.Thread):
         self.app.log("INFO", f"MkPFS: {MKPFS_NAME} v{MKPFS_VERSION}")
         _op_label = {"unpack": "Unpack", "patch": "Integrate patch",
                      "fake-sign": "Fake sign", "fpkg-extract": "Extract fPKG",
-                     "fpkg-build": "Build fPKG", "ps4-keystone": "PS4 keystone"}.get(self.operation, "Pack")
+                     "fpkg-build": "Build fPKG", "ps4-keystone": "PS4 repair"}.get(self.operation, "Pack")
         self.app.log("INFO", f"Operation: {_op_label}")
         self.app.log("INFO", f"Game: {self.item.title_id} | {self.item.name}")
         self.app.log("INFO", f"Original: {format_size(self.item.size)} | Files: {self.item.files}")
@@ -2908,7 +2920,7 @@ class CLIWorker(threading.Thread):
                 return
             if self.operation == "ps4-keystone":      # changes the packages in place, writes nothing new
                 self._write_report(True)
-                self.app.finish(True, "Keystone written and updates bound.", self.last_cmd_str)
+                self.app.finish(True, "PS4 packages repaired.", self.last_cmd_str)
                 return
 
             # A COPY job's output is a single file at a name the backend already picked
@@ -4074,9 +4086,18 @@ class JobDialog(EmbeddedDialog):
                   "when a dump's executables are still plain ELFs. Already-signed files are skipped, "
                   "so leaving it on costs nothing. A .pkg is always signed by its builder.",
         "keystone": "Saves hold the keystone of the game that wrote them. A package built with another one "
-                    "(many builders use a default) shows saves of the retail game as corrupted. Replace keystone "
-                    "opens the PS4 keystone tool: it writes the keystone exported from such a save (Apollo Save "
-                    "Tool, Export Keystone) into the package and binds its updates to the changed package.",
+                    "(many builders use a default) shows saves of the retail game as corrupted. A full game with "
+                    "an update merged in whose app version stayed the game's makes the console offer the official "
+                    "update. Repair opens the PS4 repair tool: it writes the keystone exported from such a save "
+                    "(Apollo Save Tool, Export Keystone) into the package, sets the version, and binds the "
+                    "updates to the changed package.",
+        "ps5repair": "Checks the package the way the console's installer and loader look at it: the package "
+                     "layout, param.json, PlayGo tables, images, licence, executables, keystone and the firmware "
+                     "it needs. Repair opens the PS5 repair tool, which builds a repaired copy; the original stays "
+                     "as it is.",
+        "ps4out": "This folder holds PS4 packages too. They go to their own folder: sorted into the PS4 "
+                  "library ('<Title> [CUSA…] [vX]', UPDATE and DLC named), or a package unpacked into a "
+                  "folder. Each list remembers the folders last used for its platform.",
         "lz4":    "Packs the game's data into LZ4 asset packs that ampr_emu (drakmor) reads while the game "
                   "runs, about half the size and quicker to load from USB. Only for games that load through "
                   "AMPR (their eboot.bin imports libSceAmpr); executables, modules, configs, pictures, video "
@@ -4186,6 +4207,8 @@ class JobDialog(EmbeddedDialog):
         self.patch_on_var = tk.BooleanVar(value=bool(getattr(item, "patch_source", None)) if item else False)
         self.patch_var = tk.StringVar(value=str(getattr(item, "patch_source", "") or "") if item else "")
         self.ks_state_var = TextVar(value="")
+        self.ps5_state_var = TextVar(value="")
+        self._ps5_rows = None         # the checks of the picked PS5 package, once they ran
         self._ks_default = None       # the picked PS4 game package carries the default keystone (True/False/None)
         self.backport_on_var = tk.BooleanVar(value=bool(getattr(item, "backport_target", None)) if item else False)
         _bt0 = (getattr(item, "backport_target", None) if item else None) or settings.get("backport_target_default") or "7.61"
@@ -4196,6 +4219,14 @@ class JobDialog(EmbeddedDialog):
         self.to_var = tk.StringVar(value=self._TARGET_LABEL.get(self._target_of(item) if item else "ffpfsc", ".ffpfsc"))
         out0 = str(getattr(item, "output_path", "") or "") if item else (app.output_var.get() or "").strip()
         self.out_var = tk.StringVar(value=out0)
+        # PS4 and PS5 sources each have their own output folder, remembered per platform; a folder
+        # of mixed sources shows both (the PS4 block), any other source the one of its platform
+        _r4 = app._recent_outputs("ps4")
+        self._out_default = {"ps5": out0, "ps4": (_r4[0] if _r4 else out0)}
+        self._platform = "ps5"
+        self.ps4_out_var = tk.StringVar(value=self._out_default["ps4"])
+        self.ps4_to_var = tk.StringVar(value="pkg")
+        self._ps4_n = self._ps5_n = 0
         _org = getattr(item, "auto_organize", None) if item else None
         self.organize_var = tk.BooleanVar(value=bool(app.auto_organize_var.get()) if _org is None else bool(_org))
         _aj = _after_job_module()
@@ -4239,7 +4270,7 @@ class JobDialog(EmbeddedDialog):
         self.lz4_var.trace_add("write", lambda *_: self._lz4_toggled())
         self.lz4_mode_var.trace_add("write", lambda *_: self._lz4_toggled())
         self.to_var.trace_add("write", lambda *_: self._lz4_output_changed())
-        for v in (self.sign_var, self.patch_on_var, self.patch_var, self.backport_on_var,
+        for v in (self.ps4_out_var, self.ps4_to_var, self.sign_var, self.patch_on_var, self.patch_var, self.backport_on_var,
                   self.backport_target_var, self.to_var, self.out_var,
                   self.organize_var, self.after_var, self.lz4_var, self.lz4_profile_var, self.lz4_mode_var):
             v.trace_add("write", lambda *_: self._refresh())
@@ -4395,22 +4426,35 @@ class JobDialog(EmbeddedDialog):
                      wraplength=560, justify="left", anchor="w").pack(fill="x", pady=(0, 4))
         self._bind_help(self._HELP["lz4"], l1)
 
-        # PS4 package: its keystone (the other changes are for PS5 games)
+        # PS4 package: its keystone and version (the other changes are for PS5 games)
         # what the package carries now, read in the background when a PS4 game package is picked;
-        # replacing it is the PS4 keystone tool's job (with the updates to bind)
+        # repairing it is the PS4 repair tool's job (with the updates to bind)
         kb = self._ks_box = ctk.CTkFrame(cin, fg_color=PANEL)
         kl = ctk.CTkFrame(kb, fg_color=PANEL); kl.pack(fill="x")
-        ctk.CTkLabel(kl, text="Keystone", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
+        ctk.CTkLabel(kl, text="Repair", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
         self._ks_note = ctk.CTkLabel(kl, textvariable=self.ks_state_var, text_color=MUTED, font=ctk.CTkFont(size=12),
                                      wraplength=420, justify="left", anchor="w")
         self._ks_note.pack(side="left", padx=(10, 0), fill="x", expand=True)
-        ctk.CTkButton(kl, text="Replace keystone…", width=140, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+        ctk.CTkButton(kl, text="Repair…", width=140, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=self._open_keystone).pack(side="right")
         self._bind_help(self._HELP["keystone"], kl)
         self._ps5_boxes = (po.box, bo.box, so.box, lo.box)
+        # PS5 package: what the checks found, with a way to the PS5 repair tool
+        pb = self._ps5r_box = ctk.CTkFrame(cin, fg_color=PANEL)
+        pl = ctk.CTkFrame(pb, fg_color=PANEL); pl.pack(fill="x")
+        ctk.CTkLabel(pl, text="Repair", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
+        self._ps5_note = ctk.CTkLabel(pl, textvariable=self.ps5_state_var, text_color=MUTED, font=ctk.CTkFont(size=12),
+                                      wraplength=420, justify="left", anchor="w")
+        self._ps5_note.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        ctk.CTkButton(pl, text="Repair…", width=140, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._open_ps5_repair).pack(side="right")
+        self._bind_help(self._HELP["ps5repair"], pl)
 
         # 3 · Output
         orow = self._orow = self._group("3", "Output")
+        self._ps5_head_var = TextVar(value="")
+        self._ps5_head = ctk.CTkLabel(orow, textvariable=self._ps5_head_var, text_color=WHITE, anchor="w",
+                                      font=ctk.CTkFont(size=12, weight="bold"))
         oin = ctk.CTkFrame(orow, fg_color=PANEL); oin.pack(fill="x", padx=10, pady=(2, 2))
         self._to_seg = ctk.CTkSegmentedButton(oin, values=[self._TARGET_LABEL[k] for k in self._TARGETS],
                                               variable=self.to_var, selected_color=ACCENT, selected_hover_color=ACCENT_HOVER)
@@ -4460,12 +4504,41 @@ class JobDialog(EmbeddedDialog):
         self._bind_help(self._HELP["compression"], cr)
         fin = ctk.CTkFrame(orow, fg_color=PANEL); fin.pack(fill="x", padx=10, pady=(4, 2))
         ctk.CTkLabel(fin, text="Save to:", text_color=MUTED, width=100, anchor="w", font=ctk.CTkFont(size=12)).pack(side="left")
-        self._out_entry = ctk.CTkEntry(fin, textvariable=self.out_var, fg_color=CARD2, text_color=WHITE)
+        self._out_entry = ctk.CTkComboBox(fin, variable=self.out_var, values=self.app._recent_outputs("ps5") or [self._out_default["ps5"]],
+                                          fg_color=CARD2, text_color=WHITE, border_color=BTN_BORDER,
+                                          button_color=BTN, button_hover_color=BTN_HOVER)
         self._out_entry.pack(side="left", fill="x", expand=True)
         self._out_btn = ctk.CTkButton(fin, text="Folder…", width=76, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                                       command=self._pick_out, border_width=1, border_color=BTN_BORDER)
         self._out_btn.pack(side="left", padx=(6, 0))
         self._bind_help(self._HELP["saveto"], fin)
+        self._fin = fin
+        # the PS4 packages of a folder of mixed sources: their own target and folder
+        pb4 = self._ps4_box = ctk.CTkFrame(orow, fg_color=PANEL)
+        self._ps4_head_var = TextVar(value="")
+        ctk.CTkLabel(pb4, textvariable=self._ps4_head_var, text_color=WHITE, anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(fill="x", padx=10, pady=(8, 2))
+        p4t = ctk.CTkFrame(pb4, fg_color=PANEL); p4t.pack(fill="x", padx=10, pady=(2, 2))
+        self._PS4_TARGETS = {"pkg": "Into the library", "folder": "Folder"}
+        self._ps4_seg = ctk.CTkSegmentedButton(
+            p4t, values=list(self._PS4_TARGETS.values()), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
+            command=lambda v: self.ps4_to_var.set(next(k for k, lb in self._PS4_TARGETS.items() if lb == v)))
+        self._ps4_seg.set(self._PS4_TARGETS["pkg"])
+        self._ps4_seg.pack(side="left")
+        ctk.CTkLabel(p4t, text="PS4 packages are sorted as they are; the changes above are for PS5 games",
+                     text_color=MUTED, font=ctk.CTkFont(size=12), wraplength=420, justify="left"
+                     ).pack(side="left", padx=(10, 0))
+        p4f = ctk.CTkFrame(pb4, fg_color=PANEL); p4f.pack(fill="x", padx=10, pady=(4, 2))
+        ctk.CTkLabel(p4f, text="Save to:", text_color=MUTED, width=100, anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        self._ps4_out_entry = ctk.CTkComboBox(p4f, variable=self.ps4_out_var,
+                                              values=self.app._recent_outputs("ps4") or [self._out_default["ps4"]],
+                                              fg_color=CARD2, text_color=WHITE, border_color=BTN_BORDER,
+                                              button_color=BTN, button_hover_color=BTN_HOVER)
+        self._ps4_out_entry.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(p4f, text="Folder…", width=76, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      command=self._pick_ps4_out, border_width=1, border_color=BTN_BORDER).pack(side="left", padx=(6, 0))
+        self._bind_help(self._HELP["ps4out"], pb4)
         oline = ctk.CTkFrame(orow, fg_color=PANEL); oline.pack(fill="x", padx=10, pady=(2, 6))
         self._organize_cb = ctk.CTkCheckBox(oline, text="Auto-organize - folder and file named from the game's own metadata",
                                             variable=self.organize_var, checkbox_width=18, checkbox_height=18,
@@ -4674,7 +4747,8 @@ class JobDialog(EmbeddedDialog):
 
     def _probe_keystone(self, p: Path, raw: str):
         """Read, off the main thread, whether the PS4 game package *p* carries the default
-        keystone; say so under the option (on the main thread, when the source is still *p*)."""
+        keystone and whether its version makes the console offer the official update; say so
+        under the option (on the main thread, when the source is still *p*)."""
         self._ks_default = None
         self.ks_state_var.set("")
         if not (p.is_file() and p.suffix.lower() == ".pkg"):
@@ -4682,6 +4756,7 @@ class JobDialog(EmbeddedDialog):
         box: dict = {}
 
         def work():
+            box["vp"] = self.app._ps4_version_problem(p)
             box["v"] = self.app._ps4_keystone_state(p)
 
         def poll():
@@ -4692,30 +4767,74 @@ class JobDialog(EmbeddedDialog):
                 return
             if "v" not in box:
                 self.after(80, poll); return
-            st = box["v"]
+            st, vp = box["v"], box.get("vp")
             bad = None if st is None else bool(st["default"] or not st.get("valid", True))
             self._ks_default = bad
             if bad:
                 self.detect_var.set(self._ps4_detect_text(p) + " · " + tr("default keystone"))
-            self.ks_state_var.set("" if st is None else
-                                  tr("This package has the default keystone: saves of the retail game will show "
-                                     "as corrupted. Replace it with the keystone exported from one of your saves.")
-                                  if st["default"] else tr("The keystone is damaged.") if not st.get("valid", True)
-                                  else tr("Keystone {fp}…, not the default one.", fp=st["fingerprint"][:8]))
+            text = ("" if st is None else
+                    tr("This package has the default keystone: saves of the retail game will show "
+                       "as corrupted. Replace it with the keystone exported from one of your saves.")
+                    if st["default"] else tr("The keystone is damaged.") if not st.get("valid", True)
+                    else tr("Keystone {fp}…, not the default one.", fp=st["fingerprint"][:8]))
+            if st is not None and vp:
+                text += " " + version_note(vp)
+            self.ks_state_var.set(text)
             try:
-                self._ks_note.configure(text_color=YELLOW if bad else MUTED)
+                self._ks_note.configure(text_color=YELLOW if bad or (vp and vp["named"]) else MUTED)
             except Exception:
                 pass
             self._refresh()
         threading.Thread(target=work, daemon=True).start()
         self.after(80, poll)
 
+    def _probe_ps5(self, p: Path, raw: str):
+        """Run the PS5 repair checks on the package *p* off the main thread; say what they found
+        under the option (on the main thread, when the source is still *p*)."""
+        box: dict = {}
+        fw = load_settings().get("ps5_console_fw")
+
+        def work():
+            try:
+                m = _ps5_repair_module()
+                info = m.examine(p)
+                box["v"] = m.findings(info, fw) if info.get("results") else None
+            except Exception:
+                box["v"] = None
+
+        def poll():
+            try:
+                if not self.winfo_exists() or (self.src_var.get() or "").strip() != raw:
+                    return
+            except Exception:
+                return
+            if "v" not in box:
+                self.after(80, poll); return
+            rows = box["v"]
+            self._ps5_rows = rows
+            if rows is not None:
+                bad = any(r["level"] in ("fail", "warn") for r in rows)
+                self.ps5_state_var.set(_ps5_check_text(rows))
+                try:
+                    self._ps5_note.configure(text_color=YELLOW if bad else MUTED)
+                except Exception:
+                    pass
+            self._refresh()
+        threading.Thread(target=work, daemon=True).start()
+        self.after(80, poll)
+
+    def _open_ps5_repair(self):
+        """Hand the package to the PS5 repair tool (closes this editor)."""
+        src = (self.src_var.get() or "").strip()
+        self.app._show_view("ps5repair")
+        self.app._ps5_view.preset(src)
+
     def _keystone_shown(self) -> bool:
         """A single PS4 game package whose keystone was read: the Keystone line is shown."""
         return self._kind == "ps4" and self._ks_default is not None
 
     def _open_keystone(self):
-        """Hand the package to the PS4 keystone tool (closes this editor)."""
+        """Hand the package to the PS4 repair tool (closes this editor)."""
         src = (self.src_var.get() or "").strip()
         self.app._show_view("keystone")
         self.app._keystone_view.preset(src)
@@ -4766,6 +4885,29 @@ class JobDialog(EmbeddedDialog):
         p = filedialog.askdirectory(parent=self, title="Choose the output folder for this job")
         if p:
             self.out_var.set(p)
+
+    def _pick_ps4_out(self):
+        p = filedialog.askdirectory(parent=self, title="Choose the output folder for the PS4 packages")
+        if p:
+            self.ps4_out_var.set(p)
+
+    def _mixed(self) -> bool:
+        """A folder of sources with PS4 packages and PS5 games side by side."""
+        return self._kind == "parent" and self._ps4_n > 0 and self._ps5_n > 0
+
+    def _show_platform(self, platform: str) -> None:
+        """Point the Save to field at *platform*'s folders: its recent list, and its last folder
+        unless the field holds something the user chose."""
+        if platform == self._platform:
+            return
+        cur = (self.out_var.get() or "").strip()
+        if self.edit_item is None and cur in ("", self._out_default[self._platform]):
+            self.out_var.set(self._out_default[platform])
+        self._platform = platform
+        try:
+            self._out_entry.configure(values=self.app._recent_outputs(platform) or [self._out_default[platform]])
+        except Exception:
+            pass
 
     def _look_inside(self):
         p = Path((self.src_var.get() or "").strip())
@@ -4917,8 +5059,12 @@ class JobDialog(EmbeddedDialog):
             self._update_identity_for_source(None)
             self._refresh(); return
         self._ps4_info = None
+        self._ps4_n = self._ps5_n = 0
+        self._ps4_set = set()
         self._ks_default = None
         self.ks_state_var.set("")
+        self._ps5_rows = None
+        self.ps5_state_var.set("")
         if _is_ps4_source(p):
             self._kind = "ps4"; self._games = [p]
             self.detect_var.set(self._ps4_detect_text(p))
@@ -4949,6 +5095,9 @@ class JobDialog(EmbeddedDialog):
                 sources = self._scan_sources(p)
                 if sources:
                     self._kind = "parent"; self._games = sources
+                    self._ps4_set = {str(s) for s in sources if s.suffix.lower() == ".pkg" and _is_ps4_source(s)}
+                    self._ps4_n = len(self._ps4_set)
+                    self._ps5_n = len(sources) - self._ps4_n
                     self.detect_var.set(tr("{parent} · {v} - one job each", parent=tr(self._KIND_LABEL['parent']), v=self._describe_sources(sources)))
                 else:
                     self._kind = "folder-unknown"
@@ -4974,9 +5123,11 @@ class JobDialog(EmbeddedDialog):
             except Exception:
                 size = ""
             self._detect_rest = (tid, size)
-            self.detect_var.set(" · ".join(x for x in (self._KIND_LABEL[kind], tid, size) if x))
+            self.detect_var.set(" · ".join(x for x in (tr(self._KIND_LABEL[kind]), tid, size) if x))
             if kind in ("ffpfs", "ffpfsc", "pkg"):
                 self._look_btn.pack(side="left", padx=(10, 0))
+            if kind == "pkg":
+                self._probe_ps5(p, raw)
             if kind == "archive":
                 self._probe_ps4_archive(p, raw)
         self._update_identity_for_source(p)
@@ -5151,13 +5302,15 @@ class JobDialog(EmbeddedDialog):
                 label = "archive"
             elif s.suffix.lower() in (".exfat", ".ffpkg"):
                 label = "disk image"
+            elif s.suffix.lower() == ".pkg" and _is_ps4_source(s):
+                label = "ps4"
             else:
                 label = s.suffix.lower()
             counts[label] = counts.get(label, 0) + 1
-        order = ["game folder", "archive", "disk image", ".ffpfs", ".ffpfsc", ".pkg"]
+        order = ["game folder", "archive", "disk image", ".ffpfs", ".ffpfsc", ".pkg", "ps4"]
         parts = []
         forms = {"game folder": ("1 game folder", "{n} game folders"), "archive": ("1 archive", "{n} archives"),
-                 "disk image": ("1 disk image", "{n} disk images")}
+                 "disk image": ("1 disk image", "{n} disk images"), "ps4": ("1 PS4 package", "{n} PS4 packages")}
         for label in sorted(counts, key=lambda k: order.index(k) if k in order else 99):
             n = counts[label]
             parts.append(plural(n, *forms[label]) if label in forms else f"{n} {label}")
@@ -5244,6 +5397,26 @@ class JobDialog(EmbeddedDialog):
                         b.pack_forget()
                     for b in self._ps5_boxes:
                         b.pack(fill="x", pady=(2, 2))
+        pb = getattr(self, "_ps5r_box", None)
+        if pb is not None:
+            if not ps4 and self._kind == "pkg" and self._ps5_rows is not None:
+                pb.pack(fill="x", pady=(2, 2), after=self._ps5_boxes[-1])
+            else:
+                pb.pack_forget()
+        # PS4 and PS5 output folders: a folder of mixed sources shows both blocks, any other
+        # source the folder of its platform
+        if getattr(self, "_ps4_box", None) is not None:
+            self._show_platform("ps4" if ps4 else "ps5")
+            if self._mixed():
+                self._ps5_head_var.set(plural(self._ps5_n, "PS5 games (1)", "PS5 games ({n})"))
+                self._ps4_head_var.set(plural(self._ps4_n, "PS4 packages (1)", "PS4 packages ({n})"))
+                if not self._ps5_head.winfo_manager():
+                    self._ps5_head.pack(fill="x", padx=10, pady=(4, 0), before=self._oin)
+                if not self._ps4_box.winfo_manager():
+                    self._ps4_box.pack(fill="x", before=self._oline)
+            else:
+                self._ps5_head.pack_forget()
+                self._ps4_box.pack_forget()
         if not ps4 and seg is not None and len(seg.cget("values")) != len(self._TARGETS):
             seg.configure(values=[self._TARGET_LABEL[k] for k in self._TARGETS])
             seg.set(self.to_var.get())
@@ -5346,10 +5519,17 @@ class JobDialog(EmbeddedDialog):
             ok = True
         elif self._kind == "parent":
             todo = self._parent_todo()
-            if todo:
-                text = chain_summary(self._stand_in(todo[0])) + plural(len(todo), "  × 1 job", "  × {n} jobs")
+            mixed = self._mixed()
+            ps4_set = getattr(self, "_ps4_set", set()) if mixed else set()
+            todo5 = [s for s in todo if str(s) not in ps4_set]
+            if todo5:
+                text = chain_summary(self._stand_in(todo5[0])) + plural(len(todo5), "  × 1 job", "  × {n} jobs")
             else:
                 text = "Nothing to do"
+            if mixed:          # the PS4 packages go their own way (see the PS4 block)
+                text += "  ·  " + (plural(self._ps4_n, "1 PS4 package into the library", "{n} PS4 packages into the library")
+                                   if self.ps4_to_var.get() == "pkg" else
+                                   plural(self._ps4_n, "1 PS4 package unpacked", "{n} PS4 packages unpacked"))
             ok = bool(todo)
         else:
             text = chain_summary(self._stand_in(p))
@@ -5364,6 +5544,8 @@ class JobDialog(EmbeddedDialog):
             dest = f"in {p}" if p else ""
         else:
             dest = f"→ {out}"
+            if self._kind == "parent" and self._mixed():
+                dest += "  ·  " + tr("PS4: {folder}", folder=(self.ps4_out_var.get() or "").strip() or "–")
         self.summary_var.set(text)
         self.summary_dest_var.set(dest)
         try:
@@ -5494,8 +5676,13 @@ class JobDialog(EmbeddedDialog):
         root = str(p if (p.is_dir() and not ultra_core.is_game_folder(p)) else p.parent)
         app = self.app
 
+        route = getattr(self, "_route", None)          # a folder of mixed sources: PS4 packages apart
+        passwords = app._candidate_passwords() if route else None
+        app._remember_output("ps5", out)
+
         def make(s):
-            it = app._organize_item_for(s, output_path=out)
+            it = ((app._ps4_route(s, route[0], passwords, route[1]) if route else None)
+                  or app._organize_item_for(s, output_path=out))
             it.after_source, it.after_move_to = after, after_dir or None
             it.source_root = root
             return it
@@ -5558,9 +5745,19 @@ class JobDialog(EmbeddedDialog):
             except ValueError as e:
                 messagebox.showerror("Backport", str(e), parent=self); return
         if self._kind == "ps4":
+            self.app._remember_output("ps4", out)
             return self._add_ps4(p, to, out)
+        mixed = self._mixed()
+        ps4_out = (self.ps4_out_var.get() or "").strip() if mixed else ""
+        if mixed and not ps4_out:
+            messagebox.showerror("Output", "Choose an output folder for the PS4 packages.", parent=self); return
+        ps4_to = self.ps4_to_var.get() if mixed else "pkg"
+        self._route = (ps4_out, ps4_to) if mixed else None
+        if mixed:
+            self.app._remember_output("ps4", ps4_out)
         if to == ORGANIZE_TARGET:
             return self._add_organize(p, out)
+        self.app._remember_output("ps5", out)
         stand = self._stand_in(p)
         if chain_summary(stand).startswith("Nothing to do"):
             messagebox.showerror("Nothing to do", "A folder to a folder with no changes is nothing to do.", parent=self); return
@@ -5633,7 +5830,9 @@ class JobDialog(EmbeddedDialog):
         app = self.app
         auto = to == AUTO_TARGET
         table = self._auto_table if auto else None
-        passwords = app._candidate_passwords() if auto else None
+        routed = self._kind == "parent"
+        ps4_out, ps4_to = getattr(self, "_route", None) or (out or None, "pkg")
+        passwords = app._candidate_passwords() if (auto or routed) else None
 
         def build(s, to):
             lz4 = lz4_on and to in ultra_core.LZ4_TARGETS
@@ -5650,8 +5849,9 @@ class JobDialog(EmbeddedDialog):
 
         def make(s):
             # Tk-free: runs on the add thread for a new job (archive headers are read here)
-            it = (app._auto_item_for(s, table, build, output_path=out or None, passwords=passwords)
-                  if auto else build(s, to))
+            it = ((app._ps4_route(s, ps4_out, passwords, ps4_to) if routed else None)
+                  or (app._auto_item_for(s, table, build, output_path=out or None, passwords=passwords) if auto
+                      else build(s, to)))
             if auto:      # what was asked for, should the unpacked content pick another output
                 it.auto_sign, it.auto_lz4 = sign_on, lz4_on
                 it.auto_lz4_profile = lz4_profile or None
@@ -6148,10 +6348,11 @@ class OrganizeView:
 
 
 class KeystoneView:
-    """PS4 keystone as a view of the main window, laid out like Organize: a PS4 game package,
-    the keystone from a save of the retail game, and the updates to bind to the changed
-    package; Add to queue makes one job (--ps4-keystone-set). Undo last change runs at once
-    (--ps4-keystone-undo last), like Organize's Undo."""
+    """PS4 repair as a view of the main window, laid out like Organize: a PS4 game package, the
+    keystone from a save of the retail game, the version fix for a full game with an update
+    merged in, and the updates to bind to the changed package; Add to queue makes one job
+    (--ps4-keystone-set). Undo last change runs at once (--ps4-keystone-undo last), like
+    Organize's Undo."""
     CHECK, UNCHECK = "☑", "☐"
     HOWTO = ("How to get the keystone: on a jailbroken console, open Apollo Save Tool and pick a save of this game "
              "that the retail game wrote. Choose Export Keystone and fetch the file by FTP from "
@@ -6168,15 +6369,18 @@ class KeystoneView:
         self._updates: list[dict] = []       # {"path", "name", "version", "note", "on"}
         self._iid_row: dict[str, int] = {}
         self._probe_seq = 0
+        self._version = None                 # version_problem() of the game package
+        self._base_sfo = None
+        self._wanted_fix = None              # editing a job: its version choice
         self.undo_root = Path(APP_DIR) / "keystone-undo"
         v = self.frame = kit.frame(parent)
         v.grid_columnconfigure(0, weight=1)
         v.grid_rowconfigure(9, weight=1)
-        head, btns = app._column_header(v, "PS4 keystone", subtitle="Puts the retail game's keystone into a PS4 "
-                                        "package, so its saves load.")
+        head, btns = app._column_header(v, "PS4 repair", subtitle="Makes a PS4 game package and its updates fit "
+                                        "your saves, and stops the console offering an update that is merged in.")
         head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
         self.undo_btn = app._small(btns, "Undo last change", "history", self.undo,
-                                   tooltip="Put back what the last keystone job changed")
+                                   tooltip="Put back what the last PS4 repair changed")
         self.undo_btn.pack(side="left", padx=(0, 2))
         kit.rule(v).grid(row=1, column=0, sticky="ew")
 
@@ -6194,15 +6398,27 @@ class KeystoneView:
                 row=r, column=0, sticky="ew", padx=(128, 18), pady=pady)
 
         self.base_var = tk.StringVar(value="")
-        self.base_note = TextVar(value="Choose the game package (.pkg) whose keystone you want to replace.")
+        self.base_note = TextVar(value="Choose the PS4 game package (.pkg) to repair.")
         field_row(2, "Game package:", self.base_var, "Choose…", self._pick_base)
         note(3, self.base_note)
         self.ks_var = tk.StringVar(value="")
         self.ks_note = TextVar(value=self.HOWTO)
-        field_row(4, "Keystone:", self.ks_var, "File…", self._pick_keystone, placeholder=tr("a file or its hex digits"))
+        field_row(4, "Keystone:", self.ks_var, "File…", self._pick_keystone,
+                  placeholder=tr("a file or its hex digits; empty: keep it"))
         note(5, self.ks_note)
+        # a full game with an update merged in: shown only when the package has the problem
+        self._ver_row = ctk.CTkFrame(v, fg_color="transparent")
+        ctk.CTkLabel(self._ver_row, text="Version:", text_color=MUTED, width=110, anchor="w").pack(side="left")
+        self.ver_var = tk.BooleanVar(value=False)
+        self.ver_text = TextVar(value="")
+        ctk.CTkCheckBox(self._ver_row, textvariable=self.ver_text, variable=self.ver_var, fg_color=ACCENT,
+                        hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18,
+                        command=self._refresh_buttons).pack(side="left")
+        self.ver_note = TextVar(value="")
+        self._ver_note = ctk.CTkLabel(v, textvariable=self.ver_note, text_color=MUTED, anchor="w", justify="left",
+                                      wraplength=760)
         upd_head = ctk.CTkFrame(v, fg_color="transparent")
-        upd_head.grid(row=7, column=0, sticky="ew", padx=18, pady=(12, 4))
+        upd_head.grid(row=8, column=0, sticky="ew", padx=18, pady=(12, 4))
         ctk.CTkLabel(upd_head, text="Updates", text_color=WHITE, anchor="w").pack(side="left")
         self.upd_note = TextVar(value="Updates of this game record the package they belong to; checked ones are "
                                       "bound to the changed package.")
@@ -6248,13 +6464,15 @@ class KeystoneView:
     def preset(self, base: str | None = None):
         """Open on *base* (from the job editor's hint)."""
         self._edit_item = None
+        self._wanted_fix = None
         self.add_btn.configure(text="Add to queue")
         if base:
             self.base_var.set(str(base))
 
     def edit(self, item):
-        """Show a queued keystone job; Save changes replaces it in the queue."""
+        """Show a queued repair job; Save changes replaces it in the queue."""
         self._edit_item = item
+        self._wanted_fix = bool(getattr(item, "ps4_fix_version", False))
         self.add_btn.configure(text="Save changes")
         self.ks_var.set(str(getattr(item, "ps4_keystone", "") or ""))
         self._wanted = [u for u in (getattr(item, "ps4_rebind", "") or "").splitlines() if u.strip()]
@@ -6263,11 +6481,16 @@ class KeystoneView:
     def _keystone(self):
         return _ps4pkg_module().keystone_from_text(self.ks_var.get())
 
+    def _fix_version(self) -> bool:
+        return self._version is not None and bool(self.ver_var.get())
+
     def _refresh_buttons(self):
-        ks, _why = self._keystone() if (self.ks_var.get() or "").strip() else (None, None)
+        raw = (self.ks_var.get() or "").strip()
+        ks = self._keystone()[0] if raw else None
+        todo = ks is not None or self._fix_version() or any(u["on"] and u.get("needs", True) for u in self._updates)
+        ok = self._base_ok and (not raw or ks is not None) and todo
         busy = self._busy or bool(getattr(self.app, "_batch_running", False))
-        self.add_btn.configure(state="normal" if self._base_ok and ks is not None else "disabled",
-                               fg_color=ACCENT if self._base_ok and ks is not None else BTN)
+        self.add_btn.configure(state="normal" if ok else "disabled", fg_color=ACCENT if ok else BTN)
         self.undo_btn.configure(state="normal" if not busy and _ks_job_module().last_journal(self.undo_root)
                                 else "disabled")
 
@@ -6299,10 +6522,12 @@ class KeystoneView:
         seq = self._probe_seq
         self._base_ok = False
         self._updates = []
+        self._version = self._base_sfo = None
+        self._show_version()
         self._render()
         raw = (self.base_var.get() or "").strip()
         if not raw:
-            self.base_note.set("Choose the game package (.pkg) whose keystone you want to replace.")
+            self.base_note.set("Choose the PS4 game package (.pkg) to repair.")
             return
         p = Path(raw)
         if not (p.is_file() and p.suffix.lower() == ".pkg"):
@@ -6322,8 +6547,16 @@ class KeystoneView:
                 return
             self._base_ok = box["ok"]
             self._base_ident = box.get("ident")
+            self._base_sfo = box.get("sfo")
+            self._own = box.get("own")
             self.base_note.set(box["note"])
             self._updates = box.get("updates", [])
+            self._version = box.get("version")
+            if self._version is not None:
+                fix = self._wanted_fix
+                self.ver_var.set(self._version["named"] if fix is None else fix)
+            self._wanted_fix = None
+            self._show_version()
             wanted = getattr(self, "_wanted", None)
             if wanted is not None:               # editing a job: its own choice of updates
                 for u in self._updates:
@@ -6337,10 +6570,41 @@ class KeystoneView:
         threading.Thread(target=work, daemon=True).start()
         self.frame.after(80, poll)
 
+    def _show_version(self):
+        """The version line, only for a package whose version makes the console offer the update."""
+        vp = self._version
+        if vp is None:
+            self._ver_row.grid_remove()
+            self._ver_note.grid_remove()
+            return
+        self.ver_text.set(tr("Set the app version to {ver} and the master version to {app}",
+                             ver=vp["version"], app=vp["app_ver"]))
+        self.ver_note.set(version_note(vp))
+        self._ver_note.configure(text_color=YELLOW if vp["named"] else MUTED)
+        self._ver_row.grid(row=6, column=0, sticky="ew", padx=18, pady=(10, 2))
+        self._ver_note.grid(row=7, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
+
+    @staticmethod
+    def update_info(x, base_sfo, own) -> tuple[list[str], bool]:
+        """Notes on the update *x* of the game package whose content digest is *own*, and whether
+        the job changes anything in it besides a keystone (Tk-free)."""
+        m, job = _ps4pkg_module(), _ks_job_module()
+        try:
+            belongs = m.general_digests(x).get(m.BASE_CONTENT_SLOT) == own
+            sf = job.plan_update(x, base_sfo or {}).get("save_folder")
+        except Exception:
+            return [], True
+        out = [tr("belongs to this package") if belongs else tr("made for another build of this game")]
+        if sf:
+            out.append(tr("save folder {old} → {new}", old=sf[0], new=sf[1]))
+        if job.region_changed(x):
+            out.append(tr("converted from another region: its language can differ from the game's"))
+        return out, not belongs or bool(sf)
+
     @staticmethod
     def probe(p: Path) -> dict:
-        """What the view shows for the game package *p* (Tk-free): its identity, its keystone and
-        the updates of the same game in its folder and the folders below."""
+        """What the view shows for the game package *p* (Tk-free): its identity, its keystone, its
+        version and the updates of the same game in its folder and the folders below."""
         m = _ps4pkg_module()
         out = {"done": True, "ok": False}
         try:
@@ -6365,7 +6629,12 @@ class KeystoneView:
             state = tr("has keystone {fp}…", fp=info["fingerprint"][:8])
         out["note"] = f"{name} {state}."
         out["ok"] = True
-        own = m.general_digests(p).get(1)
+        try:
+            out["sfo"] = m.read_sfo(p)
+            out["version"] = m.version_problem(p, out["sfo"])
+        except Exception:
+            pass
+        own = out["own"] = m.general_digests(p).get(1)
         ups = []
         try:
             near = [x for x in p.parent.rglob("*.pkg") if x != p and x.is_file() and not is_fs_junk_name(x.name)
@@ -6382,9 +6651,9 @@ class KeystoneView:
                 continue
             if m.BASE_CONTENT_SLOT not in slots:
                 continue
+            notes, needs = KeystoneView.update_info(x, out.get("sfo"), own)
             ups.append({"path": str(x), "name": x.name, "version": ui.version, "on": True,
-                        "note": tr("belongs to this package") if slots[m.BASE_CONTENT_SLOT] == own
-                        else tr("made for another build of this game")})
+                        "note": " · ".join(notes), "needs": needs})
         out["updates"] = ups
         return out
 
@@ -6421,14 +6690,15 @@ class KeystoneView:
                 continue
             why = _ks_job_module().check(self.base_var.get().strip(), [p]) if self._base_ok else []
             if why:
-                messagebox.showerror("PS4 keystone", "\n".join(why), parent=self.app.root)
+                messagebox.showerror("PS4 repair", "\n".join(why), parent=self.app.root)
                 continue
             try:
                 ver = m.read_identity(p).version
             except Exception:
                 ver = ""
+            notes, needs = self.update_info(p, self._base_sfo, getattr(self, "_own", None))
             self._updates.append({"path": p, "name": Path(p).name, "version": ver, "on": True,
-                                  "note": tr("added by hand")})
+                                  "note": " · ".join([tr("added by hand")] + notes), "needs": needs})
         self._render()
 
     def _remove_update(self):
@@ -6440,11 +6710,13 @@ class KeystoneView:
     # ── queue and undo ──
     def add_to_queue(self):
         base = (self.base_var.get() or "").strip()
-        ks, why = self._keystone()
-        if not self._base_ok or ks is None:
+        raw = (self.ks_var.get() or "").strip()
+        ks = self._keystone()[0] if raw else None
+        if not self._base_ok or (raw and ks is None):
             return
         ups = [u["path"] for u in self._updates if u["on"]]
-        it = GameItem.from_ps4_keystone(Path(base), ks.hex().upper(), ups)
+        it = GameItem.from_ps4_keystone(Path(base), ks.hex().upper() if ks is not None else "", ups,
+                                        fix_version=self._fix_version())
         ident = self._base_ident
         if ident is not None:
             it.title_id = ident.title_id
@@ -6457,15 +6729,15 @@ class KeystoneView:
         self._edit_item = None
         self.add_btn.configure(text="Add to queue")
         self.app.update_queue_box(select_item=it)
-        self.app.log("OK", tr("Queued: keystone for {name}{ups}.  Press ▶ START to run.", name=it.display_name or it.name,
-                              ups=plural(len(ups), ", 1 update bound", ", {n} updates bound") if ups else ""))
+        self.app.log("OK", tr("Queued: {name}: {what}.  Press ▶ START to run.", name=it.display_name or it.name,
+                              what=chain_summary(it)))
         self.app._show_view("queue")
 
     def undo(self):
         if self._busy or not _ks_job_module().last_journal(self.undo_root):
             return
-        if not messagebox.askyesno("Undo last change", "Put back the keystone and the updates the last keystone job "
-                                                       "changed?", parent=self.app.root):
+        if not messagebox.askyesno("Undo last change", "Put back what the last PS4 repair changed?",
+                                   parent=self.app.root):
             return
         self._busy = True
         self._refresh_buttons()
@@ -6494,11 +6766,485 @@ class KeystoneView:
         self._busy = False
         for ln in lines:
             if ln.startswith(("[PS4]", "[ERROR]")):
-                self.app.log("ERROR" if ln.startswith("[ERROR]") else "INFO", "PS4 keystone: " + ln.split("] ", 1)[-1])
-        self.app.log("OK" if rc == 0 else "WARN", "PS4 keystone: " + ("undone" if rc == 0 else "undo failed, see the log"))
+                self.app.log("ERROR" if ln.startswith("[ERROR]") else "INFO", "PS4 repair: " + ln.split("] ", 1)[-1])
+        self.app.log("OK" if rc == 0 else "WARN", "PS4 repair: " + ("undone" if rc == 0 else "undo failed, see the log"))
         self._refresh_buttons()
         if (self.base_var.get() or "").strip():
             self._base_changed()
+
+
+def _ps5_repair_module():
+    """backend/ps5_repair.py: PS5 package checks and the repair plan (Tk-free)."""
+    _bd = str(backend_base_dir())
+    if _bd not in sys.path:
+        sys.path.insert(0, _bd)
+    import ps5_repair
+    return ps5_repair
+
+
+def _ps5_row_text(r: dict) -> str:
+    """A check row in the interface language (the tool's own checklist stays English)."""
+    return tr(r["tmpl"], **r["args"]) if r.get("tmpl") else r["text"]
+
+
+def _ps5_check_text(rows: list, keystone: bool = False, detail: bool = True) -> str:
+    """The checks of a PS5 package in a line or two: all passed, or the problems (the first two
+    with *detail*) and what the repair does about them. *keystone*: a keystone is given, so the
+    repair also replaces the default one."""
+    bad = [r for r in rows if r["level"] in ("fail", "warn")]
+    if not bad:
+        return plural(sum(1 for r in rows if r["level"] == "pass"), "1 check passed.", "{n} checks passed.")
+    head = plural(len(bad), "1 problem", "{n} problems")
+    if detail:
+        head += ": " + "; ".join(_ps5_row_text(r) for r in bad[:2]) + (" …" if len(bad) > 2 else ".")
+    else:
+        head += "."
+    unfixable = sum(1 for r in bad if not r["fix"])
+    waiting = sum(1 for r in bad if r["fix"] == "keystone" and not keystone)
+    fixable = len(bad) - unfixable - waiting
+    parts = []
+    if fixable:
+        parts.append(tr("The repair fixes it.") if fixable == len(bad) == 1 else
+                     tr("The repair fixes all of them.") if fixable == len(bad) else
+                     plural(fixable, "The repair fixes 1 of them.", "The repair fixes {n} of them."))
+    if waiting:
+        parts.append(tr("The default keystone stays until you give the one from the game's dump."))
+    if unfixable == len(bad):
+        parts.append(tr("The repair cannot fix it.") if unfixable == 1 else tr("The repair cannot fix them."))
+    tail = " ".join(parts)
+    return head + " " + tail
+
+
+class Ps5RepairView:
+    """PS5 repair as a view of the main window, laid out like PS4 repair: a PS5 package, what the
+    console's installer and loader look at in it, and the repairs. Add to queue makes one job that
+    unpacks the package and builds a repaired copy (--to pkg --rebuild); the original stays as it
+    is. Look inside and Unpack are the other tools for the package."""
+    MARK = {"fail": "✗", "warn": "!", "info": "·", "pass": "✓"}
+    # what the Repair column says: the repair does it, or which option below does
+    FIX_TEXT = {"rebuild": "the repair fixes it", "trophy": "the repair fixes it",
+                "playgo": "PlayGo option below", "firmware": "Firmware option below",
+                "keystone": "Keystone field below", "standalone": "Updates option below"}
+    HOWTO = ("The keystone of the game's own dump (its folder, .ffpfsc or .pkg), or a keystone file. "
+             "Empty: the package keeps the one it has.")
+
+    def __init__(self, parent, app):
+        self.app = app
+        kit = app.kit
+        self._probe_seq = 0
+        self._info = None                 # ps5_repair.examine() of the package
+        self._rows: list[dict] = []
+        self._edit_item = None
+        self._wanted = None               # editing a job: its choices, applied once the package is read
+        v = self.frame = kit.frame(parent)
+        v.grid_columnconfigure(0, weight=1)
+        v.grid_rowconfigure(5, weight=1)
+        head, btns = app._column_header(v, "PS5 repair", subtitle="Checks a PS5 package and builds a repaired copy. "
+                                        "The original stays as it is.")
+        head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
+        self.look_btn = app._small(btns, "Look inside", "search", self._look,
+                                   tooltip="Browse the package and pull single files out")
+        self.look_btn.pack(side="left", padx=(0, 2))
+        self.unpack_btn = app._small(btns, "Unpack", "export", self._unpack,
+                                     tooltip="Queue a job that unpacks the package into a folder")
+        self.unpack_btn.pack(side="left", padx=(0, 2))
+        kit.rule(v).grid(row=1, column=0, sticky="ew")
+
+        def field_row(parent_, r, label, var, buttons, placeholder=""):
+            row = ctk.CTkFrame(parent_, fg_color="transparent")
+            row.grid(row=r, column=0, sticky="ew", padx=18, pady=(10, 2))
+            ctk.CTkLabel(row, text=label, text_color=MUTED, width=110, anchor="w").pack(side="left")
+            ctk.CTkEntry(row, textvariable=var, fg_color=CARD2, text_color=WHITE,
+                         placeholder_text=placeholder).pack(side="left", fill="x", expand=True)
+            for text, cmd in buttons:
+                ctk.CTkButton(row, text=text, width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                              border_width=1, border_color=BTN_BORDER, command=cmd).pack(side="left", padx=(6, 0))
+            return row
+
+        self.base_var = tk.StringVar(value="")
+        self.base_note = TextVar(value="Choose the PS5 package (.pkg) to check.")
+        field_row(v, 2, "Package:", self.base_var, [("Choose…", self._pick_base)])
+        ctk.CTkLabel(v, textvariable=self.base_note, text_color=MUTED, anchor="w", justify="left",
+                     wraplength=760).grid(row=3, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
+        chk_head = ctk.CTkFrame(v, fg_color="transparent")
+        chk_head.grid(row=4, column=0, sticky="ew", padx=18, pady=(12, 4))
+        ctk.CTkLabel(chk_head, text="Checks", text_color=WHITE, anchor="w").pack(side="left")
+        self.chk_note = TextVar(value="")
+        self._chk_label = ctk.CTkLabel(chk_head, textvariable=self.chk_note, text_color=MUTED, anchor="w")
+        self._chk_label.pack(side="left", padx=(10, 0))
+        self.show_pass_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(chk_head, text="Show passed checks", variable=self.show_pass_var, fg_color=ACCENT,
+                        hover_color=ACCENT_HOVER, text_color=MUTED, checkbox_width=16, checkbox_height=16,
+                        command=self._render).pack(side="right")
+        style = ttk.Style(v)
+        _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
+        style.configure("P5.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
+                        foreground=_pal["text"], rowheight=round(24 * ui_kit.SCALE), borderwidth=0)
+        style.configure("P5.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
+        style.map("P5.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
+        tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
+        tframe.grid(row=5, column=0, sticky="nsew", padx=18, pady=(0, 6))
+        self.tree = ttk.Treeview(tframe, columns=("area", "result", "fix"), style="P5.Treeview", selectmode="browse")
+        for col, text, w in (("#0", "", 34), ("area", "Area", 110), ("result", "Result", 560), ("fix", "Repair", 160)):
+            self.tree.heading(col, text=tr(text), anchor="w")
+            self.tree.column(col, width=round(w * ui_kit.SCALE), minwidth=round((30 if col == "#0" else 60) * ui_kit.SCALE),
+                             stretch=col == "result", anchor="w")
+        for lv, key in (("fail", "danger"), ("warn", "warning"), ("pass", "muted")):
+            self.tree.tag_configure(lv, foreground=_pal[key])
+        vsb = ThinScrollbar(tframe, self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
+        vsb.pack(side="right", fill="y", pady=6)
+
+        # the repairs
+        rep = ctk.CTkFrame(v, fg_color="transparent")
+        rep.grid(row=6, column=0, sticky="ew")
+        rep.grid_columnconfigure(0, weight=1)
+        self.ks_var = tk.StringVar(value="")
+        field_row(rep, 0, "Keystone:", self.ks_var, [("File…", self._pick_keystone), ("Dump…", self._pick_dump)],
+                  placeholder=tr("the game's own dump or a keystone file; empty: keep it"))
+        self.ks_note = TextVar(value=self.HOWTO)
+        self._ks_note = ctk.CTkLabel(rep, textvariable=self.ks_note, text_color=MUTED, anchor="w", justify="left",
+                                     wraplength=760)
+        self._ks_note.grid(row=1, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
+        fw = ctk.CTkFrame(rep, fg_color="transparent")
+        fw.grid(row=2, column=0, sticky="ew", padx=18, pady=(8, 2))
+        ctk.CTkLabel(fw, text="Firmware:", text_color=MUTED, width=110, anchor="w").pack(side="left")
+        self.fw_on_var = tk.BooleanVar(value=False)
+        self._fw_cb = ctk.CTkCheckBox(fw, text="Lower the firmware to", variable=self.fw_on_var, fg_color=ACCENT,
+                                      hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18,
+                                      checkbox_height=18, command=self._refresh_buttons)
+        self._fw_cb.pack(side="left")
+        st = load_settings()
+        fw0 = st.get("ps5_console_fw") or st.get("backport_target_default") or "7.61"
+        self.fw_var = tk.StringVar(value=fw0 if is_backport_target(fw0) else "7.61")
+        self._fw_menu = ctk.CTkOptionMenu(fw, values=self._targets(), variable=self.fw_var, width=92, height=26,
+                                          dynamic_resizing=False, command=lambda _v: self._fw_changed())
+        self._fw_menu.pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(fw, text="the firmware your console runs", text_color=MUTED, anchor="w").pack(side="left", padx=(8, 0))
+        pg = ctk.CTkFrame(rep, fg_color="transparent")
+        pg.grid(row=3, column=0, sticky="ew", padx=18, pady=(6, 2))
+        ctk.CTkLabel(pg, text="PlayGo:", text_color=MUTED, width=110, anchor="w").pack(side="left")
+        self.playgo_var = tk.BooleanVar(value=False)
+        self._pg_cb = ctk.CTkCheckBox(pg, text="Regenerate the PlayGo tables from the files in the package",
+                                      variable=self.playgo_var, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                      text_color=WHITE, checkbox_width=18, checkbox_height=18,
+                                      command=self._refresh_buttons)
+        self._pg_cb.pack(side="left")
+        sa = ctk.CTkFrame(rep, fg_color="transparent")
+        sa.grid(row=4, column=0, sticky="ew", padx=18, pady=(6, 2))
+        ctk.CTkLabel(sa, text="Updates:", text_color=MUTED, width=110, anchor="w").pack(side="left")
+        self.standalone_var = tk.BooleanVar(value=False)
+        self._sa_cb = ctk.CTkCheckBox(sa, text="Standalone game: clear the update-check URL in param.json",
+                                      variable=self.standalone_var, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                      text_color=WHITE, checkbox_width=18, checkbox_height=18,
+                                      command=self._refresh_buttons)
+        self._sa_cb.pack(side="left")
+        self.out_var = tk.StringVar(value=(app.output_var.get() or "").strip())
+        field_row(rep, 5, "Output:", self.out_var, [("Folder…", self._pick_out)])
+        bottom = ctk.CTkFrame(v, fg_color="transparent")
+        bottom.grid(row=7, column=0, sticky="ew", padx=18, pady=(10, 14))
+        ctk.CTkLabel(bottom, text="The repair unpacks the package and builds it again; images, licence and PlayGo "
+                                  "tables are put right on the way.", text_color=MUTED, anchor="w").pack(side="left")
+        self.add_btn = ctk.CTkButton(bottom, text="Add to queue", width=130, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                     text_color=ON_ACCENT, command=self.add_to_queue, state="disabled")
+        self.add_btn.pack(side="right")
+        self.base_var.trace_add("write", lambda *_: self._base_changed())
+        self.ks_var.trace_add("write", lambda *_: self._ks_changed())
+        self.out_var.trace_add("write", lambda *_: self._refresh_buttons())
+        self._refresh_buttons()
+
+    # ── state ──
+    def on_show(self):
+        self._refresh_buttons()
+
+    def preset(self, base: str | None = None):
+        """Open on *base* (from the job editor's hint)."""
+        self._edit_item = None
+        self._wanted = None
+        self.add_btn.configure(text="Add to queue")
+        if base:
+            self.base_var.set(str(base))
+
+    def edit(self, item):
+        """Show a queued repair job; Save changes replaces it in the queue."""
+        self._edit_item = item
+        self.add_btn.configure(text="Save changes")
+        self._wanted = {"fw": getattr(item, "backport_target", None),
+                        "playgo": bool(getattr(item, "fpkg_regen_playgo", False)),
+                        "standalone": bool(getattr(item, "ps5_standalone", False))}
+        self.ks_var.set(str(getattr(item, "fpkg_keystone", "") or ""))
+        self.out_var.set(str(getattr(item, "output_path", "") or ""))
+        self.base_var.set(str(item.path))
+
+    def _targets(self) -> list[str]:
+        raw = (self.app.fw_libs_var.get() or "").strip()
+        try:
+            return _backport_module().available_targets(Path(raw) if raw and Path(raw).is_dir() else None)
+        except Exception:
+            return ["7.61", "6.02", "10.xx"]
+
+    def _keystone(self, raw: str):
+        """Tk-free: runs on a worker."""
+        img = lambda p, member, dest: self.app._extract_image_member(p, member, dest)
+        return _ps5_repair_module().keystone_from(raw, image_member=img)
+
+    def _is_update(self) -> bool:
+        return self._info is not None and _ps5_repair_module().is_update(self._info)
+
+    def _refresh_buttons(self):
+        raw = (self.ks_var.get() or "").strip()
+        ks_ok = not raw or getattr(self, "_ks_ok", False)
+        ok = (self._info is not None and not self._info.get("error") and ks_ok and not self._is_update()
+              and bool((self.out_var.get() or "").strip()))
+        self.add_btn.configure(state="normal" if ok else "disabled", fg_color=ACCENT if ok else BTN)
+        opts = "disabled" if self._is_update() else "normal"     # an update package is checked only
+        for w in (self._fw_cb, self._fw_menu, self._pg_cb, self._sa_cb):
+            w.configure(state=opts)
+        has = bool((self.base_var.get() or "").strip()) and Path(self.base_var.get().strip()).is_file()
+        for b in (self.look_btn, self.unpack_btn):
+            b.configure(state="normal" if has else "disabled")
+
+    def _ks_changed(self):
+        """Read the keystone source off the main thread (a dump may need a small extraction)."""
+        raw = (self.ks_var.get() or "").strip()
+        self._ks_ok = False
+        self._ks_seq = getattr(self, "_ks_seq", 0) + 1
+        seq = self._ks_seq
+        if not raw:
+            self.ks_note.set(self.HOWTO)
+            self._ks_note.configure(text_color=MUTED)
+            self._render()
+            return
+        self.ks_note.set("Reading the keystone…")
+        box: dict = {}
+
+        def work():
+            try:
+                box["v"] = self._keystone(raw)
+            except Exception as e:
+                box["v"] = (None, str(e))
+
+        def poll():
+            if seq != self._ks_seq:
+                return
+            if "v" not in box:
+                self.frame.after(80, poll); return
+            ks, why = box["v"]
+            self._ks_ok = ks is not None
+            self._ks_bytes = (raw, ks)
+            self.ks_note.set(tr("Keystone {fp}…, will go into the package.", fp=ks[0x20:0x28].hex().upper())
+                             if ks is not None else tr(why) + ".")
+            self._ks_note.configure(text_color=MUTED if ks is not None else YELLOW)
+            self._render()
+        threading.Thread(target=work, daemon=True).start()
+        self.frame.after(80, poll)
+
+    def _pick_base(self):
+        p = filedialog.askopenfilename(parent=self.app.root, title="Choose the PS5 package",
+                                       filetypes=[("PS5 packages", "*.pkg"), ("All files", "*.*")])
+        if p:
+            self.base_var.set(p)
+
+    def _pick_keystone(self):
+        p = filedialog.askopenfilename(parent=self.app.root, title="Choose the keystone",
+                                       filetypes=[("Keystone, image or package", "*"), ("All files", "*.*")])
+        if p:
+            self.ks_var.set(p)
+
+    def _pick_dump(self):
+        p = filedialog.askdirectory(parent=self.app.root, title="Choose the game's own dump (its folder)")
+        if p:
+            self.ks_var.set(p)
+
+    def _pick_out(self):
+        p = filedialog.askdirectory(parent=self.app.root, title="Choose the output folder")
+        if p:
+            self.out_var.set(p)
+
+    def _fw_changed(self):
+        try:
+            save_settings({"ps5_console_fw": self.fw_var.get()})
+        except Exception:
+            pass
+        if self._info is not None:
+            self._rows = _ps5_repair_module().findings(self._info, self.fw_var.get())
+            if any(r["fix"] == "firmware" for r in self._rows):
+                self.fw_on_var.set(True)
+            self._render()
+
+    def _base_changed(self):
+        """Run the checks on the package off the main thread."""
+        self._probe_seq += 1
+        seq = self._probe_seq
+        self._info = None
+        self._rows = []
+        self._render()
+        raw = (self.base_var.get() or "").strip()
+        if not raw:
+            self.base_note.set("Choose the PS5 package (.pkg) to check.")
+            self.chk_note.set("")
+            return
+        p = Path(raw)
+        if not (p.is_file() and p.suffix.lower() == ".pkg"):
+            self.base_note.set("Not a .pkg file.")
+            return
+        self.base_note.set("Checking the package…")
+        self.chk_note.set("")
+        fw = self.fw_var.get()
+        box: dict = {}
+
+        def work():
+            m = _ps5_repair_module()
+            try:
+                if m.fpkg.is_ps4(p):
+                    box["info"] = {"error": tr("a PS4 package: PS4 repair is the tool for it")}
+                else:
+                    box["info"] = m.examine(p, neighbours=True)
+                    box["rows"] = m.findings(box["info"], fw)
+            except Exception as e:
+                box["info"] = {"error": str(e)}
+
+        def poll():
+            if seq != self._probe_seq:
+                return
+            if "info" not in box:
+                self.frame.after(80, poll); return
+            info = box["info"]
+            if info.get("error") and not info.get("results"):
+                self.base_note.set(tr("Not a readable PS5 package: {e}", e=info["error"]))
+                self._refresh_buttons()
+                return
+            self._info, self._rows = info, box.get("rows", [])
+            self.base_note.set(self._identity_text(p, info)
+                               + (" · " + tr("an update package: checked only") if self._is_update() else ""))
+            want = self._wanted
+            fixes = {r["fix"] for r in self._rows if r["level"] in ("fail", "warn")}
+            if want is not None:                 # editing a job: its own choices
+                if want.get("fw"):
+                    self.fw_var.set(want["fw"])
+                self.fw_on_var.set(bool(want.get("fw")))
+                self.playgo_var.set(bool(want.get("playgo")))
+                self.standalone_var.set(bool(want.get("standalone")))
+                self._wanted = None
+            else:
+                self.fw_on_var.set("firmware" in fixes)
+                self.playgo_var.set("playgo" in fixes)
+                self.standalone_var.set("standalone" in fixes)
+            self._render()
+        threading.Thread(target=work, daemon=True).start()
+        self.frame.after(80, poll)
+
+    @staticmethod
+    def _identity_text(p: Path, info: dict) -> str:
+        param = info.get("param") or {}
+        ident = info.get("ident") or {}
+        m = _ps5_repair_module()
+        title = param_title(param) if param else ""
+        bits = [f"{title or p.stem} [{param.get('titleId') or ident.get('title_id', '')}]"
+                + (f" [v{param.get('contentVersion')}]" if param.get("contentVersion") else "")]
+        need = m.fw_text(param.get("requiredSystemSoftwareVersion"))
+        if need and need != "0.00":
+            bits.append(tr("system software {v}", v=need))
+        try:
+            bits.append(format_size(p.stat().st_size))
+        except OSError:
+            pass
+        if info.get("files"):
+            bits.append(plural(info["files"], "1 file", "{n} files"))
+        return " · ".join(bits)
+
+    def _render(self):
+        self.tree.delete(*self.tree.get_children())
+        show_pass = bool(self.show_pass_var.get())
+        ks_given = bool(getattr(self, "_ks_ok", False) and (self.ks_var.get() or "").strip())
+        for r in self._rows:
+            if r["level"] == "pass" and not show_pass:
+                continue
+            fix = ("" if r["level"] in ("pass", "info") and not r["fix"] else
+                   tr("the repair fixes it") if r["fix"] == "keystone" and ks_given else
+                   tr(self.FIX_TEXT[r["fix"]]) if r["fix"] else tr("cannot be repaired here"))
+            self.tree.insert("", "end", text=self.MARK.get(r["level"], "·"), tags=(r["level"],),
+                             values=(tr(r["group"]), _ps5_row_text(r), fix))
+        if self._rows:
+            bad = [r for r in self._rows if r["level"] in ("fail", "warn")]
+            self.chk_note.set(_ps5_check_text(self._rows, keystone=ks_given, detail=False))
+            self._chk_label.configure(text_color=YELLOW if bad else MUTED)
+            if not bad and not show_pass:
+                self.tree.insert("", "end", text=self.MARK["pass"], tags=("pass",),
+                                 values=("", tr("Every check passed. Show passed checks lists them."), ""))
+        self._refresh_buttons()
+
+    # ── tools ──
+    def _look(self):
+        p = (self.base_var.get() or "").strip()
+        if p and Path(p).is_file():
+            self.app.open_pfs_browser(p)
+
+    def _unpack(self):
+        p = Path((self.base_var.get() or "").strip())
+        out = (self.out_var.get() or "").strip()
+        if not p.is_file():
+            return
+        if not out:
+            messagebox.showerror("Output", "Choose an output folder for this job.", parent=self.app.root); return
+
+        organize = bool(self.app.auto_organize_var.get())
+
+        def make(s):                        # runs on the add worker: no Tk here
+            it = GameItem.from_chain(s, to="folder", output_path=out)
+            it.auto_organize = organize
+            it.source_root = str(s.parent)
+            return it
+        self.app._add_jobs_async([p], make)
+        self.app._show_view("queue")
+
+    # ── queue ──
+    def add_to_queue(self):
+        p = Path((self.base_var.get() or "").strip())
+        out = (self.out_var.get() or "").strip()
+        if self._info is None or not p.is_file() or not out:
+            return
+        raw = (self.ks_var.get() or "").strip()
+        read_raw, ks = getattr(self, "_ks_bytes", ("", None))
+        if not raw:
+            ks = None
+        elif ks is None or read_raw != raw:         # not read yet for this text
+            return
+        target = self.fw_var.get() if self.fw_on_var.get() else None
+        app = self.app
+        params = {"content_id": "", "title_id": "", "title": "", "version": "01.000.000", "inner": "kraken",
+                  "backend": "builtin", "level": app._pkg_level_default(), "dll": "", "retail_normalize": True,
+                  "hdr_flag": "auto", "regen_playgo": bool(self.playgo_var.get()), "fake_sign": True,
+                  "backport_target": target, "backport_libs": ""}
+
+        standalone, organize = bool(self.standalone_var.get()), bool(app.auto_organize_var.get())
+        trophies = any(r["fix"] == "trophy" for r in self._rows)
+        param = (self._info or {}).get("param") or {}
+
+        def make(s):                        # runs on the add worker: no Tk here
+            it = GameItem.from_chain(s, to="pkg", output_path=out, backport_target=target)
+            app._apply_fpkg_params(it, params)
+            it.chain_rebuild = it.ps5_repair = True
+            it.ps5_standalone = standalone
+            it.ps5_trophies = trophies
+            it.fpkg_keystone = ks.hex().upper() if ks is not None else None
+            it.auto_organize = organize
+            it.source_root = str(s.parent)
+            if param:
+                it.display_name = param_title(param) or None
+            return it
+        old = self._edit_item
+        self._edit_item = None
+        self.add_btn.configure(text="Add to queue")
+        if old is not None and old in app.queue:
+            it = make(p)
+            app.queue[app.queue.index(old)] = it
+            app.update_queue_box(select_item=it)
+            app.log("OK", tr("Changed: {name}: {what}.", name=it.display_name or it.name, what=chain_summary(it)))
+        else:
+            app._add_jobs_async([p], make)
+        app._show_view("queue")
 
 
 class LookInsideView:
@@ -7250,8 +7996,10 @@ class App:
                                 "Browse a .ffpfsc, .ffpfs or .pkg and pull single files out")
         self._nav["organize"] = nav(side, "Organize", "folders", lambda: self._show_view("organize"),
                                     "Name and sort everything in a folder in place")
-        self._nav["keystone"] = nav(side, "PS4 keystone", "key", lambda: self._show_view("keystone"),
-                                    "Put the retail game's keystone into a PS4 package so its saves load")
+        self._nav["keystone"] = nav(side, "PS4 repair", "key", lambda: self._show_view("keystone"),
+                                    "Keystone, version and updates of a PS4 game package")
+        self._nav["ps5repair"] = nav(side, "PS5 repair", "package", lambda: self._show_view("ps5repair"),
+                                     "Check a PS5 package and build a repaired copy")
         nav(side, "Clean temp", "broom", self.clear_temp_files, "Delete leftovers in the temp folder")
         bottom = kit.frame(side, bg="sidebar")
         bottom.pack(side="bottom", fill="x", pady=(0, 10))
@@ -7275,10 +8023,15 @@ class App:
         if name == "keystone" and "keystone" not in self._views:
             self._keystone_view = KeystoneView(self._views_parent, self)
             self._views["keystone"] = self._keystone_view.frame
+        if name == "ps5repair" and "ps5repair" not in self._views:
+            self._ps5_view = Ps5RepairView(self._views_parent, self)
+            self._views["ps5repair"] = self._ps5_view.frame
         if name == "organize":
             self._organize_view.on_show()
         if name == "keystone":
             self._keystone_view.on_show()
+        if name == "ps5repair":
+            self._ps5_view.on_show()
         for n, f in self._views.items():
             if n == name:
                 f.grid(row=0, column=0, sticky="nsew")
@@ -7991,7 +8744,10 @@ class App:
         src = source_label(item)
         if op == "ps4-keystone":
             n = len([u for u in (getattr(item, "ps4_rebind", "") or "").splitlines() if u.strip()])
-            return [src, tr("Keystone") + (plural(n, " · 1 update", " · {n} updates") if n else "")]
+            parts = (([tr("Keystone")] if getattr(item, "ps4_keystone", None) else [])
+                     + ([tr("Version")] if getattr(item, "ps4_fix_version", False) else [])
+                     + ([plural(n, "1 update", "{n} updates")] if n else []))
+            return [src, " · ".join(parts)]
         if op == "copy" and getattr(item, "content_kind", "") == ORGANIZE_TARGET:
             return [src, "Organize"]
         if op == "copy" and getattr(item, "content_kind", "") == "ps4":
@@ -8004,6 +8760,11 @@ class App:
             return [src, lib]
         if op == "chain":
             ch = []
+            if getattr(item, "ps5_repair", False):
+                ch = (["Repair"] + (["Keystone"] if getattr(item, "fpkg_keystone", None) else [])
+                      + (["PlayGo"] if getattr(item, "fpkg_regen_playgo", False) else [])
+                      + (["Standalone"] if getattr(item, "ps5_standalone", False) else [])
+                      + (["Trophies"] if getattr(item, "ps5_trophies", False) else []))
             for c in chain_changes(item):
                 ch.append("Patch" if c == "patch" else "Sign" if c == "sign" else "LZ4" if c == "lz4"
                           else "Unpack LZ4" if c == "lz4 unpack"
@@ -8121,7 +8882,7 @@ class App:
             except Exception:
                 return tr("{kind}: not reachable", kind=kind)
             drive = ultra_core.drive_display_name(p, system="Mac")
-            return f"{kind}: {drive}  ·  {format_size(free)} free"
+            return tr("{kind}: {drive}  ·  {free} free", kind=tr(kind), drive=drive, free=format_size(free))
 
         def _work():
             try:
@@ -10407,6 +11168,10 @@ class App:
             self._show_view("keystone")
             self._keystone_view.edit(item)
             return
+        if getattr(item, "ps5_repair", False):
+            self._show_view("ps5repair")
+            self._ps5_view.edit(item)
+            return
         # One editor for every kind of job: it shows the job as source → changes → output,
         # and saving replaces the job at its place in the queue.
         try:
@@ -10724,6 +11489,45 @@ class App:
         item.copy_mode = "move" if getattr(item, "archive_path", None) else "keep"
         return item
 
+    RECENT_OUTPUTS = 8
+
+    @staticmethod
+    def _recent_outputs(platform: str) -> list[str]:
+        """The output folders last used for *platform* ('ps4', 'ps5'), newest first."""
+        try:
+            rec = load_settings().get("recent_outputs") or {}
+            return [str(x) for x in rec.get(platform) or [] if x][:App.RECENT_OUTPUTS]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _remember_output(platform: str, folder: str) -> None:
+        folder = (folder or "").strip()
+        if not folder:
+            return
+        try:
+            rec = dict(load_settings().get("recent_outputs") or {})
+            rec[platform] = ([folder] + [x for x in rec.get(platform) or [] if x != folder])[:App.RECENT_OUTPUTS]
+            save_settings({"recent_outputs": rec})
+        except Exception:
+            pass
+
+    def _ps4_route(self, src, output_path=None, passwords=None, to: str = "pkg"):
+        """The PS4 job for *src* of a folder of mixed sources when it is a PS4 package or an
+        archive of them, else None (the job the dialog set up applies): sorted into the library,
+        or with *to* 'folder' a package unpacked into a folder (an archive is always sorted).
+        Tk-free."""
+        src = Path(src)
+        if self._is_archive_path(src):
+            info = ArchiveExtractor.ps4_archive_info(src, passwords)
+            return self._ps4_archive_item(src, info, output_path=output_path) if info is not None else None
+        if not _is_ps4_source(src):
+            return None
+        if to == "folder" and src.is_file():
+            dest = Path(output_path or src.parent) / f"{sanitize_filename(src.stem)} [extracted]"
+            return GameItem.from_fpkg_extract(src, output_path=str(dest))
+        return self._ps4_item_for(src, output_path=output_path)
+
     def _auto_item_for(self, src, table, build, *, output_path=None, passwords=None):
         """A job with the output Automatic: the output Settings sets for the source's kind,
         an archive's kind read from its member names. build(src, to) makes a chain job; an
@@ -10829,6 +11633,16 @@ class App:
         got = App._ps4_keystone_state(path)
         return None if got is None else bool(got["default"] or not got.get("valid", True))
 
+    @staticmethod
+    def _ps4_version_problem(path) -> dict | None:
+        """{'app_ver', 'version', 'named'} when the PS4 game package *path* looks like a full game
+        with an update merged in whose app version stayed the game's (the console then offers the
+        official update); None otherwise or when it cannot be read. Tk-free."""
+        try:
+            return _ps4pkg_module().version_problem(Path(path))
+        except Exception:
+            return None
+
     def _ps4_item_for(self, src, *, output_path=None, info=None):
         """A copy job that sorts PS4 packages into the library: one .pkg, or a folder of
         them (an archive's extraction, a download folder), or an archive of them. The
@@ -10859,6 +11673,8 @@ class App:
         item.ps4_count = len(pkgs)
         if src.is_file() and main is not None and main.kind == "game":
             item.ps4_default_keystone = self._ps4_default_keystone(src)
+            vp = self._ps4_version_problem(src)
+            item.ps4_version_problem = bool(vp and vp["named"])
         return item
 
     # ── Auto-organize: where a job lands and what it is called ───────────────
@@ -11118,6 +11934,16 @@ class App:
             return ident_from_param_bytes(Path(pj).read_bytes())
         except OSError:
             return None
+
+    def _extract_image_member(self, image: Path, member: str, dest: Path) -> Path | None:
+        """One file of a .ffpfsc/.ffpfs image pulled into *dest*, through the backend (Tk-free)."""
+        mfile = Path(dest) / "members.txt"
+        mfile.write_text(member + "\n", encoding="utf-8")
+        out = Path(dest) / "out"
+        cmd = self._backend_cmd("--extract-from", str(image), "--dest", str(out), "--members-file", str(mfile))
+        subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        got = out / member
+        return got if got.is_file() else None
 
     def _read_image_metadata(self, p: Path) -> dict | None:
         """param.json-derived identity of a packed image, without unpacking it."""
@@ -12108,7 +12934,7 @@ class App:
         self._sync_progress_box()
         self.game_name_var.set(f"Name: {getattr(item, 'display_name', None) or item.name}")
         mode = {"unpack": "Convert", "patch": "Integrate patch",
-                "fake-sign": "Fake sign", "ps4-keystone": "PS4 keystone",
+                "fake-sign": "Fake sign", "ps4-keystone": "PS4 repair",
                 "fpkg-extract": "Extract fPKG",
                 "fpkg-build":   "Build fPKG"}.get(getattr(item, "operation", "pack"), "Pack")
         if getattr(item, "operation", "pack") == "chain":
@@ -12584,6 +13410,12 @@ class App:
             cmd += ["--copy-mode", "move" if getattr(item, "after_source", None) == "delete" else "keep"]
             if to in ("pkg", "ffpfsc") and not _resuming and self._consumable_extract(item):
                 cmd.append("--stage-in-place")      # our own unpacked copy: taken in as it goes
+            if getattr(item, "chain_rebuild", False) and not _resuming:
+                cmd.append("--rebuild")
+            if getattr(item, "ps5_standalone", False) and not _resuming:
+                cmd.append("--ps5-standalone")
+            if getattr(item, "ps5_trophies", False) and not _resuming:
+                cmd.append("--ps5-trophies")
             _ps = getattr(item, "patch_source", None)
             if _ps and not _resuming:
                 cmd += ["--patch", str(_ps)]
@@ -12636,6 +13468,8 @@ class App:
                     cmd += ["--fpkg-hdr-flag", _hdr]
                 if getattr(item, "fpkg_regen_playgo", False):
                     cmd += ["--fpkg-regen-playgo"]
+                if getattr(item, "fpkg_keystone", None):
+                    cmd += ["--fpkg-keystone", str(item.fpkg_keystone)]
                 for flag, attr in (("--content-id", "fpkg_content_id"), ("--title-id", "fpkg_title_id"),
                                    ("--fpkg-title", "fpkg_title"), ("--fpkg-version", "fpkg_version")):
                     _v = str(getattr(item, attr, "") or "").strip()
@@ -12654,7 +13488,11 @@ class App:
         # ── PS4 KEYSTONE job: the game package and its updates, changed in place ──
         if op == "ps4-keystone":
             head = pycmd if getattr(sys, "frozen", False) else pycmd + ["-u", str(cli_py)]
-            cmd = head + ["--ps4-keystone-set", str(item.path), "--ps4-keystone", str(item.ps4_keystone)]
+            cmd = head + ["--ps4-keystone-set", str(item.path)]
+            if getattr(item, "ps4_keystone", None):
+                cmd += ["--ps4-keystone", str(item.ps4_keystone)]
+            if getattr(item, "ps4_fix_version", False):
+                cmd.append("--ps4-fix-version")
             for u in (getattr(item, "ps4_rebind", "") or "").splitlines():
                 if u.strip():
                     cmd += ["--ps4-rebind", u.strip()]
@@ -12794,6 +13632,8 @@ class App:
                 cmd += ["--fpkg-hdr-flag", _hdr]
             if getattr(item, "fpkg_regen_playgo", False):
                 cmd += ["--fpkg-regen-playgo"]
+            if getattr(item, "fpkg_keystone", None):
+                cmd += ["--fpkg-keystone", str(item.fpkg_keystone)]
             if not getattr(item, "fpkg_fake_sign", True):
                 cmd += ["--fpkg-no-fake-sign"]
             # Backport: --backport-target lowers eboot/prx/sprx SDK words to the
@@ -14264,9 +15104,13 @@ class App:
                 added = True
                 if getattr(it, "ps4_default_keystone", None) and not getattr(it, "ps4_keystone", None):
                     self.log("WARN", tr("{name}: the package has the default keystone, so saves of the retail "
-                                        "game will show as corrupted. Tools › PS4 keystone replaces it with the "
+                                        "game will show as corrupted. Tools › PS4 repair replaces it with the "
                                         "keystone exported from one of your saves.",
                                         name=it.display_name or it.name))
+                if getattr(it, "ps4_version_problem", False):
+                    self.log("WARN", tr("{name}: an update is merged into this full game but its app version stayed "
+                                        "the game's, so the console will offer the official update. Tools › PS4 "
+                                        "repair sets the version.", name=it.display_name or it.name))
                 try:
                     if getattr(it, "archive_path", None):
                         self._resolve_archive_password(it)

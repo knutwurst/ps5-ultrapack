@@ -29,9 +29,9 @@ LZ4 ASSET PACKS AND .EXFAT
   - Subtitle files stay loose, and packs that would save less than 5 %
     are refused before the game changes.
 
-PS4 KEYSTONE
+PS4 REPAIR
 
-  - New tool "PS4 keystone" in the sidebar. A save holds the keystone of
+  - New tool "PS4 repair" in the sidebar. A save holds the keystone of
     the game that wrote it; a fake package built with another one (most
     builders use the default from the all-zero passcode) shows saves of
     the retail game as corrupted. The tool takes the game package, the
@@ -40,18 +40,84 @@ PS4 KEYSTONE
     the game, found next to the package or added by hand, and queues one
     job for them. Add job shows a PS4 game package's keystone and warns
     about the default one, with a button to the tool.
+  - Version: a full game with an update merged in whose param.sfo kept
+    the game's app version (01.00) and carries the update's version as
+    master version makes the console offer the official update. The tool
+    shows it and swaps the two values, so the app version is the
+    update's; checked by itself when the file or folder name carries the
+    master version. Add job and the PS4 library sorting warn about it.
+  - Save folder: an update whose INSTALL_DIR_SAVEDATA differs from the
+    game's save folder gets the game's, so its saves go where the game's
+    are. An update converted from another region (sce_sys/region.changed
+    in its image) is flagged: its language can differ from the game's.
+  - The keystone is optional: the job can fix only the version or only
+    bind updates made for another build of the game.
   - The job changes the packages in place, nothing is rebuilt. The
     keystone's sector in the inner image is re-encoded to the length it
     had, the outer blocks around it are re-signed and re-encrypted, and
     the superblock hash, chunk hashes, image digests, general digests,
-    entry digests and the header signature are recomputed. Each update
-    records the content and game digest of its base package; both are
-    rewritten so the console installs the update on the changed package.
-    Everything replaced is kept in keystone-undo/ in the app folder, and
-    "Undo last change" puts it back.
-  - Command line: --ps4-keystone-set GAME --ps4-keystone KEY
-    [--ps4-rebind UPDATE ...], --ps4-keystone-undo last; tool commands
-    ps4-keystone and ps4-rebind.
+    entry digests and the header signature are recomputed. A param.sfo
+    change rewrites the param.sfo entry, the param digest, the entry
+    digests and the header hashes; the five values the major param
+    digest covers (ATTRIBUTE, ATTRIBUTE2, CATEGORY, FORMAT, PUBTOOLVER)
+    are refused. Each update records the content and game digest of its
+    base package; both are rewritten so the console installs the update
+    on the changed package. Everything replaced is kept in keystone-undo/
+    in the app folder, and "Undo last change" puts it back.
+  - Command line: --ps4-keystone-set GAME [--ps4-keystone KEY]
+    [--ps4-fix-version] [--ps4-rebind UPDATE ...], --ps4-keystone-undo
+    last; tool commands ps4-keystone, ps4-rebind and ps4-sfo.
+
+PS5 REPAIR
+
+  - New tool "PS5 repair" in the sidebar. It checks a PS5 package in
+    place: the tool's validate checklist (package layout, param.json,
+    PlayGo tables, images, licence, executables), the firmware the game
+    needs against the console's firmware, the keystone, update markers
+    in param.json and a stray param.sfo. Every finding says whether the
+    repair fixes it. Add job shows the result for a PS5 package, with a
+    button to the tool.
+  - The repair is one queue job (--to pkg --rebuild): the package is
+    unpacked into scratch and built again, the original stays as it is.
+    The rebuild puts images, licence and PlayGo tables right and drops
+    patch markers and a param.sfo. Options: a keystone from the game's
+    own dump (its folder, .ffpfsc or .pkg) or a keystone file, the
+    firmware lowered to the console's (the backport), PlayGo tables
+    regenerated, and "standalone game", which clears the update-check
+    URL in param.json (versionFileUri), as other fPKG builders do.
+  - Trophy and activity archives (sce_sys/trophy2/*.ucp, sce_sys/uds/
+    *.ucp): their structure and SHA-1 are checked. The bundled
+    LibProsperoPkg packs a wrong checksum as it is, so the repair writes
+    it (--ps5-trophies) before the rebuild.
+  - AMPR: a package with the AMPR emulator in fakelib needs
+    ampr_emu.index, and the index has to describe the game files as the
+    package holds them. A missing or stale index is reported; the
+    rebuild writes it again.
+  - Update packages: an update is compared with the game package of the
+    same title next to it (its version has to be higher; the game
+    version it was made for is shown when it differs), and a game with
+    the updates next to it. An update package is only checked; the
+    repair builds full games.
+  - The keystone LibProsperoPkg makes for the all-zero passcode is the
+    same for every content id; the check calls it the default keystone,
+    like on PS4. A PS4 keystone (format 2) is refused for a PS5 package.
+  - Tools in the view: Look inside, and Unpack to a folder.
+  - Command line: --rebuild and --ps5-standalone for --to, --fpkg-keystone
+    FILE|HEX for a .pkg build; tool option build --keystone FILE.
+
+MIXED PS4 AND PS5 FOLDERS
+
+  - A folder with PS4 packages and PS5 games side by side was taken for
+    a folder of PS4 packages as soon as every .pkg in it was a PS4 one,
+    so the PS5 games could only be sorted into the PS4 library. It is a
+    folder of games now: one job each, the PS4 packages (and archives of
+    them) go into the PS4 library, the PS5 games get the output picked.
+    Only a folder that holds nothing but PS4 packages is a PS4 source.
+  - Such a folder shows two blocks in the output step: PS5 games with
+    the usual targets and folder, PS4 packages with "Into the library"
+    or "Folder" and a folder of their own. The summary counts both. Each
+    "Save to" field lists the folders last used for its platform (eight
+    each), and a PS4 source on its own starts on the last PS4 folder.
 
 ARCHIVE CONTENT AND THE OUTPUT AUTO
 

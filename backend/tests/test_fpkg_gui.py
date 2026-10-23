@@ -2592,6 +2592,44 @@ try:
                 sfo={"TITLE": "Sample Game", "TITLE_ID": "CUSA00001", "CATEGORY": "gd", "APP_VER": "01.00"})
     _mk4(_p4dir / "dlc.pkg", content_id="UP0000-CUSA00001_00-SAMPLEDLC0000000", content_type=0x1B,
          sfo={"TITLE": "Sample Game - Extra", "TITLE_ID": "CUSA00001", "CATEGORY": "ac", "VERSION": "01.00"})
+    # a folder of PS4 packages only is a PS4 source; next to a PS5 game folder it is a folder of
+    # mixed sources: one job each, the PS4 package into the PS4 library, the PS5 game as asked
+    _mix = S / "mixed_src"; shutil.rmtree(_mix, ignore_errors=True); (_mix / "ps4").mkdir(parents=True)
+    shutil.copyfile(_p4g, _mix / "ps4" / "Sample Game.pkg")
+    ok("ps4.folder-of-ps4-packages", m._is_ps4_source(_mix), str(_mix))
+    shutil.copytree(HBT, _mix / "HomebrewTest")
+    ok("mixed.folder-is-not-ps4", not m._is_ps4_source(_mix), str(_mix))
+    _dm = m.JobDialog(app, init_src=str(_mix), init_to="ffpfsc"); root.update()
+    ok("mixed.dialog-parent", _dm._kind == "parent" and "PS4" in _dm.detect_var.get()
+       and _dm._to_key() == "ffpfsc", f"{_dm._kind} {_dm.detect_var.get()} {_dm._to_key()}")
+    ok("mixed.ps4-block-shown", bool(_dm._ps4_box.winfo_manager()) and bool(_dm._ps5_head.winfo_manager())
+       and _dm._ps4_head_var.get() == "PS4 packages (1)" and _dm._ps5_head_var.get() == "PS5 games (1)",
+       f"{_dm._ps4_head_var.get()} {_dm._ps5_head_var.get()}")
+    _qm0 = len(app.queue)
+    _ps4lib = S / "ps4_library"
+    _dm.out_var.set(str(OUT)); _dm.ps4_out_var.set(str(_ps4lib)); root.update(); _dm._refresh()
+    ok("mixed.summary-splits", "× 1 job" in _dm.summary_var.get() and "1 PS4 package into the library" in _dm.summary_var.get()
+       and str(_ps4lib) in _dm.summary_dest_var.get(), f"{_dm.summary_var.get()} | {_dm.summary_dest_var.get()}")
+    _dm._add(); settle()
+    _qm = app.queue[_qm0:]
+    ok("mixed.one-job-each", len(_qm) == 2
+       and any(getattr(j, "content_kind", "") == "ps4" and j.operation == "copy"
+               and str(j.output_path) == str(_ps4lib) for j in _qm)
+       and any(j.operation == "chain" and j.chain_to == "ffpfsc" and Path(j.path).name == "HomebrewTest"
+               and str(j.output_path) == str(OUT) for j in _qm),
+       str([(j.operation, getattr(j, "content_kind", None), getattr(j, "chain_to", None), Path(j.path).name,
+             str(j.output_path)) for j in _qm]))
+    ok("mixed.folders-remembered", app._recent_outputs("ps4")[:1] == [str(_ps4lib)]
+       and app._recent_outputs("ps5")[:1] == [str(OUT)], f"{app._recent_outputs('ps4')} {app._recent_outputs('ps5')}")
+    # a PS4 package alone starts on the PS4 folder, without the second block
+    _d4s = m.JobDialog(app, init_src=str(_p4g)); root.update()
+    ok("mixed.ps4-source-gets-ps4-folder", _d4s.out_var.get() == str(_ps4lib) and not _d4s._ps4_box.winfo_manager(),
+       _d4s.out_var.get())
+    _d4s.destroy(); root.update()
+    for _j in _qm:
+        app.queue.remove(_j)
+    app.update_queue_box()
+    shutil.rmtree(_mix, ignore_errors=True)
     _p4item = app._ps4_item_for(_p4dir, output_path=str(OUT))
     _p4cmd, *_ = app.build_command(_p4item)
     ok("ps4.item-is-sorted-copy", _p4item.operation == "copy" and _p4item.content_kind == "ps4"
@@ -2681,6 +2719,9 @@ try:
         ok("ps4.keystone-hint-in-editor", _dk._ks_default is True and bool(_dk._crow.winfo_manager())
            and bool(_dk._ks_box.winfo_manager()) and "default keystone" in _dk.ks_state_var.get()
            and "default keystone" in _dk.detect_var.get(), f"{_dk._ks_default} {_dk.ks_state_var.get()}")
+        _kvp = _p4m.version_problem(_kb)       # the sample's master version is above its app version, or not
+        ok("ps4.version-hint-in-editor", (_kvp is None) == ("app version" not in _dk.ks_state_var.get()),
+           f"{_kvp} {_dk.ks_state_var.get()}")
         _dk._open_keystone(); root.update()
         _kv = app._keystone_view
         ok("ps4.keystone-editor-opens-tool", app._view == "keystone" and _kv.base_var.get() == str(_kb), app._view)
@@ -2688,6 +2729,14 @@ try:
         ok("ps4.keystone-tool-reads-package", _kv._base_ok and "default keystone" in _kv.base_note.get()
            and [u["path"] for u in _kv._updates] == [str(_ku)] and _kv._updates[0]["on"]
            and str(_kv.add_btn.cget("state")) == "disabled", f"{_kv.base_note.get()} {_kv._updates}")
+        # the version line shows only for a package with the problem, checked only when its name says so
+        ok("ps4.repair-version-line", bool(_kv._ver_row.winfo_manager()) == (_kvp is not None)
+           and (_kvp is None or (bool(_kv.ver_var.get()) == _kvp["named"] and _kvp["version"] in _kv.ver_text.get())),
+           f"{_kvp} {_kv.ver_text.get()} {_kv.ver_var.get()}")
+        if _kvp is not None:
+            _kv.ver_var.set(True); _kv._refresh_buttons()
+            ok("ps4.repair-version-alone-is-a-job", str(_kv.add_btn.cget("state")) == "normal", str(_kv.add_btn.cget("state")))
+            _kv.ver_var.set(False); _kv._refresh_buttons()
         _kv.ks_var.set("not a keystone"); root.update()
         ok("ps4.keystone-tool-rejects-input", str(_kv.add_btn.cget("state")) == "disabled"
            and "not a keystone file" in _kv.ks_note.get(), _kv.ks_note.get())
@@ -2720,8 +2769,15 @@ try:
            and _kj2.ps4_rebind == "" and app._job_recipe_parts(_kj2)[1:] == ["Keystone"], f"{len(app.queue)} {_kj2.ps4_rebind!r}")
         app._edit_job(_kj2); root.update()
         pump(lambda: _kv._base_ok and _kv._updates, timeout=20.0); root.update()
-        _kv._toggle(next(iter(_kv._iid_row))); _kv.add_to_queue(); root.update()
+        _kv._toggle(next(iter(_kv._iid_row)))
+        if _kvp is not None:
+            _kv.ver_var.set(True)
+        _kv.add_to_queue(); root.update()
         _kj = app.queue[-1]
+        _kc = app.build_command(_kj)[0]
+        ok("ps4.repair-job-command", ("--ps4-fix-version" in _kc) == (_kvp is not None) and "--ps4-keystone" in _kc
+           and (_kvp is None or app._job_recipe_parts(_kj)[1:] == ["Keystone · Version · 1 update"]),
+           f"{_kc[-6:]} {app._job_recipe_parts(_kj)}")
         # run it: the keystone goes in, the update points at the changed package
         _q0k, _act0k = list(app.queue), app._active_item
         app.cancel_requested = False
@@ -2730,9 +2786,12 @@ try:
             app.start()
             pump(lambda: _kj.status in ("Done", "Failed", "Skipped", "Cancelled") and not app._batch_running, timeout=180.0)
             _kst = _fpkg.ps4_keystone_info(_kb) or {}
+            _ksfo = _p4m.read_sfo(_kb)
             ok("ps4.keystone-run", _kj.status == "Done" and _kst.get("fingerprint") == _kfp and _kst.get("valid")
                and _p4m.general_digests(_ku)[10] == _p4m.general_digests(_kb)[1]
-               and _p4m.general_digests(_ku)[12] == _p4m.general_digests(_kb)[2], f"{_kj.status} {_kst}")
+               and _p4m.general_digests(_ku)[12] == _p4m.general_digests(_kb)[2]
+               and (_kvp is None or (_ksfo["APP_VER"], _ksfo["VERSION"]) == (_kvp["version"], _kvp["app_ver"])),
+               f"{_kj.status} {_kst} {_ksfo.get('APP_VER')} {_ksfo.get('VERSION')}")
         finally:
             app._batch_running = False
             app.queue[:] = _q0k; app._active_item = _act0k; app.update_queue_box()
@@ -2747,6 +2806,79 @@ try:
         shutil.rmtree(_kd.parent, ignore_errors=True)
         for _f in (_kb0, _ku0):
             _f.unlink(missing_ok=True)
+    # PS5 repair, on a copy of the test package (built without a keystone: it has the default one)
+    _p5 = next((S / "c1_pkg").glob("*.pkg"), None)
+    if _p5 is not None:
+        import filecmp, ps5_repair as _p5m
+        _p5c = S / "p5_copy"; shutil.rmtree(_p5c, ignore_errors=True); _p5c.mkdir()
+        _p5s = _p5c / _p5.name; shutil.copyfile(_p5, _p5s)
+        _d5 = m.JobDialog(app, init_src=str(_p5s)); root.update()
+        pump(lambda: _d5._ps5_rows is not None, timeout=30.0); root.update()
+        ok("ps5.repair-hint-in-editor", bool(_d5._ps5r_box.winfo_manager())
+           and "default keystone" in _d5.ps5_state_var.get(), _d5.ps5_state_var.get())
+        _d5._open_ps5_repair(); root.update()
+        _pv = app._ps5_view
+        pump(lambda: _pv._info is not None, timeout=30.0); root.update()
+        _r5 = {x["check"]: x for x in _pv._rows}
+        ok("ps5.repair-view-reads-package", app._view == "ps5repair" and _pv.base_var.get() == str(_p5s)
+           and _r5.get("image.keystone", {}).get("fix") == "keystone" and len(_pv.tree.get_children()) >= 1,
+           f"{_pv.base_note.get()} {sorted(_r5)[:6]}")
+        _pv.out_var.set(str(S / "p5_out")); root.update()
+        ok("ps5.repair-ready-without-keystone", str(_pv.add_btn.cget("state")) == "normal",
+           str(_pv.add_btn.cget("state")))
+        _pv.ks_var.set("not a keystone")
+        pump(lambda: "Reading" not in _pv.ks_note.get(), timeout=10.0); root.update()
+        ok("ps5.repair-rejects-input", str(_pv.add_btn.cget("state")) == "disabled"
+           and "not a keystone file" in _pv.ks_note.get(), _pv.ks_note.get())
+        _ks5 = S / "p5.keystone"
+        _ks5.write_bytes(b"keystone" + bytes([3, 0, 1, 0]) + bytes(20) + bytes(range(64, 96)) + bytes(32))
+        _pv.ks_var.set(str(_ks5))
+        pump(lambda: getattr(_pv, "_ks_ok", False), timeout=30.0); root.update()
+        _pv.playgo_var.set(True); _pv.standalone_var.set(True); _pv._refresh_buttons()
+        _q5 = len(app.queue)
+        _pv.add_to_queue(); settle()
+        _j5 = app.queue[-1] if len(app.queue) > _q5 else None
+        _c5 = app.build_command(_j5)[0] if _j5 is not None else []
+        ok("ps5.repair-job-queued", _j5 is not None and _j5.ps5_repair and "--rebuild" in _c5
+           and "--ps5-standalone" in _c5 and "--fpkg-regen-playgo" in _c5
+           and _c5[_c5.index("--fpkg-keystone") + 1].lower() == _ks5.read_bytes().hex()
+           and app._job_recipe_parts(_j5)[1:] == ["Repair", "Keystone", "PlayGo", "Standalone", ".pkg"]
+           and m.chain_summary(_j5) == "Replace the keystone, regenerate PlayGo, make it a standalone game, "
+                                        "then rebuild the package",
+           f"{_c5[-8:]} {app._job_recipe_parts(_j5) if _j5 else None} {m.chain_summary(_j5) if _j5 else None} "
+           f"ks_ok={getattr(_pv, '_ks_ok', None)} note={_pv.ks_note.get()!r} btn={_pv.add_btn.cget('state')} "
+           f"info={_pv._info is not None} queue={len(app.queue)}/{_q5}")
+        if _j5 is not None:
+            # Edit opens the tool on the job; unticking Standalone and saving replaces it in place
+            app._edit_job(_j5); root.update()
+            pump(lambda: _pv._info is not None and _pv._wanted is None and getattr(_pv, "_ks_ok", False), timeout=30.0)
+            root.update()
+            ok("ps5.repair-edit-shows-job", app._view == "ps5repair" and _pv.add_btn.cget("text") == "Save changes"
+               and _pv.playgo_var.get() and _pv.standalone_var.get() and _pv.ks_var.get() == _j5.fpkg_keystone,
+               f"{_pv.add_btn.cget('text')} {_pv.playgo_var.get()} {_pv.standalone_var.get()}")
+            _pv.standalone_var.set(False); _pv.add_to_queue(); root.update()
+            _j5b = app.queue[-1]
+            ok("ps5.repair-edit-replaces", len(app.queue) == _q5 + 1 and _j5b is not _j5 and not _j5b.ps5_standalone
+               and _j5b.fpkg_keystone == _j5.fpkg_keystone, f"{len(app.queue)} {_j5b.ps5_standalone}")
+            # run it: a repaired copy with the keystone, the source as it was
+            _q0p, _a0p = list(app.queue), app._active_item
+            app.cancel_requested = False
+            try:
+                app.queue[:] = [_j5b]; app._active_item = None
+                app.start()
+                pump(lambda: _j5b.status in ("Done", "Failed", "Skipped", "Cancelled") and not app._batch_running,
+                     timeout=240.0)
+                _o5 = sorted((S / "p5_out").rglob("*.pkg"))
+                _i5 = _p5m.examine(_o5[0]) if _o5 else {}
+                ok("ps5.repair-run", _j5b.status == "Done" and _i5.get("keystone_fp") == bytes(range(64, 96)).hex().upper()
+                   and filecmp.cmp(_p5s, _p5, shallow=False),
+                   f"{_j5b.status} {[str(x) for x in _o5]} {_i5.get('keystone_fp', '')[:16]}")
+            finally:
+                app._batch_running = False
+                app.queue[:] = _q0p; app._active_item = _a0p; app.update_queue_box()
+        _d5.destroy() if _d5.winfo_exists() else None
+        app._show_view("queue"); root.update()
+        shutil.rmtree(_p5c, ignore_errors=True); shutil.rmtree(S / "p5_out", ignore_errors=True)
     _d4 = m.JobDialog(app, init_src=str(_p4g)); root.update()
     _q_before = len(app.queue)
     _d4.out_var.set(str(OUT)); _d4._add(); settle()

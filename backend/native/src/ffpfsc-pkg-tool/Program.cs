@@ -51,6 +51,7 @@ internal static partial class Program
                 "ps4-extract" => CmdPs4Extract(args),
                 "ps4-keystone" => CmdPs4Keystone(args),
                 "ps4-rebind" => CmdPs4Rebind(args),
+                "ps4-sfo" => CmdPs4Sfo(args),
                 _ => Bad("unknown command: " + args[0]),
             };
         }
@@ -82,6 +83,7 @@ internal static partial class Program
         Console.WriteLine("  ps4-keystone <ps4.pkg> [<keystone>] [--undo FILE]  (no keystone: print the current one)");
         Console.WriteLine("      Writes a 96-byte keystone (e.g. exported from a save) into a PS4 fake package, in place.");
         Console.WriteLine("      --undo FILE keeps the overwritten bytes; 'ps4-keystone <ps4.pkg> --restore FILE' puts them back.");
+        Console.WriteLine("  ps4-sfo <ps4.pkg> --set KEY=VALUE [--set ...] [--undo FILE]  (change param.sfo values in place)");
         Console.WriteLine("  ps4-rebind <update.pkg> <base.pkg> [--undo FILE]  (point an update at a changed base again)");
         Console.WriteLine("      Copies the base's content and game digest into the update; restore with ps4-keystone --restore.");
         Console.WriteLine("  extract-outer <pkg> <out-dir> [--passcode P]     [--decompress|--no-decompress]");
@@ -111,6 +113,7 @@ internal static partial class Program
         Console.WriteLine("      --no-ampr-index              keep the source's ampr_emu.index as it is (default: when fakelib/");
         Console.WriteLine("                                   libSceAmpr.sprx is shipped, rebuild the index over the packed files)");
         Console.WriteLine("      --regen-playgo               discard source sce_sys/playgo-*.dat and let the builder regenerate them");
+        Console.WriteLine("      --keystone FILE              put FILE (96 bytes) into the package as sce_sys/keystone instead of the source's");
         Console.WriteLine("                                   (a CORRUPT prepared set — wrong format, e.g. JSON under hash-table.dat — is");
         Console.WriteLine("                                   always discarded automatically; this forces it for valid-looking sets too)");
         Console.WriteLine("      --hdr-flag auto|on|off       param.json attribute bit 29 (HDR support). auto = keep what the source");
@@ -1374,6 +1377,7 @@ internal static partial class Program
         bool playGoChunksExplicit = false; // did the user pass --playgo-chunks?
         bool retailNormalize = true;      // auto-upgrade a "standard" retail source to a shape the console launches
         bool regenPlayGo = false;         // force-discard a prepared PlayGo set even if it validates
+        string? keystoneFile = null;      // --keystone: the save-data key of the game the saves come from
         bool amprIndex = true;            // rebuild ampr_emu.index when the AMPR emulator is shipped
         string hdrFlag = "auto";          // param.json attribute bit 29 (HDR support): auto = as the source declares, on, off
 
@@ -1548,6 +1552,7 @@ internal static partial class Program
                     opts.EnableRelocationAlignmentAdjustment = on;
                     break;
                 }
+                case "--keystone": keystoneFile = Need(args, ref i, a); break;
                 case "--regen-playgo":
                     // Discard the source's sce_sys/playgo-*.dat even when they validate, so
                     // LibProsperoPkg generates a set that matches the inner tree it builds.
@@ -1569,6 +1574,12 @@ internal static partial class Program
                 case "--no-hdr-flag": hdrFlag = "off"; break;   // 1.1.12/1.1.13 spelling
                 default: return Bad("unknown build flag: " + a);
             }
+        }
+        if (keystoneFile != null)
+        {
+            var ks = File.Exists(keystoneFile) ? File.ReadAllBytes(keystoneFile) : null;
+            if (ks == null || ks.Length != 96 || System.Text.Encoding.ASCII.GetString(ks, 0, 8) != "keystone")
+                return Bad("--keystone needs a keystone file (96 bytes, starting with 'keystone'): " + keystoneFile);
         }
         if (string.IsNullOrWhiteSpace(opts.ContentId)) return Bad("--content-id required");
         if (string.IsNullOrWhiteSpace(opts.TitleId)) return Bad("--title-id required");
@@ -1748,7 +1759,9 @@ internal static partial class Program
             // regenerated keystone (different passcode) reports every existing save of
             // the title as corrupt (verified, build N). LibProsperoPkg keeps a present
             // keystone and only generates one when it is missing — say which happened.
-            if (File.Exists(Path.Combine(srcSceSys, "keystone")))
+            if (keystoneFile != null)
+                Console.Error.WriteLine($"  [keystone] replaced with {keystoneFile} (saves of the game it came from stay readable)");
+            else if (File.Exists(Path.Combine(srcSceSys, "keystone")))
                 Console.Error.WriteLine("  [keystone] source keystone preserved (save-data key; saves stay compatible with the original dump)");
             else
                 Console.Error.WriteLine($"  [keystone] source has no sce_sys/keystone — the builder generates one for passcode {opts.Passcode}; saves from other builds of this title will NOT be readable");
@@ -1774,6 +1787,12 @@ internal static partial class Program
                     Console.Error.WriteLine($"[stage] copying {stageBytes / 1073741824.0:F1} GB into {autoStage} (the source stays untouched)");
                     MirrorSource(effectiveSource, autoStage, stageBytes);
                     Console.Error.WriteLine($"  [stage] mirrored source into {autoStage} (copy)");
+                }
+
+                if (keystoneFile != null)
+                {
+                    Directory.CreateDirectory(Path.Combine(autoStage, "sce_sys"));
+                    File.Copy(keystoneFile, Path.Combine(autoStage, "sce_sys", "keystone"), true);
                 }
 
                 // (0) Drop corrupt/mislabeled sce_sys metadata from the mirror (unlinks the
