@@ -207,6 +207,15 @@ def _ps4pkg_module():
     return ps4pkg
 
 
+def _ks_job_module():
+    """backend/ps4_keystone_job.py: the keystone job and its undo journal (Tk-free)."""
+    _bd = str(backend_base_dir())
+    if _bd not in sys.path:
+        sys.path.insert(0, _bd)
+    import ps4_keystone_job
+    return ps4_keystone_job
+
+
 def _is_ps4_source(p) -> bool:
     """A PS4 package, or a folder (not a game folder) whose packages are all PS4 ones."""
     try:
@@ -1192,6 +1201,7 @@ class ErrorDialog(MessageWindow):
         "fpkg-extract": "fPKG extraction failed",
         "fpkg-build":   "fPKG build failed",
         "fake-sign":    "Fake-signing failed",
+        "ps4-keystone": "Keystone change failed",
         "chain":        "Job failed",
     }
 
@@ -2727,7 +2737,7 @@ class CLIWorker(threading.Thread):
         self.app.log("INFO", f"MkPFS: {MKPFS_NAME} v{MKPFS_VERSION}")
         _op_label = {"unpack": "Unpack", "patch": "Integrate patch",
                      "fake-sign": "Fake sign", "fpkg-extract": "Extract fPKG",
-                     "fpkg-build": "Build fPKG"}.get(self.operation, "Pack")
+                     "fpkg-build": "Build fPKG", "ps4-keystone": "PS4 keystone"}.get(self.operation, "Pack")
         self.app.log("INFO", f"Operation: {_op_label}")
         self.app.log("INFO", f"Game: {self.item.title_id} | {self.item.name}")
         self.app.log("INFO", f"Original: {format_size(self.item.size)} | Files: {self.item.files}")
@@ -2895,6 +2905,10 @@ class CLIWorker(threading.Thread):
             if self.operation == "fake-sign":
                 self._write_report(True)
                 self.app.finish(True, "Fake-signing completed successfully.", self.last_cmd_str)
+                return
+            if self.operation == "ps4-keystone":      # changes the packages in place, writes nothing new
+                self._write_report(True)
+                self.app.finish(True, "Keystone written and updates bound.", self.last_cmd_str)
                 return
 
             # A COPY job's output is a single file at a name the backend already picked
@@ -4059,6 +4073,10 @@ class JobDialog(EmbeddedDialog):
         "sign":   "Fake-signs eboot.bin and every prx/sprx so a jailbroken console loads them. Needed "
                   "when a dump's executables are still plain ELFs. Already-signed files are skipped, "
                   "so leaving it on costs nothing. A .pkg is always signed by its builder.",
+        "keystone": "Saves hold the keystone of the game that wrote them. A package built with another one "
+                    "(many builders use a default) shows saves of the retail game as corrupted. Replace keystone "
+                    "opens the PS4 keystone tool: it writes the keystone exported from such a save (Apollo Save "
+                    "Tool, Export Keystone) into the package and binds its updates to the changed package.",
         "lz4":    "Packs the game's data into LZ4 asset packs that ampr_emu (drakmor) reads while the game "
                   "runs, about half the size and quicker to load from USB. Only for games that load through "
                   "AMPR (their eboot.bin imports libSceAmpr); executables, modules, configs, pictures, video "
@@ -4167,6 +4185,8 @@ class JobDialog(EmbeddedDialog):
         self._auto_table = auto_actions(settings.get("auto_actions"))    # the output Automatic picks per source kind
         self.patch_on_var = tk.BooleanVar(value=bool(getattr(item, "patch_source", None)) if item else False)
         self.patch_var = tk.StringVar(value=str(getattr(item, "patch_source", "") or "") if item else "")
+        self.ks_state_var = TextVar(value="")
+        self._ks_default = None       # the picked PS4 game package carries the default keystone (True/False/None)
         self.backport_on_var = tk.BooleanVar(value=bool(getattr(item, "backport_target", None)) if item else False)
         _bt0 = (getattr(item, "backport_target", None) if item else None) or settings.get("backport_target_default") or "7.61"
         self.backport_target_var = tk.StringVar(value=_bt0 if is_backport_target(_bt0) else "7.61")
@@ -4374,6 +4394,20 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkLabel(lo.inner, textvariable=self.lz4_note_var, text_color=MUTED, font=ctk.CTkFont(size=12),
                      wraplength=560, justify="left", anchor="w").pack(fill="x", pady=(0, 4))
         self._bind_help(self._HELP["lz4"], l1)
+
+        # PS4 package: its keystone (the other changes are for PS5 games)
+        # what the package carries now, read in the background when a PS4 game package is picked;
+        # replacing it is the PS4 keystone tool's job (with the updates to bind)
+        kb = self._ks_box = ctk.CTkFrame(cin, fg_color=PANEL)
+        kl = ctk.CTkFrame(kb, fg_color=PANEL); kl.pack(fill="x")
+        ctk.CTkLabel(kl, text="Keystone", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
+        self._ks_note = ctk.CTkLabel(kl, textvariable=self.ks_state_var, text_color=MUTED, font=ctk.CTkFont(size=12),
+                                     wraplength=420, justify="left", anchor="w")
+        self._ks_note.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        ctk.CTkButton(kl, text="Replace keystone…", width=140, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._open_keystone).pack(side="right")
+        self._bind_help(self._HELP["keystone"], kl)
+        self._ps5_boxes = (po.box, bo.box, so.box, lo.box)
 
         # 3 · Output
         orow = self._orow = self._group("3", "Output")
@@ -4638,6 +4672,54 @@ class JobDialog(EmbeddedDialog):
         if p:
             self.patch_var.set(p)
 
+    def _probe_keystone(self, p: Path, raw: str):
+        """Read, off the main thread, whether the PS4 game package *p* carries the default
+        keystone; say so under the option (on the main thread, when the source is still *p*)."""
+        self._ks_default = None
+        self.ks_state_var.set("")
+        if not (p.is_file() and p.suffix.lower() == ".pkg"):
+            return
+        box: dict = {}
+
+        def work():
+            box["v"] = self.app._ps4_keystone_state(p)
+
+        def poll():
+            try:
+                if not self.winfo_exists() or (self.src_var.get() or "").strip() != raw:
+                    return
+            except Exception:
+                return
+            if "v" not in box:
+                self.after(80, poll); return
+            st = box["v"]
+            bad = None if st is None else bool(st["default"] or not st.get("valid", True))
+            self._ks_default = bad
+            if bad:
+                self.detect_var.set(self._ps4_detect_text(p) + " · " + tr("default keystone"))
+            self.ks_state_var.set("" if st is None else
+                                  tr("This package has the default keystone: saves of the retail game will show "
+                                     "as corrupted. Replace it with the keystone exported from one of your saves.")
+                                  if st["default"] else tr("The keystone is damaged.") if not st.get("valid", True)
+                                  else tr("Keystone {fp}…, not the default one.", fp=st["fingerprint"][:8]))
+            try:
+                self._ks_note.configure(text_color=YELLOW if bad else MUTED)
+            except Exception:
+                pass
+            self._refresh()
+        threading.Thread(target=work, daemon=True).start()
+        self.after(80, poll)
+
+    def _keystone_shown(self) -> bool:
+        """A single PS4 game package whose keystone was read: the Keystone line is shown."""
+        return self._kind == "ps4" and self._ks_default is not None
+
+    def _open_keystone(self):
+        """Hand the package to the PS4 keystone tool (closes this editor)."""
+        src = (self.src_var.get() or "").strip()
+        self.app._show_view("keystone")
+        self.app._keystone_view.preset(src)
+
     def _pick_lz4_profile(self):
         p = filedialog.askopenfilename(parent=self, title="Choose an LZ4 pack profile",
                                        filetypes=[("Pack profiles", "*.toml"), ("All files", "*.*")])
@@ -4813,11 +4895,11 @@ class JobDialog(EmbeddedDialog):
             kinds[i.kind] = kinds.get(i.kind, 0) + 1
         what = ", ".join(f"{n} {k if k != 'dlc' else 'DLC'}{'s' if n != 1 and k != 'dlc' else ''}"
                          for k, n in kinds.items())
-        bits = ["PS4 package" if p.is_file() else f"PS4 packages · {what}"]
+        bits = [tr("PS4 package") if p.is_file() else f"{tr('PS4 packages')} · {what}"]
         if first:
             bits += [first.title_id, f"v{first.version}" if first.version else ""]
             if p.is_file():
-                bits.insert(1, {"game": "game", "update": "update", "dlc": "DLC"}.get(first.kind, first.kind))
+                bits.insert(1, tr({"game": "game", "update": "update", "dlc": "DLC"}.get(first.kind, first.kind)))
         return " · ".join(b for b in bits if b)
 
     def _on_source_changed(self):
@@ -4835,11 +4917,14 @@ class JobDialog(EmbeddedDialog):
             self._update_identity_for_source(None)
             self._refresh(); return
         self._ps4_info = None
+        self._ks_default = None
+        self.ks_state_var.set("")
         if _is_ps4_source(p):
             self._kind = "ps4"; self._games = [p]
             self.detect_var.set(self._ps4_detect_text(p))
             if p.is_file():
                 self._look_btn.pack(side="left", padx=(10, 0))
+                self._probe_keystone(p, raw)
             self._update_identity_for_source(None)
             self._refresh(); return
         if p.is_dir():
@@ -4917,7 +5002,7 @@ class JobDialog(EmbeddedDialog):
             return "pkg"
         if op == "unpack":
             return "folder" if getattr(item, "unwrap", True) else "ffpfs"
-        if op in ("fpkg-extract", "fake-sign"):
+        if op in ("fpkg-extract", "fake-sign", "ps4-keystone"):
             return "folder"
         if op == "patch":
             return "ffpfsc"                  # a patch job always writes "<game> [patched].ffpfsc"
@@ -5140,10 +5225,25 @@ class JobDialog(EmbeddedDialog):
         crow, orow = getattr(self, "_crow", None), getattr(self, "_orow", None)
         org = not ps4 and self._to_key() == ORGANIZE_TARGET     # the source goes over as it is
         if crow is not None and orow is not None:          # both exist once the dialog is built
-            if ps4 or org:
+            if (ps4 and not self._keystone_shown()) or org:
                 crow.pack_forget()
             elif not crow.winfo_manager():
                 crow.pack(fill="x", padx=20, pady=5, before=orow)
+        ks_box = getattr(self, "_ks_box", None)
+        if ks_box is not None:
+            # a PS4 package offers only its keystone; a PS5 source never does
+            if ps4:
+                for b in self._ps5_boxes:
+                    b.pack_forget()
+                if not ks_box.winfo_manager():
+                    ks_box.pack(fill="x", pady=(2, 2))
+            else:
+                ks_box.pack_forget()
+                if not all(b.winfo_manager() for b in self._ps5_boxes):
+                    for b in self._ps5_boxes:
+                        b.pack_forget()
+                    for b in self._ps5_boxes:
+                        b.pack(fill="x", pady=(2, 2))
         if not ps4 and seg is not None and len(seg.cget("values")) != len(self._TARGETS):
             seg.configure(values=[self._TARGET_LABEL[k] for k in self._TARGETS])
             seg.set(self.to_var.get())
@@ -6047,6 +6147,360 @@ class OrganizeView:
             self.status_var.set(last)
 
 
+class KeystoneView:
+    """PS4 keystone as a view of the main window, laid out like Organize: a PS4 game package,
+    the keystone from a save of the retail game, and the updates to bind to the changed
+    package; Add to queue makes one job (--ps4-keystone-set). Undo last change runs at once
+    (--ps4-keystone-undo last), like Organize's Undo."""
+    CHECK, UNCHECK = "☑", "☐"
+    HOWTO = ("How to get the keystone: on a jailbroken console, open Apollo Save Tool and pick a save of this game "
+             "that the retail game wrote. Choose Export Keystone and fetch the file by FTP from "
+             "/data/apollo/<user id>/<title id>/keystone, or choose Show Keystone Fingerprint and type the "
+             "64 hex digits it shows.")
+
+    def __init__(self, parent, app):
+        self.app = app
+        kit = app.kit
+        self._q = queue.Queue()
+        self._busy = False
+        self._base_ok = False
+        self._base_ident = None
+        self._updates: list[dict] = []       # {"path", "name", "version", "note", "on"}
+        self._iid_row: dict[str, int] = {}
+        self._probe_seq = 0
+        self.undo_root = Path(APP_DIR) / "keystone-undo"
+        v = self.frame = kit.frame(parent)
+        v.grid_columnconfigure(0, weight=1)
+        v.grid_rowconfigure(9, weight=1)
+        head, btns = app._column_header(v, "PS4 keystone", subtitle="Puts the retail game's keystone into a PS4 "
+                                        "package, so its saves load.")
+        head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
+        self.undo_btn = app._small(btns, "Undo last change", "history", self.undo,
+                                   tooltip="Put back what the last keystone job changed")
+        self.undo_btn.pack(side="left", padx=(0, 2))
+        kit.rule(v).grid(row=1, column=0, sticky="ew")
+
+        def field_row(r, label, var, pick_text, pick_cmd, placeholder=""):
+            row = ctk.CTkFrame(v, fg_color="transparent")
+            row.grid(row=r, column=0, sticky="ew", padx=18, pady=(10, 2))
+            ctk.CTkLabel(row, text=label, text_color=MUTED, width=110, anchor="w").pack(side="left")
+            ctk.CTkEntry(row, textvariable=var, fg_color=CARD2, text_color=WHITE,
+                         placeholder_text=placeholder).pack(side="left", fill="x", expand=True)
+            ctk.CTkButton(row, text=pick_text, width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                          border_width=1, border_color=BTN_BORDER, command=pick_cmd).pack(side="left", padx=(6, 0))
+
+        def note(r, var, pady=(0, 2)):
+            ctk.CTkLabel(v, textvariable=var, text_color=MUTED, anchor="w", justify="left", wraplength=760).grid(
+                row=r, column=0, sticky="ew", padx=(128, 18), pady=pady)
+
+        self.base_var = tk.StringVar(value="")
+        self.base_note = TextVar(value="Choose the game package (.pkg) whose keystone you want to replace.")
+        field_row(2, "Game package:", self.base_var, "Choose…", self._pick_base)
+        note(3, self.base_note)
+        self.ks_var = tk.StringVar(value="")
+        self.ks_note = TextVar(value=self.HOWTO)
+        field_row(4, "Keystone:", self.ks_var, "File…", self._pick_keystone, placeholder=tr("a file or its hex digits"))
+        note(5, self.ks_note)
+        upd_head = ctk.CTkFrame(v, fg_color="transparent")
+        upd_head.grid(row=7, column=0, sticky="ew", padx=18, pady=(12, 4))
+        ctk.CTkLabel(upd_head, text="Updates", text_color=WHITE, anchor="w").pack(side="left")
+        self.upd_note = TextVar(value="Updates of this game record the package they belong to; checked ones are "
+                                      "bound to the changed package.")
+        ctk.CTkLabel(upd_head, textvariable=self.upd_note, text_color=MUTED, anchor="w").pack(side="left", padx=(10, 0))
+        ctk.CTkButton(upd_head, text="Remove", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._remove_update).pack(side="right")
+        ctk.CTkButton(upd_head, text="Add…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._add_update).pack(side="right", padx=(0, 6))
+        style = ttk.Style(v)
+        _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
+        style.configure("Ks.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
+                        foreground=_pal["text"], rowheight=round(24 * ui_kit.SCALE), borderwidth=0)
+        style.configure("Ks.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
+        style.map("Ks.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
+        tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
+        tframe.grid(row=9, column=0, sticky="nsew", padx=18, pady=(0, 6))
+        self.tree = ttk.Treeview(tframe, columns=("pkg", "ver", "note"), style="Ks.Treeview", selectmode="browse")
+        for col, text, w in (("#0", "", 34), ("pkg", "Package", 380), ("ver", "Version", 80), ("note", "", 300)):
+            self.tree.heading(col, text=text, anchor="w")
+            self.tree.column(col, width=round(w * ui_kit.SCALE), minwidth=round((30 if col == "#0" else 60) * ui_kit.SCALE),
+                             stretch=col not in ("#0", "ver"), anchor="w")
+        vsb = ThinScrollbar(tframe, self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
+        vsb.pack(side="right", fill="y", pady=6)
+        self.tree.bind("<Button-1>", self._click)
+        self.tree.bind("<space>", lambda _e: self._toggle(self.tree.focus()))
+        bottom = ctk.CTkFrame(v, fg_color="transparent")
+        bottom.grid(row=10, column=0, sticky="ew", padx=18, pady=(0, 14))
+        ctk.CTkLabel(bottom, text="Changes the packages themselves. What it replaces is kept in the app folder; "
+                                  "Undo last change puts it back.", text_color=MUTED, anchor="w").pack(side="left")
+        self.add_btn = ctk.CTkButton(bottom, text="Add to queue", width=130, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                     text_color=ON_ACCENT, command=self.add_to_queue, state="disabled")
+        self.add_btn.pack(side="right")
+        self.base_var.trace_add("write", lambda *_: self._base_changed())
+        self.ks_var.trace_add("write", lambda *_: self._ks_changed())
+        self._refresh_buttons()
+
+    # ── state ──
+    def on_show(self):
+        self._refresh_buttons()
+
+    def preset(self, base: str | None = None):
+        """Open on *base* (from the job editor's hint)."""
+        self._edit_item = None
+        self.add_btn.configure(text="Add to queue")
+        if base:
+            self.base_var.set(str(base))
+
+    def edit(self, item):
+        """Show a queued keystone job; Save changes replaces it in the queue."""
+        self._edit_item = item
+        self.add_btn.configure(text="Save changes")
+        self.ks_var.set(str(getattr(item, "ps4_keystone", "") or ""))
+        self._wanted = [u for u in (getattr(item, "ps4_rebind", "") or "").splitlines() if u.strip()]
+        self.base_var.set(str(item.path))
+
+    def _keystone(self):
+        return _ps4pkg_module().keystone_from_text(self.ks_var.get())
+
+    def _refresh_buttons(self):
+        ks, _why = self._keystone() if (self.ks_var.get() or "").strip() else (None, None)
+        busy = self._busy or bool(getattr(self.app, "_batch_running", False))
+        self.add_btn.configure(state="normal" if self._base_ok and ks is not None else "disabled",
+                               fg_color=ACCENT if self._base_ok and ks is not None else BTN)
+        self.undo_btn.configure(state="normal" if not busy and _ks_job_module().last_journal(self.undo_root)
+                                else "disabled")
+
+    def _ks_changed(self):
+        raw = (self.ks_var.get() or "").strip()
+        if not raw:
+            self.ks_note.set(self.HOWTO)
+        else:
+            ks, why = self._keystone()
+            self.ks_note.set(tr("Keystone {fp}…, valid.", fp=ks[0x20:0x28].hex().upper()) if ks is not None
+                             else tr(why) + ".")
+        self._refresh_buttons()
+
+    def _pick_base(self):
+        p = filedialog.askopenfilename(parent=self.app.root, title="Choose the PS4 game package",
+                                       filetypes=[("PS4 packages", "*.pkg"), ("All files", "*.*")])
+        if p:
+            self.base_var.set(p)
+
+    def _pick_keystone(self):
+        p = filedialog.askopenfilename(parent=self.app.root, title="Choose the keystone",
+                                       filetypes=[("All files", "*.*")])
+        if p:
+            self.ks_var.set(p)
+
+    def _base_changed(self):
+        """Read the package, its keystone and the updates beside it, off the main thread."""
+        self._probe_seq += 1
+        seq = self._probe_seq
+        self._base_ok = False
+        self._updates = []
+        self._render()
+        raw = (self.base_var.get() or "").strip()
+        if not raw:
+            self.base_note.set("Choose the game package (.pkg) whose keystone you want to replace.")
+            return
+        p = Path(raw)
+        if not (p.is_file() and p.suffix.lower() == ".pkg"):
+            self.base_note.set("Not a .pkg file.")
+            return
+        self.base_note.set("Reading the package…")
+        box: dict = {}
+
+        def work():
+            box.update(self.probe(p))
+
+        def poll():
+            if seq != self._probe_seq:
+                return
+            if "done" not in box:
+                self.frame.after(80, poll)
+                return
+            self._base_ok = box["ok"]
+            self._base_ident = box.get("ident")
+            self.base_note.set(box["note"])
+            self._updates = box.get("updates", [])
+            wanted = getattr(self, "_wanted", None)
+            if wanted is not None:               # editing a job: its own choice of updates
+                for u in self._updates:
+                    u["on"] = u["path"] in wanted
+                for w in wanted:
+                    if not any(u["path"] == w for u in self._updates) and Path(w).is_file():
+                        self._updates.append({"path": w, "name": Path(w).name, "version": "", "on": True,
+                                              "note": tr("added by hand")})
+                self._wanted = None
+            self._render()
+        threading.Thread(target=work, daemon=True).start()
+        self.frame.after(80, poll)
+
+    @staticmethod
+    def probe(p: Path) -> dict:
+        """What the view shows for the game package *p* (Tk-free): its identity, its keystone and
+        the updates of the same game in its folder and the folders below."""
+        m = _ps4pkg_module()
+        out = {"done": True, "ok": False}
+        try:
+            ident = m.read_identity(p)
+        except Exception as e:
+            out["note"] = tr("Not a readable PS4 package: {e}", e=e)
+            return out
+        if ident.kind != "game":
+            out["note"] = tr("This is an {kind}, not the game: the keystone goes into the game package.", kind=ident.kind)
+            return out
+        out["ident"] = ident
+        info = App._ps4_keystone_state(p)
+        name = f"{ident.title or p.stem} [{ident.title_id}] [v{ident.version}]"
+        if info is None:
+            out["note"] = tr("{name}: its keystone cannot be read (not a fake package?).", name=name)
+            return out
+        if info["default"]:
+            state = tr("has the default keystone, so saves of the retail game show as corrupted")
+        elif not info.get("valid", True):
+            state = tr("has a damaged keystone")
+        else:
+            state = tr("has keystone {fp}…", fp=info["fingerprint"][:8])
+        out["note"] = f"{name} {state}."
+        out["ok"] = True
+        own = m.general_digests(p).get(1)
+        ups = []
+        try:
+            near = [x for x in p.parent.rglob("*.pkg") if x != p and x.is_file() and not is_fs_junk_name(x.name)
+                    and len(x.relative_to(p.parent).parts) <= 3]
+        except OSError:
+            near = []
+        for x in sorted(near):
+            try:
+                ui = m.read_identity(x)
+                if ui.content_id != ident.content_id or ui.kind != "update":
+                    continue
+                slots = m.general_digests(x)
+            except Exception:
+                continue
+            if m.BASE_CONTENT_SLOT not in slots:
+                continue
+            ups.append({"path": str(x), "name": x.name, "version": ui.version, "on": True,
+                        "note": tr("belongs to this package") if slots[m.BASE_CONTENT_SLOT] == own
+                        else tr("made for another build of this game")})
+        out["updates"] = ups
+        return out
+
+    def _render(self):
+        self.tree.delete(*self.tree.get_children())
+        self._iid_row.clear()
+        for i, u in enumerate(self._updates):
+            iid = self.tree.insert("", "end", text=self.CHECK if u["on"] else self.UNCHECK,
+                                   values=(u["name"], u["version"], u["note"]))
+            self._iid_row[iid] = i
+        self.upd_note.set(plural(sum(1 for u in self._updates if u["on"]), "1 update will be bound to the changed package.",
+                                 "{n} updates will be bound to the changed package.") if self._updates
+                          else tr("No update of this game found next to it; add one with Add… if you have it elsewhere."))
+        self._refresh_buttons()
+
+    def _toggle(self, iid):
+        i = self._iid_row.get(iid)
+        if i is None:
+            return
+        self._updates[i]["on"] = not self._updates[i]["on"]
+        self._render()
+
+    def _click(self, e):
+        if self.tree.identify_column(e.x) == "#0" and self.tree.identify_region(e.x, e.y) in ("tree", "cell"):
+            self._toggle(self.tree.identify_row(e.y))
+            return "break"
+
+    def _add_update(self):
+        paths = filedialog.askopenfilenames(parent=self.app.root, title="Choose update packages",
+                                            filetypes=[("PS4 packages", "*.pkg"), ("All files", "*.*")])
+        m = _ps4pkg_module()
+        for p in paths or ():
+            if any(u["path"] == p for u in self._updates):
+                continue
+            why = _ks_job_module().check(self.base_var.get().strip(), [p]) if self._base_ok else []
+            if why:
+                messagebox.showerror("PS4 keystone", "\n".join(why), parent=self.app.root)
+                continue
+            try:
+                ver = m.read_identity(p).version
+            except Exception:
+                ver = ""
+            self._updates.append({"path": p, "name": Path(p).name, "version": ver, "on": True,
+                                  "note": tr("added by hand")})
+        self._render()
+
+    def _remove_update(self):
+        i = self._iid_row.get(self.tree.focus())
+        if i is not None:
+            del self._updates[i]
+            self._render()
+
+    # ── queue and undo ──
+    def add_to_queue(self):
+        base = (self.base_var.get() or "").strip()
+        ks, why = self._keystone()
+        if not self._base_ok or ks is None:
+            return
+        ups = [u["path"] for u in self._updates if u["on"]]
+        it = GameItem.from_ps4_keystone(Path(base), ks.hex().upper(), ups)
+        ident = self._base_ident
+        if ident is not None:
+            it.title_id = ident.title_id
+            it.display_name = ident.title or Path(base).stem
+        old = getattr(self, "_edit_item", None)
+        if old is not None and old in self.app.queue:
+            self.app.queue[self.app.queue.index(old)] = it
+        else:
+            self.app.queue.append(it)
+        self._edit_item = None
+        self.add_btn.configure(text="Add to queue")
+        self.app.update_queue_box(select_item=it)
+        self.app.log("OK", tr("Queued: keystone for {name}{ups}.  Press ▶ START to run.", name=it.display_name or it.name,
+                              ups=plural(len(ups), ", 1 update bound", ", {n} updates bound") if ups else ""))
+        self.app._show_view("queue")
+
+    def undo(self):
+        if self._busy or not _ks_job_module().last_journal(self.undo_root):
+            return
+        if not messagebox.askyesno("Undo last change", "Put back the keystone and the updates the last keystone job "
+                                                       "changed?", parent=self.app.root):
+            return
+        self._busy = True
+        self._refresh_buttons()
+        cmd = self.app._backend_cmd("--ps4-keystone-undo", "last")
+
+        def work():
+            lines = []
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                        encoding="utf-8", errors="replace", bufsize=1)
+                lines = [ln.rstrip("\n") for ln in proc.stdout]
+                rc = proc.wait()
+            except Exception as ex:
+                lines.append(f"[ERROR] {ex}")
+                rc = 1
+            self._q.put((rc, lines))
+        threading.Thread(target=work, daemon=True).start()
+        self.frame.after(100, self._poll_undo)
+
+    def _poll_undo(self):
+        try:
+            rc, lines = self._q.get_nowait()
+        except queue.Empty:
+            self.frame.after(100, self._poll_undo)
+            return
+        self._busy = False
+        for ln in lines:
+            if ln.startswith(("[PS4]", "[ERROR]")):
+                self.app.log("ERROR" if ln.startswith("[ERROR]") else "INFO", "PS4 keystone: " + ln.split("] ", 1)[-1])
+        self.app.log("OK" if rc == 0 else "WARN", "PS4 keystone: " + ("undone" if rc == 0 else "undo failed, see the log"))
+        self._refresh_buttons()
+        if (self.base_var.get() or "").strip():
+            self._base_changed()
+
+
 class LookInsideView:
     """Look inside as a view of the main window, laid out like Organize: open a .ffpfs, .ffpfsc or .pkg (fPKG), see what is inside, and extract single files or folders without unpacking the whole image."""
 
@@ -6796,6 +7250,8 @@ class App:
                                 "Browse a .ffpfsc, .ffpfs or .pkg and pull single files out")
         self._nav["organize"] = nav(side, "Organize", "folders", lambda: self._show_view("organize"),
                                     "Name and sort everything in a folder in place")
+        self._nav["keystone"] = nav(side, "PS4 keystone", "key", lambda: self._show_view("keystone"),
+                                    "Put the retail game's keystone into a PS4 package so its saves load")
         nav(side, "Clean temp", "broom", self.clear_temp_files, "Delete leftovers in the temp folder")
         bottom = kit.frame(side, bg="sidebar")
         bottom.pack(side="bottom", fill="x", pady=(0, 10))
@@ -6816,8 +7272,13 @@ class App:
         if name == "organize" and "organize" not in self._views:
             self._organize_view = OrganizeView(self._views_parent, self)
             self._views["organize"] = self._organize_view.frame
+        if name == "keystone" and "keystone" not in self._views:
+            self._keystone_view = KeystoneView(self._views_parent, self)
+            self._views["keystone"] = self._keystone_view.frame
         if name == "organize":
             self._organize_view.on_show()
+        if name == "keystone":
+            self._keystone_view.on_show()
         for n, f in self._views.items():
             if n == name:
                 f.grid(row=0, column=0, sticky="nsew")
@@ -7528,11 +7989,19 @@ class App:
     def _job_recipe_parts(self, item) -> list[str]:
         op = getattr(item, "operation", "pack")
         src = source_label(item)
+        if op == "ps4-keystone":
+            n = len([u for u in (getattr(item, "ps4_rebind", "") or "").splitlines() if u.strip()])
+            return [src, tr("Keystone") + (plural(n, " · 1 update", " · {n} updates") if n else "")]
         if op == "copy" and getattr(item, "content_kind", "") == ORGANIZE_TARGET:
             return [src, "Organize"]
         if op == "copy" and getattr(item, "content_kind", "") == "ps4":
             n = int(getattr(item, "ps4_count", 0) or 0)
-            return [src, tr("PS4 library") + (plural(n, " · 1 package", " · {n} packages") if n else "")]
+            lib = tr("PS4 library") + (plural(n, " · 1 package", " · {n} packages") if n else "")
+            if getattr(item, "ps4_keystone", None):
+                return [src, "Keystone", lib]
+            if getattr(item, "ps4_default_keystone", None):
+                return [src, "Default keystone", lib]
+            return [src, lib]
         if op == "chain":
             ch = []
             for c in chain_changes(item):
@@ -9934,6 +10403,10 @@ class App:
             # the extracted copy may be gone: the editor then shows the archive it came from
             self._rearm_from_archive(item)
 
+        if getattr(item, "operation", "") == "ps4-keystone":
+            self._show_view("keystone")
+            self._keystone_view.edit(item)
+            return
         # One editor for every kind of job: it shows the job as source → changes → output,
         # and saving replaces the job at its place in the queue.
         try:
@@ -10335,6 +10808,27 @@ class App:
             self._take_game_name(item, {"title": ident.title, "title_id": ident.title_id})
         return item
 
+    @staticmethod
+    def _ps4_keystone_state(path) -> dict | None:
+        """{'fingerprint', 'default', 'valid'} of the PS4 game package *path*'s keystone; None
+        for anything without a keystone or that cannot be read. Tk-free, about 0.1 s."""
+        try:
+            _bd = str(backend_base_dir())
+            if _bd not in sys.path:
+                sys.path.insert(0, _bd)
+            import fpkg as _fpkg
+            return _fpkg.ps4_keystone_info(Path(path))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _ps4_default_keystone(path) -> bool | None:
+        """True when the PS4 game package *path* carries the default keystone (the one a builder
+        makes from the all-zero passcode) or a damaged one: saves of the retail game then show
+        as corrupted. None for anything without a keystone or that cannot be read."""
+        got = App._ps4_keystone_state(path)
+        return None if got is None else bool(got["default"] or not got.get("valid", True))
+
     def _ps4_item_for(self, src, *, output_path=None, info=None):
         """A copy job that sorts PS4 packages into the library: one .pkg, or a folder of
         them (an archive's extraction, a download folder), or an archive of them. The
@@ -10363,6 +10857,8 @@ class App:
             item.title_id = main.title_id
             item.display_name = main.title or src.stem
         item.ps4_count = len(pkgs)
+        if src.is_file() and main is not None and main.kind == "game":
+            item.ps4_default_keystone = self._ps4_default_keystone(src)
         return item
 
     # ── Auto-organize: where a job lands and what it is called ───────────────
@@ -11525,6 +12021,7 @@ class App:
             opn = getattr(item, "operation", "pack")
             badge = {"unpack": "CONVERT", "patch": "PATCH ",
                      "fake-sign": "SIGN   ",
+                     "ps4-keystone": "KEY    ",
                      "fpkg-extract": "fPKG-EX",
                      "fpkg-build":   "fPKG-BD",
                      "copy":         "COPY   ",
@@ -11537,7 +12034,7 @@ class App:
                 _sz = (f"~{format_size(display_size(item))}" if shows_extracted_size(item)
                        else format_size(getattr(item, "size", 0) or 0))
                 detail = f"{_ch}  ·  {_sz}"
-            elif opn == "fake-sign":
+            elif opn in ("fake-sign", "ps4-keystone"):
                 detail = "in place"
             elif opn == "patch":
                 detail = "overwrite" if getattr(item, "patch_overwrite", False) else "→ [patched]"
@@ -11611,7 +12108,7 @@ class App:
         self._sync_progress_box()
         self.game_name_var.set(f"Name: {getattr(item, 'display_name', None) or item.name}")
         mode = {"unpack": "Convert", "patch": "Integrate patch",
-                "fake-sign": "Fake sign",
+                "fake-sign": "Fake sign", "ps4-keystone": "PS4 keystone",
                 "fpkg-extract": "Extract fPKG",
                 "fpkg-build":   "Build fPKG"}.get(getattr(item, "operation", "pack"), "Pack")
         if getattr(item, "operation", "pack") == "chain":
@@ -11774,7 +12271,7 @@ class App:
         aj = _after_job_module()
         act = getattr(item, "after_source", None) or aj.KEEP
         if (act in aj.ACTIONS and act != aj.KEEP
-                and (getattr(item, "operation", "") not in ("fake-sign", "copy")
+                and (getattr(item, "operation", "") not in ("fake-sign", "copy", "ps4-keystone")
                      or getattr(item, "content_kind", "") in ("ps4", ORGANIZE_TARGET))):
             text = aj.DONE_TEXT[act].format(dest=getattr(item, "after_move_to", None) or "a folder")
             info["After"] = text[0].upper() + text[1:] + ", once the job is Done"
@@ -12154,6 +12651,15 @@ class App:
                 cmd.append("--overwrite")
             return cmd, backend, run_dir, temp
 
+        # ── PS4 KEYSTONE job: the game package and its updates, changed in place ──
+        if op == "ps4-keystone":
+            head = pycmd if getattr(sys, "frozen", False) else pycmd + ["-u", str(cli_py)]
+            cmd = head + ["--ps4-keystone-set", str(item.path), "--ps4-keystone", str(item.ps4_keystone)]
+            for u in (getattr(item, "ps4_rebind", "") or "").splitlines():
+                if u.strip():
+                    cmd += ["--ps4-rebind", u.strip()]
+            return cmd, backend, Path(item.path).parent, temp
+
         # ── FAKE-SIGN job ────────────────────────────────────────────────────
         if op == "fake-sign":
             head = pycmd if getattr(sys, "frozen", False) else pycmd + ["-u", str(cli_py)]
@@ -12193,6 +12699,8 @@ class App:
             cmd = head + ["--ps4-sort", str(item.path),
                           "--copy-mode", self._ps4_copy_mode(item),
                           "--if-exists", self.output_exists_var.get() or "skip"]
+            if getattr(item, "ps4_keystone", None):
+                cmd += ["--ps4-keystone", str(item.ps4_keystone)]
             return cmd, backend, out, temp
         if op == "copy":
             src = Path(item.path)
@@ -13249,7 +13757,7 @@ class App:
         op = getattr(item, "operation", "pack")
         # Unpack and fPKG extract write to the output drive only; fake-sign rewrites in
         # place (no temp, no new output). None of them needs the pack space gate.
-        if op in ("unpack", "fake-sign", "fpkg-extract"):
+        if op in ("unpack", "fake-sign", "fpkg-extract", "ps4-keystone"):
             return "proceed"
         # A chain that only changes a folder in place, or unpacks to a folder, writes no
         # inner image - same as the three above.
@@ -13754,6 +14262,11 @@ class App:
                 st["made"].append(it)
                 st["done"] += 1
                 added = True
+                if getattr(it, "ps4_default_keystone", None) and not getattr(it, "ps4_keystone", None):
+                    self.log("WARN", tr("{name}: the package has the default keystone, so saves of the retail "
+                                        "game will show as corrupted. Tools › PS4 keystone replaces it with the "
+                                        "keystone exported from one of your saves.",
+                                        name=it.display_name or it.name))
                 try:
                     if getattr(it, "archive_path", None):
                         self._resolve_archive_password(it)
@@ -13795,7 +14308,7 @@ class App:
         started (the caller waits for it and checks the space again)."""
         kept = [it for it in self.queue
                 if it is not item and getattr(it, "status", "") == "Failed" and getattr(it, "kept_extract", False)]
-        if not kept or getattr(item, "operation", "pack") in ("unpack", "fake-sign", "fpkg-extract"):
+        if not kept or getattr(item, "operation", "pack") in ("unpack", "fake-sign", "fpkg-extract", "ps4-keystone"):
             return False
         try:
             self._probe_pkg_content(item)
@@ -14193,7 +14706,7 @@ class App:
         if act not in aj.ACTIONS or act == aj.KEEP:
             return aj.KEEP, [], None, None
         ps4 = getattr(item, "content_kind", "") in ("ps4", ORGANIZE_TARGET)   # library jobs (see _ps4_copy_mode)
-        if getattr(item, "operation", "") in ("fake-sign", "copy") and not ps4:
+        if getattr(item, "operation", "") in ("fake-sign", "copy", "ps4-keystone") and not ps4:
             return aj.KEEP, [], None, None          # these work on the source themselves
         if ps4 and act == aj.DELETE and not getattr(item, "origin_archive", None):
             return aj.KEEP, [], None, None          # the packages were moved (see _ps4_copy_mode)
@@ -15631,7 +16144,7 @@ class App:
                 completed_operation = getattr(completed_item, "operation", "pack") if completed_item else "pack"
                 # History applies only to jobs that PRODUCE a .ffpfsc (pack, patch).
                 # Unpack and fake-sign create no packed game → skip them.
-                if completed_operation not in ("unpack", "fake-sign", "fpkg-extract", "copy"):
+                if completed_operation not in ("unpack", "fake-sign", "fpkg-extract", "copy", "ps4-keystone"):
                     # Record history HERE (main thread) - add_history mutates Tk widgets.
                     try:
                         _w = self.worker

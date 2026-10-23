@@ -2900,6 +2900,18 @@ def main() -> None:
                              "OUTPUT as '<Title> [CUSA…] [vX]/…' (UPDATE, DLC, 'DLC Pack' from four "
                              "DLCs on; a title folder already in OUTPUT is joined). --copy-mode says "
                              "what happens to each source package.")
+    parser.add_argument("--ps4-keystone-set", type=str, default=None, metavar="BASE",
+                        help="PS4 KEYSTONE MODE: write --ps4-keystone into the game package BASE in place and "
+                             "bind every --ps4-rebind update to the changed package. Undo data goes to the app folder.")
+    parser.add_argument("--ps4-rebind", type=str, action="append", default=[], metavar="UPDATE",
+                        help="With --ps4-keystone-set: an update package of the game to bind to the changed package "
+                             "(repeat for each).")
+    parser.add_argument("--ps4-keystone-undo", type=str, default=None, metavar="JOURNAL",
+                        help="Put back what a --ps4-keystone-set run changed ('last' for the most recent run).")
+    parser.add_argument("--ps4-keystone", type=str, default=None, metavar="FILE",
+                        help="With --ps4-sort: write this keystone (96 bytes, e.g. exported from a save) "
+                             "into the game package once it is in the library, so saves of the retail "
+                             "game load. The bytes it replaces are kept in the app folder.")
     parser.add_argument("--if-exists", choices=("skip", "ask", "overwrite", "keep"), default="skip",
                         help="For --ps4-sort and --organize-into: what happens when an item is already in "
                              "the library (ask behaves like skip inside a job).")
@@ -3255,10 +3267,29 @@ def main() -> None:
             or args.organize_into is not None):
         sys.exit(_organize_main(args))
 
+    if args.ps4_keystone_set or args.ps4_keystone_undo:
+        import ps4_keystone_job as _ksjob
+        import ultra_core
+        _undo_root = Path(ultra_core.APP_DIR) / "keystone-undo"
+        if args.ps4_keystone_undo:
+            _j = _ksjob.last_journal(_undo_root) if args.ps4_keystone_undo == "last" else Path(args.ps4_keystone_undo)
+            if _j is None:
+                print("[ERROR] no keystone change to undo", flush=True)
+                sys.exit(1)
+            sys.exit(_ksjob.undo(_j))
+        if not args.ps4_keystone:
+            print("[ERROR] --ps4-keystone-set needs --ps4-keystone (a file or the hex digits)", flush=True)
+            sys.exit(2)
+        sys.exit(_ksjob.run(Path(args.ps4_keystone_set), args.ps4_keystone, [Path(u) for u in args.ps4_rebind],
+                            _undo_root))
+
     if args.ps4_sort:
         import ps4_sort as _ps4_sort
+        import ultra_core
         sys.exit(_ps4_sort.sort_packages(Path(args.ps4_sort).resolve(), Path(args.output).resolve(),
-                                         mode=args.copy_mode, if_exists=args.if_exists))
+                                         mode=args.copy_mode, if_exists=args.if_exists,
+                                         keystone=Path(args.ps4_keystone).resolve() if args.ps4_keystone else None,
+                                         undo_dir=Path(ultra_core.APP_DIR) / "keystone-undo"))
 
     if args.copy:
         try:

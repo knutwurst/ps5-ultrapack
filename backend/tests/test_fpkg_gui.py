@@ -2642,9 +2642,112 @@ try:
     # the editor: a PS4 source hides the PS5 changes, offers library or folder, queues a sorted copy
     _d4 = m.JobDialog(app, init_src=str(_p4g)); root.update()
     _d4.to_var.set(_d4._TARGET_LABEL["ffpfsc"]); _d4._refresh(); root.update()
-    _hidden = not _d4._crow.winfo_manager()
+    _hidden = not any(b.winfo_manager() for b in _d4._ps5_boxes)
+    pump(lambda: True, timeout=0.5)
     ok("ps4.dialog-view", _d4._kind == "ps4" and _d4._to_key() == "pkg" and _hidden
-       and "PS4 package" in _d4.detect_var.get(), f"{_d4._kind} {_d4._to_key()} hidden={_hidden} {_d4.detect_var.get()}")
+       and not _d4._crow.winfo_manager() and "PS4 package" in _d4.detect_var.get(),
+       f"{_d4._kind} {_d4._to_key()} hidden={_hidden} {_d4.detect_var.get()}")
+    _d4.destroy(); root.update()
+    # PS4 keystone, on copies of the real sample packages (git-ignored, optional)
+    import ps4pkg as _p4m
+    _ksamples: dict = {}
+    for _x in sorted((REPO / "unzipped" / "ps4").glob("*.pkg")):
+        try:
+            _xi = _p4m.read_identity(_x)
+        except Exception:
+            continue
+        _ksamples.setdefault((_xi.content_id, _xi.kind), _x)
+    _kgame = _kupd = None
+    for (_cid, _kind), _x in _ksamples.items():
+        if _kind == "game" and (_cid, "update") in _ksamples:
+            _kgame, _kupd = _x, _ksamples[(_cid, "update")]
+            break
+    if _kgame and _kupd:
+        import filecmp, fpkg as _fpkg
+        from ps4_fixture import make_default_keystone as _mkdef
+        _kd = S / "ks_lib" / "Sample Game [CUSA00001] [v01.04]"; shutil.rmtree(_kd.parent, ignore_errors=True); _kd.mkdir(parents=True)
+        _kb, _ku = _kd / "game.pkg", _kd / "update.pkg"
+        for _src, _dst in ((_kgame, _kb), (_kupd, _ku)):
+            if subprocess.run(["cp", "-c", str(_src), str(_dst)]).returncode != 0:
+                shutil.copyfile(_src, _dst)
+        (S / "ks_default").write_bytes(_mkdef())
+        _fpkg.ps4_keystone(_kb, S / "ks_default", on_line=lambda _l: None)     # a package with the default keystone
+        _fpkg.ps4_rebind(_ku, _kb, on_line=lambda _l: None)
+        _kb0, _ku0 = S / "game.orig", S / "update.orig"
+        shutil.copyfile(_kb, _kb0); shutil.copyfile(_ku, _ku0)
+        # the editor reads the keystone and says it is the default one, with a way to the tool
+        _dk = m.JobDialog(app, init_src=str(_kb)); root.update()
+        pump(lambda: _dk._ks_default is not None, timeout=20.0); root.update()
+        ok("ps4.keystone-hint-in-editor", _dk._ks_default is True and bool(_dk._crow.winfo_manager())
+           and bool(_dk._ks_box.winfo_manager()) and "default keystone" in _dk.ks_state_var.get()
+           and "default keystone" in _dk.detect_var.get(), f"{_dk._ks_default} {_dk.ks_state_var.get()}")
+        _dk._open_keystone(); root.update()
+        _kv = app._keystone_view
+        ok("ps4.keystone-editor-opens-tool", app._view == "keystone" and _kv.base_var.get() == str(_kb), app._view)
+        pump(lambda: _kv._base_ok, timeout=20.0); root.update()
+        ok("ps4.keystone-tool-reads-package", _kv._base_ok and "default keystone" in _kv.base_note.get()
+           and [u["path"] for u in _kv._updates] == [str(_ku)] and _kv._updates[0]["on"]
+           and str(_kv.add_btn.cget("state")) == "disabled", f"{_kv.base_note.get()} {_kv._updates}")
+        _kv.ks_var.set("not a keystone"); root.update()
+        ok("ps4.keystone-tool-rejects-input", str(_kv.add_btn.cget("state")) == "disabled"
+           and "not a keystone file" in _kv.ks_note.get(), _kv.ks_note.get())
+        _kv.ks_var.set(_mkdef()[0x20:0x40].hex()); root.update()
+        ok("ps4.keystone-tool-rejects-default", str(_kv.add_btn.cget("state")) == "disabled"
+           and "default keystone itself" in _kv.ks_note.get(), _kv.ks_note.get())
+        _kfp = bytes(range(100, 132)).hex().upper()
+        _kv.ks_var.set(_kfp.lower()); root.update()
+        ok("ps4.keystone-tool-accepts-fingerprint", str(_kv.add_btn.cget("state")) == "normal"
+           and _kv.ks_note.get().startswith("Keystone " + _kfp[:16]), _kv.ks_note.get())
+        _qk0 = len(app.queue)
+        _kv.add_to_queue(); root.update()
+        _kj = app.queue[-1] if len(app.queue) > _qk0 else None
+        _kc = app.build_command(_kj)[0] if _kj is not None else []
+        ok("ps4.keystone-job-queued", _kj is not None and _kj.operation == "ps4-keystone" and app._view == "queue"
+           and _kc[_kc.index("--ps4-keystone-set") + 1] == str(_kb) and _kc[_kc.index("--ps4-rebind") + 1] == str(_ku)
+           and _p4m.keystone_from_text(_kc[_kc.index("--ps4-keystone") + 1])[0][0x20:0x40].hex().upper() == _kfp
+           and app._job_recipe_parts(_kj)[1:] == ["Keystone · 1 update"]
+           and m.chain_summary(_kj) == "Replace the keystone, bind 1 update",
+           f"{getattr(_kj, 'operation', None)} {_kc[-6:]} {app._job_recipe_parts(_kj) if _kj else None}")
+        # Edit opens the tool on the job; unchecking the update and saving replaces it in place
+        app._edit_job(_kj); root.update()
+        pump(lambda: _kv._base_ok and _kv._updates, timeout=20.0); root.update()
+        ok("ps4.keystone-edit-shows-job", app._view == "keystone" and _kv.add_btn.cget("text") == "Save changes"
+           and _kv.ks_var.get() == _kj.ps4_keystone and [u["on"] for u in _kv._updates] == [True],
+           f"{_kv.add_btn.cget('text')} {_kv._updates}")
+        _kv._toggle(next(iter(_kv._iid_row))); _kv.add_to_queue(); root.update()
+        _kj2 = app.queue[-1]
+        ok("ps4.keystone-edit-replaces", len(app.queue) == _qk0 + 1 and _kj2 is not _kj
+           and _kj2.ps4_rebind == "" and app._job_recipe_parts(_kj2)[1:] == ["Keystone"], f"{len(app.queue)} {_kj2.ps4_rebind!r}")
+        app._edit_job(_kj2); root.update()
+        pump(lambda: _kv._base_ok and _kv._updates, timeout=20.0); root.update()
+        _kv._toggle(next(iter(_kv._iid_row))); _kv.add_to_queue(); root.update()
+        _kj = app.queue[-1]
+        # run it: the keystone goes in, the update points at the changed package
+        _q0k, _act0k = list(app.queue), app._active_item
+        app.cancel_requested = False
+        try:
+            app.queue[:] = [_kj]; app._active_item = None
+            app.start()
+            pump(lambda: _kj.status in ("Done", "Failed", "Skipped", "Cancelled") and not app._batch_running, timeout=180.0)
+            _kst = _fpkg.ps4_keystone_info(_kb) or {}
+            ok("ps4.keystone-run", _kj.status == "Done" and _kst.get("fingerprint") == _kfp and _kst.get("valid")
+               and _p4m.general_digests(_ku)[10] == _p4m.general_digests(_kb)[1]
+               and _p4m.general_digests(_ku)[12] == _p4m.general_digests(_kb)[2], f"{_kj.status} {_kst}")
+        finally:
+            app._batch_running = False
+            app.queue[:] = _q0k; app._active_item = _act0k; app.update_queue_box()
+        # Undo last change puts both packages back, byte for byte
+        app._show_view("keystone"); root.update()
+        ok("ps4.keystone-undo-offered", str(_kv.undo_btn.cget("state")) == "normal", str(_kv.undo_btn.cget("state")))
+        _kv.undo(); pump(lambda: not _kv._busy, timeout=120.0); root.update()
+        ok("ps4.keystone-undo", filecmp.cmp(_kb, _kb0, shallow=False) and filecmp.cmp(_ku, _ku0, shallow=False)
+           and str(_kv.undo_btn.cget("state")) == "disabled", str(_kv.undo_btn.cget("state")))
+        _dk.destroy() if _dk.winfo_exists() else None
+        app._show_view("queue"); root.update()
+        shutil.rmtree(_kd.parent, ignore_errors=True)
+        for _f in (_kb0, _ku0):
+            _f.unlink(missing_ok=True)
+    _d4 = m.JobDialog(app, init_src=str(_p4g)); root.update()
     _q_before = len(app.queue)
     _d4.out_var.set(str(OUT)); _d4._add(); settle()
     _q4 = app.queue[-1] if len(app.queue) > _q_before else None
@@ -2834,7 +2937,8 @@ try:
     # switching back to a PS5 source shows the changes again
     _d5 = m.JobDialog(app, init_src=str(_p4g)); root.update()
     _d5.src_var.set(str(HBT)); root.update(); _d5._refresh(); root.update()
-    ok("ps4.dialog-back-to-ps5", _d5._kind == "folder" and bool(_d5._crow.winfo_manager()), _d5._kind)
+    ok("ps4.dialog-back-to-ps5", _d5._kind == "folder" and bool(_d5._crow.winfo_manager())
+       and all(b.winfo_manager() for b in _d5._ps5_boxes) and not _d5._ks_box.winfo_manager(), _d5._kind)
     _d5.destroy(); root.update()
     # Organize: a view of the main window; scan a folder (no '._' rows), Apply, Undo
     _org = S / "org_lib"; (_org / "Some.Release").mkdir(parents=True, exist_ok=True)

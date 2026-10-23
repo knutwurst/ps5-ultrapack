@@ -121,6 +121,19 @@ python3 backend/cli.py --prepare-backport-libs 7.61 --fw-libs-root <firmware fol
 python3 backend/cli.py <game>.ffpfsc <output folder> --to ffpfsc --backport-target 7.61 --fw-libs-root <firmware folder> --backport-libs <patched folder>
 ```
 
+## PS4 keystone
+
+A PS4 save holds the keystone of the game that wrote it. A fake package built with a different keystone (most builders use a default one) shows saves of the retail game as corrupted. Add job tells you when a PS4 game package carries that default keystone.
+
+**PS4 keystone** in the sidebar fixes it:
+
+1. Pick the game package.
+2. Give the keystone of the retail game. On a jailbroken console, open Apollo Save Tool, pick a save of the game, and either **Export Keystone** (then fetch `/data/apollo/<user id>/<title id>/keystone` by FTP and pick the file) or **Show Keystone Fingerprint** (then type the 64 hex digits).
+3. Check the updates of the game. The tool lists the ones next to the package; add others with **Add…**. Each update records the package it belongs to, and the job points it at the changed package so it still installs.
+4. **Add to queue** and start the queue.
+
+The packages are changed in place, nothing is rebuilt. Everything the job replaces is kept in the app folder under `keystone-undo/`, and **Undo last change** puts it back.
+
 ## Organize
 
 Organize (in the sidebar) cleans up an existing library. Pick a folder and press Scan. You get a list of every game folder, image, package and archive in it with its current and new name. Apply only renames, so it's fast even on a large drive, and **Undo last organize** puts everything back.

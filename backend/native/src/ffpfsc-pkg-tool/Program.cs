@@ -49,6 +49,8 @@ internal static partial class Program
                 "ampr-index" => CmdAmprIndex(args),
                 "ps4-list" => CmdPs4List(args),
                 "ps4-extract" => CmdPs4Extract(args),
+                "ps4-keystone" => CmdPs4Keystone(args),
+                "ps4-rebind" => CmdPs4Rebind(args),
                 _ => Bad("unknown command: " + args[0]),
             };
         }
@@ -77,6 +79,11 @@ internal static partial class Program
         Console.WriteLine("  ps4-extract <ps4.pkg> <out-dir> [--members <file>]  (all files, or the listed files/folders)");
         Console.WriteLine("      Selective: <file> lists one path per line (relative to /app0); a directory");
         Console.WriteLine("      means its whole subtree incl. empty folders. Prints '[####] NN% extract (path)'.");
+        Console.WriteLine("  ps4-keystone <ps4.pkg> [<keystone>] [--undo FILE]  (no keystone: print the current one)");
+        Console.WriteLine("      Writes a 96-byte keystone (e.g. exported from a save) into a PS4 fake package, in place.");
+        Console.WriteLine("      --undo FILE keeps the overwritten bytes; 'ps4-keystone <ps4.pkg> --restore FILE' puts them back.");
+        Console.WriteLine("  ps4-rebind <update.pkg> <base.pkg> [--undo FILE]  (point an update at a changed base again)");
+        Console.WriteLine("      Copies the base's content and game digest into the update; restore with ps4-keystone --restore.");
         Console.WriteLine("  extract-outer <pkg> <out-dir> [--passcode P]     [--decompress|--no-decompress]");
         Console.WriteLine("  validate      <pkg> [--passcode P] [--temp DIR]  [--json]   (reads the package in place; --temp only");
         Console.WriteLine("                                                             holds the lifted sce_sys entries for a moment)");

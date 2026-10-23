@@ -17,7 +17,7 @@ import zipfile
 import zlib
 from pathlib import Path
 from typing import NamedTuple
-from i18n import t as tr, number  # interface texts (English unless German is chosen)
+from i18n import t as tr, number, plural  # interface texts (English unless German is chosen)
 
 
 def _bundled_backend_dir() -> Path:
@@ -639,7 +639,12 @@ def chain_summary(item) -> str:
     """The sentence the dialog shows above 'Add to queue' and the queue row carries:
     'Sign, backport to 7.61, then build .ffpfsc' · 'Unpack to folder' · 'Build .pkg' ·
     'Copy or move (same format)' · 'Sign in place' · 'Nothing to do'."""
+    if getattr(item, "operation", "") == "ps4-keystone":
+        n = len([u for u in (getattr(item, "ps4_rebind", "") or "").splitlines() if u.strip()])
+        return tr("Replace the keystone") + (plural(n, ", bind 1 update", ", bind {n} updates") if n else "")
     if getattr(item, "content_kind", "") == "ps4":
+        if getattr(item, "ps4_keystone", None):
+            return "Sort into the PS4 library, then replace the keystone"
         return "Sort into the PS4 library"
     if getattr(item, "content_kind", "") == ORGANIZE_TARGET or getattr(item, "chain_to", None) == ORGANIZE_TARGET:
         return "Organize into the library (same format)"
@@ -4164,6 +4169,10 @@ class GameItem:
     after_source = None     # once Done: "keep" | "trash" | "move" | "delete"; None (older queues) = keep
     after_move_to = None    # str: the folder "move" sends the source to
     source_root = None      # str: the folder the job was added from; never moved or removed whole
+    ps4_keystone = None     # str: PS4 job: a keystone file written into the sorted game package;
+                            # ps4-keystone job: the keystone as 192 hex digits
+    ps4_rebind = ""         # ps4-keystone job: the update packages to bind, one path per line
+    ps4_default_keystone = None  # PS4 game package: True when it carries the builder's default keystone
 
     def __init__(self, path: Path):
         self.path       = path
@@ -4262,6 +4271,26 @@ class GameItem:
         obj.status       = "Queued"
         obj.source_kind    = "inplace"   # unpack op - no second copy on the build drive
         obj.extracted_size = obj.size
+        return obj
+
+    @classmethod
+    def from_ps4_keystone(cls, base: Path, keystone_hex: str, updates) -> "GameItem":
+        """Job that writes a keystone into the PS4 game package *base* in place and binds the
+        *updates* (paths) to the changed package."""
+        obj              = cls.__new__(cls)
+        obj.path         = base
+        obj.archive_path = None
+        obj.operation    = "ps4-keystone"
+        obj.name         = base.stem
+        obj.title_id     = parse_title_id(base) or "🔑"
+        obj.size         = base.stat().st_size if base.exists() else 0
+        obj.files        = 1
+        obj.artwork      = None
+        obj.status       = "Queued"
+        obj.source_kind  = "inplace"
+        obj.extracted_size = 0
+        obj.ps4_keystone = keystone_hex
+        obj.ps4_rebind   = "\n".join(str(u) for u in updates)   # one path per line (the queue saves plain values)
         return obj
 
     @classmethod

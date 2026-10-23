@@ -1,6 +1,8 @@
 """Read PS4 packages (.pkg, title ids CUSA…): identity from the header and param.sfo."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
 import struct
 from dataclasses import dataclass
@@ -213,6 +215,88 @@ def _entries(path, h: Ps4Header) -> list:
         f.seek(h.entry_table_offset)
         table = f.read(32 * h.entry_count)
     return [struct.unpack_from(">IIIIII", table, i * 32)[::1] for i in range(len(table) // 32)]
+
+
+KEYSTONE_SIZE = 0x60
+_KEYSTONE_HEAD = b"keystone" + bytes((2, 0, 1, 0)) + bytes(20)
+# the key of the MAC over the first 0x40 bytes of a keystone (public, from LibOrbisPkg)
+_KEYSTONE_MAC_KEY = bytes.fromhex("783D6F3AE91C0E0712FCAAB7950BDE06855CF7A22DCDBDE127E9BFCBAD0FF0FE")
+
+
+def _keystone_bytes_problem(data: bytes) -> str | None:
+    if len(data) != KEYSTONE_SIZE:
+        return "not a keystone: a keystone file has exactly 96 bytes"
+    if data[:0x20] != _KEYSTONE_HEAD:
+        return "not a keystone: the file does not start like one"
+    if not hmac.compare_digest(hmac.new(_KEYSTONE_MAC_KEY, data[:0x40], hashlib.sha256).digest(), data[0x40:]):
+        return "the keystone is damaged: its checksum does not match"
+    return None
+
+
+def keystone_problem(path) -> str | None:
+    """None when *path* holds a keystone a package can take (an export from a save: 96 bytes,
+    version 2, a MAC that matches), else why not."""
+    try:
+        data = Path(path).read_bytes() if Path(path).stat().st_size <= 4096 else b""
+    except OSError as e:
+        return f"cannot read the keystone file: {e.strerror or e}"
+    return _keystone_bytes_problem(data)
+
+
+def make_keystone(fingerprint: bytes) -> bytes:
+    """The 96-byte keystone for a 32-byte fingerprint (what Apollo shows as the save's
+    keystone fingerprint): the v2 header, the fingerprint, the MAC over both."""
+    head = _KEYSTONE_HEAD + fingerprint
+    return head + hmac.new(_KEYSTONE_MAC_KEY, head, hashlib.sha256).digest()
+
+
+# the keystone a builder makes from the all-zero passcode; retail saves do not open with it
+DEFAULT_KEYSTONE_FINGERPRINT = bytes.fromhex("294A5ED06DB170618F2EED8C424B9D828879C080CC66FBC4864F69E974DEB856")
+
+
+def keystone_from_text(text: str) -> tuple[bytes | None, str | None]:
+    """(keystone, None) or (None, why not) for what the user typed or picked: a keystone file,
+    its 64 hex digits fingerprint, or all 192 hex digits of the file."""
+    raw = (text or "").strip().strip('"')
+    if not raw:
+        return None, "no keystone given"
+    hexpart = "".join(ch for ch in raw if ch not in " :-\t\n")
+    if all(ch in "0123456789abcdefABCDEF" for ch in hexpart) and len(hexpart) in (64, 192):
+        data = bytes.fromhex(hexpart)
+        if len(data) == 32:
+            data = make_keystone(data)
+    else:
+        p = Path(raw).expanduser()
+        if not p.is_file():
+            return None, "not a keystone file and not 64 or 192 hex digits"
+        try:
+            data = p.read_bytes() if p.stat().st_size <= 4096 else b""
+        except OSError as e:
+            return None, f"cannot read the keystone file: {e.strerror or e}"
+    why = _keystone_bytes_problem(data)
+    if why:
+        return None, why
+    if data[0x20:0x40] == DEFAULT_KEYSTONE_FINGERPRINT:
+        return None, "this is the default keystone itself; use the one from a save of the retail game"
+    return data, None
+
+
+ENTRY_GENERAL_DIGESTS = 0x80
+BASE_CONTENT_SLOT, BASE_GAME_SLOT = 10, 12      # an update's record of its base package
+
+
+def general_digests(path) -> dict[int, bytes]:
+    """{slot: 32 bytes} of the set general digests (1 content, 2 game, ... 10 and 12 the base
+    package an update belongs to)."""
+    h = read_header(path)
+    for eid, _fn, _f1, _f2, off, size in _entries(path, h):
+        if eid == ENTRY_GENERAL_DIGESTS:
+            with open(path, "rb") as f:
+                f.seek(off)
+                d = f.read(size)
+            flags = struct.unpack_from(">I", d, 28)[0]
+            return {i: d[32 * i:32 * i + 32] for i in range(1, size // 32) if flags >> i & 1}
+    raise Ps4PackageError("no general digests entry")
 
 
 if __name__ == "__main__":

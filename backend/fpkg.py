@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -154,6 +155,46 @@ def is_ps4(pkg: Path) -> bool:
     """A PS4 package (CUSA title id): read with the tool's ps4-* commands, never as a PS5 fPKG."""
     import ps4pkg
     return ps4pkg.is_ps4_package(pkg)
+
+
+def ps4_keystone(pkg: Path, keystone: Path, *, undo: Optional[Path] = None, on_line=None) -> int:
+    """Write *keystone* (96 bytes, e.g. exported from a save) into the PS4 fake package *pkg*,
+    in place. *undo* keeps the overwritten bytes (ps4_keystone_restore puts them back).
+    Progress lines '[####] NN% keystone' stream through *on_line*."""
+    argv = [str(tool_path()), "ps4-keystone", str(pkg), str(keystone)]
+    if undo is not None:
+        argv += ["--undo", str(undo)]
+    return _run(argv, on_line=on_line)
+
+
+def ps4_keystone_info(pkg: Path) -> Optional[dict]:
+    """{'fingerprint': hex, 'default': True when it is the keystone a builder makes from the
+    all-zero passcode, 'valid': False when its checksum does not match} for a PS4 game package; None when it has no keystone (updates, add-ons)
+    or cannot be read. Reads a few blocks, about 0.1 s."""
+    try:
+        r = subprocess.run([str(tool_path()), "ps4-keystone", str(pkg)], capture_output=True, text=True,
+                           timeout=60, encoding="utf-8", errors="replace", **_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"current fingerprint=([0-9A-F]+) zero_passcode=(true|false)", r.stdout or "")
+    if r.returncode != 0 or not m:
+        return None
+    v = re.search(r" valid=(true|false)", r.stdout or "")
+    return {"fingerprint": m.group(1), "default": m.group(2) == "true", "valid": not v or v.group(1) == "true"}
+
+
+def ps4_rebind(update: Path, base: Path, *, undo: Optional[Path] = None, on_line=None) -> int:
+    """Point the PS4 update *update* at the package *base* again (after the base's keystone
+    changed), in place. *undo* keeps the overwritten bytes (ps4_keystone_restore reads it)."""
+    argv = [str(tool_path()), "ps4-rebind", str(update), str(base)]
+    if undo is not None:
+        argv += ["--undo", str(undo)]
+    return _run(argv, on_line=on_line)
+
+
+def ps4_keystone_restore(pkg: Path, undo: Path, *, on_line=None) -> int:
+    """Put back the bytes a ps4_keystone run saved to *undo*."""
+    return _run([str(tool_path()), "ps4-keystone", str(pkg), "--restore", str(undo)], on_line=on_line)
 
 
 def list_inner(pkg: Path, *, passcode: str = "0" * 32) -> dict:

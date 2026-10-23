@@ -79,9 +79,29 @@ def recover_parts(out_dir: Path, on_line=None) -> None:
                     _say(on_line, f"[WARN] could not restore {part.name}: {e}")
 
 
-def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "skip", on_line=None) -> int:
+def _write_keystone(pkg: Path, keystone: Path, undo_dir, relay, on_line) -> int:
+    """0 once *keystone* is in *pkg*, 1 when the tool failed (it leaves the package as it was)."""
+    import fpkg
+    undo = None
+    if undo_dir is not None:
+        undo_dir = Path(undo_dir)
+        undo_dir.mkdir(parents=True, exist_ok=True)
+        undo = undo_dir / f"{pkg.stem} {time.strftime('%Y-%m-%d %H%M%S')}.undo"
+    rc = fpkg.ps4_keystone(pkg, keystone, undo=undo, on_line=relay)
+    if rc != 0:
+        _say(on_line, f"[ERROR] could not write the keystone into {pkg.name}")
+        return 1
+    if undo is not None and undo.is_file():
+        _say(on_line, f"[INFO] the bytes the keystone replaced are kept in {undo}")
+    return 0
+
+
+def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "skip", on_line=None,
+                  keystone=None, undo_dir=None) -> int:
     """0 when every PS4 package found is in the library, 1 on an error, copy_job.KEPT (4) when
-    the run finished but packages stay in the source (not PS4, unreadable, or skipped)."""
+    the run finished but packages stay in the source (not PS4, unreadable, or skipped).
+    *keystone*: a keystone file written into the package once it is in the library (one game
+    package only); the bytes it replaces go to a file in *undo_dir*."""
     out_dir = Path(out_dir)
     _say(on_line, "[JOB] copy")
     _say(on_line, "[PHASE] Writing Final Image")
@@ -107,6 +127,14 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
         kept.append(p.name)
     _say(on_line, f"[PS4] {len(items)} package(s)")
     kinds = {p: i.kind for p, i in items}
+    if keystone is not None:
+        why = ps4pkg.keystone_problem(keystone)
+        if why:
+            _say(on_line, f"[ERROR] {Path(keystone).name}: {why}")
+            return 1
+        if len(items) != 1 or items[0][1].kind != "game":
+            _say(on_line, "[ERROR] a keystone goes into one game package; updates and add-ons carry none")
+            return 1
     known = scan_ps4_library(out_dir)
     placements = ps4_layout(items, known=known)
     # A title folder already in the library whose version tag the set raises is renamed
@@ -134,6 +162,8 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
             moved[folder] = lib.folder
     placements = [(src, moved.get(f, f), sub, name) for src, f, sub, name in placements]
     total = sum(max(1, p.stat().st_size) for p, *_ in placements)
+    if keystone is not None:
+        total *= 2                           # writing the keystone reads the package once more
     done = 0
     last_pct = [-1]
     t0 = time.monotonic()
@@ -160,6 +190,7 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
     # names that differ only in case are one name on such a drive
     key = (lambda p: str(p).casefold()) if case_blind(out_dir) else str
     written: set[str] = set()                # key() of every target this run wrote
+    placed: Path | None = None               # where the package for the keystone ended up
     for src_pkg, folder, sub, name in placements:
         size = max(1, src_pkg.stat().st_size)
         dst_dir = out_dir / folder / sub if sub else out_dir / folder
@@ -175,6 +206,7 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
             rel, target = rel.with_name(name), dst_dir / name
         elif target.exists() and _same_file(target, src_pkg):
             _say(on_line, f"[INFO] already in place: {rel}")
+            placed = target
             written.add(key(target))
             done += size
             continue
@@ -192,6 +224,7 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
                 if rc == 0:
                     try:
                         os.replace(part, target)
+                        placed = target
                         _say(on_line, f"[PS4] {kinds[src_pkg]} -> {rel} (replaced)")
                     except OSError as e:
                         _say(on_line, f"[ERROR] could not replace {rel}: {e}")
@@ -217,10 +250,17 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
         written.add(key(target))
         rc = copy_job.run_copy(src_pkg, dst_dir, dst_name=name, mode=mode, on_line=relay(size, name))
         if rc in (0, 2):
+            placed = target
             _say(on_line, f"[PS4] {kinds[src_pkg]} -> {rel}")
         else:
             rc_all = 1
         done += size
+    if keystone is not None:
+        if placed is None:
+            _say(on_line, "[WARN] the keystone was not written: the package did not go into the library")
+        else:
+            rc_all = _write_keystone(placed, Path(keystone), undo_dir, relay(placed.stat().st_size, "keystone"),
+                                     on_line) or rc_all
     bar(0, 0, "")
     # macOS tags every file it writes with a provenance attribute; on exFAT that becomes a
     # '._' sidecar, which the system drops after a few seconds but which stays for good when

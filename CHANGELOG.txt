@@ -29,6 +29,30 @@ LZ4 ASSET PACKS AND .EXFAT
   - Subtitle files stay loose, and packs that would save less than 5 %
     are refused before the game changes.
 
+PS4 KEYSTONE
+
+  - New tool "PS4 keystone" in the sidebar. A save holds the keystone of
+    the game that wrote it; a fake package built with another one (most
+    builders use the default from the all-zero passcode) shows saves of
+    the retail game as corrupted. The tool takes the game package, the
+    keystone exported from such a save with Apollo Save Tool (the file,
+    its 64-digit fingerprint or all 192 hex digits) and the updates of
+    the game, found next to the package or added by hand, and queues one
+    job for them. Add job shows a PS4 game package's keystone and warns
+    about the default one, with a button to the tool.
+  - The job changes the packages in place, nothing is rebuilt. The
+    keystone's sector in the inner image is re-encoded to the length it
+    had, the outer blocks around it are re-signed and re-encrypted, and
+    the superblock hash, chunk hashes, image digests, general digests,
+    entry digests and the header signature are recomputed. Each update
+    records the content and game digest of its base package; both are
+    rewritten so the console installs the update on the changed package.
+    Everything replaced is kept in keystone-undo/ in the app folder, and
+    "Undo last change" puts it back.
+  - Command line: --ps4-keystone-set GAME --ps4-keystone KEY
+    [--ps4-rebind UPDATE ...], --ps4-keystone-undo last; tool commands
+    ps4-keystone and ps4-rebind.
+
 ARCHIVE CONTENT AND THE OUTPUT AUTO
 
   - Every queued archive is opened briefly in the background (its file

@@ -23,6 +23,15 @@ we wrote:
   vendored LibOrbisPkg in `../LibOrbisPkg/` (LGPL-3). Only fake packages open (the library's fake
   keyset recovers their PFS key); the package-header entries (param.sfo, icon0.png, …) are listed
   under `sce_sys/` as for a PS5 package. Nothing is built for PS4.
+- `Ps4Keystone.cs` — `ps4-keystone` writes another `sce_sys/keystone` into a PS4 fake package in
+  place: the keystone's sector in the inner PFSC image keeps its stored length (`DeflateFit`
+  re-encodes a compressed one to exactly that size), the outer blocks that carry it are re-signed
+  and re-encrypted, and playgo-chunk.sha, the PFS digests, the general and entry digests, the
+  header hashes and the fake header signature are recomputed. `--undo FILE` keeps every
+  overwritten range; `--restore FILE` writes them back. A failed run restores the package itself.
+- `Ps4Rebind.cs` — `ps4-rebind <update> <base>` points a PS4 update at a changed base package: an
+  update records the base's content digest (general digest slot 10) and game digest (slot 12);
+  both are rewritten and the entry digest, the header hashes and the fake signature recomputed.
 
 Every `--json` document is serialized through the source-generated `PkgToolJsonContext` at
 the end of `Program.cs`. It dates from when the binary was published trimmed (which switches
