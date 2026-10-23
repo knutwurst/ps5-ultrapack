@@ -36,7 +36,7 @@ Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack
 ## Screenshots
 
 <p align="center">
-  <img src="images/main-window.jpg" alt="Main window with three jobs in the queue and the details of the running one" width="900">
+  <img src="images/main-window.jpg" alt="Main window with four jobs in the queue and the details of the selected one" width="900">
 </p>
 
 <table>
@@ -45,7 +45,11 @@ Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack
     <td align="center" width="50%"><img src="images/add-job.jpg" width="400" alt="Add job: source, changes, output"><br><sub>Add job</sub></td>
   </tr>
   <tr>
-    <td align="center" width="50%"><img src="images/look-inside.jpg" width="400" alt="Look inside a .ffpfsc"><br><sub>Look inside</sub></td>
+    <td align="center" width="50%"><img src="images/add-job-ps4.jpg" width="400" alt="Add job with a PS4 package that carries the default keystone"><br><sub>A PS4 package with the default keystone</sub></td>
+    <td align="center" width="50%"><img src="images/ps4-keystone.jpg" width="400" alt="The PS4 keystone tool with a package, a keystone and one update"><br><sub>PS4 keystone</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><img src="images/settings-auto.jpg" width="400" alt="Settings, Compression, with the Auto output table"><br><sub>Auto output in Settings</sub></td>
     <td align="center" width="50%"><img src="images/main-window-light.jpg" width="400" alt="Main window in light mode"><br><sub>Light mode</sub></td>
   </tr>
 </table>
@@ -56,13 +60,14 @@ Older versions of the UI are in [docs/screenshots](docs/screenshots/README.md).
 
 **Inputs:** a decrypted game folder (`eboot.bin` + `sce_sys/param.json`), a folder full of games (one job each), ZIP/RAR/7z archives including multi-part RAR sets and encrypted headers, `.exfat`/`.ffpkg` disk images, `.ffpfs`, `.ffpfsc`, and PS5 or PS4 `.pkg` files.
 
-**Outputs:** `.ffpfsc` (compressed), `.ffpfs` (uncompressed, faster to mount), an installable `.pkg`, a plain folder, or "Organize", which files the source into your library as it is.
+**Outputs:** `.ffpfsc` (compressed), `.ffpfs` (uncompressed, faster to mount), `.exfat` (an exFAT image with 64 KiB clusters, which ShadowMountPlus reads fastest from USB), an installable `.pkg`, a plain folder, or "Organize", which files the source into your library as it is. **Auto** picks one of these per source: you set in Settings › Compression what a game folder, an image or a `.pkg` turns into, and an archive counts as what it holds.
 
-**On the way** a job can integrate a patch, backport the game to an older firmware and fake-sign the executables, in that order. All of that happens on a working copy. Your source only changes if you ask for it (signing or backporting a folder in place), and if a patch job on your own folder fails, the patch is rolled back.
+**On the way** a job can integrate a patch, backport the game to an older firmware, fake-sign the executables and, for games that load through AMPR, put their data into LZ4 asset packs, in that order. The packs make the game about half the size and are read by drakmor's ampr_emu, which the app puts into `fakelib/`; "Unpack LZ4" is the way back. All of that happens on a working copy. Your source only changes if you ask for it (signing or backporting a folder in place), and if a patch job on your own folder fails, the patch is rolled back.
 
 Some things that make day-to-day use easier:
 
-- Archives can go straight in. Saved passwords are tried first, and the app only asks if none of them works. An archive with several games in it is unpacked once and each game gets its own job.
+- Archives can go straight in. Saved passwords are tried first, and the app only asks if none of them works. The queue shows what an archive holds (`.pkg`, Folder, `.exfat`) instead of `.rar`. An archive with several games in it is unpacked once and each game gets its own job.
+- A download folder with one game and a folder of add-ons next to it gives one job. After the game is done, its DLC and updates are unpacked and sorted into the game's title folder in the library, and anything else in the folder is copied next to the output. The add-ons don't show up as jobs of their own.
 - Output files are named from the game itself: `<Title> [PPSA12345] [v01.200] [fw8.00].ffpfsc` in a folder per title. The firmware tag comes from the SDK version in `eboot.bin`. Names stay within ShadowMountPlus's length limit.
 - Extras that come with a release (notes, checksums, backport files, DLC folders) don't go into the image, but they aren't thrown away either. They end up next to the output. macOS and Windows junk like `.DS_Store`, `._*` and `Thumbs.db` is dropped.
 - Work is spread across drives. The image is built on your fast temp SSD and the result is written to the output drive. If the SSD is too small, the app splits the work or falls back to the output drive. A job that won't fit is skipped up front, with the numbers, so it doesn't fail halfway.
@@ -125,6 +130,10 @@ python3 backend/cli.py <game>.ffpfsc <output folder> --to ffpfsc --backport-targ
 
 A PS4 save holds the keystone of the game that wrote it. A fake package built with a different keystone (most builders use a default one) shows saves of the retail game as corrupted. Add job tells you when a PS4 game package carries that default keystone.
 
+<p align="center">
+  <img src="images/ps4-keystone.jpg" alt="The PS4 keystone tool with a package, a keystone and one update" width="760">
+</p>
+
 **PS4 keystone** in the sidebar fixes it:
 
 1. Pick the game package.
@@ -141,6 +150,10 @@ Organize (in the sidebar) cleans up an existing library. Pick a folder and press
 Each game ends up in one title folder named after the newest version it has. PS4 packages get their own layout with UPDATE and DLC entries. Archives keep their file names. If the app can't tell which game an archive belongs to, it leaves that folder alone and says so.
 
 ## Look inside
+
+<p align="center">
+  <img src="images/look-inside.jpg" alt="Look inside a .ffpfsc" width="760">
+</p>
 
 Look inside opens a `.ffpfs`, `.ffpfsc` or `.pkg` and shows the file tree. You can extract single files or folders without unpacking the whole thing. Only the blocks you need are read and decompressed, so even a 100 GB container opens quickly. Extracted files are identical to the originals.
 
