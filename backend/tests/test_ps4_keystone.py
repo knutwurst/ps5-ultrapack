@@ -399,6 +399,23 @@ class KeystoneJob(unittest.TestCase):
         self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
         self.assertIsNone(self.job.last_journal(undo_root))
 
+    def test_undo_keeps_the_steps_of_a_missing_package(self):
+        undo_root = self.tmp / "undo"
+        self.assertEqual(self.job.run(self.base, bytes(range(100, 132)).hex(), [self.upd], undo_root,
+                                      on_line=lambda _l: None), 0)
+        away = self.tmp / "away.pkg"
+        self.upd.rename(away)                      # the update's drive is unplugged
+        lines = []
+        j = self.job.last_journal(undo_root)
+        self.assertEqual(self.job.undo(j, on_line=lines.append), 1)
+        self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
+        self.assertTrue(any("is not there" in x for x in lines), lines)
+        self.assertEqual(self.job.last_journal(undo_root), j, "the update's step waits for the next Undo")
+        away.rename(self.upd)
+        self.assertEqual(self.job.undo(j, on_line=lambda _l: None), 0)
+        self.assertTrue(filecmp.cmp(self.upd, UPDATE, shallow=False))
+        self.assertIsNone(self.job.last_journal(undo_root))
+
     def test_wrong_inputs_change_nothing(self):
         lines = []
         self.assertEqual(self.job.run(self.upd, make_keystone().hex(), [], self.tmp / "u", on_line=lines.append), 1)

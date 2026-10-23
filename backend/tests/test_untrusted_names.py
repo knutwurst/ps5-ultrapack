@@ -42,7 +42,7 @@ class ExfatNames(unittest.TestCase):
             self.assertEqual([p for p in tmp.rglob("ESC_XX")], [])
 
     def test_separator_and_control_characters_are_refused(self):
-        for bad in ("AAAAAA/AAAAAAAA", "AAAAAA\\AAAAAAAA", "AAAAAA\nAAAAAAAA", "AAAAAAA:AAAAAAA"):
+        for bad in ("AAAAAA/AAAAAAAA", "AAAAAA\nAAAAAAAA", "..\x00AAAAAAAAAAAA"[:15]):
             with self.subTest(name=repr(bad)), tempfile.TemporaryDirectory() as t:
                 tmp = Path(t)
                 img = _image_with_name(tmp, bad)
@@ -50,6 +50,19 @@ class ExfatNames(unittest.TestCase):
                 res = extract_exfat_image(img, out)
                 self.assertTrue(res.errors)
                 self.assertFalse(any(out.rglob("*")) if out.exists() else False)
+
+    def test_other_odd_names_stay_inside(self):
+        # legal on macOS, so the app's own writer may store them: readable, and never outside
+        for odd in ("AAAAAA\\AAAAAAAA", "AAAAAAA:AAAAAAA", "what?AAAAAAAAAA", "..\\..\\AAAAAAAAA"):
+            with self.subTest(name=repr(odd)), tempfile.TemporaryDirectory() as t:
+                tmp = Path(t)
+                img = _image_with_name(tmp, odd)
+                out = tmp / "a" / "out"
+                extract_exfat_image(img, out)
+                inside = {p.resolve() for p in out.rglob("*")} if out.exists() else set()
+                everything = {p.resolve() for p in tmp.rglob("*") if p.is_file() and p.suffix != ".exfat"
+                              and "src" not in p.parts}
+                self.assertTrue(everything <= inside, everything - inside)
 
     def test_normal_names_still_extract(self):
         with tempfile.TemporaryDirectory() as t:

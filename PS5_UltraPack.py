@@ -5250,9 +5250,17 @@ class JobDialog(EmbeddedDialog):
         if route and route[0]:
             self.app._remember_output("ps4", route[0])
 
+    def _drop_shown(self) -> bool:
+        """The source field still shows the folder of a drop of several paths."""
+        try:
+            return bool(self._dropped) and Path((self.src_var.get() or "").strip()) == self._dropped_root
+        except (TypeError, ValueError):
+            return False
+
     def _mixed(self) -> bool:
-        """A folder of sources with PS4 packages and PS5 games side by side."""
-        return self._kind == "parent" and self._ps4_n > 0 and self._ps5_n > 0
+        """A folder of sources with PS4 packages and PS5 games side by side; dropped PS4
+        packages go the same way (the PS4 block) even without a PS5 game."""
+        return self._kind == "parent" and self._ps4_n > 0 and (self._ps5_n > 0 or self._drop_shown())
 
     def _show_platform(self, platform: str) -> None:
         """Point the Save to field at *platform*'s folders: its recent list, and its last folder
@@ -5458,7 +5466,8 @@ class JobDialog(EmbeddedDialog):
         self.ks_state_var.set("")
         self._ps5_rows = None
         self.ps5_state_var.set("")
-        if _is_ps4_source(p):
+        dropped_root = bool(self._dropped) and p == self._dropped_root
+        if not dropped_root and _is_ps4_source(p):     # a drop's common folder is never walked
             self._kind = "ps4"; self._games = [p]
             self.detect_var.set(self._ps4_detect_text(p))
             if p.is_file():
@@ -5467,7 +5476,7 @@ class JobDialog(EmbeddedDialog):
             self._update_identity_for_source(None)
             self._refresh(); return
         if p.is_dir():
-            if is_game_folder(p):
+            if is_game_folder(p) and not dropped_root:
                 self._kind = "folder"; self._games = [p]
                 bits = [self._KIND_LABEL["folder"], parse_title_id(p) or "no title id"]
                 ver = ""
@@ -5975,7 +5984,7 @@ class JobDialog(EmbeddedDialog):
             todo5 = [s for s in todo if str(s) not in ps4_set]
             if todo5:
                 _si = self._stand_in(todo5[0])
-                copy_only = self._copy_only(_si, to)
+                copy_only = all(self._copy_only(self._stand_in(x), to) for x in todo5)
                 text = chain_summary(_si) + plural(len(todo5), "  × 1 job", "  × {n} jobs")
             else:
                 text = "Nothing to do"
@@ -6137,7 +6146,9 @@ class JobDialog(EmbeddedDialog):
                                  parent=self); return
         self._defaults[self._kind] = dict(self._defaults.get(self._kind) or {}, to=ORGANIZE_TARGET)
         try:
-            save_settings({"job_dialog_defaults": self._defaults, "last_source": str(p),
+            # dropped paths have no folder of their own for Rescan: their common folder may be a drive
+            save_settings({"job_dialog_defaults": self._defaults} if self._drop_shown() else
+                          {"job_dialog_defaults": self._defaults, "last_source": str(p),
                            "last_source_dir": str(p if p.is_dir() else p.parent),
                            "rescan_template": {"to": ORGANIZE_TARGET, "output": out, "after_source": after,
                                                "after_move_to": after_dir or None}})
@@ -6270,6 +6281,9 @@ class JobDialog(EmbeddedDialog):
                                    "pkg_params": pkg_params if to == "pkg" else None}}
         if target:
             upd["backport_target_default"] = target
+        if self._drop_shown():         # no Rescan folder from a drop (see the Organize path)
+            for k in ("last_source", "last_source_dir", "rescan_template"):
+                upd.pop(k, None)
         try:
             save_settings(upd)
         except Exception:
@@ -7268,6 +7282,9 @@ class KeystoneView:
         job = _ks_job_module()
         j = job.last_journal(self.undo_root)
         if self._busy or j is None:
+            return
+        if getattr(self.app, "_batch_running", False):      # a PS4 repair may be writing that journal
+            NoticeWindow(self.app.root, "Undo last change", tr("Undo waits until the queue has finished."))
             return
         try:
             d = job.describe(j)
@@ -8333,15 +8350,15 @@ class App:
                 q = self._stop_question() or tr("A job is still running.")
                 if not ask_confirm("Quit and stop the job?", q, "Quit", "Keep running", danger=True):
                     return
+                self.cancel_requested = True
+                self.extract_cancel_event.set()
+                if proc_alive:
+                    _kill_process_tree(self.current_process)
             elif getattr(self, "_after_busy", False):
                 if not ask_confirm("Quit now?", tr("A finished job is still moving or deleting its source "
                                                    "(After the job). Quit now and that stops half-way."),
                                    "Quit", "Wait", danger=True):
                     return
-                self.cancel_requested = True
-                self.extract_cancel_event.set()
-                if proc_alive:
-                    _kill_process_tree(self.current_process)
         except Exception:
             pass
         self._save_window_geometry()
@@ -8653,6 +8670,7 @@ class App:
         if name == "keystone" and "keystone" not in self._views:
             self._keystone_view = KeystoneView(self._views_parent, self)
             self._views["keystone"] = self._keystone_view.frame
+            self.batch_counter_var.trace_add("write", lambda *_: self._keystone_view._refresh_buttons())
         if name == "ps5repair" and "ps5repair" not in self._views:
             self._ps5_view = Ps5RepairView(self._views_parent, self)
             self._views["ps5repair"] = self._ps5_view.frame
@@ -9627,8 +9645,13 @@ class App:
         if getattr(item, "operation", "") == "ps4-keystone":
             return tr("PS4 repair is changing {name} in place. Stopped now, the package stays half changed "
                       "until you press Undo last change in PS4 repair.", name=name)
+        # since the job was picked (its unpack included); the worker only when it is this job's
+        since = getattr(self, "_active_since", (None, 0))
+        t0 = since[1] if since[0] == id(item) else None
         w = getattr(self, "worker", None)
-        ran = time.time() - w.start_time if w is not None and getattr(w, "start_time", 0) else 0
+        if t0 is None and w is not None and getattr(w, "item", None) is item and getattr(w, "start_time", 0):
+            t0 = w.start_time
+        ran = time.time() - t0 if t0 else 0
         if ran < 20:
             return None
         return tr("{name} has run for {time}. The work done so far is lost, and the queue stops.",
@@ -13256,20 +13279,47 @@ class App:
     def _parked_source(d: dict):
         return d.get("archive_path") or d.get("path") or d.get("origin_archive")
 
+    @staticmethod
+    def _parked_back(d: dict) -> bool:
+        """Something the job can start from is reachable again: its archive, its folder, or
+        the archive a consumed unpack came from (_restore_queue rearms it from there)."""
+        return any(x and Path(str(x)).exists() for x in (d.get("archive_path"), d.get("path"), d.get("origin_archive")))
+
     def _recheck_parked(self):
-        """Every 20 s: a parked job whose drive is back joins the queue again."""
-        try:
-            parked = list(getattr(self, "_queue_missing_saved", None) or [])
-            if parked and not self._batch_running and any(
-                    self._parked_source(d) and Path(str(self._parked_source(d))).exists() for d in parked):
-                self._queue_missing_saved = []
-                self._restore_queue(saved=parked, quiet=True)
-        except Exception as e:
-            self.log("WARN", f"Could not look for parked jobs: {e}")
-        try:
-            self.root.after(20000, self._recheck_parked)
-        except tk.TclError:
-            pass
+        """Every 20 s: a parked job whose drive is back joins the queue again. The look runs
+        off the main thread: a share that does not answer must not freeze the window."""
+        parked = list(getattr(self, "_queue_missing_saved", None) or [])
+
+        def look():
+            back = False
+            try:
+                back = any(self._parked_back(d) for d in parked)
+            except OSError as e:
+                try:
+                    self.root.after(0, lambda e=e: self.log("WARN", f"Could not look for parked jobs: {e}"))
+                except (tk.TclError, RuntimeError):
+                    pass
+            finally:
+                try:
+                    self.root.after(0, lambda: done(back))
+                except (tk.TclError, RuntimeError):
+                    pass
+
+        def done(back):
+            try:
+                if back and not self._batch_running and parked == list(self._queue_missing_saved or []):
+                    self._queue_missing_saved = []
+                    self._restore_queue(saved=parked, quiet=True)
+            except Exception as e:
+                self.log("WARN", f"Could not look for parked jobs: {e}")
+            try:
+                self.root.after(20000, self._recheck_parked)
+            except tk.TclError:
+                pass
+        if parked:
+            threading.Thread(target=look, daemon=True).start()
+        else:
+            done(False)
 
     def _refresh_parked(self):
         n = len(getattr(self, "_queue_missing_saved", None) or [])
@@ -14953,6 +15003,13 @@ class App:
         _tp = (self.temp_var.get() or "").strip()   # snapshot on the main thread
         _own = self._extract_dir_for_item(item)
         _own_parts = [] if keep_source else self._extract_cleanup_parts(item)
+        _temp_roots = set()
+        for c in (_bt, _tv, *_scr):
+            try:
+                if c:
+                    _temp_roots.add(str(Path(c).resolve()))
+            except OSError:
+                pass
         def _work(tp=_tp):
             freed = 0
             for root in roots:
@@ -14967,6 +15024,17 @@ class App:
                             freed += sz
                 except Exception:
                     pass
+            # the output folder's _ffpfsc_temp (a package build's own folder) goes when only
+            # OS markers are left in it; the temp folder itself stays
+            try:
+                if out_spool and Path(out_spool).is_dir() and str(Path(out_spool).resolve()) not in _temp_roots:
+                    junk = list(Path(out_spool).iterdir())
+                    if all(q.is_file() and (is_fs_junk_name(q.name) or q.name == ".metadata_never_index") for q in junk):
+                        for q in junk:
+                            q.unlink(missing_ok=True)
+                        os.rmdir(out_spool)          # fails when a new job put its folder in meanwhile
+            except OSError:
+                pass
             # The fPKG tool stages a hard-link mirror of a folder source next to it
             # ("<parent>/.ffpfsc-stage-<id>"); a killed build can leave it behind. Removing
             # it only unlinks the mirror's links - the source files keep their own.
@@ -15403,6 +15471,8 @@ class App:
             if getattr(self, "_run_next", None) is item:
                 self._run_next = None
             self.__dict__.setdefault("_job_t0", {}).setdefault(id(item), time.time())
+            if getattr(self, "_active_since", (None, 0))[0] != id(item):
+                self._active_since = (id(item), time.time())     # kept over the unpack's re-entry
         return item
 
     def _extract_is_complete(self, item) -> bool:
@@ -15418,11 +15488,22 @@ class App:
     _RETRYABLE = ("Failed", "Cancelled", "Skipped")
 
     def _retry_failed(self):
-        """Run the failed jobs of the queue again (the queue report's button)."""
+        """Run the failed jobs of the queue again (the queue report's button); skipped and
+        stopped jobs stay as they are."""
         if self._batch_running:
             return
-        if any(getattr(it, "status", "") == "Failed" for it in self.queue):
-            self.start()
+        n = 0
+        for it in [x for x in self.queue if getattr(x, "status", "") == "Failed"]:
+            self._rearm_from_archive(it)
+            if self._copy_lacks_files(it):
+                continue
+            it.status = "Pending Extract" if getattr(it, "archive_path", None) else "Queued"
+            it.status_note = ""
+            n += 1
+        if n:
+            self.update_queue_box()
+            self.log("INFO", f"Retry failed: {n} job(s) run again.")
+            self.start(rearm_failed=False)
 
     def _retry_selected(self):
         item = getattr(self, "_details_item", None)

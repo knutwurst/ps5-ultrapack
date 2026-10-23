@@ -3595,7 +3595,7 @@ try:
         # ── UI/UX and safety review (2.3.1) ─────────────────────────────────
         # a file name in a package can fake the backend's markers: only the app's own paths count
         ok("review.inner-marker-shape", not m._is_inner_image_path("/Volumes")
-           and not m._is_inner_image_path(str(S / "x")) and m._is_inner_image_path("/t/_ffpfsc_inner/PPSA00001.ffpfs"), "")
+           and not m._is_inner_image_path(str(S / "x")) and m._is_inner_image_path(str(S / "_ffpfsc_inner" / "PPSA00001.ffpfs")), "")
         _victim = S / "review_victim"; _victim.mkdir(exist_ok=True); (_victim / "keep.bin").write_bytes(b"x")
         _vi = types.SimpleNamespace(_inner_image=str(_victim))
         app._cleanup_inner_image(_vi); pump(lambda: False, timeout=0.5)
@@ -3678,6 +3678,19 @@ try:
             m.ask_confirm = _ac
             del app._stop_question, app.cancel
         ok("review.stop-asks-first", _asked == ["Stop the job?"], str(_asked))
+        _ac, _destroy = m.ask_confirm, root.destroy
+        m.ask_confirm = lambda *a, **k: True
+        root.destroy = lambda: None
+        app._batch_running = True; app.cancel_requested = False; app.extract_cancel_event.clear()
+        try:
+            app._on_close()
+            _stopped = app.cancel_requested and app.extract_cancel_event.is_set()
+        finally:
+            m.ask_confirm, root.destroy = _ac, _destroy
+            app._batch_running = False; app.cancel_requested = False; app.extract_cancel_event.clear()
+            if getattr(app, "_keepawake_stop", None) is not None:
+                app._keepawake_stop.clear()
+        ok("review.quit-stops-the-job", _stopped, "")
         # every settings page builds, with the folded advanced options and the reset buttons
         app._show_view("settings"); root.update()
         _pages_ok = True

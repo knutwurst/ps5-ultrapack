@@ -9,12 +9,12 @@
 SAFETY
 
   - A crafted .exfat image can no longer write outside the folder it is
-    unpacked to: names with separators, "..", ":" or control characters
-    fail the extraction, every target is checked against the folder, and
-    a directory loop stops the read.
-  - The package tool escapes control characters in every line it prints,
-    and the app takes a path from the backend's output only when it lies
-    in the job's own folders. A file name with a line break inside a
+    unpacked to: names with a separator, ".." or control characters fail
+    the extraction, every target is checked against the folder, and a
+    directory loop stops the read.
+  - The package tool escapes control characters in the lines that name
+    files, and the app takes a path from the backend's output only when it
+    lies in the job's own folders. A file name with a line break inside a
     package could fake a marker and make the app remove any folder.
   - "Output already there" with Delete deletes the source only when the
     output is exactly the job's (same name, firmware included). A build of
@@ -22,22 +22,28 @@ SAFETY
   - A .pkg is built in a folder of its own inside the output folder and
     moved out when it is done. A package already in the output folder (the
     source of a repair, an older build) is never written over half-way or
-    removed by a failed build; the job's own source is never replaced.
+    removed by a failed build; the job's own source is never replaced, and
+    a finished package that cannot be moved stays where it is.
   - PS5 repair of a package in the library writes the repaired package
     beside it ("(2)") instead of skipping the job or replacing the
     original; the view shows where the package will go.
   - PS4 repair records every step before it starts, so a run that is
     stopped or crashes half-way can be undone; an undo file cut off while
     it was written is restored up to its last complete range. Undo last
-    change goes back one run at a time and names the package and the time.
+    change goes back one run at a time and names the package and the time;
+    a package that is not there keeps its changes recorded for the next
+    Undo, and Undo waits while the queue runs.
   - Organize keeps one journal per Apply: Undo goes back step by step and
     names the folder, the count and the time.
   - Rescan no longer gives every new job the patch of the last Add job.
   - A move to another drive copies under a hidden temporary name and
-    renames when complete; quitting while it runs asks first.
+    renames when complete; a copy whose source vanished half-way is named
+    "(incomplete)"; quitting while it runs asks first.
   - Stop asks before it ends a job that has run for a while, and Quit and
     Stop during a PS4 repair say that the package stays half changed.
-  - Archive passwords go to 7-Zip at its prompt, not on the command line.
+  - Archive passwords go to 7-Zip at its prompt, not on the command line
+    (non-ASCII ones still on the command line where 7-Zip would misread
+    them).
   - A download folder with a hidden subfolder is no longer taken as a
     whole by Move or Delete.
 

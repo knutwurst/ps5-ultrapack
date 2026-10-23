@@ -560,11 +560,22 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
     return {"moved": moved, "failed": failed}
 
 
+def _journal_order(j: Path):
+    """When the journal was written (a clock set back keeps the order), then '<time>.json'
+    before '<time>-2.json' (two runs in one second)."""
+    m = re.match(r"^(.*?)(?:-(\d+))?$", j.stem)
+    try:
+        t = j.stat().st_mtime_ns
+    except OSError:
+        t = 0
+    return (t, m.group(1), int(m.group(2) or 1))
+
+
 def journals(folder, legacy=None) -> list[Path]:
     """The journals of the Apply runs not undone yet, newest first (*legacy*: the single
     journal file older versions kept, counted as the oldest)."""
     found = sorted((j for j in Path(folder).glob("*.json") if not j.name.endswith(".undone.json")),
-                   key=lambda j: j.name, reverse=True) if Path(folder).is_dir() else []
+                   key=_journal_order, reverse=True) if Path(folder).is_dir() else []
     if legacy and Path(legacy).is_file():
         found.append(Path(legacy))
     return found

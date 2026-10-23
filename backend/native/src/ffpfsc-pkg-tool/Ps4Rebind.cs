@@ -82,6 +82,8 @@ internal static partial class Program
             catch
             {
                 e.RollBack();
+                e.Dispose();
+                if (undoPath != null) File.Delete(undoPath);          // nothing to undo
                 Console.Error.WriteLine("[ERROR] the package was restored to its state before the run");
                 throw;
             }

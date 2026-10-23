@@ -179,7 +179,7 @@ internal static partial class Program
                 BitConverter.GetBytes(nb.Length + 1).CopyTo(sfo, at + 4);
             }
             else { Console.Error.WriteLine($"[ERROR] {k} has a format this tool does not write"); return 1; }
-            Console.WriteLine($"[sfo] {k}: {old} -> {v}");
+            Console.WriteLine($"[sfo] {k}: {SafeLineWriter.Escape(old)} -> {SafeLineWriter.Escape(v)}");
         }
         using (var e = new CntEdit(pkgPath, undoPath, UndoMagic, new[] { Orbis.PKG.EntryId.PARAM_SFO, Orbis.PKG.EntryId.GENERAL_DIGESTS }))
         {

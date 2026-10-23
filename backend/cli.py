@@ -2066,15 +2066,38 @@ def _place_built_pkg(pkg: Path, out_dir: Path, args) -> Path:
     same name is replaced; the job's own source never is: the new one gets ' (2)' then."""
     dest = out_dir / pkg.name
     sources = [s for s in (getattr(args, "_chain_src", None), getattr(args, "fpkg_build", None)) if s]
-    if dest.exists() and any(_is_same_file(Path(s), dest) for s in sources):
+
+    def free() -> Path:
         stem, n = dest.stem, 2
-        while (out_dir / f"{stem} ({n}).pkg").exists():
+        while os.path.lexists(out_dir / f"{stem} ({n}).pkg"):
             n += 1
-        new = out_dir / f"{stem} ({n}).pkg"
-        print(f"[INFO] {dest.name} is the source of this job: the new package is {new.name}", flush=True)
+        return out_dir / f"{stem} ({n}).pkg"
+    if os.path.lexists(dest) and (dest.is_dir() or any(_is_same_file(Path(s), dest) for s in sources)):
+        new = free()
+        print(f"[INFO] {dest.name} is the source of this job or a folder: the new package is {new.name}", flush=True)
         dest = new
-    os.replace(pkg, dest)
+    try:
+        _rename_retrying(pkg, dest, replace=True)
+    except PermissionError:
+        # an older package of that name is open or read-only (Windows): the new one goes beside it
+        new = free()
+        print(f"[WARN] {dest.name} could not be replaced; the new package is {new.name}", flush=True)
+        _rename_retrying(pkg, new, replace=True)
+        dest = new
     return dest
+
+
+def _rename_retrying(a: Path, b: Path, replace: bool = False) -> None:
+    """A rename tried again for a few seconds: on Windows a scanner can hold a file that was
+    just written."""
+    for attempt in range(5):
+        try:
+            (os.replace if replace else os.rename)(a, b)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.5 * (attempt + 1))
 
 
 def check_patch_fits(game_root: Path, patch_root: Path) -> None:
@@ -3700,7 +3723,13 @@ def main() -> None:
             # out once it is done: a package already in the output folder (a repair's source,
             # an older build) is never written over half-way.
             _holder_made = not (out_dir / "_ffpfsc_temp").exists()
-            stage_out = Path(tempfile.mkdtemp(prefix="tmp", dir=str(_ensure_dir(out_dir / "_ffpfsc_temp"))))
+            for _try in range(3):             # a cleanup of the last job may take an empty holder away
+                try:
+                    stage_out = Path(tempfile.mkdtemp(prefix="tmp", dir=str(_ensure_dir(out_dir / "_ffpfsc_temp"))))
+                    break
+                except FileNotFoundError:
+                    if _try == 2:
+                        raise
             _ks = None
             if args.fpkg_keystone:
                 if re.fullmatch(r"[0-9A-Fa-f]{192}", args.fpkg_keystone.strip()):
@@ -3737,6 +3766,7 @@ def main() -> None:
                 if staged is not None:
                     shutil.rmtree(staged, ignore_errors=True)
                     print(f"[INFO] Removed unwrap scratch {staged}", flush=True)
+            keep_stage = False
             try:
                 if rc != 0:
                     print(f"\n[ERROR] fPKG build failed (rc={rc}).", flush=True); sys.exit(1)
@@ -3745,11 +3775,26 @@ def main() -> None:
                     print(f"\n[ERROR] The package tool reported success, but no new package is in {out_dir}.",
                           flush=True)
                     sys.exit(1)
-                built = [_place_built_pkg(made[-1], out_dir, args)]
+                try:
+                    built = [_place_built_pkg(made[-1], out_dir, args)]
+                except OSError as e:
+                    # the package is finished: it stays, in a folder no temp cleanup takes
+                    keep_stage = True
+                    kept = made[-1]
+                    try:
+                        held = out_dir / f"{made[-1].stem[:80]} (not moved {os.urandom(2).hex()})"
+                        _rename_retrying(stage_out, held)
+                        kept = held / made[-1].name
+                    except OSError:
+                        pass
+                    print(f"\n[ERROR] The package is built but could not be moved into {out_dir} ({e}). "
+                          f"It is here: {kept}", flush=True)
+                    sys.exit(1)
             finally:
-                shutil.rmtree(stage_out, ignore_errors=True)
-                if _holder_made:                      # the _ffpfsc_temp this build made, when nothing else is in it
-                    _drop_scratch_holder(stage_out.parent)
+                if not keep_stage:
+                    shutil.rmtree(stage_out, ignore_errors=True)
+                    if _holder_made:                  # the _ffpfsc_temp this build made, when nothing else is in it
+                        _drop_scratch_holder(stage_out.parent)
             # Run the diagnostic checklist BEFORE announcing the result so a bad build is
             # visible right in the log. A failed check fails the job (exit code 3) but the
             # package stays for inspection; warnings stay warnings.

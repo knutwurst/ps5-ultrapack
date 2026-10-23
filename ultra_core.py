@@ -3359,6 +3359,10 @@ class ArchiveExtractor:
         code = proc.wait()
         if code != 0:
             readable = ArchiveExtractor._cli_tail_lines(tail)
+            if password:
+                # the prompt we answered through stdin is no sign of a wrong password
+                readable = [x for x in (re.sub(r"enter password[^:]*:", "", ln, flags=re.I).strip()
+                                        for ln in readable) if x]
             excerpt = ArchiveExtractor._cli_excerpt(readable)
             if ArchiveExtractor._CLI_PASSWORD_RE.search("\n".join(readable)):
                 raise ArchivePasswordError(
@@ -3499,6 +3503,8 @@ class ArchiveExtractor:
             if is_7z:
                 # -bsp1 streams progress to stdout; -y auto-confirms; a password goes in at its prompt
                 cmd = [tool, "x", str(archive), f"-o{dest}", "-y", "-bsp1", "-bso0"]
+                if password and not password.isascii():
+                    cmd.append(f"-p{password}")   # stdin is read in the console code page here
             else:
                 cmd = [tool, "x", "-y"]
                 if password:
@@ -3512,7 +3518,7 @@ class ArchiveExtractor:
                 ArchiveExtractor._run_extract_process(
                     cmd, Path(tool).name, log_fn=log_fn,
                     progress_fn=progress_fn, cancel_event=cancel_event,
-                    password=password if is_7z else None
+                    password=password if is_7z and password.isascii() else None
                 )
                 if log_fn:
                     log_fn("OK", f"RAR extracted via {Path(tool).name}")

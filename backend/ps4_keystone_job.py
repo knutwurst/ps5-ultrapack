@@ -204,7 +204,15 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
 def journals(undo_root) -> list[Path]:
     """The journals of the runs that changed something and are not undone yet, newest first."""
     out = []
-    for j in sorted(Path(undo_root).glob("*/journal.json"), key=lambda q: q.parent.name, reverse=True):
+    def order(q):
+        # by when the journal was written (a clock set back keeps the order), then '<time>-2'
+        m = re.match(r"^(.*?)(?:-(\d+))?$", q.parent.name)
+        try:
+            t = q.stat().st_mtime_ns
+        except OSError:
+            t = 0
+        return (t, m.group(1), int(m.group(2) or 1))
+    for j in sorted(Path(undo_root).glob("*/journal.json"), key=order, reverse=True):
         try:
             steps = json.loads(j.read_text(encoding="utf-8")).get("steps") or []
         except (OSError, ValueError):
@@ -233,21 +241,34 @@ def describe(journal_path) -> dict:
 
 
 def undo(journal_path, on_line=None) -> int:
-    """Put back what the run of *journal_path* changed, newest first."""
+    """Put back what the run of *journal_path* changed, newest first. A package that is not
+    there or cannot be restored keeps its steps in the journal for the next Undo; the rest
+    of the run is put back."""
     journal_path = Path(journal_path)
     journal = json.loads(journal_path.read_text(encoding="utf-8"))
-    rc_all = 0
+    left, blocked = [], set()
     for step in reversed(journal["steps"]):
         pkg, u = Path(step["package"]), Path(step["undo"])
         if not u.is_file():
             continue                     # the run stopped before this step changed anything
+        if str(pkg) in blocked:
+            left.append(step)            # a newer step of this package is still in place
+            continue
+        if not pkg.is_file():
+            _say(on_line, f"[ERROR] {pkg.name} is not there (a drive unplugged, or moved?); "
+                          f"its changes stay recorded for the next Undo")
+            blocked.add(str(pkg)); left.append(step)
+            continue
         rc = fpkg.ps4_keystone_restore(pkg, u, on_line=lambda line: _say(on_line, line) if line.startswith(("[ok]", "[ERROR]")) else None)
         if rc == 0:
             _say(on_line, f"[PS4] restored {pkg.name}")
         else:
             _say(on_line, f"[ERROR] could not restore {pkg.name}")
-            rc_all = 1
-    if rc_all == 0:
+            blocked.add(str(pkg)); left.append(step)
+    if not left:
         journal_path.rename(journal_path.with_name("journal.undone.json"))
         _say(on_line, "[OK] PS4 repair: undone")
-    return rc_all
+        return 0
+    journal["steps"] = list(reversed(left))
+    journal_path.write_text(json.dumps(journal, indent=1), encoding="utf-8")
+    return 1

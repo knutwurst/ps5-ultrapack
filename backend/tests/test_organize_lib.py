@@ -543,5 +543,18 @@ class Roles(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class Journals(unittest.TestCase):
+    def test_newest_apply_first_also_within_one_second(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            a = ol.new_journal_path(folder); a.write_text('{"root": "/x", "ops": []}')
+            b = ol.new_journal_path(folder); b.write_text('{"root": "/x", "ops": [{"op": "move"}]}')
+            c = ol.new_journal_path(folder); c.write_text('{"root": "/x", "ops": []}')
+            self.assertEqual(ol.journals(folder)[0], c)
+            self.assertEqual(ol.describe(b)["moves"], 1)
+            c.rename(c.with_name(c.stem + ".undone.json"))
+            self.assertEqual(ol.journals(folder)[0], b)
+
+
 if __name__ == "__main__":
     unittest.main()

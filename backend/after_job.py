@@ -1,12 +1,14 @@
 """What happens to a job's source once the job is done, and to the computer once the queue is."""
 from __future__ import annotations
 
+import glob
 import os
 import uuid
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -379,6 +381,26 @@ def _copy_file(src: Path, dst: Path, tick) -> None:
         raise OSError(f"short copy: {dst.name}")
 
 
+def _rename_settled(a: Path, b: Path) -> None:
+    """os.rename, tried again for a few seconds: on Windows a scanner or the indexer can hold
+    a file of a tree that was just written."""
+    for attempt in range(6):
+        try:
+            os.rename(a, b)
+            return
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+
+
+def _free_name(p: Path) -> Path:
+    n, cand = 2, p
+    while os.path.lexists(str(cand)):
+        cand, n = p.with_name(f"{p.name} {n}"), n + 1
+    return cand
+
+
 def _copy_then_remove(src: Path, dst: Path, tick) -> None:
     """Copy *src* to *dst* on another drive under a hidden temporary name, check every
     file's size, give the copy its name, then remove *src*. An interrupted copy never sits
@@ -386,7 +408,14 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
     when *src* is gone by then, the copy stays."""
     if os.path.lexists(str(dst)):
         raise FileExistsError(f"{dst.name} is already there")
-    part = dst.with_name(f".{dst.name[:80]}.part-{uuid.uuid4().hex[:8]}")
+    stem = f".{dst.name[:80]}.part-"
+    for old in dst.parent.glob(f"{glob.escape(stem)}*"):       # an earlier move of it that was cut off
+        if re.fullmatch(r"[0-9a-f]{8}", old.name[len(stem):]):
+            try:
+                _delete(old)
+            except OSError:
+                pass
+    part = dst.with_name(f"{stem}{uuid.uuid4().hex[:8]}")
     created = False
     try:
         if src.is_symlink():
@@ -422,14 +451,15 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
                 raise OSError(f"short copy: {dst.name}")
         if os.path.lexists(str(dst)):
             raise FileExistsError(f"{dst.name} turned up during the copy")
-        os.rename(part, dst)
+        _rename_settled(part, dst)
     except BaseException:
         try:
             if created and os.path.lexists(str(part)):
                 if os.path.lexists(str(src)):
                     _delete(part)
-                elif not os.path.lexists(str(dst)):
-                    os.rename(part, dst)               # the source is gone: this copy is all there is
+                else:
+                    # the source is gone: this copy is all there is, under a name that says so
+                    _rename_settled(part, _free_name(dst.with_name(f"{dst.name} (incomplete)")))
         except OSError:
             pass
         raise

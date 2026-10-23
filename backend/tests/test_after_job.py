@@ -236,8 +236,9 @@ class ActionTests(Base):
         with mock.patch.object(aj, "_copy_file", side_effect=copy_then_lose_source):
             with self.assertRaises(OSError):
                 aj.apply(aj.MOVE, [g], dest=dest, same_device=lambda a, b: False)
+        # all there is, under a name that says it is not complete
         self.assertEqual(sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()),
-                         ["Game/data/a.bin", "Game/eboot.bin"])
+                         ["Game (incomplete)/data/a.bin", "Game (incomplete)/eboot.bin"])
 
     def test_cross_drive_copy_never_sits_under_the_final_name_half_done(self):
         g = self.game()
@@ -257,6 +258,16 @@ class ActionTests(Base):
         self.assertFalse((dest / "Game").exists())
         self.assertEqual(list(dest.iterdir()) if dest.exists() else [], [])
         self.assertTrue((g / "data" / "a.bin").is_file())
+
+    def test_cross_drive_move_clears_its_own_cut_off_copy(self):
+        g = self.game()
+        dest = self.tmp / "other_drive"; dest.mkdir()
+        stale = dest / ".Game.part-0123abcd"; stale.mkdir(); (stale / "eboot.bin").write_bytes(b"old")
+        other = dest / ".Game.part-notours"; other.mkdir()
+        aj.apply(aj.MOVE, [g], dest=dest, same_device=lambda a, b: False)
+        self.assertTrue((dest / "Game" / "eboot.bin").is_file())
+        self.assertFalse(stale.exists())
+        self.assertTrue(other.exists(), "only the app's own names go")
 
     @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "needs a folder this user cannot read")
     def test_cross_drive_unreadable_folder_keeps_the_source(self):

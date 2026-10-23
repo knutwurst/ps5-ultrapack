@@ -23,8 +23,10 @@ _NAME_CHARS_PER_ENTRY = 15
 
 
 
-# exFAT forbids these in names; a name with them (or "." / "..") could leave the target folder
-_BAD_NAME_CHARS = set('"*/:<>?\\|') | {chr(c) for c in range(0x20)}
+# A separator, a control character, "." or ".." could take a name out of the target folder or
+# fake a line of the log. Other characters exFAT forbids stay readable (the app's own writer
+# may have put them there from a macOS name); the extractor checks every target anyway.
+_BAD_NAME_CHARS = {"/"} | {chr(c) for c in range(0x20)}
 
 
 def _safe_name(name: str) -> bool:
