@@ -10,7 +10,7 @@ The app used to be called PS5 FFPFSC ULTRA.
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS%2026+-Apple%20Silicon-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 26 or newer (Apple Silicon)">
-  <a href="https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.2.8-windows-preview.1"><img src="https://img.shields.io/badge/Windows%20x64-preview-f59e0b?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64 preview"></a>
+  <a href="https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.3.0-windows-preview.1"><img src="https://img.shields.io/badge/Windows%20x64-preview-f59e0b?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64 preview"></a>
   <img src="https://img.shields.io/badge/FW%2011.60-verified-22c55e?style=for-the-badge" alt="FW 11.60 verified">
   <img src="https://img.shields.io/badge/source-MIT-3a3a3a?style=for-the-badge" alt="Source MIT">
   <img src="https://img.shields.io/badge/binary-GPL--3-3a3a3a?style=for-the-badge" alt="Binary GPL-3">
@@ -45,6 +45,10 @@ Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack
     <td align="center" width="50%"><img src="images/add-job.jpg" width="400" alt="Add job: source, changes, output"><br><sub>Add job</sub></td>
   </tr>
   <tr>
+    <td align="center" width="50%"><img src="images/add-job-mixed.jpg" width="400" alt="Add job with a folder of PS4 and PS5 games, each with its own output folder"><br><sub>A folder with PS4 and PS5 games</sub></td>
+    <td align="center" width="50%"><img src="images/settings-auto.jpg" width="400" alt="Settings, Compression, with the Auto output table"><br><sub>Auto output in Settings</sub></td>
+  </tr>
+  <tr>
     <td align="center" width="50%"><img src="images/add-job-ps4.jpg" width="400" alt="Add job with a PS4 package that carries the default keystone and a merged update"><br><sub>A PS4 package that needs a repair</sub></td>
     <td align="center" width="50%"><img src="images/ps4-keystone.jpg" width="400" alt="The PS4 repair tool with a package, a keystone and one update"><br><sub>PS4 repair</sub></td>
   </tr>
@@ -53,8 +57,7 @@ Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack
     <td align="center" width="50%"><img src="images/ps5-repair.jpg" width="400" alt="The PS5 repair tool with a package that has the default keystone"><br><sub>PS5 repair</sub></td>
   </tr>
   <tr>
-    <td align="center" width="50%"><img src="images/settings-auto.jpg" width="400" alt="Settings, Compression, with the Auto output table"><br><sub>Auto output in Settings</sub></td>
-    <td align="center" width="50%"><img src="images/main-window-light.jpg" width="400" alt="Main window in light mode"><br><sub>Light mode</sub></td>
+    <td align="center" colspan="2"><img src="images/main-window-light.jpg" width="400" alt="Main window in light mode"><br><sub>Light mode</sub></td>
   </tr>
 </table>
 
