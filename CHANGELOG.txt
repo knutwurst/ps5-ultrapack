@@ -103,6 +103,9 @@ TOOLS AND SETTINGS
   - The first-run setup names every output and needs both folders.
   - PS4 repair and PS5 repair are now PS4 PKG Tools and PS5 PKG Tools, also
     in the File menu. In German, their labels were partly still English.
+  - The notes in PS4 and PS5 PKG Tools wrap at the width the window gives
+    them. In a small window, Add to queue and the last table column stay
+    in sight and the view headings wrap instead of being cut off.
 
 ────────────────────────────────────────────────────────────────────────
   v2.3.0

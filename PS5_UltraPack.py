@@ -326,6 +326,56 @@ def _firmware_folder_status(raw: str) -> str:
     return "No firmware subfolders and no .sprx libraries found."
 
 
+def fit_notes(view, notes, beside=None) -> None:
+    """Wrap the notes under a tool view's fields at the room the view gives them: its width less
+    the 128 px indent and 18 px margin, and less *beside* for the first note while it is shown.
+    CTk scales wraplength itself, so it is set in logical pixels."""
+    try:
+        s = notes[0]._get_widget_scaling()
+        room = view.winfo_width() / s - 146 - 6
+        if room <= 0:
+            return
+        for i, lbl in enumerate(notes):
+            w = room - (beside.winfo_reqwidth() / s + 10 if i == 0 and beside is not None
+                        and beside.winfo_manager() else 0)
+            lbl.configure(wraplength=max(160, round(w)))
+    except (tk.TclError, AttributeError):
+        pass
+
+
+def wrap_beside(row, label, *others, pad=16) -> None:
+    """Wrap *label* at the room *row* leaves it beside *others*, which are packed before it so a
+    narrow window wraps the text instead of pushing them out of sight."""
+    def _fit(e):
+        try:
+            s = label._get_widget_scaling()
+            room = (e.width - sum(o.winfo_reqwidth() for o in others)) / s - pad
+            label.configure(wraplength=max(120, round(room)))
+        except (tk.TclError, AttributeError):
+            pass
+    row.bind("<Configure>", _fit, add="+")
+
+
+def fit_columns(tree) -> None:
+    """Shrink a table's stretching columns, down to their minimum, when the table gets narrower
+    than its columns: Tk left them as wide and the last columns went out of sight."""
+    def _fit(e):
+        try:
+            cols = ["#0", *tree["columns"]]
+            over = sum(int(tree.column(c, "width")) for c in cols) - e.width
+            spare = {c: int(tree.column(c, "width")) - int(tree.column(c, "minwidth")) for c in cols
+                     if tree.tk.getboolean(tree.column(c, "stretch"))}
+            room = sum(v for v in spare.values() if v > 0)
+            if over <= 0 or room <= 0:
+                return
+            for c, v in spare.items():
+                if v > 0:
+                    tree.column(c, width=int(tree.column(c, "width")) - min(v, -(-over * v // room)))
+        except tk.TclError:
+            pass
+    tree.bind("<Configure>", _fit, add="+")
+
+
 _WORD_WIDTHS: dict = {}
 
 
@@ -6902,16 +6952,18 @@ class KeystoneView:
             return e
 
         def note(r, var, pady=(0, 2)):
-            ctk.CTkLabel(v, textvariable=var, text_color=MUTED, anchor="w", justify="left", wraplength=760).grid(
-                row=r, column=0, sticky="ew", padx=(128, 18), pady=pady)
+            lbl = ctk.CTkLabel(v, textvariable=var, text_color=MUTED, anchor="w", justify="left", wraplength=760)
+            lbl.grid(row=r, column=0, sticky="ew", padx=(128, 18), pady=pady)
+            return lbl
 
         self.base_var = tk.StringVar(value="")
         self.base_note = TextVar(value="Choose the PS4 game package (.pkg) to repair.")
         self._base_entry = field_row(2, "Package:", self.base_var, "Choose…", self._pick_base)
         nr = ctk.CTkFrame(v, fg_color="transparent")
         nr.grid(row=3, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
-        ctk.CTkLabel(nr, textvariable=self.base_note, text_color=MUTED, anchor="w", justify="left",
-                     wraplength=640).pack(side="left")
+        self._base_lbl = ctk.CTkLabel(nr, textvariable=self.base_note, text_color=MUTED, anchor="w",
+                                      justify="left", wraplength=760)
+        self._base_lbl.pack(side="left")
         self._other_tool = ctk.CTkButton(nr, text="Open in PS5 PKG Tools", width=130, height=24, fg_color=BTN,
                                          hover_color=BTN_HOVER, text_color=WHITE, border_width=1,
                                          border_color=BTN_BORDER, command=self._to_ps5_repair)
@@ -6919,7 +6971,7 @@ class KeystoneView:
         self.ks_note = TextVar(value=self.HOWTO)
         field_row(4, "Keystone:", self.ks_var, "File…", self._pick_keystone,
                   placeholder=tr("a file or its hex digits; empty: keep it"))
-        note(5, self.ks_note)
+        ks_lbl = note(5, self.ks_note)
         # a full game with an update merged in: shown only when the package has the problem
         self._ver_row = ctk.CTkFrame(v, fg_color="transparent")
         ctk.CTkLabel(self._ver_row, text="Version:", text_color=MUTED, width=110, anchor="w").pack(side="left")
@@ -6931,18 +6983,24 @@ class KeystoneView:
         self.ver_note = TextVar(value="")
         self._ver_note = ctk.CTkLabel(v, textvariable=self.ver_note, text_color=MUTED, anchor="w", justify="left",
                                       wraplength=760)
+        self._notes = [self._base_lbl, ks_lbl, self._ver_note]
+        v.bind("<Configure>", lambda _e: self._fit_notes(), add="+")
         upd_head = ctk.CTkFrame(v, fg_color="transparent")
         upd_head.grid(row=8, column=0, sticky="ew", padx=18, pady=(12, 4))
-        ctk.CTkLabel(upd_head, text="Updates", text_color=WHITE, anchor="w").pack(side="left")
+        upd_lbl = ctk.CTkLabel(upd_head, text="Updates", text_color=WHITE, anchor="w")
+        upd_lbl.pack(side="left")
         self.upd_note = TextVar(value="Updates of this game record the package they belong to; checked ones are "
                                       "bound to the changed package.")
-        ctk.CTkLabel(upd_head, textvariable=self.upd_note, text_color=MUTED, anchor="w").pack(side="left", padx=(10, 0))
         self.remove_btn = ctk.CTkButton(upd_head, text="Remove from list", width=120, fg_color=BTN, hover_color=BTN_HOVER,
                                         text_color=WHITE, border_width=1, border_color=BTN_BORDER,
                                         command=self._remove_update, state="disabled")
         self.remove_btn.pack(side="right")
-        ctk.CTkButton(upd_head, text="Add…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
-                      border_width=1, border_color=BTN_BORDER, command=self._add_update).pack(side="right", padx=(0, 6))
+        add_upd = ctk.CTkButton(upd_head, text="Add…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                                border_width=1, border_color=BTN_BORDER, command=self._add_update)
+        add_upd.pack(side="right", padx=(0, 6))
+        upd_note = ctk.CTkLabel(upd_head, textvariable=self.upd_note, text_color=MUTED, anchor="w", justify="left")
+        upd_note.pack(side="left", padx=(10, 0))
+        wrap_beside(upd_head, upd_note, upd_lbl, add_upd, self.remove_btn, pad=28)
         _pal = style_tree(v, "Ks.Treeview", self.app.kit)
         tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
         tframe.grid(row=9, column=0, sticky="nsew", padx=18, pady=(0, 6))
@@ -6959,13 +7017,16 @@ class KeystoneView:
         self.tree.bind("<Button-1>", self._click)
         self.tree.bind("<space>", lambda _e: self._toggle(self.tree.focus()))
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._refresh_buttons(), add="+")
+        fit_columns(self.tree)
         bottom = ctk.CTkFrame(v, fg_color="transparent")
         bottom.grid(row=10, column=0, sticky="ew", padx=18, pady=(0, 14))
-        ctk.CTkLabel(bottom, text="Changes the packages themselves. What it replaces is kept in the app folder; "
-                                  "Undo last change puts it back.", text_color=MUTED, anchor="w").pack(side="left")
         self.add_btn = ctk.CTkButton(bottom, text="Add to queue", width=130, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                      text_color=ON_ACCENT, command=self.add_to_queue, state="disabled")
         self.add_btn.pack(side="right")
+        foot = ctk.CTkLabel(bottom, text="Changes the packages themselves. What it replaces is kept in the app folder; "
+                                         "Undo last change puts it back.", text_color=MUTED, anchor="w", justify="left")
+        foot.pack(side="left")
+        wrap_beside(bottom, foot, self.add_btn)
         self.base_var.trace_add("write", lambda *_: self._base_changed())
         self.ks_var.trace_add("write", lambda *_: self._ks_changed())
         self._refresh_buttons()
@@ -7038,6 +7099,9 @@ class KeystoneView:
         if p:
             self.ks_var.set(p)
 
+    def _fit_notes(self):
+        fit_notes(self.frame, self._notes, beside=self._other_tool)
+
     def _base_changed(self):
         """Read the package, its keystone and the updates beside it, off the main thread."""
         self._probe_seq += 1
@@ -7073,6 +7137,7 @@ class KeystoneView:
             self._own = box.get("own")
             self.base_note.set(box["note"])
             (self._other_tool.pack(side="left", padx=(10, 0)) if box.get("ps5") else self._other_tool.pack_forget())
+            self._fit_notes()
             self._updates = box.get("updates", [])
             self._version = box.get("version")
             if self._version is not None:
@@ -7440,21 +7505,26 @@ class Ps5RepairView:
         self._base_entry = field_row(v, 2, "Package:", self.base_var, [("Choose…", self._pick_base)]).entry
         nr = ctk.CTkFrame(v, fg_color="transparent")
         nr.grid(row=3, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
-        ctk.CTkLabel(nr, textvariable=self.base_note, text_color=MUTED, anchor="w", justify="left",
-                     wraplength=640).pack(side="left")
+        self._base_lbl = ctk.CTkLabel(nr, textvariable=self.base_note, text_color=MUTED, anchor="w",
+                                      justify="left", wraplength=760)
+        self._base_lbl.pack(side="left")
         self._other_tool = ctk.CTkButton(nr, text="Open in PS4 PKG Tools", width=130, height=24, fg_color=BTN,
                                          hover_color=BTN_HOVER, text_color=WHITE, border_width=1,
                                          border_color=BTN_BORDER, command=self._to_ps4_repair)
         chk_head = ctk.CTkFrame(v, fg_color="transparent")
         chk_head.grid(row=4, column=0, sticky="ew", padx=18, pady=(12, 4))
-        ctk.CTkLabel(chk_head, text="Checks", text_color=WHITE, anchor="w").pack(side="left")
+        chk_lbl = ctk.CTkLabel(chk_head, text="Checks", text_color=WHITE, anchor="w")
+        chk_lbl.pack(side="left")
         self.chk_note = TextVar(value="")
-        self._chk_label = ctk.CTkLabel(chk_head, textvariable=self.chk_note, text_color=MUTED, anchor="w")
-        self._chk_label.pack(side="left", padx=(10, 0))
         self.show_pass_var = tk.BooleanVar(value=False)
-        ctk.CTkCheckBox(chk_head, text="Show passed checks", variable=self.show_pass_var, fg_color=ACCENT,
-                        hover_color=ACCENT_HOVER, text_color=MUTED, checkbox_width=16, checkbox_height=16,
-                        command=self._render).pack(side="right")
+        show_pass = ctk.CTkCheckBox(chk_head, text="Show passed checks", variable=self.show_pass_var, fg_color=ACCENT,
+                                    hover_color=ACCENT_HOVER, text_color=MUTED, checkbox_width=16, checkbox_height=16,
+                                    command=self._render)
+        show_pass.pack(side="right")
+        self._chk_label = ctk.CTkLabel(chk_head, textvariable=self.chk_note, text_color=MUTED, anchor="w",
+                                       justify="left")
+        self._chk_label.pack(side="left", padx=(10, 0))
+        wrap_beside(chk_head, self._chk_label, chk_lbl, show_pass, pad=26)
         _pal = style_tree(v, "P5.Treeview", self.app.kit)
         tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
         tframe.grid(row=5, column=0, sticky="nsew", padx=18, pady=(0, 6))
@@ -7472,6 +7542,7 @@ class Ps5RepairView:
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
         vsb.pack(side="right", fill="y", pady=6)
+        fit_columns(self.tree)
 
         # the repairs
         rep = ctk.CTkFrame(v, fg_color="transparent")
@@ -7486,7 +7557,8 @@ class Ps5RepairView:
         self._ks_note.grid(row=1, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
         fw = ctk.CTkFrame(rep, fg_color="transparent")
         fw.grid(row=2, column=0, sticky="ew", padx=18, pady=(8, 2))
-        ctk.CTkLabel(fw, text="Firmware:", text_color=MUTED, width=110, anchor="w").pack(side="left")
+        fw_lbl = ctk.CTkLabel(fw, text="Firmware:", text_color=MUTED, width=110, anchor="w")
+        fw_lbl.pack(side="left")
         self.fw_on_var = tk.BooleanVar(value=False)
         self._fw_cb = ctk.CTkCheckBox(fw, text="Lower the required firmware to", variable=self.fw_on_var, fg_color=ACCENT,
                                       hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18,
@@ -7496,7 +7568,10 @@ class Ps5RepairView:
         self._fw_menu = ctk.CTkOptionMenu(fw, values=self._targets(), variable=self.fw_var, width=92, height=26,
                                           dynamic_resizing=False, command=lambda _v: self._fw_changed())
         self._fw_menu.pack(side="left", padx=(8, 0))
-        ctk.CTkLabel(fw, text="your console's firmware, also used by the checks in Add job", text_color=MUTED, anchor="w").pack(side="left", padx=(8, 0))
+        fw_hint = ctk.CTkLabel(fw, text="your console's firmware, also used by the checks in Add job", text_color=MUTED,
+                               anchor="w", justify="left")
+        fw_hint.pack(side="left", padx=(8, 0))
+        wrap_beside(fw, fw_hint, fw_lbl, self._fw_cb, self._fw_menu, pad=24)
         pg = ctk.CTkFrame(rep, fg_color="transparent")
         pg.grid(row=3, column=0, sticky="ew", padx=18, pady=(6, 2))
         ctk.CTkLabel(pg, text="PlayGo:", text_color=MUTED, width=110, anchor="w").pack(side="left")
@@ -7518,15 +7593,21 @@ class Ps5RepairView:
         self.out_var = tk.StringVar(value=(app.output_var.get() or "").strip())
         field_row(rep, 5, "Output:", self.out_var, [("Folder…", self._pick_out)])
         self.becomes = TextVar(value="")
-        ctk.CTkLabel(rep, textvariable=self.becomes, text_color=MUTED, anchor="w", justify="left",
-                     wraplength=760).grid(row=6, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
+        becomes = ctk.CTkLabel(rep, textvariable=self.becomes, text_color=MUTED, anchor="w", justify="left",
+                               wraplength=760)
+        becomes.grid(row=6, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
+        self._notes = [self._base_lbl, self._ks_note, becomes]
+        v.bind("<Configure>", lambda _e: self._fit_notes(), add="+")
         bottom = ctk.CTkFrame(v, fg_color="transparent")
         bottom.grid(row=7, column=0, sticky="ew", padx=18, pady=(10, 14))
-        ctk.CTkLabel(bottom, text="The rebuild unpacks the package and builds it again; images, license and PlayGo "
-                                  "tables are put right on the way.", text_color=MUTED, anchor="w").pack(side="left")
         self.add_btn = ctk.CTkButton(bottom, text="Add to queue", width=130, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                      text_color=ON_ACCENT, command=self.add_to_queue, state="disabled")
         self.add_btn.pack(side="right")
+        foot = ctk.CTkLabel(bottom, text="The rebuild unpacks the package and builds it again; images, license and "
+                                         "PlayGo tables are put right on the way.", text_color=MUTED, anchor="w",
+                            justify="left")
+        foot.pack(side="left")
+        wrap_beside(bottom, foot, self.add_btn)
         self.base_var.trace_add("write", lambda *_: self._base_changed())
         self.ks_var.trace_add("write", lambda *_: self._ks_changed())
         self.out_var.trace_add("write", lambda *_: self._refresh_buttons())
@@ -7677,6 +7758,9 @@ class Ps5RepairView:
             self.fw_on_var.set(any(r["fix"] == "firmware" and r["level"] in ("fail", "warn") for r in self._rows))
             self._render()
 
+    def _fit_notes(self):
+        fit_notes(self.frame, self._notes, beside=self._other_tool)
+
     def _base_changed(self):
         """Run the checks on the package off the main thread."""
         self._probe_seq += 1
@@ -7717,6 +7801,7 @@ class Ps5RepairView:
             info, rows = box["v"]
             ps4 = info.get("error") == "ps4"
             (self._other_tool.pack(side="left", padx=(10, 0)) if ps4 else self._other_tool.pack_forget())
+            self._fit_notes()
             if info.get("error") and not info.get("results"):
                 self.base_note.set(self._unreadable_text(info))
                 self._refresh_buttons()
@@ -8739,11 +8824,15 @@ class App:
         tb = kit.frame(head, bg=bg)
         tb.grid(row=0, column=0, sticky="w")
         kit.label(tb, bg=bg, text=title, font=kit.fonts.view).pack(anchor="w")
-        if subtitle or subtitle_var:
-            kw = {"textvariable": subtitle_var} if subtitle_var else {"text": subtitle}
-            kit.label(tb, bg=bg, fg="muted", font=kit.fonts.small, **kw).pack(anchor="w", pady=(2, 0))
         btns = kit.frame(head, bg=bg)
         btns.grid(row=0, column=1, sticky="e")
+        if subtitle or subtitle_var:
+            kw = {"textvariable": subtitle_var} if subtitle_var else {"text": subtitle}
+            sub = kit.label(tb, bg=bg, fg="muted", font=kit.fonts.small, **kw)
+            sub.pack(anchor="w", pady=(2, 0))
+            # a narrow window wraps the line instead of cutting it under the buttons
+            head.bind("<Configure>", lambda e: sub.configure(
+                wraplength=max(200, e.width - btns.winfo_reqwidth() - round(16 * ui_kit.SCALE))), add="+")
         return head, btns
 
     def _small(self, parent, text, icon, cmd, variant="ghost", tooltip=None, bg="surface"):
