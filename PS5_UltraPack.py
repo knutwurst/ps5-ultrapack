@@ -4847,7 +4847,8 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkButton(p4f, text="Folder…", width=76, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       command=self._pick_ps4_out, border_width=1, border_color=BTN_BORDER).pack(side="left", padx=(6, 0))
         self._bind_help(self._HELP["ps4out"], pb4)
-        oline = ctk.CTkFrame(orow, fg_color=PANEL); oline.pack(fill="x", padx=10, pady=(2, 6))
+        # height=1: with Auto-organize hidden (PS4, Organize) an empty CTkFrame would ask for 200 px
+        oline = ctk.CTkFrame(orow, fg_color=PANEL, height=1); oline.pack(fill="x", padx=10, pady=(2, 6))
         self._organize_cb = ctk.CTkCheckBox(oline, text="Auto-organize - folder and file named from the game's own metadata",
                                             variable=self.organize_var, checkbox_width=18, checkbox_height=18,
                                             fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=WHITE, font=ctk.CTkFont(size=12))

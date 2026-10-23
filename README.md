@@ -150,7 +150,7 @@ A PS4 save holds the keystone of the game that wrote it. A fake package built wi
 4. Check the updates of the game. The tool lists the ones next to the package; add others with **Add…**. Each update records the package it belongs to, and the job points it at the changed package so it still installs. An update whose saves would go to another folder than the game's gets the game's folder. An update converted from another region is marked, because its language can differ from the game's.
 5. **Add to queue** and start the queue.
 
-The packages are changed in place, nothing is rebuilt. Everything the job replaces is kept in the app folder under `keystone-undo/`, and **Undo last change** puts it back.
+The packages are changed in place, nothing is rebuilt. Everything the job replaces is kept in the app folder under `keystone-undo/`, and **Undo last change** puts it back, one run at a time and newest first. A run that is stopped half-way can be undone too.
 
 ## PS5 repair
 
@@ -173,7 +173,7 @@ The view also has **Look inside** and **Unpack** for the package.
 
 ## Organize
 
-Organize (in the sidebar) cleans up an existing library. Pick a folder and press Scan. You get a list of every game folder, image, package and archive in it with its current and new name. Apply only renames, so it's fast even on a large drive, and **Undo last organize** puts everything back.
+Organize (in the sidebar) cleans up an existing library. Pick a folder and press Scan. You get a list of every game folder, image, package and archive in it with its current and new name. Apply only renames, so it's fast even on a large drive, and **Undo last organize** puts things back, one Apply at a time.
 
 Each game ends up in one title folder named after the newest version it has. PS4 packages get their own layout with UPDATE and DLC entries. Archives keep their file names. If the app can't tell which game an archive belongs to, it leaves that folder alone and says so.
 
@@ -183,7 +183,7 @@ Each game ends up in one title folder named after the newest version it has. PS4
   <img src="images/look-inside.jpg" alt="Look inside a .ffpfsc" width="760">
 </p>
 
-Look inside opens a `.ffpfs`, `.ffpfsc` or `.pkg` and shows the file tree. You can extract single files or folders without unpacking the whole thing. Only the blocks you need are read and decompressed, so even a 100 GB container opens quickly. Extracted files are identical to the originals.
+Look inside opens a `.ffpfs`, `.ffpfsc` or `.pkg` and shows the file tree. You can extract single files or folders without unpacking the whole thing. Only the blocks you need are read and decompressed, so even a 100 GB container opens quickly. Extracted files are identical to the originals. **Unpack all as a job** puts the whole image into a folder through the queue.
 
 ## Other bits
 
