@@ -2046,6 +2046,37 @@ def patch_brings_ampr(patch_dir: Path) -> bool:
     return (_patch_descend_wrapper(patch_dir) / "fakelib" / "libSceAmpr.sprx").is_file()
 
 
+def _ensure_dir(p: Path) -> Path:
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _drop_scratch_holder(holder: Path) -> None:
+    """Remove a scratch holder that holds nothing but OS markers (Spotlight's, Finder's)."""
+    try:
+        left = [q for q in holder.iterdir() if not (_is_junk_name(q.name) or q.name == ".metadata_never_index")]
+        if not left:
+            shutil.rmtree(holder, ignore_errors=True)
+    except OSError:
+        pass
+
+
+def _place_built_pkg(pkg: Path, out_dir: Path, args) -> Path:
+    """Move a finished package from its build folder into *out_dir*. An older package of the
+    same name is replaced; the job's own source never is: the new one gets ' (2)' then."""
+    dest = out_dir / pkg.name
+    sources = [s for s in (getattr(args, "_chain_src", None), getattr(args, "fpkg_build", None)) if s]
+    if dest.exists() and any(_is_same_file(Path(s), dest) for s in sources):
+        stem, n = dest.stem, 2
+        while (out_dir / f"{stem} ({n}).pkg").exists():
+            n += 1
+        new = out_dir / f"{stem} ({n}).pkg"
+        print(f"[INFO] {dest.name} is the source of this job: the new package is {new.name}", flush=True)
+        dest = new
+    os.replace(pkg, dest)
+    return dest
+
+
 def check_patch_fits(game_root: Path, patch_root: Path) -> None:
     """Refuse a patch for another game (title id). A backport (a patch whose SDK is lower
     than the game's) only fits the version it was made for: warn when the versions differ."""
@@ -3476,6 +3507,7 @@ def main() -> None:
         args.chain_sign = False; args.fake_sign_first = False; args.chain_to = None
         if to == "pkg":
             args._fpkg_in_place = owned is not None   # the tool may build right in our scratch
+            args._chain_src = str(src)                # never built over: see the fPKG build below
             args.fpkg_build = str(root)
         else:
             args.game_folder = str(root); args.operation = "pack"; args.no_compress = (to == "ffpfs")
@@ -3663,8 +3695,12 @@ def main() -> None:
             if _in_place:
                 print("[INFO] Building in the unpacked copy itself: each file is removed as soon as the package "
                       "holds it. A build that fails is unpacked again on Retry.", flush=True)
-            # what is in the output folder before: the validation looks at this build's package only
-            _pkgs_before = {q.name: q.stat().st_mtime_ns for q in out_dir.glob("*.pkg")}
+            # The library writes the package straight under its final name and removes that name
+            # after a failed build. It builds in a folder of its own here, and the package moves
+            # out once it is done: a package already in the output folder (a repair's source,
+            # an older build) is never written over half-way.
+            _holder_made = not (out_dir / "_ffpfsc_temp").exists()
+            stage_out = Path(tempfile.mkdtemp(prefix="tmp", dir=str(_ensure_dir(out_dir / "_ffpfsc_temp"))))
             _ks = None
             if args.fpkg_keystone:
                 if re.fullmatch(r"[0-9A-Fa-f]{192}", args.fpkg_keystone.strip()):
@@ -3674,7 +3710,7 @@ def main() -> None:
                 else:
                     _ks = Path(args.fpkg_keystone)
             try:
-                rc = _fpkg.build(build_src, out_dir,
+                rc = _fpkg.build(build_src, stage_out,
                                  content_id=_cid,
                                  title_id=_tid,
                                  title=ident["title"],
@@ -3701,15 +3737,19 @@ def main() -> None:
                 if staged is not None:
                     shutil.rmtree(staged, ignore_errors=True)
                     print(f"[INFO] Removed unwrap scratch {staged}", flush=True)
-            if rc != 0:
-                print(f"\n[ERROR] fPKG build failed (rc={rc}).", flush=True); sys.exit(1)
-            built = sorted((q for q in out_dir.glob("*.pkg")
-                            if _pkgs_before.get(q.name) != q.stat().st_mtime_ns),
-                           key=lambda x: x.stat().st_mtime)
-            if not built:
-                print(f"\n[ERROR] The package tool reported success, but no new package is in {out_dir}.",
-                      flush=True)
-                sys.exit(1)
+            try:
+                if rc != 0:
+                    print(f"\n[ERROR] fPKG build failed (rc={rc}).", flush=True); sys.exit(1)
+                made = sorted(stage_out.glob("*.pkg"), key=lambda x: x.stat().st_mtime)
+                if not made:
+                    print(f"\n[ERROR] The package tool reported success, but no new package is in {out_dir}.",
+                          flush=True)
+                    sys.exit(1)
+                built = [_place_built_pkg(made[-1], out_dir, args)]
+            finally:
+                shutil.rmtree(stage_out, ignore_errors=True)
+                if _holder_made:                      # the _ffpfsc_temp this build made, when nothing else is in it
+                    _drop_scratch_holder(stage_out.parent)
             # Run the diagnostic checklist BEFORE announcing the result so a bad build is
             # visible right in the log. A failed check fails the job (exit code 3) but the
             # package stays for inspection; warnings stay warnings.

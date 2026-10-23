@@ -110,8 +110,11 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
         if keystone is None and not updates:
             _say(on_line, "[OK] PS4 repair: nothing left to do")
             return 0
-    folder = Path(undo_root) / time.strftime("%Y-%m-%d %H%M%S")
-    folder.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d %H%M%S")
+    folder, n = Path(undo_root) / stamp, 2
+    while folder.exists():                 # two runs in one second keep their own journals
+        folder, n = Path(undo_root) / f"{stamp}-{n}", n + 1
+    folder.mkdir(parents=True)
     journal = {"base": str(base), "steps": []}
     n_undo = [0]
 
@@ -121,8 +124,6 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
 
     def save_journal():
         (folder / "journal.json").write_text(json.dumps(journal, indent=1), encoding="utf-8")
-        (Path(undo_root) / "last.json").write_text(json.dumps({"journal": str(folder / "journal.json")}),
-                                                     encoding="utf-8")
 
     t0 = time.monotonic()
     size = max(1, base.stat().st_size)
@@ -142,14 +143,22 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
 
     def step(pkg: Path, rc_of, done: str, failed: str) -> bool:
         uf = undo_file()
+        # in the journal before the tool starts: a run stopped half-way can still be undone
+        entry = {"package": str(pkg), "undo": str(uf)}
+        journal["steps"].append(entry)
+        save_journal()
         if rc_of(uf) != 0:
-            _say(on_line, f"[ERROR] {failed}; " + ("the changes this run made to it before stay, Undo last "
-                                                   "change puts them back" if str(pkg) in changed
+            if not uf.is_file():                  # rolled back by the tool, or never opened
+                journal["steps"].remove(entry)
+                save_journal()
+            _say(on_line, f"[ERROR] {failed}; " + ("the changes this run made to it stay, Undo last "
+                                                   "change puts them back" if str(pkg) in changed or uf.is_file()
                                                    else "the package is unchanged"))
             return False
         if uf.is_file():
-            journal["steps"].append({"package": str(pkg), "undo": str(uf)})
             changed.add(str(pkg))
+        else:
+            journal["steps"].remove(entry)
             save_journal()
         _say(on_line, f"[PS4] {done}")
         return True
@@ -192,13 +201,35 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
     return rc_all
 
 
+def journals(undo_root) -> list[Path]:
+    """The journals of the runs that changed something and are not undone yet, newest first."""
+    out = []
+    for j in sorted(Path(undo_root).glob("*/journal.json"), key=lambda q: q.parent.name, reverse=True):
+        try:
+            steps = json.loads(j.read_text(encoding="utf-8")).get("steps") or []
+        except (OSError, ValueError):
+            continue
+        if any(Path(st.get("undo", "")).is_file() for st in steps):
+            out.append(j)
+    return out
+
+
 def last_journal(undo_root) -> Path | None:
-    """The journal of the last run that changed something, if it is still there."""
+    """The journal Undo last change works on: the newest run not undone yet."""
+    found = journals(undo_root)
+    return found[0] if found else None
+
+
+def describe(journal_path) -> dict:
+    """What a journal changed, for the question before an undo: the game package, when, and
+    how many packages."""
+    j = json.loads(Path(journal_path).read_text(encoding="utf-8"))
+    pkgs = {st.get("package") for st in j.get("steps") or []}
     try:
-        p = Path(json.loads((Path(undo_root) / "last.json").read_text(encoding="utf-8"))["journal"])
-    except (OSError, ValueError, KeyError):
-        return None
-    return p if p.is_file() else None
+        when = time.strftime("%Y-%m-%d %H:%M", time.strptime(Path(journal_path).parent.name[:17], "%Y-%m-%d %H%M%S"))
+    except ValueError:
+        when = ""
+    return {"base": str(j.get("base") or ""), "when": when, "packages": len(pkgs)}
 
 
 def undo(journal_path, on_line=None) -> int:
@@ -208,6 +239,8 @@ def undo(journal_path, on_line=None) -> int:
     rc_all = 0
     for step in reversed(journal["steps"]):
         pkg, u = Path(step["package"]), Path(step["undo"])
+        if not u.is_file():
+            continue                     # the run stopped before this step changed anything
         rc = fpkg.ps4_keystone_restore(pkg, u, on_line=lambda line: _say(on_line, line) if line.startswith(("[ok]", "[ERROR]")) else None)
         if rc == 0:
             _say(on_line, f"[PS4] restored {pkg.name}")

@@ -6771,6 +6771,15 @@ def _normalize_extract_selectors(selectors: list[str] | None) -> list[str] | Non
     return cleaned or None
 
 
+def _exfat_target_inside(base: Path, rel: str) -> bool:
+    """True when *rel* stays inside *base* (the reader already refuses such names)."""
+    try:
+        root = base.resolve()
+        return (root / rel).resolve().is_relative_to(root) and (root / rel).resolve() != root
+    except (OSError, ValueError):
+        return False
+
+
 def extract_exfat_image(
     image: Path,
     output_path: Path,
@@ -6826,6 +6835,10 @@ def extract_exfat_image(
     output_path.mkdir(parents=True, exist_ok=True)
 
     for directory in dirs:
+        if not _exfat_target_inside(output_path, directory.rel_path):
+            result.errors.append(f"refused entry outside the output folder: {directory.rel_path!r}")
+            fh.close()
+            return result
         (output_path / directory.rel_path).mkdir(parents=True, exist_ok=True)
         result.directories_created += 1
 
@@ -6842,6 +6855,10 @@ def extract_exfat_image(
         progress.status(f"\nExtracting {len(files)} files from exFAT image to {output_path}...")
 
     for file_entry in files:
+        if not _exfat_target_inside(output_path, file_entry.rel_path):
+            result.errors.append(f"refused entry outside the output folder: {file_entry.rel_path!r}")
+            fh.close()
+            return result
         target: Path = output_path / file_entry.rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -6926,6 +6943,9 @@ def _extract_inner_exfat(
         files = [f for f in files if _selected(f.rel_path)]
 
         for directory in dirs:
+            if not _exfat_target_inside(output_path, directory.rel_path):
+                result.errors.append(f"refused entry outside the output folder: {directory.rel_path!r}")
+                return result
             (output_path / directory.rel_path).mkdir(parents=True, exist_ok=True)
             result.directories_created += 1
 
@@ -6941,6 +6961,9 @@ def _extract_inner_exfat(
         if progress is not None:
             progress.status(f"\nExtracting {len(files)} files from inner exFAT to {output_path}...")
         for file_entry in files:
+            if not _exfat_target_inside(output_path, file_entry.rel_path):
+                result.errors.append(f"refused entry outside the output folder: {file_entry.rel_path!r}")
+                return result
             target: Path = output_path / file_entry.rel_path
             target.parent.mkdir(parents=True, exist_ok=True)
             try:

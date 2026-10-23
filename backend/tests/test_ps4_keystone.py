@@ -253,10 +253,6 @@ class ToolOnARealPackage(unittest.TestCase):
         self.assertFalse(lib.exists() and any(lib.rglob("*.pkg")))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class KeystoneText(unittest.TestCase):
     def test_fingerprint_full_hex_and_file_give_the_same_keystone(self):
         ks = make_keystone(bytes(range(100, 132)))
@@ -372,6 +368,37 @@ class KeystoneJob(unittest.TestCase):
         self.assertEqual(self.job.undo(self.job.last_journal(self.tmp / "undo"), on_line=lambda _l: None), 0)
         self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
 
+    def test_a_run_stopped_in_a_step_can_be_undone(self):
+        real = fpkg.ps4_keystone
+
+        def dies_after_writing(*a, **k):
+            real(*a, **k)                 # the package is changed, then the process is gone
+            raise SystemExit(-15)
+        fpkg.ps4_keystone = dies_after_writing
+        try:
+            with self.assertRaises(SystemExit):
+                self.job.run(self.base, bytes(range(100, 132)).hex(), [], self.tmp / "undo", on_line=lambda _l: None)
+        finally:
+            fpkg.ps4_keystone = real
+        self.assertFalse(filecmp.cmp(self.base, GAME, shallow=False))
+        journal = self.job.last_journal(self.tmp / "undo")
+        self.assertIsNotNone(journal, "the step must be in the journal before it starts")
+        self.assertEqual(self.job.undo(journal, on_line=lambda _l: None), 0)
+        self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
+
+    def test_undo_goes_back_one_run_at_a_time(self):
+        undo_root = self.tmp / "undo"
+        fp1, fp2 = bytes(range(100, 132)), bytes(range(140, 172))
+        self.assertEqual(self.job.run(self.base, fp1.hex(), [], undo_root, on_line=lambda _l: None), 0)
+        self.assertEqual(self.job.run(self.base, fp2.hex(), [], undo_root, on_line=lambda _l: None), 0)
+        self.assertEqual(len(self.job.journals(undo_root)), 2)
+        self.assertEqual(self.job.describe(self.job.last_journal(undo_root))["base"], str(self.base))
+        self.assertEqual(self.job.undo(self.job.last_journal(undo_root), on_line=lambda _l: None), 0)
+        self.assertEqual(fpkg.ps4_keystone_info(self.base)["fingerprint"], fp1.hex().upper())
+        self.assertEqual(self.job.undo(self.job.last_journal(undo_root), on_line=lambda _l: None), 0)
+        self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
+        self.assertIsNone(self.job.last_journal(undo_root))
+
     def test_wrong_inputs_change_nothing(self):
         lines = []
         self.assertEqual(self.job.run(self.upd, make_keystone().hex(), [], self.tmp / "u", on_line=lines.append), 1)
@@ -384,3 +411,7 @@ class KeystoneJob(unittest.TestCase):
         self.assertEqual(self.job.run(self.upd, None, [], self.tmp / "u", on_line=lines.append, fix_version=True), 1)
         self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
         self.assertTrue(filecmp.cmp(self.upd, UPDATE, shallow=False))
+
+
+if __name__ == "__main__":
+    unittest.main()

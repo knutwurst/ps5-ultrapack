@@ -457,9 +457,12 @@ internal static partial class Program
                 return Bad("not an undo file of ps4-keystone: " + undoPath);
             cid = System.Text.Encoding.ASCII.GetString(r.ReadBytes(36)).TrimEnd('\0');
             size = r.ReadInt64();
-            while (r.BaseStream.Position < r.BaseStream.Length)
+            while (r.BaseStream.Length - r.BaseStream.Position >= 12)
             {
-                var off = r.ReadInt64(); var len = r.ReadInt32(); entries.Add((off, r.ReadBytes(len)));
+                var off = r.ReadInt64(); var len = r.ReadInt32();
+                var old = r.ReadBytes(len);
+                if (old.Length < len) break;   // a run stopped while saving this range: not written yet
+                entries.Add((off, old));
             }
         }
         // only the package the undo file was made from

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 import re
 import shutil
 import subprocess
@@ -379,20 +380,24 @@ def _copy_file(src: Path, dst: Path, tick) -> None:
 
 
 def _copy_then_remove(src: Path, dst: Path, tick) -> None:
-    """Copy *src* to *dst* on another drive, check every file's size, then remove *src*.
-    A failed copy removes what it wrote (nothing that was there before) and leaves *src*
-    untouched; when *src* is gone by then, the copy stays."""
+    """Copy *src* to *dst* on another drive under a hidden temporary name, check every
+    file's size, give the copy its name, then remove *src*. An interrupted copy never sits
+    under the final name. A failed copy removes what it wrote and leaves *src* untouched;
+    when *src* is gone by then, the copy stays."""
+    if os.path.lexists(str(dst)):
+        raise FileExistsError(f"{dst.name} is already there")
+    part = dst.with_name(f".{dst.name[:80]}.part-{uuid.uuid4().hex[:8]}")
     created = False
     try:
         if src.is_symlink():
-            os.symlink(os.readlink(src), dst, target_is_directory=src.is_dir())
+            os.symlink(os.readlink(src), part, target_is_directory=src.is_dir())
             created = True
         elif src.is_file():
-            os.close(os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
+            os.close(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
             created = True
-            _copy_file(src, dst, tick)
+            _copy_file(src, part, tick)
         else:
-            dst.mkdir()
+            part.mkdir()
             created = True
 
             def unreadable(e: OSError):
@@ -402,23 +407,29 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
                 dns[:] = [d for d in dns if not _is_junk(d)]      # OS clutter is left behind
                 fns = [f for f in fns if not _is_junk(f)]
                 for d in dns:
-                    sd, td = Path(dp) / d, dst / rel / d
+                    sd, td = Path(dp) / d, part / rel / d
                     if sd.is_symlink():
                         os.symlink(os.readlink(sd), td, target_is_directory=True)   # Windows tells them apart
                     else:
                         td.mkdir()
                 for fn in fns:
-                    sf, tf = Path(dp) / fn, dst / rel / fn
+                    sf, tf = Path(dp) / fn, part / rel / fn
                     if sf.is_symlink():
                         os.symlink(os.readlink(sf), tf)
                     else:
                         _copy_file(sf, tf, tick)
-            if size_of([dst]) != size_of([src]):
+            if size_of([part]) != size_of([src]):
                 raise OSError(f"short copy: {dst.name}")
+        if os.path.lexists(str(dst)):
+            raise FileExistsError(f"{dst.name} turned up during the copy")
+        os.rename(part, dst)
     except BaseException:
         try:
-            if created and os.path.lexists(str(src)) and os.path.lexists(str(dst)):
-                _delete(dst)
+            if created and os.path.lexists(str(part)):
+                if os.path.lexists(str(src)):
+                    _delete(part)
+                elif not os.path.lexists(str(dst)):
+                    os.rename(part, dst)               # the source is gone: this copy is all there is
         except OSError:
             pass
         raise

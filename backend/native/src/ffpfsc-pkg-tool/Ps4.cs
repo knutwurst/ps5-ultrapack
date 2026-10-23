@@ -179,7 +179,7 @@ internal static partial class Program
                     o.Write(buf, 0, n);
                     pos += n; done += n;
                     int pct = total > 0 ? (int)Math.Min(99, done * 100 / total) : 99;
-                    if (pct != lastPct) { lastPct = pct; Console.WriteLine($"[####] {pct}% extract ({rel})"); }
+                    if (pct != lastPct) { lastPct = pct; Console.WriteLine($"[####] {pct}% extract ({SafeLineWriter.Escape(rel)})"); }
                 }
             }, keepExisting));
         }

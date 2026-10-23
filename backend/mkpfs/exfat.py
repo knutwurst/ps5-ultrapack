@@ -22,6 +22,14 @@ _FAT_END_OF_CHAIN = 0xFFFFFFFF
 _NAME_CHARS_PER_ENTRY = 15
 
 
+
+# exFAT forbids these in names; a name with them (or "." / "..") could leave the target folder
+_BAD_NAME_CHARS = set('"*/:<>?\\|') | {chr(c) for c in range(0x20)}
+
+
+def _safe_name(name: str) -> bool:
+    return bool(name) and name not in (".", "..") and not (set(name) & _BAD_NAME_CHARS)
+
 class ExfatError(ValueError):
     """Raised when an exFAT image is malformed or unsupported."""
 
@@ -187,6 +195,8 @@ class ExfatReader:
                 if secondary[0] == _ENTRY_FILE_NAME:
                     name_units += secondary[2:32]
             name: str = name_units.decode("utf-16-le", errors="replace")[:name_length]
+            if not _safe_name(name):
+                raise ExfatError(f"invalid file name in the image: {name!r}")
 
             is_dir: bool = bool(file_attrs & _ATTR_DIRECTORY)
             rel_path: str = f"{rel_dir}/{name}" if rel_dir else name
@@ -199,12 +209,16 @@ class ExfatReader:
                 no_fat_chain=child_no_fat,
             )
             if is_dir:
+                if child_cluster in self._dirs_seen:
+                    raise ExfatError(f"directory loop in the image at {rel_path!r}")
+                self._dirs_seen.add(child_cluster)
                 node.children = self._walk_directory(child_cluster, child_no_fat, data_length, rel_path)
             entries.append(node)
         return entries
 
     def root_entries(self) -> list[ExfatEntry]:
         """Return the directory tree rooted at the volume root."""
+        self._dirs_seen = {self.geometry.root_dir_cluster}
         return self._walk_directory(self.geometry.root_dir_cluster, no_fat_chain=False, length=0, rel_dir="")
 
     def iter_files(self) -> Iterator[ExfatEntry]:

@@ -18,7 +18,7 @@ PALETTE = {
     "dark": {
         "bg": "#0b0d12", "sidebar": "#0f1218", "surface": "#12161e", "surface2": "#1a1f2a",
         "inspector": "#161b24", "raised": "#20262f", "border": "#262d3a", "border_strong": "#3a4354",
-        "text": "#e7ebf2", "muted": "#9aa3b2", "faint": "#6b7385",
+        "text": "#e7ebf2", "muted": "#9aa3b2", "faint": "#858d9d",
         "accent": "#3d8bff", "accent_fill": "#1f6feb", "accent_hover": "#3b82f6",
         "accent_bg": "#16294a", "accent_text": "#7ab0ff", "on_accent": "#ffffff",
         "select": "#162644", "hover": "#171c26", "track": "#262d3a",
@@ -34,7 +34,7 @@ PALETTE = {
     "light": {
         "bg": "#f4f6f9", "sidebar": "#eaedf2", "surface": "#ffffff", "surface2": "#f1f4f8",
         "inspector": "#f7f9fc", "raised": "#ffffff", "border": "#dde2ea", "border_strong": "#c3cbd8",
-        "text": "#141821", "muted": "#566070", "faint": "#8a93a3",
+        "text": "#141821", "muted": "#566070", "faint": "#636c7d",
         "accent": "#0064d2", "accent_fill": "#0064d2", "accent_hover": "#0057b8",
         "accent_bg": "#dcebff", "accent_text": "#0057b8", "on_accent": "#ffffff",
         "select": "#dcebff", "hover": "#eef1f6", "track": "#e2e7ee",

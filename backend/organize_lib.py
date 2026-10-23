@@ -560,6 +560,38 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
     return {"moved": moved, "failed": failed}
 
 
+def journals(folder, legacy=None) -> list[Path]:
+    """The journals of the Apply runs not undone yet, newest first (*legacy*: the single
+    journal file older versions kept, counted as the oldest)."""
+    found = sorted((j for j in Path(folder).glob("*.json") if not j.name.endswith(".undone.json")),
+                   key=lambda j: j.name, reverse=True) if Path(folder).is_dir() else []
+    if legacy and Path(legacy).is_file():
+        found.append(Path(legacy))
+    return found
+
+
+def new_journal_path(folder) -> Path:
+    """A journal file of its own for the next Apply, named by the time."""
+    Path(folder).mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d %H%M%S")
+    j, n = Path(folder) / f"{stamp}.json", 2
+    while j.exists() or j.with_name(j.stem + ".undone.json").exists():
+        j, n = Path(folder) / f"{stamp}-{n}.json", n + 1
+    return j
+
+
+def describe(journal_path) -> dict:
+    """What an Apply moved, for the question before its undo: the library folder, how many
+    items and when."""
+    data = json.loads(Path(journal_path).read_text(encoding="utf-8"))
+    moves = sum(1 for op in data.get("ops", []) if op.get("op") == "move")
+    try:
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(Path(journal_path).stat().st_mtime))
+    except OSError:
+        when = ""
+    return {"root": str(data.get("root") or ""), "moves": moves, "when": when}
+
+
 def undo(journal_path, on_line=None) -> dict:
     """Move back everything the journal moved that is still where Organize put it."""
     journal_path = Path(journal_path)

@@ -3,6 +3,102 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.3.1
+────────────────────────────────────────────────────────────────────────
+
+SAFETY
+
+  - A crafted .exfat image can no longer write outside the folder it is
+    unpacked to: names with separators, "..", ":" or control characters
+    fail the extraction, every target is checked against the folder, and
+    a directory loop stops the read.
+  - The package tool escapes control characters in every line it prints,
+    and the app takes a path from the backend's output only when it lies
+    in the job's own folders. A file name with a line break inside a
+    package could fake a marker and make the app remove any folder.
+  - "Output already there" with Delete deletes the source only when the
+    output is exactly the job's (same name, firmware included). A build of
+    another firmware leaves the source in place.
+  - A .pkg is built in a folder of its own inside the output folder and
+    moved out when it is done. A package already in the output folder (the
+    source of a repair, an older build) is never written over half-way or
+    removed by a failed build; the job's own source is never replaced.
+  - PS5 repair of a package in the library writes the repaired package
+    beside it ("(2)") instead of skipping the job or replacing the
+    original; the view shows where the package will go.
+  - PS4 repair records every step before it starts, so a run that is
+    stopped or crashes half-way can be undone; an undo file cut off while
+    it was written is restored up to its last complete range. Undo last
+    change goes back one run at a time and names the package and the time.
+  - Organize keeps one journal per Apply: Undo goes back step by step and
+    names the folder, the count and the time.
+  - Rescan no longer gives every new job the patch of the last Add job.
+  - A move to another drive copies under a hidden temporary name and
+    renames when complete; quitting while it runs asks first.
+  - Stop asks before it ends a job that has run for a while, and Quit and
+    Stop during a PS4 repair say that the package stays half changed.
+  - Archive passwords go to 7-Zip at its prompt, not on the command line.
+  - A download folder with a hidden subfolder is no longer taken as a
+    whole by Move or Delete.
+
+ADD JOB
+
+  - The after-job choice is part of the summary and of the queue row; a
+    selected Delete is red. Rescan says when its jobs move or delete their
+    sources.
+  - Same format and no changes: the options that would do nothing are
+    hidden, and the dialog says the file is copied as it is.
+  - Backport, Sign and Patch on a game folder say that they change the
+    folder itself.
+  - A PS4 package offers "Into the library" or "Unpack to folder", the
+    same words as in a folder of PS4 and PS5 games; Auto-organize is
+    hidden where it does nothing, and in a mixed folder the after-job
+    choice sits under both blocks.
+  - Shorter help texts: the help line takes at most three lines, and a
+    field shows its help when it gets the focus.
+  - Several dropped paths open one Add job with them as the sources; a
+    drop on an open Add job fills its source.
+  - A sidebar click keeps a half-filled Add job for the next one.
+  - The source field takes the focus, and Backspace in the editor never
+    removes the job behind it.
+
+QUEUE AND RESULTS
+
+  - With "Ask me" on low space, the question defaults to "Skip this job"
+    and skips by itself after a minute, so a queue left alone goes on.
+  - The end of a run lists every job that did not finish, with its reason,
+    and offers Retry failed. The job report rates compression only for
+    .ffpfsc and .pkg, is translated and has Show in Finder.
+  - Jobs whose drive is not connected stay listed ("waiting for their
+    drive") and come back when the drive does.
+  - Start says when it runs failed, skipped or stopped jobs again.
+  - The log in the details wraps its lines; the status dot follows the
+    state in every language; the details show the title id.
+  - Questions use buttons that say what they do ("Stop job", "Keep
+    running").
+
+TOOLS AND SETTINGS
+
+  - PS5 repair always shows its checks (the result could arrive half);
+    a package for the other console names the right tool and opens it.
+  - PS4 repair: Space toggles one update after the other, "Remove from
+    list" takes an update off the list only, the notes column has a name.
+  - Look inside: "Unpack all as a job" goes through the queue; a selection
+    says where it was extracted, with Show in Finder.
+  - Clean temp covers the extra temp drives and a package build stopped in
+    the output folder; one name everywhere.
+  - Settings: Packing options together on Compression, debugging and drive
+    tuning folded into Advanced, Reset this page on Compression and Drives,
+    the add-on option under When a job is done with a text that matches
+    what it does, the password field says it is not stored, the Windows
+    DLL option only on Windows, shorter sliders with their meaning.
+  - The tables of the tool views follow light and dark mode and the
+    Windows display scaling. Dim text has more contrast.
+  - The first-run setup names every output and needs both folders.
+  - The File menu has PS4 Repair and PS5 Repair. In German, PS5 repair
+    and its labels were partly still English.
+
+────────────────────────────────────────────────────────────────────────
   v2.3.0
 ────────────────────────────────────────────────────────────────────────
 

@@ -20,12 +20,13 @@ namespace PkgTool;
 
 internal static partial class Program
 {
-    const string ToolVersion = "2.2.11";
+    const string ToolVersion = "2.3.1";
 
     static int Main(string[] args)
     {
         // UTF-8 on every system: a Windows console or pipe defaults to the OEM code page
         Console.OutputEncoding = new System.Text.UTF8Encoding(false);
+        SafeLineWriter.Install();                      // after the encoding: setting it replaces the writers
         // One number format (invariant: 1,234.5) for everything printed; the build log is parsed
         var invariant = System.Globalization.CultureInfo.InvariantCulture;
         System.Globalization.CultureInfo.DefaultThreadCurrentCulture = invariant;
@@ -599,7 +600,7 @@ internal static partial class Program
                 if (pct != lastPct)
                 {
                     lastPct = pct;
-                    Console.WriteLine($"[####] {pct}% extract ({rel})");
+                    Console.WriteLine($"[####] {pct}% extract ({SafeLineWriter.Escape(rel)})");
                 }
             }
             foreach (var e in fileTargets)
@@ -1044,7 +1045,7 @@ internal static partial class Program
         foreach (var r in checks)
         {
             string tag = r.Level switch { "pass" => "[ok  ]", "warn" => "[WARN]", _ => "[FAIL]" };
-            Console.WriteLine($"  {tag}  {r.Check,-24}  {r.Message}");
+            Console.WriteLine($"  {tag}  {r.Check,-24}  {SafeLineWriter.Escape(r.Message)}");   // a message may name a file
         }
         Console.WriteLine();
         Console.WriteLine($"summary: {p} passed, {w} warned, {f} failed");

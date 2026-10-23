@@ -239,6 +239,25 @@ class ActionTests(Base):
         self.assertEqual(sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()),
                          ["Game/data/a.bin", "Game/eboot.bin"])
 
+    def test_cross_drive_copy_never_sits_under_the_final_name_half_done(self):
+        g = self.game()
+        dest = self.tmp / "other_drive"
+        seen = []
+        real = aj._copy_file
+
+        def copy_and_look(s, d, tick):
+            real(s, d, tick)
+            seen.append(any(dest.glob("Game")))       # the final name is not there while copying
+            if len(seen) == 2:
+                raise KeyboardInterrupt               # the app quit half-way
+        with mock.patch.object(aj, "_copy_file", side_effect=copy_and_look):
+            with self.assertRaises(KeyboardInterrupt):
+                aj.apply(aj.MOVE, [g], dest=dest, same_device=lambda a, b: False)
+        self.assertEqual(seen, [False, False])
+        self.assertFalse((dest / "Game").exists())
+        self.assertEqual(list(dest.iterdir()) if dest.exists() else [], [])
+        self.assertTrue((g / "data" / "a.bin").is_file())
+
     @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "needs a folder this user cannot read")
     def test_cross_drive_unreadable_folder_keeps_the_source(self):
         g = self.game(files=(("eboot.bin", 300), ("data/a.bin", 700), ("locked/b.bin", 50)))

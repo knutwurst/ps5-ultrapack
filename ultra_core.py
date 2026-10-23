@@ -2679,17 +2679,17 @@ class ArchiveExtractor:
                 f"Could not extract {archive.name}: the archive looks damaged or incomplete. "
                 f"Saved password {n} opened it, but the data failed its check ({e}).\n\n"
                 "Download the archive again. Should it be intact, that password is not the "
-                "right one: add the correct one in Settings → Saved Archive Passwords.")
+                "right one: add the correct one in Settings › Archives.")
         if named:
             raise RuntimeError(
                 f"Could not open {archive.name}: wrong or missing password - none of the "
                 f"{len(named)} saved password(s) worked.\n\n"
-                "Add the correct password in Settings → Saved Archive Passwords "
+                "Add the correct password in Settings › Archives "
                 "(or in the 'Archive Password' field) and try again."
             )
         raise RuntimeError(
             f"Could not open {archive.name}: it is password-protected and no password "
-            "is saved.\n\nAdd the password in Settings → Saved Archive Passwords "
+            "is saved.\n\nAdd the password in Settings › Archives "
             "(or in the 'Archive Password' field) and try again."
         )
 
@@ -3275,7 +3275,8 @@ class ArchiveExtractor:
 
     @staticmethod
     def _run_extract_process(cmd: list[str], tool_name: str, log_fn=None, progress_fn=None,
-                             cancel_event: threading.Event | None = None, encoding: str | None = None) -> None:
+                             cancel_event: threading.Event | None = None, encoding: str | None = None,
+                             password: str | None = None) -> None:
         """Run a CLI extractor, streaming its progress; raise on a non-zero exit.
         The last lines of its output are kept so the failure names the reason: a
         wrong/missing password raises ArchivePasswordError, anything else
@@ -3284,8 +3285,9 @@ class ArchiveExtractor:
         proc = subprocess.Popen(
             cmd,
             # Closed stdin: an encrypted archive we passed no password for makes the tool
-            # prompt ("Enter password:") - it must fail, not wait for a keyboard.
-            stdin=subprocess.DEVNULL,
+            # prompt ("Enter password:") - it must fail, not wait for a keyboard. A password
+            # goes in at that prompt, not on the command line other programs can read.
+            stdin=subprocess.PIPE if password else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -3295,6 +3297,12 @@ class ArchiveExtractor:
             universal_newlines=True,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
+        if password:
+            try:
+                proc.stdin.write(password + "\n")
+                proc.stdin.close()
+            except OSError:
+                pass
         lines: queue.Queue[str] = queue.Queue()
         tail: deque[str] = deque(maxlen=20)   # what the tool said last - for the error
 
@@ -3489,10 +3497,8 @@ class ArchiveExtractor:
             tool_name = Path(tool).name.lower()
             is_7z = "7z" in tool_name
             if is_7z:
-                # -bsp1 streams progress to stdout; -y auto-confirms
+                # -bsp1 streams progress to stdout; -y auto-confirms; a password goes in at its prompt
                 cmd = [tool, "x", str(archive), f"-o{dest}", "-y", "-bsp1", "-bso0"]
-                if password:
-                    cmd.append(f"-p{password}")
             else:
                 cmd = [tool, "x", "-y"]
                 if password:
@@ -3505,7 +3511,8 @@ class ArchiveExtractor:
             try:
                 ArchiveExtractor._run_extract_process(
                     cmd, Path(tool).name, log_fn=log_fn,
-                    progress_fn=progress_fn, cancel_event=cancel_event
+                    progress_fn=progress_fn, cancel_event=cancel_event,
+                    password=password if is_7z else None
                 )
                 if log_fn:
                     log_fn("OK", f"RAR extracted via {Path(tool).name}")
@@ -3584,12 +3591,15 @@ class ArchiveExtractor:
     def _run_native_7z(exe: str, archive: Path, dest: Path, log_fn=None, progress_fn=None,
                        password: str = "", cancel_event: threading.Event | None = None) -> None:
         """Extract *archive* (any format the binary reads: 7z, zip, …) with the native 7-Zip CLI."""
-        cmd = [exe, "x", str(archive), f"-o{dest}", "-y", "-bsp1", "-sccUTF-8", f"-p{password}",
+        cmd = [exe, "x", str(archive), f"-o{dest}", "-y", "-bsp1", "-sccUTF-8",
                # OS and archiver clutter is not extracted at all (strip_fs_junk catches the rest).
                "-xr!._*", "-xr!.DS_Store", "-xr!__MACOSX", "-xr!Thumbs.db", "-xr!desktop.ini"]
+        if not password:
+            cmd.insert(6, "-p")              # no prompt: an encrypted archive fails as locked
         ArchiveExtractor._run_extract_process(
             cmd, os.path.basename(exe), log_fn=log_fn,
-            progress_fn=progress_fn, cancel_event=cancel_event, encoding="utf-8")
+            progress_fn=progress_fn, cancel_event=cancel_event, encoding="utf-8",
+            password=password or None)
 
     @staticmethod
     def _py7zr_password_failure(e: Exception) -> bool:

@@ -121,7 +121,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
 # Windows builds are a preview for now: the title, sidebar and About say so.
 APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
 # For archive sources, the GUI extraction occupies the first slice of a game's overall
@@ -797,6 +797,9 @@ class PanelHost:
         whatever was open, without a question."""
         for panel in list(reversed(self.stack)):
             try:
+                keep = getattr(panel, "keep_draft", None)
+                if keep is not None:
+                    keep()                # a half-filled Add job comes back next time
                 panel.destroy()
             except Exception:
                 pass
@@ -925,6 +928,10 @@ class EmbeddedDialog(ctk.CTkFrame):
     def iconify(self, *a, **k): pass
 
 
+REVEAL_LABEL = ("Show in Finder" if sys.platform == "darwin" else
+                "Show in Explorer" if sys.platform == "win32" else "Show in folder")
+
+
 class MessageWindow(ctk.CTkToplevel):
     """A message or a single question in a small window of its own: a job's result, an error report, the space check before a start, a password or folder prompt."""
 
@@ -1023,6 +1030,120 @@ class MessageWindow(ctk.CTkToplevel):
         super().destroy()
 
 
+class ConfirmWindow(MessageWindow):
+    """One question with two buttons that say what they do ("Stop job" / "Keep running").
+    A destructive action is red and never the Return default."""
+
+    def __init__(self, parent, title: str, text: str, action: str, cancel: str = "Cancel",
+                 danger: bool = False, detail: str = ""):
+        super().__init__(parent)
+        self.ok = False
+        self.resizable(True, False)
+        self.title(title)
+        ctk.CTkLabel(self, text=tr(title), font=ctk.CTkFont(size=15, weight="bold"),
+                     text_color=RED if danger else WHITE).pack(anchor="w", padx=20, pady=(16, 6))
+        btns = ctk.CTkFrame(self, fg_color=BLACK)
+        btns.pack(side="bottom", fill="x", padx=20, pady=(4, 14))
+        ctk.CTkButton(btns, text=tr(action), fg_color=RED if danger else ACCENT,
+                      hover_color=DANGER_HOVER if danger else ACCENT_HOVER, text_color=ON_ACCENT,
+                      command=self._yes).pack(side="right")
+        ctk.CTkButton(btns, text=tr(cancel), fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self.destroy).pack(side="right", padx=(0, 8))
+        ctk.CTkLabel(self, text=text, text_color=WHITE, wraplength=480, justify="left",
+                     font=ctk.CTkFont(size=13)).pack(anchor="w", padx=20, pady=(0, 6 if detail else 12))
+        if detail:
+            ctk.CTkLabel(self, text=detail, text_color=MUTED, wraplength=480, justify="left",
+                         font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(0, 12))
+        for seq in ("<Return>", "<KP_Enter>"):
+            self.bind(seq, lambda e: (self.destroy() if danger else self._yes()))
+        self.update_idletasks()
+        self.geometry(f"520x{max(150, self.winfo_reqheight())}")
+        self.grab_set()
+
+    def _yes(self):
+        self.ok = True
+        self.destroy()
+
+
+class NoticeWindow(MessageWindow):
+    """A short result in a window of its own, with one button."""
+
+    def __init__(self, parent, title: str, text: str, warn: bool = False):
+        super().__init__(parent)
+        self.resizable(True, False)
+        self.title(title)
+        ctk.CTkLabel(self, text=tr(title), font=ctk.CTkFont(size=15, weight="bold"),
+                     text_color=YELLOW if warn else WHITE).pack(anchor="w", padx=20, pady=(16, 6))
+        btns = ctk.CTkFrame(self, fg_color=BLACK)
+        btns.pack(side="bottom", fill="x", padx=20, pady=(4, 14))
+        ctk.CTkButton(btns, text="OK", width=90, fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=ON_ACCENT,
+                      command=self.destroy).pack(side="right")
+        ctk.CTkLabel(self, text=text, text_color=WHITE, wraplength=480, justify="left",
+                     font=ctk.CTkFont(size=13)).pack(anchor="w", padx=20, pady=(0, 12))
+        for seq in ("<Return>", "<KP_Enter>"):
+            self.bind(seq, lambda e: self.destroy())
+        self.update_idletasks()
+        self.geometry(f"520x{max(130, self.winfo_reqheight())}")
+
+
+_TREES: list = []          # (tree, style name, kit, tags) restyled when the theme changes
+
+
+def style_tree(widget, name: str, kit) -> dict:
+    """One look for the tables of the tool views: palette colours, row height and, on a
+    scaled Windows display, the app's fonts (Tk's own stay at 96 dpi). Returns the palette."""
+    style = ttk.Style(widget)
+    try:
+        style.theme_use("default")              # the Aqua theme ignores the colours below
+    except tk.TclError:
+        pass
+    pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
+    style.configure(name, background=pal["surface2"], fieldbackground=pal["surface2"],
+                    foreground=pal["text"], rowheight=round(24 * ui_kit.SCALE), borderwidth=0)
+    style.configure(name + ".Heading", background=pal["surface"], foreground=pal["muted"], borderwidth=0)
+    if ui_kit.SCALE != 1:
+        style.configure(name, font=kit.fonts.body)
+        style.configure(name + ".Heading", font=kit.fonts.small)
+    style.map(name, background=[("selected", pal["select"])], foreground=[("selected", pal["text"])])
+    return pal
+
+
+def watch_tree_theme(tree, name: str, kit, tags=None) -> None:
+    _TREES.append((tree, name, kit, tags))
+
+
+def restyle_trees() -> None:
+    for tree, name, kit, tags in list(_TREES):
+        try:
+            if not tree.winfo_exists():
+                _TREES.remove((tree, name, kit, tags))
+                continue
+            pal = style_tree(tree, name, kit)
+            if tags is not None:
+                tags(pal)
+        except tk.TclError:
+            pass
+
+
+def ask_confirm(title: str, text: str, action: str, cancel: str = "Cancel", danger: bool = False,
+                detail: str = "", parent=None) -> bool:
+    """Ask in a ConfirmWindow and wait. With the main window hidden (the GUI test driver)
+    a message window cannot show, so the plain yes/no question stands in."""
+    owner = parent or (EmbeddedDialog.host.app.root if EmbeddedDialog.host else None)
+    try:
+        visible = owner is not None and bool(owner.winfo_toplevel().winfo_viewable())
+    except tk.TclError:
+        visible = False
+    if not visible:
+        return bool(messagebox.askyesno(title, text + (f"\n\n{detail}" if detail else "")))
+    win = ConfirmWindow(owner, title, text, action, cancel=cancel, danger=danger, detail=detail)
+    try:
+        owner.wait_window(win)
+    except tk.TclError:
+        return False
+    return win.ok
+
+
 class FirstRunWizard(EmbeddedDialog):
     LARGE = True
     MAX_W = 700            # a readable column, not the full width of a wide window
@@ -1041,6 +1162,8 @@ class FirstRunWizard(EmbeddedDialog):
         self.result = {}
 
         self._build()
+        for v in (self.temp_path, self.output_path):
+            v.trace_add("write", self._gate_next)
         self._show_step(0)
 
     def _build(self):
@@ -1071,9 +1194,10 @@ class FirstRunWizard(EmbeddedDialog):
 
     def _show_step(self, n):
         self.step = n
-        self.step_var.set(f"Step {n + 1} of 4")
+        self.step_var.set(tr("Step {n} of 4", n=n + 1))
         self.back_btn.configure(state="normal" if n > 0 else "disabled")
         self.next_btn.configure(text="Finish" if n == 3 else "Next →")
+        self._gate_next()
         self._clear_body()
         ctk.CTkFrame(self.body, height=8, fg_color=PANEL).pack(fill="x")          # top padding of the box
 
@@ -1085,18 +1209,19 @@ class FirstRunWizard(EmbeddedDialog):
             row.pack(fill="x", padx=14)
             row.grid_columnconfigure(0, weight=1)
             ctk.CTkEntry(row, textvariable=self.temp_path, fg_color=CARD, border_color=BORDER2, text_color=WHITE).grid(row=0, column=0, sticky="ew", padx=(0, 8))
-            ctk.CTkButton(row, text="Browse", width=80, fg_color=BTN, text_color=WHITE, hover_color=BTN_HOVER,
+            ctk.CTkButton(row, text="Folder…", width=80, fg_color=BTN, text_color=WHITE, hover_color=BTN_HOVER,
                            command=self._browse_temp, border_width=1, border_color=BTN_BORDER).grid(row=0, column=1)
 
         elif n == 1:
             self.header.configure(text="Choose an output folder")
-            self.sub.configure(text="Finished .ffpfsc files go here. An external drive works, and so does the temp drive.")
+            self.sub.configure(text="Finished games go here (.ffpfsc, .pkg, .exfat or folders). An external drive "
+                                    "works, and so does the temp drive.")
             ctk.CTkLabel(self.body, text="Output folder", text_color=WHITE).pack(anchor="w", padx=14, pady=(6, 4))
             row = ctk.CTkFrame(self.body, fg_color=PANEL)
             row.pack(fill="x", padx=14)
             row.grid_columnconfigure(0, weight=1)
             ctk.CTkEntry(row, textvariable=self.output_path, fg_color=CARD, border_color=BORDER2, text_color=WHITE).grid(row=0, column=0, sticky="ew", padx=(0, 8))
-            ctk.CTkButton(row, text="Browse", width=80, fg_color=BTN, text_color=WHITE, hover_color=BTN_HOVER,
+            ctk.CTkButton(row, text="Folder…", width=80, fg_color=BTN, text_color=WHITE, hover_color=BTN_HOVER,
                            command=self._browse_output, border_width=1, border_color=BTN_BORDER).grid(row=0, column=1)
 
         elif n == 2:
@@ -1140,7 +1265,9 @@ class FirstRunWizard(EmbeddedDialog):
             if self.output_path.get():
                 summary.append(tr("Output folder:  {v}", v=self.output_path.get()))
             summary.append("")
-            summary.append(tr("Click Finish to launch {APP_NAME}.", APP_NAME=APP_NAME))
+            summary.append("")
+            summary.append(tr("Next: drop a game folder, an archive or a .pkg onto the window, or press Add job "
+                              "({add}).", add=SHORTCUT["add"]))
             for line in summary:
                 ctk.CTkLabel(self.body, text=line, text_color=WHITE, anchor="w",
                               font=ctk.CTkFont(family=MONO_FONT, size=11)).pack(anchor="w", padx=14, pady=2)
@@ -1188,7 +1315,19 @@ class FirstRunWizard(EmbeddedDialog):
         if self.step > 0:
             self._show_step(self.step - 1)
 
+    def _gate_next(self, *_):
+        """Next waits for a folder on the two folder steps."""
+        need = {0: self.temp_path, 1: self.output_path}.get(getattr(self, "step", 0))
+        ok = need is None or bool((need.get() or "").strip())
+        try:
+            self.next_btn.configure(state="normal" if ok else "disabled")
+        except tk.TclError:
+            pass
+
     def _next(self):
+        need = {0: self.temp_path, 1: self.output_path}.get(self.step)
+        if need is not None and not (need.get() or "").strip():
+            return
         if self.step < 3:
             self._show_step(self.step + 1)
         else:
@@ -1293,7 +1432,7 @@ class ErrorDialog(MessageWindow):
         if "read-only file system" in t or "erofs" in t:
             return "The target folder is on a read-only volume. Choose a writable folder."
         if "wrong or missing password" in t or "rarwrongpassword" in t:
-            return "The archive's password is wrong or missing. Set it in Settings → Archive passwords."
+            return "The archive's password is wrong or missing. Set it in Settings › Archives."
         if "extraction failed" in t and ("is damaged" in t or "of the set is missing" in t
                                          or "of the set are missing" in t or "cannot be opened" in t):
             return ("The archive itself is broken: a part is damaged or missing. A password does not "
@@ -1313,7 +1452,7 @@ class ErrorDialog(MessageWindow):
             return ("The game calls functions that this firmware does not have, so lowering the SDK alone "
                     "would not start it. Edit job lets you pick another backport target (Check tells you "
                     "which one works), or put patched libraries for this target into the folder set in "
-                    "Settings › Backport and Retry.")
+                    "Settings › Backport & libraries and Retry.")
         return None
 
     # ── layout ───────────────────────────────────────────────────────────────
@@ -1389,7 +1528,7 @@ class ErrorDialog(MessageWindow):
 class SummaryDialog(MessageWindow):
     """Compression result summary with copy-to-clipboard button."""
 
-    def __init__(self, parent, report: str):
+    def __init__(self, parent, report: str, on_show=None):
         super().__init__(parent)
         self.title("Job complete")
         self.configure(fg_color=BLACK)
@@ -1419,6 +1558,11 @@ class SummaryDialog(MessageWindow):
         btn_row.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 14))
         btn_row.grid_columnconfigure(0, weight=1)
         btn_row.grid_columnconfigure(1, weight=1)
+        btn_row.grid_columnconfigure(2, weight=1)
+        if on_show is not None:
+            ctk.CTkButton(btn_row, text=REVEAL_LABEL, command=on_show, fg_color=BTN, hover_color=BTN_HOVER,
+                          text_color=WHITE, border_width=1, border_color=BTN_BORDER).grid(
+                row=0, column=1, sticky="ew", padx=(0, 6))
 
         def _copy():
             self.clipboard_clear()
@@ -1432,9 +1576,47 @@ class SummaryDialog(MessageWindow):
         copy_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         ctk.CTkButton(btn_row, text="Close", command=self.destroy,
                        fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                       text_color=ON_ACCENT).grid(row=0, column=1, sticky="ew")
+                       text_color=ON_ACCENT).grid(row=0, column=2, sticky="ew")
         for seq in ("<Return>", "<KP_Enter>"):
             self.bind(seq, lambda e: self.destroy())
+
+
+class QueueReportWindow(MessageWindow):
+    """The end of a run: how many jobs are done, and every job that is not, with its reason."""
+
+    def __init__(self, parent, done: int, total: int, left: list, retry=None):
+        super().__init__(parent)
+        self.resizable(True, False)
+        failed = [it for it in left if getattr(it, "status", "") == "Failed"]
+        head = tr("Queue finished") if not left else tr("Queue finished with problems")
+        self.title(head)
+        ctk.CTkLabel(self, text=head, font=ctk.CTkFont(size=15, weight="bold"),
+                     text_color=SUCCESS if not left else YELLOW).pack(anchor="w", padx=20, pady=(16, 4))
+        btns = ctk.CTkFrame(self, fg_color=BLACK)
+        btns.pack(side="bottom", fill="x", padx=20, pady=(4, 14))
+        ctk.CTkButton(btns, text="Close", width=100, fg_color=ACCENT, text_color=ON_ACCENT,
+                      hover_color=ACCENT_HOVER, command=self.destroy).pack(side="right")
+        if failed and retry is not None:
+            ctk.CTkButton(btns, text="Retry failed", width=110, fg_color=BTN, hover_color=BTN_HOVER,
+                          text_color=WHITE, border_width=1, border_color=BTN_BORDER,
+                          command=lambda: (self.destroy(), retry())).pack(side="right", padx=(0, 8))
+        ctk.CTkLabel(self, text=plural(total, "{done} of 1 job done.", "{done} of {n} jobs done.", done=done),
+                     text_color=WHITE, font=ctk.CTkFont(size=13)).pack(anchor="w", padx=20, pady=(0, 8))
+        status_text = {"Failed": tr("failed"), "Skipped": tr("skipped"), "Cancelled": tr("stopped")}
+        lines = []
+        for it in left[:12]:
+            name = getattr(it, "display_name", None) or it.name
+            note = " ".join(str(getattr(it, "status_note", "") or "").split())
+            lines.append(f"•  {name}: {status_text.get(it.status, it.status)}" + (f". {note}" if note else ""))
+        if len(left) > 12:
+            lines.append(plural(len(left) - 12, "… and 1 more", "… and {n} more"))
+        if lines:
+            ctk.CTkLabel(self, text="\n".join(lines), text_color=MUTED, wraplength=500, justify="left",
+                         font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(0, 10))
+        for seq in ("<Return>", "<KP_Enter>"):
+            self.bind(seq, lambda e: self.destroy())
+        self.update_idletasks()
+        self.geometry(f"560x{max(150, self.winfo_reqheight())}")
 
 
 class SpaceSkipWindow(MessageWindow):
@@ -1493,19 +1675,22 @@ class SpaceDiagnosticsDialog(MessageWindow):
         self.resizable(False, False)
         self.configure(fg_color=BLACK)
         self.proceed = False
+        self.choice = "cancel"          # proceed | skip | cancel
         self._auto_timer = None
         self._countdown  = 0
         self._proceed_btn = None   # set in _build
+        self._skip_btn = None
+        self._low = not _space_preflight_ok(item, temp_dir, out_dir)
         self._build(item, temp_dir, out_dir)
         self.geometry(f"520x{300 + 28 * getattr(self, '_row_count', 8)}")
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         for seq in ("<Return>", "<KP_Enter>"):
-            self.bind(seq, lambda e: self._ok())
+            self.bind(seq, lambda e: self._skip() if self._low else self._ok())
         self.after(50, self.grab_set)
-        # Auto-proceed after 4 s only when BOTH temp and output drives have room
-        if _space_preflight_ok(item, temp_dir, out_dir):
-            self._countdown = 4
-            self.after(1000, self._tick_countdown)
+        # With room on both drives the job starts after 4 s; without, it is skipped after a
+        # minute, so a queue left alone overnight goes on with the next job
+        self._countdown = 60 if self._low else 4
+        self.after(1000, self._tick_countdown)
 
     def _build(self, item, temp_dir: Path, out_dir: Path):
         ctk.CTkLabel(self, text="Drive space check",
@@ -1576,15 +1761,24 @@ class SpaceDiagnosticsDialog(MessageWindow):
         btns = ctk.CTkFrame(self, fg_color=BLACK)
         btns.pack(fill="x", padx=20, pady=(0, 16))
 
-        self._proceed_btn = ctk.CTkButton(btns, text="Start now",
-                       fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                       text_color=ON_ACCENT,
-                       font=ctk.CTkFont(size=13),
-                       height=38,
-                       command=self._ok
-                      )
+        if self._low:
+            self._skip_btn = ctk.CTkButton(btns, text="Skip this job", fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                           text_color=ON_ACCENT, font=ctk.CTkFont(size=13), height=38,
+                                           command=self._skip)
+            self._skip_btn.pack(side="right", padx=(8, 0))
+            self._proceed_btn = ctk.CTkButton(btns, text="Start anyway", fg_color=BTN, hover_color=BTN_HOVER,
+                                              text_color=WHITE, height=38, border_width=1,
+                                              border_color=BTN_BORDER, command=self._ok)
+        else:
+            self._proceed_btn = ctk.CTkButton(btns, text="Start now",
+                           fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                           text_color=ON_ACCENT,
+                           font=ctk.CTkFont(size=13),
+                           height=38,
+                           command=self._ok
+                          )
         self._proceed_btn.pack(side="right", padx=(8, 0))
-        ctk.CTkButton(btns, text="Cancel",
+        ctk.CTkButton(btns, text="Stop the queue",
                        fg_color=BTN, text_color=WHITE,
                        hover_color=BTN_HOVER,
                        command=self._cancel, border_width=1, border_color=BTN_BORDER
@@ -1622,31 +1816,34 @@ class SpaceDiagnosticsDialog(MessageWindow):
         except Exception:
             return
         if self._countdown > 0:
-            if self._proceed_btn:
+            if self._low and self._skip_btn:
+                self._skip_btn.configure(text=tr("Skip this job  (auto in {countdown} s)", countdown=self._countdown))
+            elif self._proceed_btn:
                 self._proceed_btn.configure(
                     text=tr("Start now  (auto in {countdown} s)", countdown=self._countdown))
             self._countdown -= 1
             self._auto_timer = self.after(1000, self._tick_countdown)
         else:
-            self._ok()
+            self._skip() if self._low else self._ok()
+
+    def _close(self, choice: str):
+        if self._auto_timer:
+            try:
+                self.after_cancel(self._auto_timer)
+            except Exception:
+                pass
+        self.choice = choice
+        self.proceed = choice == "proceed"
+        self.destroy()
 
     def _ok(self):
-        if self._auto_timer:
-            try:
-                self.after_cancel(self._auto_timer)
-            except Exception:
-                pass
-        self.proceed = True
-        self.destroy()
+        self._close("proceed")
+
+    def _skip(self):
+        self._close("skip")
 
     def _cancel(self):
-        if self._auto_timer:
-            try:
-                self.after_cancel(self._auto_timer)
-            except Exception:
-                pass
-        self.proceed = False
-        self.destroy()
+        self._close("cancel")
 
 
 # ─── Export Diagnostic Package ─────────────────────────────────────────────────
@@ -1740,13 +1937,13 @@ class SettingsView:
     PAGES = [
         ("general", "General", "settings",
          "Where new jobs write, and how the app tells you it is done. Changes apply immediately."),
-        ("compression", "Compression", "package", "What a new job starts with, and the CPU cores."),
+        ("compression", "Compression", "package", "How games are packed, and what a new job starts with."),
         ("archives", "Archives", "key", "Passwords for protected archives."),
         ("drives", "Drives & space", "drive",
          "Where archives are unpacked, how much free space a job needs, and how drives are kept awake."),
         ("backport", "Backport & libraries", "layers",
-         "Libraries for backports and PlayGo titles, and the optional Windows fPKG backend. You supply "
-         "all of them; none ship with the app."),
+         "Libraries for backports and PlayGo titles" + (", and the optional fPKG backend" if sys.platform == "win32" else "")
+         + ". You supply all of them; none ship with the app."),
         ("about", "About", "info", ""),
     ]
 
@@ -1806,7 +2003,7 @@ class SettingsView:
                 row=row_i, column=0, padx=14, pady=8, sticky="w")
             ctk.CTkEntry(fold, textvariable=var, fg_color=CARD, border_color=BORDER2,
                           text_color=WHITE).grid(row=row_i, column=1, sticky="ew", padx=(0, 8), pady=8)
-            ctk.CTkButton(fold, text="Browse", width=80, fg_color=BTN, text_color=WHITE,
+            ctk.CTkButton(fold, text="Folder…", width=80, fg_color=BTN, text_color=WHITE,
                            hover_color=BTN_HOVER,
                            command=lambda v=var, k=key, t=title: self._browse_folder(v, k, t), border_width=1, border_color=BTN_BORDER).grid(
                 row=row_i, column=2, padx=(0, 14), pady=8)
@@ -1816,6 +2013,9 @@ class SettingsView:
                      text_color=MUTED, font=ctk.CTkFont(size=12)).pack(side="left")
         ctk.CTkButton(_ct, text="Clean temp now", width=120, fg_color=BTN, text_color=WHITE, hover_color=BTN_HOVER,
                       border_width=1, border_color=BTN_BORDER, command=self.app.clear_temp_files).pack(side="right")
+        ctk.CTkCheckBox(fold, text="Clean the temp folder after every job that succeeds", variable=self.app.auto_clear_temp_var,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18,
+                        checkbox_height=18).grid(row=3, column=0, columnspan=3, sticky="w", padx=14, pady=(0, 10))
 
         aj = _after_job_module()
         def seg_row(parent, label, var, keys, labels, command=None, pady=(4, 4)):
@@ -1864,6 +2064,17 @@ class SettingsView:
         ]:
             ctk.CTkCheckBox(jd, text=text, variable=var, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                             text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=5)
+        ctk.CTkCheckBox(jd, text="Bring a game's add-ons along", variable=self.app.copy_siblings_var,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18,
+                        checkbox_height=18,
+                        command=lambda: save_settings({"copy_bundle_siblings": self.app.copy_siblings_var.get()})).pack(
+            anchor="w", padx=14, pady=(5, 2))
+        ctk.CTkLabel(jd, text="When a download folder holds one game and its add-ons, the DLC and update packages "
+                              "go into the game's title folder in the library (archives are unpacked first) and "
+                              "the other files are copied next to the output. Off: they stay in the download "
+                              "folder.",
+                     text_color=MUTED, font=ctk.CTkFont(size=12), wraplength=600, justify="left").pack(
+            anchor="w", padx=14 + 28, pady=(0, 6))
         ctk.CTkFrame(jd, fg_color=PANEL, height=6).pack()
 
         # WHEN THE QUEUE IS DONE
@@ -1880,11 +2091,8 @@ class SettingsView:
         self._section_label(scroll, "Interface")
         ui = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         ui.pack(fill="x", pady=(4, 12))
-        ctk.CTkCheckBox(ui, text="Auto-integrate patch from release folder", variable=self.app.auto_integrate_patch_var,
-                        fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18,
-                        checkbox_height=18).pack(anchor="w", padx=14, pady=(10, 6))
         oe_row = ctk.CTkFrame(ui, fg_color=PANEL)
-        oe_row.pack(fill="x", padx=14, pady=(4, 4))
+        oe_row.pack(fill="x", padx=14, pady=(10, 4))
         ctk.CTkLabel(oe_row, text="When the output is already there", text_color=WHITE).pack(side="left", padx=(0, 12))
         _labels = self.app.OUTPUT_EXISTS_LABELS
         _oe = ctk.CTkSegmentedButton(oe_row, values=[_labels[k] for k in self.app.OUTPUT_EXISTS_CHOICES],
@@ -1933,53 +2141,88 @@ class SettingsView:
             anchor="w", padx=14 + 28, pady=(0, 10))
 
 
+    def _advanced(self, scroll, title: str = "Advanced"):
+        """A section that stays folded until asked for: tuning and debugging options."""
+        head = ctk.CTkFrame(scroll, fg_color="transparent")
+        head.pack(fill="x", pady=(6, 0))
+        box = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
+        label = tk.StringVar(value="▸  " + tr(title))
+
+        def toggle():
+            if box.winfo_manager():
+                box.pack_forget()
+                label.set("▸  " + tr(title))
+            else:
+                box.pack(fill="x", pady=(4, 12), after=head)
+                label.set("▾  " + tr(title))
+        ctk.CTkButton(head, textvariable=label, fg_color="transparent", hover_color=CARD2, text_color=WHITE,
+                      anchor="w", width=160, height=26, font=ctk.CTkFont(size=13, weight="bold"),
+                      command=toggle).pack(side="left", padx=(0, 0))
+        return box
+
+    def _check(self, parent, text, var, command=None, pady=6):
+        cb = ctk.CTkCheckBox(parent, text=text, variable=var, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                             text_color=WHITE, checkbox_width=18, checkbox_height=18, command=command)
+        cb.pack(anchor="w", padx=14, pady=pady)
+        return cb
+
+    def _help(self, parent, text, indent=14):
+        ctk.CTkLabel(parent, text=text, text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
+                     wraplength=640).pack(anchor="w", padx=(indent, 14), pady=(0, 8))
+
     def _page_compression(self, scroll):
+        # PACKING
+        self._section_label(scroll, "Packing")
+        pk = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
+        pk.pack(fill="x", pady=(4, 12))
+        self._check(pk, "Verify the output after packing (slower, uses more RAM)", self.app.verify_output_var,
+                    pady=(10, 6))
+        self._check(pk, "Integrate a patch found in the release folder", self.app.auto_integrate_patch_var)
+
+        def _confirm_fake_sign():
+            # Warn once when ENABLING: every pack will then mutate the source folder
+            # in place (the toolbar button asks per-run; the setting is persistent).
+            if not self.app.fake_sign_before_pack_var.get():
+                return
+            if not ask_confirm("Fake-sign before packing?",
+                               tr("With this on, every pack of a game folder fake-signs its executables in "
+                                  "place before packing: your source files change (files already signed are "
+                                  "skipped). Disk-image sources are not touched."), "Turn on"):
+                self.app.fake_sign_before_pack_var.set(False)
+        self._check(pk, "Fake-sign executables before packing (game folders, in place)",
+                    self.app.fake_sign_before_pack_var, command=_confirm_fake_sign)
+        self._check(pk, "Build through an exFAT volume", self.app.build_via_exfat_var, pady=(6, 2))
+        self._help(pk, "Slower than the folder builder; worth a try when a folder-built .ffpfsc crashes the "
+                       "console.", indent=14 + 28)
+
+        # DEFAULTS FOR NEW JOBS
+        self._section_label(scroll, "Compression for new jobs")
         comp = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         comp.pack(fill="x", pady=(4, 12))
-        for text, var, key in [
-            ("Keep intermediate PFS image",           self.app.keep_pfs_var,        None),
-            ("Verify output (slower, uses more RAM)", self.app.verify_output_var,    None),
-            ("Auto-clear temp folder after success",  self.app.auto_clear_temp_var,  "auto_clear_temp"),
-            ("Verbose mkpfs output (debug)",          self.app.verbose_var,           None),
-        ]:
-            cb = ctk.CTkCheckBox(comp, text=text, variable=var, fg_color=ACCENT,
-                                  hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18)
-            if key:
-                cb.configure(command=lambda k=key, v=var: save_settings({k: v.get()}))
-            cb.pack(anchor="w", padx=14, pady=6)
-
-        # Defaults for new jobs. Each job keeps its own compression (Add job › Output), the
-        # editor starts from these and remembers the last one used; cores are the machine's.
         _st = ctk.CTkFrame(comp, fg_color="transparent")
-        _st.pack(fill="x", padx=14, pady=(4, 8))
-        _st.columnconfigure(1, weight=1)
+        _st.pack(fill="x", padx=14, pady=(10, 4))
 
-        ctk.CTkLabel(_st, text=".ffpfsc level for new jobs:", text_color=WHITE,
-                      font=ctk.CTkFont(size=12)).grid(row=0, column=0, sticky="w", pady=4)
-        ctk.CTkSlider(_st, from_=1, to=9, number_of_steps=8,
-                       variable=self.app.compression_level_var,
-                       fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
-                       button_hover_color=ACCENT_HOVER).grid(row=0, column=1, sticky="ew", padx=8, pady=4)
-        _cl_lbl = ctk.CTkLabel(_st, text=str(self.app.compression_level_var.get()),
-                                 text_color=ACCENT, font=ctk.CTkFont(size=12, weight="bold"), width=24)
-        _cl_lbl.grid(row=0, column=2)
-        def _cl_cb(*_):
-            # The app-level var already persists on write (trace added at creation);
-            # this callback only refreshes the page-local label. Guard against firing
-            # after the page was rebuilt (the trace can outlive the label).
-            if _cl_lbl.winfo_exists():
-                _cl_lbl.configure(text=str(self.app.compression_level_var.get()))
-        self.app.compression_level_var.trace_add("write", _cl_cb)
+        def slider_row(r, label, frm, to, var, text_of):
+            ctk.CTkLabel(_st, text=label, text_color=WHITE, width=150, anchor="w",
+                         font=ctk.CTkFont(size=12)).grid(row=r, column=0, sticky="w", pady=4)
+            ctk.CTkSlider(_st, from_=frm, to=to, number_of_steps=to - frm, variable=var, width=240,
+                          fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
+                          button_hover_color=ACCENT_HOVER).grid(row=r, column=1, sticky="w", padx=8, pady=4)
+            lbl = ctk.CTkLabel(_st, text="", text_color=MUTED, anchor="w", font=ctk.CTkFont(size=12))
+            lbl.grid(row=r, column=2, sticky="w")
 
-        ctk.CTkLabel(_st, text=".pkg Kraken level for new jobs:", text_color=WHITE,
-                      font=ctk.CTkFont(size=12)).grid(row=1, column=0, sticky="w", pady=4)
+            def show(*_):
+                if lbl.winfo_exists():
+                    try:
+                        lbl.configure(text=text_of(int(var.get())))
+                    except (TypeError, ValueError, tk.TclError):
+                        pass
+            var.trace_add("write", show)
+            show()
+
+        slider_row(0, ".ffpfsc level", 1, 9, self.app.compression_level_var,
+                   lambda v: tr("level {n}", n=v) + "  ·  " + tr("higher: smaller file, slower build"))
         _pkg_level = tk.IntVar(value=self.app._pkg_level_default())
-        ctk.CTkSlider(_st, from_=-4, to=9, number_of_steps=13, variable=_pkg_level,
-                       fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
-                       button_hover_color=ACCENT_HOVER).grid(row=1, column=1, sticky="ew", padx=8, pady=4)
-        _pkg_lbl = ctk.CTkLabel(_st, text=str(_pkg_level.get()),
-                                text_color=ACCENT, font=ctk.CTkFont(size=12, weight="bold"), width=24)
-        _pkg_lbl.grid(row=1, column=2)
 
         def _pkg_cb(*_):
             try:
@@ -1988,45 +2231,15 @@ class SettingsView:
                 return
             self.app.fpkg_defaults["level"] = v
             save_settings({"fpkg_defaults": self.app.fpkg_defaults})
-            if _pkg_lbl.winfo_exists():
-                _pkg_lbl.configure(text=str(v))
         _pkg_level.trace_add("write", _pkg_cb)
-
-        ctk.CTkLabel(_st, text="CPU cores (0=auto):", text_color=WHITE,
-                      font=ctk.CTkFont(size=12)).grid(row=2, column=0, sticky="w", pady=4)
-        ctk.CTkSlider(_st, from_=0, to=16, number_of_steps=16,
-                       variable=self.app.cpu_count_var,
-                       fg_color=BORDER2, progress_color=ACCENT, button_color=ACCENT,
-                       button_hover_color=ACCENT_HOVER).grid(row=2, column=1, sticky="ew", padx=8, pady=4)
-        _cpu_lbl = ctk.CTkLabel(_st, text="auto" if self.app.cpu_count_var.get() == 0 else str(self.app.cpu_count_var.get()),
-                                  text_color=ACCENT, font=ctk.CTkFont(size=12, weight="bold"), width=24)
-        _cpu_lbl.grid(row=2, column=2)
-        def _cpu_cb(*_):
-            if _cpu_lbl.winfo_exists():
-                v = self.app.cpu_count_var.get()
-                _cpu_lbl.configure(text="auto" if v == 0 else str(v))
-        self.app.cpu_count_var.trace_add("write", _cpu_cb)
-
-        ctk.CTkLabel(_st, text="Each job keeps its own compression, set in Add job under Output; a new job starts "
-                               "from these values, and the editor remembers the last one you used. Higher .ffpfsc "
-                               "levels give smaller files and take longer; 7 is the default. Blocks are always "
-                               "64 KiB, the size the PS5 needs. With cores on auto the app decides by game size "
-                               "and uses fewer when the output drive is a slow HDD.",
-                      text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
-                      wraplength=640).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
-
-        # ── Folder bundles ───────────────────────────────────────────────────
-        _cs_cb = ctk.CTkCheckBox(
-            comp,
-            text="Copy extra files (DLCs etc.) next to the .ffpfsc when packing a folder",
-            variable=self.app.copy_siblings_var, fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=WHITE,
-            command=lambda: save_settings({"copy_bundle_siblings": self.app.copy_siblings_var.get()}), checkbox_width=18, checkbox_height=18
-        )
-        _cs_cb.pack(anchor="w", padx=14, pady=(2, 4))
-        ctk.CTkLabel(comp, text="When a folder holds one game plus extras, the source folder is recreated "
-                                "at the destination with the .ffpfsc and the extras inside.",
-                      text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left").pack(
-            anchor="w", padx=14, pady=(0, 10))
+        slider_row(1, ".pkg Kraken level", -4, 9, _pkg_level,
+                   lambda v: tr("level {n}", n=v) + "  ·  " + tr(self.app._pkg_level_text(v)))
+        slider_row(2, "CPU cores", 0, 16, self.app.cpu_count_var,
+                   lambda v: tr("auto: by game size and output drive") if v == 0 else str(v))
+        self._help(comp, "Each job keeps its own compression (Add job › Output); a new job starts from these "
+                         "values, and the editor remembers the last one you used. Blocks are always 64 KiB, "
+                         "the size the PS5 needs.")
+        self._pkg_level_var = _pkg_level
 
         # The output Auto (Add job › Output) picks per kind of source; an archive counts as
         # what it holds.
@@ -2060,12 +2273,44 @@ class SettingsView:
         ctk.CTkFrame(auto, fg_color=PANEL, height=6).pack()
 
 
+        adv = self._advanced(scroll)
+        self._check(adv, "Keep the intermediate PFS image", self.app.keep_pfs_var, pady=(10, 2))
+        self._help(adv, "The uncompressed image pass 1 builds stays in the temp folder (as big as the game).",
+                   indent=14 + 28)
+        self._check(adv, "Verbose MkPFS output in the log (debugging)", self.app.verbose_var, pady=(2, 10))
+        rs = ctk.CTkFrame(scroll, fg_color="transparent")
+        rs.pack(fill="x", pady=(8, 12))
+        ctk.CTkButton(rs, text="Reset this page", width=130, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._reset_compression).pack(side="left")
+
+    def _reset_compression(self):
+        if not ask_confirm("Reset this page?", tr("Packing, the compression for new jobs, Auto output and the "
+                                                   "advanced options go back to their defaults."), "Reset"):
+            return
+        a = self.app
+        for var, value in ((a.verify_output_var, False), (a.auto_integrate_patch_var, False),
+                           (a.fake_sign_before_pack_var, False), (a.build_via_exfat_var, False),
+                           (a.keep_pfs_var, False), (a.verbose_var, False)):
+            var.set(value)
+        a.compression_level_var.set(7)
+        a.cpu_count_var.set(0)
+        if getattr(self, "_pkg_level_var", None) is not None:
+            self._pkg_level_var.set(0)
+        save_settings({"auto_actions": dict(DEFAULT_AUTO_ACTIONS)})
+        self._rebuild("compression")
+
+    def _rebuild(self, key):
+        f = self._page_frames.pop(key, None)
+        if f is not None:
+            f.destroy()
+        self.show(key)
+
     def _page_archives(self, scroll):
         comp = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         comp.pack(fill="x", pady=(4, 12))
-        ctk.CTkLabel(comp, text="Default archive password (optional):", text_color=MUTED, anchor="w").pack(
+        ctk.CTkLabel(comp, text="Password to try first (until you quit):", text_color=MUTED, anchor="w").pack(
             anchor="w", padx=14, pady=(8, 2))
-        ctk.CTkLabel(comp, text="Tried FIRST. A one-off password for the next extraction.",
+        ctk.CTkLabel(comp, text="Tried before the saved list for every archive in this session; not stored.",
                       text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w").pack(
             anchor="w", padx=14)
         ctk.CTkEntry(comp, textvariable=self.app.password_var, show="*",
@@ -2146,53 +2391,12 @@ class SettingsView:
         lp_menu.set(lp_labels.get(s.get("low_space_policy", "ask"), "Ask me"))
         lp_menu.pack(side="left")
 
-        # Same-drive read+write: costless on an SSD, slow (seek thrashing) on an HDD. When
-        # allowed, the build keeps the source on the temp drive instead of routing it to a
-        # slower output drive. Auto = allow only when the temp drive probes as an SSD.
-        sd_labels = {"auto": "Auto (allow on SSD)", "always": "Always allow", "never": "Never (always split)"}
-        sd_rev = {v: k for k, v in sd_labels.items()}
-        sd_menu = ctk.CTkOptionMenu(
-            _ds_row("Same-drive read+write:"), values=list(sd_labels.values()), width=200,
-            command=lambda disp: save_settings({"same_drive_rw": sd_rev.get(disp, "auto")}))
-        sd_menu.set(sd_labels.get(s.get("same_drive_rw", "auto"), sd_labels["auto"]))
-        sd_menu.pack(side="left")
-
         ctk.CTkCheckBox(ds, text="Show the drive space check before each pack",
                          variable=self.app.show_space_dialog_var, fg_color=ACCENT,
                          hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=(6, 4))
-        ctk.CTkCheckBox(ds, text="Build via exFAT intermediate - PSBrew's most-stable path (cross-platform)",
-                         variable=self.app.build_via_exfat_var, fg_color=ACCENT,
-                         hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=(0, 4))
-        def _confirm_fake_sign():
-            # Warn once when ENABLING: every pack will then mutate the source folder
-            # in place (the toolbar button asks per-run; the setting is persistent).
-            if not self.app.fake_sign_before_pack_var.get():
-                return
-            if not messagebox.askyesno(
-                    "Fake-sign before packing?",
-                    "With this on, every pack of a game FOLDER will fake-sign its "
-                    "executables IN PLACE before packing - modifying your source files "
-                    "(already-signed files are skipped). Disk-image sources are unaffected.\n\n"
-                    "Enable this?"):
-                self.app.fake_sign_before_pack_var.set(False)
-        ctk.CTkCheckBox(ds, text="Fake-sign executables before packing (folder sources; in place)",
-                         variable=self.app.fake_sign_before_pack_var, fg_color=ACCENT,
-                         hover_color=ACCENT_HOVER, text_color=WHITE,
-                         command=_confirm_fake_sign, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=(0, 4))
-        ctk.CTkCheckBox(ds, text="Keep external drives spun-up during a run (bridges gaps between games)",
+        ctk.CTkCheckBox(ds, text="Keep external drives spun up during a run (bridges gaps between games)",
                          variable=self.app.keep_drives_awake_var, fg_color=ACCENT,
                          hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=(0, 4))
-        ka_labels = {5: "every 5 s", 8: "every 8 s (recommended)", 10: "every 10 s", 15: "every 15 s"}
-        ka_rev = {v: k for k, v in ka_labels.items()}
-        ka_menu = ctk.CTkOptionMenu(
-            _ds_row("Keep-awake interval:"), values=list(ka_labels.values()), width=200,
-            command=lambda disp: save_settings({"keep_awake_interval": ka_rev.get(disp, 8)}))
-        try:
-            _cur_ka = int(s.get("keep_awake_interval", 8))
-        except (TypeError, ValueError):
-            _cur_ka = 8
-        ka_menu.set(ka_labels.get(_cur_ka, "every 8 s (recommended)"))
-        ka_menu.pack(side="left")
 
         # ── Extra temp drives (pool) ─────────────────────────────────────────
         ctk.CTkLabel(ds, text="Extra temp drives (pool, one path per line):",
@@ -2238,14 +2442,56 @@ class SettingsView:
                        hover_color=ACCENT_HOVER, width=120, command=_save_pool).pack(side="left", padx=(8, 0))
 
         ctk.CTkLabel(ds, text="The safety factor scales only the temp headroom; the output drive always has to "
-                              "fit the finished .ffpfsc, and 'Skip' applies per game in a batch. The exFAT mode "
-                              "builds through a real exFAT volume instead of the folder builder: slower, and "
-                              "worth a try when a folder-built .ffpfsc crashes the console.\n\n"
-                              "Keep-awake runs only while a job packs. A tiny write every few seconds keeps "
-                              "bus-powered HDDs spinning between games, on the drive the job is not using. Keep "
-                              "the interval under about 8 s, the drive's park timer; when idle the drive sleeps "
-                              "normally.",
+                              "fit the finished .ffpfsc. With Ask me, a job that does not fit is skipped after a "
+                              "minute unless you decide, so a queue left alone goes on.\n\n"
+                              "Keeping drives spun up runs only while a job packs: a tiny write every few seconds "
+                              "keeps bus-powered HDDs from parking between games.",
                       text_color=MUTED, justify="left", wraplength=640).pack(anchor="w", padx=14, pady=(0, 10))
+
+        adv = self._advanced(scroll)
+        def _adv_row(label):
+            row = ctk.CTkFrame(adv, fg_color=PANEL)
+            row.pack(fill="x", padx=14, pady=6)
+            ctk.CTkLabel(row, text=label, text_color=WHITE, width=180, anchor="w").pack(side="left")
+            return row
+        # Same-drive read+write: costless on an SSD, slow (seek thrashing) on an HDD. When
+        # allowed, the build keeps the source on the temp drive instead of routing it to a
+        # slower output drive. Auto = allow only when the temp drive probes as an SSD.
+        sd_labels = {"auto": "Auto (allow on SSD)", "always": "Always allow", "never": "Never (always split)"}
+        sd_rev = {v: k for k, v in sd_labels.items()}
+        sd_menu = ctk.CTkOptionMenu(
+            _adv_row("Same-drive read+write:"), values=list(sd_labels.values()), width=200,
+            command=lambda disp: save_settings({"same_drive_rw": sd_rev.get(disp, "auto")}))
+        sd_menu.set(sd_labels.get(s.get("same_drive_rw", "auto"), sd_labels["auto"]))
+        sd_menu.pack(side="left")
+        ka_labels = {5: "every 5 s", 8: "every 8 s (recommended)", 10: "every 10 s", 15: "every 15 s"}
+        ka_rev = {v: k for k, v in ka_labels.items()}
+        ka_menu = ctk.CTkOptionMenu(
+            _adv_row("Keep-awake interval:"), values=list(ka_labels.values()), width=200,
+            command=lambda disp: save_settings({"keep_awake_interval": ka_rev.get(disp, 8)}))
+        try:
+            _cur_ka = int(s.get("keep_awake_interval", 8))
+        except (TypeError, ValueError):
+            _cur_ka = 8
+        ka_menu.set(ka_labels.get(_cur_ka, "every 8 s (recommended)"))
+        ka_menu.pack(side="left")
+        self._help(adv, "Reading and writing on one drive costs nothing on an SSD and is slow on an HDD. Keep the "
+                        "keep-awake interval under about 8 s, the park timer of most drives.")
+        rs = ctk.CTkFrame(scroll, fg_color="transparent")
+        rs.pack(fill="x", pady=(8, 12))
+        ctk.CTkButton(rs, text="Reset this page", width=130, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._reset_drives).pack(side="left")
+
+    def _reset_drives(self):
+        if not ask_confirm("Reset this page?", tr("Drive usage, the space options and the advanced options go "
+                                                   "back to their defaults. The extra temp drives stay."), "Reset"):
+            return
+        self.app.drive_mode_var.set("auto")
+        self.app.show_space_dialog_var.set(True)
+        self.app.keep_drives_awake_var.set(False)
+        save_settings({"space_safety_factor": 1.0, "low_space_policy": "ask", "same_drive_rw": "auto",
+                       "keep_awake_interval": 8})
+        self._rebuild("drives")
 
 
     def _page_backport(self, scroll):
@@ -2274,7 +2520,7 @@ class SettingsView:
                 self.app.ampr_var.set(c)
                 _save_ampr()
         _ampr_entry.bind("<FocusOut>", lambda e: _save_ampr())
-        ctk.CTkButton(_ampr_row, text="Browse", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+        ctk.CTkButton(_ampr_row, text="Folder…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=_browse_ampr).pack(side="left")
 
         # ── Backport folders ─────────────────────────────────────────────────
@@ -2308,7 +2554,7 @@ class SettingsView:
                 self.app.fw_libs_var.set(c)
                 _save_fw()
         _fw_entry.bind("<FocusOut>", lambda e: _save_fw())
-        ctk.CTkButton(_fw_row, text="Browse", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+        ctk.CTkButton(_fw_row, text="Folder…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=_browse_fw).pack(side="left")
         ctk.CTkLabel(ds, textvariable=_fw_status, text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w",
                       justify="left", wraplength=640).pack(anchor="w", padx=14, pady=(2, 4))
@@ -2335,7 +2581,7 @@ class SettingsView:
                 self.app.backport_libs_var.set(c)
                 _save_bl()
         _bl_entry.bind("<FocusOut>", lambda e: _save_bl())
-        ctk.CTkButton(_bl_row, text="Browse", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+        ctk.CTkButton(_bl_row, text="Folder…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=_browse_bl).pack(side="left")
 
         # One-click prepare: BestPig BackPork patches (small, ~1 KB total per target) →
@@ -2358,31 +2604,30 @@ class SettingsView:
                       wraplength=640).pack(anchor="w", padx=14, pady=(4, 4))
 
         # ── fPKG: optional Sony Publishing Tools DLL ─────────────────────────
-        ctk.CTkLabel(ds, text="fPKG - Publishing Tools DLL (optional, Windows only):",
-                      text_color=MUTED, anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
-        ctk.CTkLabel(ds, text="Path to your own libScePubTools.dll (Sony SDK, not bundled). Only used on Windows "
-                              "when an fPKG job selects the 'publishingtools' Kraken backend - LibProsperoPkg "
-                              "refuses that backend on macOS (the build would fail), so here the built-in "
-                              "managed Kraken encoder is always used.",
-                      text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
-                      wraplength=640).pack(anchor="w", padx=14)
-        _pt_row = ctk.CTkFrame(ds, fg_color="transparent")
-        _pt_row.pack(fill="x", padx=14, pady=(4, 4))
-        _pt_entry = ctk.CTkEntry(_pt_row, textvariable=self.app.pubtools_dll_var,
-                                 placeholder_text="…/libScePubTools.dll")
-        _pt_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        def _save_pt(*_):
-            save_settings({"pubtools_dll": self.app.pubtools_dll_var.get().strip()})
-        def _browse_pt():
-            from tkinter import filedialog
-            c = filedialog.askopenfilename(title="Select libScePubTools.dll",
-                                           filetypes=[("DLL", "*.dll"), ("All files", "*.*")])
-            if c:
-                self.app.pubtools_dll_var.set(c)
-                _save_pt()
-        _pt_entry.bind("<FocusOut>", lambda e: _save_pt())
-        ctk.CTkButton(_pt_row, text="Browse", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
-                      border_width=1, border_color=BTN_BORDER, command=_browse_pt).pack(side="left")
+        if sys.platform == "win32":     # LibProsperoPkg refuses this backend elsewhere
+            ctk.CTkLabel(ds, text="fPKG - Publishing Tools DLL (optional):",
+                          text_color=MUTED, anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
+            ctk.CTkLabel(ds, text="Path to your own libScePubTools.dll (Sony SDK, not bundled). Used when an fPKG "
+                                  "job picks the 'publishingtools' Kraken backend.",
+                          text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
+                          wraplength=640).pack(anchor="w", padx=14)
+            _pt_row = ctk.CTkFrame(ds, fg_color="transparent")
+            _pt_row.pack(fill="x", padx=14, pady=(4, 4))
+            _pt_entry = ctk.CTkEntry(_pt_row, textvariable=self.app.pubtools_dll_var,
+                                     placeholder_text="…/libScePubTools.dll")
+            _pt_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+            def _save_pt(*_):
+                save_settings({"pubtools_dll": self.app.pubtools_dll_var.get().strip()})
+            def _browse_pt():
+                from tkinter import filedialog
+                c = filedialog.askopenfilename(title="Select libScePubTools.dll",
+                                               filetypes=[("DLL", "*.dll"), ("All files", "*.*")])
+                if c:
+                    self.app.pubtools_dll_var.set(c)
+                    _save_pt()
+            _pt_entry.bind("<FocusOut>", lambda e: _save_pt())
+            ctk.CTkButton(_pt_row, text="Choose…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                          border_width=1, border_color=BTN_BORDER, command=_browse_pt).pack(side="left")
 
 
     def _page_about(self, scroll):
@@ -2428,11 +2673,13 @@ class SettingsView:
         key = next(k for k in aj.ACTIONS if aj.LABELS[k] == label)
         prev = self.app.after_source_var.get()
         if key == aj.DELETE and prev != aj.DELETE:
-            if not messagebox.askyesno(
+            if not ask_confirm(
                     "Delete sources?",
                     tr("From now on, a new job deletes its source for good once it is Done: the game folder, "
-                      "the archive with all its parts, or the container. It does not go to the "
-                      "{TRASH_NAME}.\n\nJobs already in the queue keep their own choice. Use Delete for new jobs?", TRASH_NAME=TRASH_NAME)):
+                      "the archive with all its parts, or the container, and its whole download folder when "
+                      "the game's add-ons went along. It does not go to the "
+                      "{TRASH_NAME}.\n\nJobs already in the queue keep their own choice.", TRASH_NAME=TRASH_NAME),
+                    "Use Delete", danger=True):
                 self._after_seg.set(aj.LABELS.get(prev, aj.LABELS[aj.KEEP]))
                 return
         self.app.after_source_var.set(key)
@@ -2455,6 +2702,26 @@ class SettingsView:
 
 
 # ─── CLI Worker ────────────────────────────────────────────────────────────────
+
+def _package_platform(p) -> str | None:
+    """"ps4" or "ps5" from the first bytes of a package, None for anything else."""
+    try:
+        with open(p, "rb") as f:
+            head = f.read(4)
+    except OSError:
+        return None
+    return {b"\x7fCNT": "ps4", b"\x7fFIH": "ps5"}.get(head)
+
+
+def _is_inner_image_path(p) -> bool:
+    """The pass-1 image the backend names: '<temp>/_ffpfsc_inner/<id>.ffpfs'."""
+    try:
+        q = Path(str(p or ""))
+        return (q.is_absolute() and q.suffix.lower() == ".ffpfs" and q.parent.name == "_ffpfsc_inner"
+                and ".." not in q.parts)
+    except (TypeError, ValueError):
+        return False
+
 
 class CLIWorker(threading.Thread):
     WEIGHTS = {
@@ -3226,6 +3493,10 @@ class CLIWorker(threading.Thread):
         # and free the extracted source NOW to halve peak temp usage.
         if line.startswith("[PASS1-DONE] "):
             inner = line[len("[PASS1-DONE] "):].strip()
+            if not _is_inner_image_path(inner):
+                # a file name inside a package can carry a line break and fake this marker
+                self.app.log("WARN", f"Ignored a pass-1 marker that does not name an inner image: {inner}")
+                return
             try:
                 self.item._inner_image = inner
             except Exception:
@@ -3321,23 +3592,25 @@ class CLIWorker(threading.Thread):
                 )
             return
 
-        if "Compression complete:" in line:
-            self.output_path = line.split("Compression complete:", 1)[-1].strip()
-        if "fPKG complete:" in line:
-            self.output_path = line.split("fPKG complete:", 1)[-1].strip()
+        # Paths in these lines come from the backend, but a crafted file name can fake a
+        # line: only a path inside this job's output folder (or its own source) counts.
+        if line.startswith("[OK] Compression complete: "):
+            self._take_output(line[len("[OK] Compression complete: "):])
+        if line.startswith("[OK] fPKG complete: "):
+            self._take_output(line[len("[OK] fPKG complete: "):])
         if line.startswith("[OK] exFAT image ready: "):
-            self.output_path = line[len("[OK] exFAT image ready: "):].strip()
+            self._take_output(line[len("[OK] exFAT image ready: "):])
         elif line.startswith("[OK] Folder ready: "):
-            self.output_path = line[len("[OK] Folder ready: "):].strip()
+            self._take_output(line[len("[OK] Folder ready: "):])
         if line.startswith("[OK] Organized: "):
-            self.output_path = line[len("[OK] Organized: "):].split(" (replaced)")[0].strip()
-            self._written.append(self.output_path)
+            if self._take_output(line[len("[OK] Organized: "):].split(" (replaced)")[0]):
+                self._written.append(self.output_path)
         if line.startswith("[OK] PS4 sorted: "):
-            self.output_path = line[len("[OK] PS4 sorted: "):].strip()      # a title folder of the set
-            self._written.append(self.output_path)
+            if self._take_output(line[len("[OK] PS4 sorted: "):]):           # a title folder of the set
+                self._written.append(self.output_path)
         _cm = re.match(r"\[SUCCESS\] (?:Copied|Moved) .+? → (.+)$", line)
         if _cm and self.operation == "copy":
-            self.output_path = _cm.group(1).strip()                         # the copied file
+            self._take_output(_cm.group(1))                                 # the copied file
         if "Validation reported failures" in line:
             self.validate_failed = True
         if "Extraction complete:" in line:
@@ -3346,11 +3619,11 @@ class CLIWorker(threading.Thread):
             # the bar for the whole repack - the [PHASE] markers drive it instead.
             if self.operation in ("unpack", "fpkg-extract"):
                 self._set_stage("Extracting", 100, "Extraction complete.")
-            maybe_path = line.split("Extraction complete:", 1)[-1].strip()
-            if maybe_path:
-                self.output_path = maybe_path
-        if self.operation == "unpack" and re.search(r"\bOutput:\s+", line):
-            self.output_path = re.split(r"\bOutput:\s+", line, maxsplit=1)[-1].strip()
+            if line.startswith("[OK] Extraction complete: "):
+                self._take_output(line[len("[OK] Extraction complete: "):])
+        _um = re.match(r"\s+Output:\s+(.+)$", line) if self.operation == "unpack" else None
+        if _um:
+            self._take_output(_um.group(1))
 
         prog = PROGRESS_RE.search(line)
         if prog:
@@ -3567,6 +3840,34 @@ class CLIWorker(threading.Thread):
 
         self.output_path = ""
         self.final_size = 0
+        return False
+
+    def _take_output(self, raw: str) -> bool:
+        """Set output_path from a backend line when the path lies inside this job's output
+        folder or its own source; anything else is logged and ignored."""
+        raw = (raw or "").strip().strip('"')
+        if not raw or not os.path.isabs(raw):
+            return False
+        roots = [(r, True) for r in (self.output_dir, getattr(self.item, "path", None),
+                                     getattr(self.item, "archive_path", None)) if r]
+        # the folders the backend was told to write to: its output argument and the like
+        roots += [(a, False) for a in (self.cmd or []) if isinstance(a, str) and os.path.isabs(a) and os.path.isdir(a)]
+        try:
+            cand = Path(raw).resolve()
+            home = Path.home().resolve()
+            for r, own in roots:
+                base = Path(str(r)).resolve()
+                if base.is_file():
+                    base = base.parent
+                if not own and (base.parent == base or base == home
+                                or str(base) in ("/Volumes", "/media", "/mnt", "/Users")):
+                    continue                     # a drive root, the mount folders, the home folder
+                if cand == base or cand.is_relative_to(base):
+                    self.output_path = raw
+                    return True
+        except (OSError, ValueError):
+            pass
+        self.app.log("WARN", f"Ignored an output path outside the job's folders: {raw}")
         return False
 
     def _strip_written_clutter(self) -> None:
@@ -3915,16 +4216,17 @@ class CLIWorker(threading.Thread):
         if success:
             self._find_output()
         elapsed = time.time() - self.start_time
+        ok = tr("Success") if success else tr("Failed")
         if self.operation == "unpack":
             FINAL_REPORT_FILE.write_text(
-                f"{APP_NAME} Report\n\n"
-                f"Status: {'Success' if success else 'Failed'}\n"
-                f"Operation: Extract PFS image\n"
-                f"Source: {self.item.path}\n"
-                f"Output: {self.output_path or 'Unknown'}\n"
-                f"Source Size: {format_size(self.item.size)}\n"
-                f"Extracted Size: {format_size(self.final_size)}\n"
-                f"Elapsed: {format_duration(elapsed)}\n"
+                tr("{app} report", app=APP_NAME) + "\n\n"
+                f"{tr('Status')}: {ok}\n"
+                f"{tr('Operation')}: {tr('Extract PFS image')}\n"
+                f"{tr('Source')}: {self.item.path}\n"
+                f"{tr('Output')}: {self.output_path or tr('Unknown')}\n"
+                f"{tr('Source size')}: {format_size(self.item.size)}\n"
+                f"{tr('Extracted size')}: {format_size(self.final_size)}\n"
+                f"{tr('Elapsed')}: {format_duration(elapsed)}\n"
                 f"Backend: {BACKEND_NAME}\n"
                 f"MkPFS: {MKPFS_NAME} v{MKPFS_VERSION}\n",
                 encoding="utf-8",
@@ -3933,28 +4235,31 @@ class CLIWorker(threading.Thread):
             return
         saved = self.item.size - self.final_size if self.item.size and self.final_size else 0
         pct = (saved / self.item.size * 100) if self.item.size else 0
-        rating, recommendation = compression_rating(pct)
         temp_removed = max(0, self.temp_peak_size - get_folder_size(self.temp_dir))
-        FINAL_REPORT_FILE.write_text(
-            f"{APP_NAME} Report\n\n"
-            f"Status: {'Success' if success else 'Failed'}\n"
-            f"Game: {self.item.name}\n"
-            f"Title ID: {self.item.title_id}\n"
-            f"Source: {self.item.path}\n"
-            f"Output: {self.output_path or 'Unknown'}\n"
-            f"Original Size: {format_size(self.item.size)}\n"
-            f"Output Size: {format_size(self.final_size)}\n"
-            f"Space Saved: {format_size(saved)} ({pct:.2f}%)\n"
-            f"Compression Rating: {rating}\n"
-            f"Recommendation: {recommendation}\n"
-            f"Peak Temp Usage Seen: {format_size(self.temp_peak_size)}\n"
-            f"Temporary Files Removed: {format_size(temp_removed)}\n"
-            f"Elapsed: {format_duration(elapsed)}\n"
-            f"Backend: {BACKEND_NAME}\n"
-            f"MkPFS: {MKPFS_NAME} v{MKPFS_VERSION}\n",
-            encoding="utf-8",
-            errors="replace",
-        )
+        # a rating only where the job compresses: an .exfat, a folder, a copy or a sort into
+        # the library keeps the size, and "not worth compressing" would only confuse
+        out_ext = Path(str(self.output_path or "")).suffix.lower()
+        compressing = (self.operation not in ("copy", "ps4-keystone", "fake-sign")
+                       and (out_ext in (".ffpfsc", ".pkg") or (not out_ext and self._chain_to() in ("ffpfsc", "pkg"))))
+        lines = [tr("{app} report", app=APP_NAME), "",
+                 f"{tr('Status')}: {ok}",
+                 f"{tr('Game')}: {self.item.name}",
+                 f"{tr('Title ID')}: {self.item.title_id}",
+                 f"{tr('Source')}: {self.item.path}",
+                 f"{tr('Output')}: {self.output_path or tr('Unknown')}",
+                 f"{tr('Original size')}: {format_size(self.item.size)}",
+                 f"{tr('Output size')}: {format_size(self.final_size)}"]
+        if compressing:
+            rating, recommendation = compression_rating(pct)
+            lines += [f"{tr('Space saved')}: {format_size(saved)} ({pct:.2f}%)",
+                      f"{tr('Compression rating')}: {tr(rating)}",
+                      f"{tr('Recommendation')}: {tr(recommendation)}"]
+        lines += [f"{tr('Peak temp use')}: {format_size(self.temp_peak_size)}",
+                  f"{tr('Temporary files removed')}: {format_size(temp_removed)}",
+                  f"{tr('Elapsed')}: {format_duration(elapsed)}",
+                  f"Backend: {BACKEND_NAME}",
+                  f"MkPFS: {MKPFS_NAME} v{MKPFS_VERSION}"]
+        FINAL_REPORT_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8", errors="replace")
 
     def _terminate(self):
         _kill_process_tree(self.proc)
@@ -4050,7 +4355,9 @@ class JobDialog(EmbeddedDialog):
     _TARGET_LABEL = {"folder": "Folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "exfat": ".exfat", "pkg": ".pkg",
                      "organize": "Organize", "auto": "Auto"}
     _TARGETS = ("folder", "ffpfs", "ffpfsc", "exfat", "pkg", "organize", "auto")
-    _TARGET_KEY = {v: k for k, v in _TARGET_LABEL.items()}
+    # a PS4 package is sorted or unpacked, never converted: its own words for the same keys
+    _PS4_LABEL = {"pkg": "Into the library", "folder": "Unpack to folder"}
+    _TARGET_KEY = {**{v: k for k, v in _PS4_LABEL.items()}, **{v: k for k, v in _TARGET_LABEL.items()}}
     _SOURCE_HINT = ("Game folder, parent folder of games, archive (.zip/.rar/.7z), disk image "
                     "(.exfat/.ffpkg), .ffpfs, .ffpfsc or .pkg")
     _BACKPORT_HINTS = {
@@ -4068,70 +4375,50 @@ class JobDialog(EmbeddedDialog):
         "patch":  "Merges an update's files over the game's own before packing - the result is the "
                   "updated game. A folder, a .zip or a .rar. Applied first, so patched executables are "
                   "backported and signed too.",
-        "backport": "Lowers the SDK version in eboot.bin and every prx/sprx so an older firmware loads "
-                    "them. When the game uses functions the target lacks, it also needs patched libraries: "
-                    "the job copies the set for its target from the patched libraries folder in Settings "
-                    "into fakelib/. Without that folder the backport only lowers the SDK. Nothing is "
-                    "bundled with this app.",
-        "target": "7.61: public library patches exist, the documented path. 6.02: experimental, a "
-                  "smaller public set, only some titles run. 10.xx: SDK only, for a game newer than "
-                  "the console. Every other entry is a firmware from your firmware libraries folder "
-                  "(Settings), with the SDK values its own libraries carry; Check shows whether it has "
-                  "every function the game uses.",
-        "check":  "Reads the functions the game imports and compares them with what the target "
-                  "firmware's original libraries (Settings), your patched libraries and the game's own "
-                  "modules export. Tells you whether lowering the SDK is enough or which libraries "
-                  "are missing. Needs a game folder; a container is checked when the job runs.",
+        "backport": "Lowers the SDK in eboot.bin and every prx/sprx so an older firmware loads them. A game that uses"
+                    " functions the target lacks also needs patched libraries: the job copies them from the folder "
+                    "set in Settings into fakelib/. Nothing is bundled with this app.",
+        "target": "7.61: public library patches exist. 6.02: experimental, only some titles run. 10.xx: SDK only, "
+                  "for a game newer than the console. The other entries come from your firmware libraries folder "
+                  "(Settings); Check shows whether one has every function the game uses.",
+        "check": "Compares the functions the game imports with what the target's libraries, your patched libraries"
+                 " and the game's own modules export: is lowering the SDK enough, or which libraries are missing? "
+                 "Needs a game folder; a container is checked when the job runs.",
         "sign":   "Fake-signs eboot.bin and every prx/sprx so a jailbroken console loads them. Needed "
                   "when a dump's executables are still plain ELFs. Already-signed files are skipped, "
                   "so leaving it on costs nothing. A .pkg is always signed by its builder.",
-        "keystone": "Saves hold the keystone of the game that wrote them. A package built with another one "
-                    "(many builders use a default) shows saves of the retail game as corrupted. A full game with "
-                    "an update merged in whose app version stayed the game's makes the console offer the official "
-                    "update. Repair opens the PS4 repair tool: it writes the keystone exported from such a save "
-                    "(Apollo Save Tool, Export Keystone) into the package, sets the version, and binds the "
-                    "updates to the changed package.",
+        "keystone": "Saves hold the keystone of the game that wrote them. A package with a default keystone shows "
+                    "saves of the retail game as corrupted, and a merged update whose app version stayed the game's "
+                    "makes the console offer the official update. Repair opens PS4 repair, which fixes both.",
         "ps5repair": "Checks the package the way the console's installer and loader look at it: the package "
-                     "layout, param.json, PlayGo tables, images, licence, executables, keystone and the firmware "
+                     "layout, param.json, PlayGo tables, images, license, executables, keystone and the firmware "
                      "it needs. Repair opens the PS5 repair tool, which builds a repaired copy; the original stays "
                      "as it is.",
         "ps4out": "This folder holds PS4 packages too. They go to their own folder: sorted into the PS4 "
                   "library ('<Title> [CUSA…] [vX]', UPDATE and DLC named), or a package unpacked into a "
                   "folder. Each list remembers the folders last used for its platform.",
-        "lz4":    "Packs the game's data into LZ4 asset packs that ampr_emu (drakmor) reads while the game "
-                  "runs, about half the size and quicker to load from USB. Only for games that load through "
-                  "AMPR (their eboot.bin imports libSceAmpr); executables, modules, configs, pictures, video "
-                  "and audio stay loose. Every packed file is checked against the original before the job "
-                  "finishes. Goes into an .exfat or a folder. Keep the original until the game ran on the "
-                  "console: the default profile is a careful guess, a profile from a trace is more reliable.",
-        "output": "Folder: a plain /app0 folder (a folder source is changed in place). .ffpfs: "
-                  "uncompressed image, fastest to build and mount, full size. .ffpfsc: compressed "
-                  "image for ShadowMount, built with the 64 KiB block size verified on a console. "
-                  ".exfat: exFAT image with 64 KiB clusters, the format ShadowMountPlus reads fastest from "
-                  "USB; full size, or smaller with LZ4 packs. .pkg: installable package.",
+        "lz4": "Packs the game's data into LZ4 asset packs that ampr_emu reads while the game runs: about half "
+               "the size, quicker from USB. Only for games that load through AMPR. Every packed file is checked "
+               "against the original. Goes into an .exfat or a folder; keep the original until the game ran on "
+               "the console.",
+        "output": "Folder: a plain /app0 folder (a folder source is changed in place). .ffpfs: uncompressed image, "
+                  "full size. .ffpfsc: compressed image for ShadowMount. .exfat: the format ShadowMountPlus reads "
+                  "fastest from USB. .pkg: installable package.",
         "saveto": "Where the result lands. With auto-organize it gets its own folder there, named "
                   "from the game.",
         "organize": "Names the folder and the file from the game's own metadata: "
                     "<Title> [TID] [vX.Y.Z]/<Title> [TID] [vX.Y] [fwN.NN], with the firmware the "
                     "game needs read from its eboot.bin (a backport lowers it to the target). Long names are shortened to "
                     "ShadowMount's byte limit.",
-        "after":  tr("What happens to the source once this job is Done: the game folder, the archive with "
-                     "all its parts, or the container. Keep leaves it where it is, also when the output is a ")
-                  + tr("plain copy (on the same drive an APFS clone, instant and without extra space). " if IS_MAC
-                       else "plain copy. ")
-                  + tr("Move to {TRASH_NAME} can be put back from the {TRASH_NAME}; Delete cannot. Nothing "
-                      "happens when the job fails, is skipped or stopped, or while another job in the queue "
-                      "still needs the same source. Settings › General sets the default.", TRASH_NAME=TRASH_NAME),
-        "retail": "Keep on. Drops placeholder license files and issues a valid debug license, sets the "
-                  "retail DRM type and the retail flag in every executable, rebuilds a corrupt PlayGo "
-                  "set and repairs presentation images - the configuration verified on a console. Off "
-                  "only for a byte-exact re-pack or an A/B test.",
-        "playgo": "Off (recommended): the game's own PlayGo layout is kept - which file sits in which "
-                  "chunk, the chunk names and languages, the scenario names - and only the image "
-                  "ranges are recomputed for the new package. On: the source's PlayGo files are "
-                  "discarded and the builder writes a fresh one-chunk set. Same build time either "
-                  "way. A corrupt or mismatching set is rebuilt regardless, so switch this on only "
-                  "for a title that installs but will not start (CE-100022-5).",
+        "after": tr("What happens to the source once the job is Done. What goes to the {TRASH_NAME} can be put back; "
+                    "Delete cannot. Nothing happens when the job fails, is skipped or stopped, or while another job "
+                    "still needs the same source. Settings › General sets the default.", TRASH_NAME=TRASH_NAME),
+        "retail": "Keep on: drops placeholder licenses and issues a valid debug license, sets the retail DRM type "
+                  "and flag, rebuilds a corrupt PlayGo set and repairs presentation images, as verified on a "
+                  "console. Off only for a byte-exact repack.",
+        "playgo": "Off (recommended): the game's PlayGo layout is kept and only the image ranges are recomputed. "
+                  "On: a fresh one-chunk set is written. A corrupt set is rebuilt either way; switch this on only "
+                  "for a title that installs but does not start (CE-100022-5).",
         "hdr":    "auto keeps what the game's param.json declares - the publisher's intent; a console on "
                   "'HDR when supported' follows this flag. on forces it, off clears it.",
         "identity": "The package identity comes from the game's sce_sys/param.json when it is built. Fill these in "
@@ -4139,12 +4426,9 @@ class JobDialog(EmbeddedDialog):
                     "param.json lacks.",
         "codec":  "The codec layer of the image inside the package. kraken is the verified default; zlib and none "
                   "are for experiments.",
-        "compression": "How hard this job compresses. .ffpfsc: zlib level 1 to 9, higher gives a smaller "
-                       "file and takes longer; 7 is the default. .pkg: Kraken level -4 to 9. Measured on a "
-                       "retail sample: -4 to -1 are the fastest and about 2 % larger; 0 to 5 cost a tenth "
-                       "more time and are 0.3 % larger than 7; 7 to 9 take 4 to 10 times as long for that "
-                       "last 0.3 %. 0 is the default. Each job keeps its own; a new job starts from "
-                       "Settings › Compression.",
+        "compression": "How hard this job compresses. .ffpfsc: zlib 1 to 9, 7 is the default. .pkg: Kraken -4 to 9, 0 is"
+                       " the default; -4 to -1 are fastest and about 2 % larger, 7 to 9 take 4 to 10 times as long for "
+                       "the last 0.3 %. A new job starts from Settings › Compression.",
     }
     _CID_RE = re.compile(r"^[A-Z]{2}[0-9]{4}-[A-Z]{4}[0-9]{5}_00-[A-Z0-9]{16}$")
     _TID_RE = re.compile(r"^[A-Z]{4}[0-9]{5}$")
@@ -4159,10 +4443,24 @@ class JobDialog(EmbeddedDialog):
                    "exfat": "exFAT disk image", "ffpkg": "ffpkg disk image", "ffpfs": ".ffpfs image",
                    "ffpfsc": ".ffpfsc image", "pkg": "PS5 package (.pkg)", "ps4": "PS4 package"}
 
-    def __init__(self, app, item=None, init_src: str | None = None, init_to: str | None = None):
+    def __init__(self, app, item=None, init_src: str | None = None, init_to: str | None = None,
+                 init_sources: list | None = None):
         super().__init__(app.root)
         self.app = app
         self.edit_item = item
+        # several paths dropped at once: they are the sources, shown under their common folder
+        self._dropped, self._dropped_root = [], None
+        if init_sources and not item:
+            self._dropped = [Path(x) for x in init_sources if Path(x).exists()]
+            if len(self._dropped) > 1:
+                try:
+                    root = Path(os.path.commonpath([str(x) for x in self._dropped]))
+                except ValueError:                 # different drives
+                    root = self._dropped[0].parent
+                self._dropped_root = root if root.is_dir() else self._dropped[0].parent
+                init_src = str(self._dropped_root)
+            elif self._dropped:
+                init_src, self._dropped = str(self._dropped[0]), []
         self.title("Edit job" if item else "Add job")
         self.geometry("780x600")
         self.minsize(660, 420)
@@ -4279,6 +4577,10 @@ class JobDialog(EmbeddedDialog):
         self._on_source_changed()
         if init_to in self._TARGET_LABEL:
             self.to_var.set(self._TARGET_LABEL[init_to])
+        draft = getattr(app, "_job_draft", None)
+        if draft and item is None and not init_src and not init_sources:
+            self._restore_draft(draft)
+        app._job_draft = None
 
     # ── layout ───────────────────────────────────────────────────────────────
     def _group(self, number: str, title: str, hint: str = ""):
@@ -4330,7 +4632,10 @@ class JobDialog(EmbeddedDialog):
         # 1 · Source
         srow = self._group("1", "Source", "folder, parent folder, archive, disk image, .ffpfs, .ffpfsc or .pkg")
         sinner = ctk.CTkFrame(srow, fg_color=PANEL); sinner.pack(fill="x", padx=10, pady=(2, 2))
-        ctk.CTkEntry(sinner, textvariable=self.src_var, fg_color=CARD2, text_color=WHITE).pack(side="left", fill="x", expand=True)
+        self._src_entry = ctk.CTkEntry(sinner, textvariable=self.src_var, fg_color=CARD2, text_color=WHITE)
+        self._src_entry.pack(side="left", fill="x", expand=True)
+        # the keyboard goes to the editor, not to the queue list behind it
+        self.after(60, lambda: self._src_entry.winfo_exists() and self._src_entry.focus_set())
         ctk.CTkButton(sinner, text="File…", width=76, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                        command=self._pick_file, border_width=1, border_color=BTN_BORDER).pack(side="left", padx=(6, 0))
         ctk.CTkButton(sinner, text="Folder…", width=88, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
@@ -4425,6 +4730,9 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkLabel(lo.inner, textvariable=self.lz4_note_var, text_color=MUTED, font=ctk.CTkFont(size=12),
                      wraplength=560, justify="left", anchor="w").pack(fill="x", pady=(0, 4))
         self._bind_help(self._HELP["lz4"], l1)
+        # a game folder of the user's is changed itself, not a copy: said when it applies
+        self._own_note = ctk.CTkLabel(cin, text="", text_color=YELLOW, font=ctk.CTkFont(size=12),
+                                      wraplength=640, justify="left", anchor="w")
 
         # PS4 package: its keystone and version (the other changes are for PS5 games)
         # what the package carries now, read in the background when a PS4 game package is picked;
@@ -4519,7 +4827,7 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkLabel(pb4, textvariable=self._ps4_head_var, text_color=WHITE, anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(fill="x", padx=10, pady=(8, 2))
         p4t = ctk.CTkFrame(pb4, fg_color=PANEL); p4t.pack(fill="x", padx=10, pady=(2, 2))
-        self._PS4_TARGETS = {"pkg": "Into the library", "folder": "Folder"}
+        self._PS4_TARGETS = dict(self._PS4_LABEL)
         self._ps4_seg = ctk.CTkSegmentedButton(
             p4t, values=list(self._PS4_TARGETS.values()), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
             command=lambda v: self.ps4_to_var.set(next(k for k, lb in self._PS4_TARGETS.items() if lb == v)))
@@ -4549,7 +4857,10 @@ class JobDialog(EmbeddedDialog):
         # After the job: what happens to the source once this job is Done (shown by _refresh)
         aj = _after_job_module()
         self._after_box = ab = ctk.CTkFrame(orow, fg_color=PANEL)
-        ar = ctk.CTkFrame(ab, fg_color=PANEL); ar.pack(fill="x")
+        ar = self._after_row = ctk.CTkFrame(ab, fg_color=PANEL); ar.pack(fill="x")
+        # in a folder of PS4 and PS5 games the choice is for both, under the two blocks
+        self._after_head = ctk.CTkLabel(ab, text="PS4 and PS5", text_color=WHITE, anchor="w",
+                                        font=ctk.CTkFont(size=12, weight="bold"))
         ctk.CTkLabel(ar, text="After the job:", text_color=MUTED, width=100, anchor="w",
                      font=ctk.CTkFont(size=12)).pack(side="left")
         self._after_seg = ctk.CTkSegmentedButton(
@@ -4566,8 +4877,10 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkButton(self._after_dir_row, text="Folder…", width=76, fg_color=BTN, hover_color=BTN_HOVER,
                       text_color=WHITE, border_width=1, border_color=BTN_BORDER,
                       command=self._pick_after_dir).pack(side="left", padx=(6, 0))
-        self._after_note = ctk.CTkLabel(ab, text=tr("Deleted for good once the job is Done; it does not go to the {TRASH_NAME}.", TRASH_NAME=TRASH_NAME),
-                                        text_color=RED, font=ctk.CTkFont(size=12), anchor="w")
+        self._after_note = ctk.CTkLabel(ab, text=tr("Deleted for good once the job is Done, with its download folder when "
+                                                    "the add-ons went along; it does not go to the {TRASH_NAME}.", TRASH_NAME=TRASH_NAME),
+                                        text_color=RED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
+                                        wraplength=620)
         # .pkg options - two rows, shown only when .pkg is the output
         self._pkg_opts = ctk.CTkFrame(orow, fg_color=PANEL)
         ctk.CTkFrame(self._pkg_opts, width=2, height=1, fg_color=ACCENT_HOVER).pack(side="left", fill="y", padx=(10, 12), pady=2)
@@ -4692,6 +5005,8 @@ class JobDialog(EmbeddedDialog):
         def _walk(w):
             try:
                 w.bind("<Enter>", _show, add="+"); w.bind("<Leave>", _leave, add="+")
+                if isinstance(w, tk.Entry):      # typing in a field shows its help too
+                    w.bind("<FocusIn>", _show, add="+")
             except Exception:
                 pass
             for c in w.winfo_children():
@@ -5088,6 +5403,40 @@ class JobDialog(EmbeddedDialog):
                 bits.insert(1, tr({"game": "game", "update": "update", "dlc": "DLC"}.get(first.kind, first.kind)))
         return " · ".join(b for b in bits if b)
 
+    _DRAFT_VARS = ("to_var", "out_var", "ps4_out_var", "ps4_to_var", "patch_on_var", "patch_var",
+                   "backport_on_var", "backport_target_var", "sign_var", "lz4_var", "lz4_mode_var",
+                   "lz4_profile_var", "level_var", "pkg_level_var", "organize_var", "after_var",
+                   "after_dir_var", "retail_var", "regen_var")
+
+    def keep_draft(self):
+        """Called when the sidebar leaves this editor open: its choices wait for the next Add job."""
+        if self.edit_item is not None or not (self.src_var.get() or "").strip():
+            return
+        d = {"src": self.src_var.get(), "dropped": [str(x) for x in self._dropped],
+             "dropped_root": str(self._dropped_root) if self._dropped_root else ""}
+        for name in self._DRAFT_VARS:
+            v = getattr(self, name, None)
+            if v is not None:
+                try:
+                    d[name] = v.get()
+                except tk.TclError:
+                    pass
+        self.app._job_draft = d
+
+    def _restore_draft(self, d: dict) -> None:
+        if d.get("dropped") and d.get("dropped_root"):
+            self._dropped = [Path(x) for x in d["dropped"]]
+            self._dropped_root = Path(d["dropped_root"])
+        self.src_var.set(d.get("src", ""))
+        for name in self._DRAFT_VARS:
+            v = getattr(self, name, None)
+            if v is not None and name in d:
+                try:
+                    v.set(d[name])
+                except tk.TclError:
+                    pass
+        self.help_var.set(tr("Your unsaved job is back. Cancel discards it."))
+
     def _on_source_changed(self):
         raw = (self.src_var.get() or "").strip()
         p = Path(raw) if raw else None
@@ -5142,7 +5491,9 @@ class JobDialog(EmbeddedDialog):
                     self._ps4_set = {str(s) for s in sources if s.suffix.lower() == ".pkg" and _is_ps4_source(s)}
                     self._ps4_n = len(self._ps4_set)
                     self._ps5_n = len(sources) - self._ps4_n
-                    self.detect_var.set(tr("{parent} · {v} - one job each", parent=tr(self._KIND_LABEL['parent']),
+                    _dropped = bool(self._dropped) and p == self._dropped_root
+                    self.detect_var.set(tr("{parent} · {v} - one job each",
+                                           parent=tr("Dropped items") if _dropped else tr(self._KIND_LABEL['parent']),
                                            v=self._describe_sources(sources, self._ps4_set)))
                     self._probe_parent_archives(sources, raw)
                 else:
@@ -5327,7 +5678,10 @@ class JobDialog(EmbeddedDialog):
     # ── live state ───────────────────────────────────────────────────────────
     def _scan_sources(self, p: Path) -> list[Path]:
         """find_job_sources, remembered per folder and its modification time: the source
-        field calls this on every keystroke, and a library on a USB drive is slow to walk."""
+        field calls this on every keystroke, and a library on a USB drive is slow to walk.
+        For the folder of a drop of several paths, the dropped paths themselves."""
+        if self._dropped and self._dropped_root is not None and Path(p) == self._dropped_root:
+            return list(self._dropped)
         try:
             key = (str(p), p.stat().st_mtime_ns)
         except OSError:
@@ -5367,6 +5721,34 @@ class JobDialog(EmbeddedDialog):
         """The parent folder's sources this job setup would change: a game folder to a
         folder with nothing to change is left out (there is nothing to do for it)."""
         return [s for s in self._games if not chain_summary(self._stand_in(s)).startswith("Nothing to do")]
+
+    @staticmethod
+    def _copy_only(stand_in, to: str) -> bool:
+        """The job ends as a plain copy: same format in and out and nothing to change."""
+        try:
+            return (to not in ("folder", ORGANIZE_TARGET, AUTO_TARGET) and chain_source_kind(stand_in) == to
+                    and not chain_changes(stand_in) and not getattr(stand_in, "chain_rebuild", False))
+        except Exception:
+            return False
+
+    def _own_folder_note(self, to: str, ps4: bool) -> str:
+        """What a change does to a game folder of the user's (not to a copy of it)."""
+        own = (self._kind == "folder" or (self._kind == "parent" and bool(self._games)
+                                          and all(Path(g).is_dir() for g in self._games)))
+        if not own or ps4:
+            return ""
+        bp, sg = bool(self.backport_on_var.get()), bool(self.sign_var.get()) and to != "pkg"
+        parts = []
+        if bp and sg:
+            parts.append(tr("Backport and Sign change eboot.bin and the libraries in your game folder itself, "
+                            "not a copy."))
+        elif bp or sg:
+            parts.append(tr("{what} changes eboot.bin and the libraries in your game folder itself, not a copy.",
+                            what=tr("Backport") if bp else tr("Sign")))
+        if self.patch_on_var.get():
+            parts.append(tr("Integrate a patch writes into your game folder; the files it replaces are kept "
+                            "beside the output."))
+        return " ".join(parts)
 
     def _in_place(self, to: str) -> bool:
         """Folder output changes a game folder where it is: true for a game folder source,
@@ -5414,16 +5796,23 @@ class JobDialog(EmbeddedDialog):
             # an archive or a folder of them only goes to the library
             src = Path((self.src_var.get() or "").strip())
             one_pkg = src.is_file() and src.suffix.lower() == ".pkg"
-            allowed = ("folder", "pkg") if one_pkg else ("pkg",)
-            if self._to_key() not in allowed:
-                self.to_var.set(self._TARGET_LABEL["pkg"])
+            allowed = ("pkg", "folder") if one_pkg else ("pkg",)
+            key = self._to_key() if self._to_key() in allowed else "pkg"
+            if self.to_var.get() != self._PS4_LABEL[key]:
+                self.to_var.set(self._PS4_LABEL[key])
             if seg is not None:
-                seg.configure(values=[self._TARGET_LABEL[k] for k in allowed])
+                seg.configure(values=[self._PS4_LABEL[k] for k in allowed])
                 seg.set(self.to_var.get())
             for v in (self.patch_on_var, self.backport_on_var, self.sign_var, self.lz4_var):
                 v.set(False)
         crow, orow = getattr(self, "_crow", None), getattr(self, "_orow", None)
         org = not ps4 and self._to_key() == ORGANIZE_TARGET     # the source goes over as it is
+        ocb = getattr(self, "_organize_cb", None)
+        if ocb is not None:            # PS4 packages and Organize name everything anyway
+            if ps4 or org:
+                ocb.pack_forget()
+            elif not ocb.winfo_manager():
+                ocb.pack(side="left")
         if crow is not None and orow is not None:          # both exist once the dialog is built
             if (ps4 and not self._keystone_shown()) or org:
                 crow.pack_forget()
@@ -5460,11 +5849,12 @@ class JobDialog(EmbeddedDialog):
                 if not self._ps5_head.winfo_manager():
                     self._ps5_head.pack(fill="x", padx=10, pady=(4, 0), before=self._oin)
                 if not self._ps4_box.winfo_manager():
-                    self._ps4_box.pack(fill="x", before=self._oline)
+                    self._ps4_box.pack(fill="x", after=self._oline)    # Auto-organize belongs to the PS5 games
             else:
                 self._ps5_head.pack_forget()
                 self._ps4_box.pack_forget()
         if not ps4 and seg is not None and len(seg.cget("values")) != len(self._TARGETS):
+            self.to_var.set(self._TARGET_LABEL.get(self._to_key(), ".ffpfsc"))
             seg.configure(values=[self._TARGET_LABEL[k] for k in self._TARGETS])
             seg.set(self.to_var.get())
         to = self._to_key()
@@ -5523,6 +5913,12 @@ class JobDialog(EmbeddedDialog):
             self._check_btn.configure(state="normal" if self._check_folder() is not None else "disabled")
         except Exception:
             pass
+        self._own_note.configure(text=self._own_folder_note(to, ps4))
+        if self._own_note.cget("text"):
+            if not self._own_note.winfo_manager():
+                self._own_note.pack(fill="x", pady=(4, 2))
+        else:
+            self._own_note.pack_forget()
         self._to_hint.set({"folder": "plain /app0 folder - for a folder source: changes in place",
                            "ffpfs": "uncompressed image - fastest to build and mount, full size",
                            "ffpfsc": "compressed image - mounts with ShadowMount",
@@ -5530,7 +5926,7 @@ class JobDialog(EmbeddedDialog):
                            "organize": "into the library as it is: '<Title> [ID] [vX]/…', the same format, "
                                        "joining a title folder that is already there",
                            "auto": self._auto_hint()}.get(to, "") if not ps4 else
-                          {"pkg": "into the library: '<Title> [CUSA…] [vX]', UPDATE and DLC named, 'DLC Pack' from 4 DLCs",
+                          {"pkg": "sorted as it is into '<Title> [CUSA…] [vX]', with its updates and DLC",
                            "folder": "the package's files in a folder"}.get(to, ""))
         in_place = self._in_place(to)
         for w in (self._out_entry, self._out_btn):
@@ -5544,8 +5940,15 @@ class JobDialog(EmbeddedDialog):
             if in_place or self._kind == "none":
                 self._after_box.pack_forget()
             else:
-                if not self._after_box.winfo_manager():
-                    self._after_box.pack(fill="x", padx=10, pady=(0, 6), after=self._oline)
+                anchor = self._ps4_box if self._ps4_box.winfo_manager() else self._oline
+                if not self._after_box.winfo_manager() or getattr(self, "_after_anchor", None) is not anchor:
+                    self._after_box.pack_forget()
+                    self._after_box.pack(fill="x", padx=10, pady=(0, 6), after=anchor)
+                    self._after_anchor = anchor
+                if anchor is not self._ps4_box:
+                    self._after_head.pack_forget()
+                elif not self._after_head.winfo_manager():
+                    self._after_head.pack(anchor="w", pady=(6, 2), before=self._after_row)
                 act = self.after_var.get()
                 self._after_seg.set(aj.LABELS.get(act, aj.LABELS[aj.KEEP]))
                 self._after_dir_row.pack_forget(); self._after_note.pack_forget()
@@ -5558,6 +5961,7 @@ class JobDialog(EmbeddedDialog):
         # summary
         raw = (self.src_var.get() or "").strip()
         p = Path(raw) if raw else None
+        copy_only = False
         if self._kind in ("none", "folder-unknown", "file-unknown") or p is None:
             text = "Choose a source"
             ok = False
@@ -5570,7 +5974,9 @@ class JobDialog(EmbeddedDialog):
             ps4_set = getattr(self, "_ps4_set", set()) if mixed else set()
             todo5 = [s for s in todo if str(s) not in ps4_set]
             if todo5:
-                text = chain_summary(self._stand_in(todo5[0])) + plural(len(todo5), "  × 1 job", "  × {n} jobs")
+                _si = self._stand_in(todo5[0])
+                copy_only = self._copy_only(_si, to)
+                text = chain_summary(_si) + plural(len(todo5), "  × 1 job", "  × {n} jobs")
             else:
                 text = "Nothing to do"
             if mixed:          # the PS4 packages go their own way (see the PS4 block)
@@ -5579,7 +5985,9 @@ class JobDialog(EmbeddedDialog):
                                    plural(self._ps4_n, "1 PS4 package unpacked", "{n} PS4 packages unpacked"))
             ok = bool(todo)
         else:
-            text = chain_summary(self._stand_in(p))
+            _si = self._stand_in(p)
+            copy_only = self._copy_only(_si, to)
+            text = chain_summary(_si)
             ok = not text.startswith("Nothing to do")
         out = (self.out_var.get() or "").strip()
         if p is None or self._kind in ("none", "folder-unknown", "file-unknown"):
@@ -5593,6 +6001,24 @@ class JobDialog(EmbeddedDialog):
             dest = f"→ {out}"
             if self._kind == "parent" and self._mixed():
                 dest += "  ·  " + tr("PS4: {folder}", folder=(self.ps4_out_var.get() or "").strip() or "–")
+        if copy_only:
+            # nothing is rebuilt: the compression and .pkg options would do nothing
+            self._comp_row.pack_forget()
+            self._pkg_opts.pack_forget()
+            self._to_hint.set("same format and no changes: copied as it is"
+                              + ("; PS5 repair rebuilds a package" if to == "pkg" else ""))
+        act = self.after_var.get() if self._after_box.winfo_manager() else "keep"
+        then = {"trash": tr("then the source goes to the {TRASH_NAME}", TRASH_NAME=TRASH_NAME),
+                "move": tr("then the source moves"),
+                "delete": tr("then the source is deleted")}.get(act)
+        if ok and then:
+            text += "  ·  " + then
+        try:
+            danger = act == "delete"
+            self._after_seg.configure(selected_color=RED if danger else ACCENT,
+                                      selected_hover_color=DANGER_HOVER if danger else ACCENT_HOVER)
+        except Exception:
+            pass
         self.summary_var.set(text)
         self.summary_dest_var.set(dest)
         try:
@@ -5698,7 +6124,7 @@ class JobDialog(EmbeddedDialog):
         else:
             self.app.queue.append(it)
         self.app.update_queue_box(select_item=it)
-        self.app.log("OK", f"Queued: {chain_summary(it)} - {it.display_name or it.name}.  Press ▶ START to run.")
+        self.app.log("OK", f"Queued: {chain_summary(it)} - {it.display_name or it.name}.  Press Start to run.")
         self.destroy()
 
     def _add_organize(self, p: Path, out: str):
@@ -5773,7 +6199,7 @@ class JobDialog(EmbeddedDialog):
             verdict, why = self.app._patch_fit(p, Path(patch))
             if verdict == "refuse":
                 messagebox.showerror("Patch", why, parent=self); return
-            if verdict == "warn" and not messagebox.askyesno("Patch", why + "\n\nAdd the job anyway?", parent=self):
+            if verdict == "warn" and not ask_confirm("Add the job anyway?", why, "Add anyway"):
                 return
         target = self.backport_target_var.get() if self.backport_on_var.get() else None
         glibs = (self.app.backport_libs_var.get() or "").strip() if target else ""
@@ -5836,8 +6262,9 @@ class JobDialog(EmbeddedDialog):
                "last_source": str(p),
                "last_source_dir": str(p if p.is_dir() else p.parent),
                # the recipe Rescan reuses on new sources from the same folder:
+               # (no patch: a patch belongs to one game, never to the new ones Rescan finds)
                "rescan_template": {"to": to, "output": out, "sign": bool(self.sign_var.get()),
-                                   "backport_target": target, "patch_source": patch or None,
+                                   "backport_target": target,
                                    "organize": organize, "ff_level": ff_level,
                                    "after_source": after, "after_move_to": after_dir or None,
                                    "pkg_params": pkg_params if to == "pkg" else None}}
@@ -5961,7 +6388,7 @@ class JobDialog(EmbeddedDialog):
         self.app.update_queue_box(select_item=made[-1])
         what = chain_summary(made[0]) + (f" × {len(made)}" if len(made) > 1 else "")
         self.app.log("OK", f"Queued: {what} - {made[0].display_name or made[0].name}"
-                           + (f" (+{len(made) - 1} more)" if len(made) > 1 else "") + ".  Press ▶ START to run.")
+                           + (f" (+{len(made) - 1} more)" if len(made) > 1 else "") + ".  Press Start to run.")
         self.destroy()
 
 
@@ -6047,10 +6474,10 @@ class OutputExistsDialog(MessageWindow):
         ctk.CTkLabel(self, text=plural(
                          n, "1 job would write a file that is already there. Skip leaves it out of this run; "
                             "Overwrite replaces the file once the new build is finished; Keep both gives the new "
-                            "build a numbered name. Settings › Interface can answer this for every start.",
+                            "build a numbered name. Settings › General can answer this for every start.",
                          "{n} jobs would write a file that is already there. Skip leaves them out of this run; "
                          "Overwrite replaces the files once the new build is finished; Keep both gives the new "
-                         "build a numbered name. Settings › Interface can answer this for every start."),
+                         "build a numbered name. Settings › General can answer this for every start."),
                      text_color=MUTED, wraplength=520, justify="left").pack(anchor="w", padx=20, pady=(0, 10))
         box = ctk.CTkFrame(self, fg_color=PANEL, corner_radius=8)
         box.pack(fill="x", padx=20, pady=(0, 4))
@@ -6164,7 +6591,8 @@ class OrganizeView:
         self._checked: set[int] = set()
         self._iid_move: dict[str, int] = {}
         self.plan_file = Path(APP_DIR) / "organize_plan.json"
-        self.journal = Path(APP_DIR) / "organize_journal.json"
+        self.journal_dir = Path(APP_DIR) / "organize-undo"        # one journal per Apply: Undo goes back step by step
+        self.legacy_journal = Path(APP_DIR) / "organize_journal.json"
         v = self.frame = kit.frame(parent)
         v.grid_columnconfigure(0, weight=1)
         v.grid_rowconfigure(4, weight=1)
@@ -6178,8 +6606,9 @@ class OrganizeView:
         row = ctk.CTkFrame(v, fg_color="transparent")
         row.grid(row=2, column=0, sticky="ew", padx=18, pady=(12, 4))
         self.root_var = tk.StringVar(value=str(app.output_var.get() or ""))
-        ctk.CTkEntry(row, textvariable=self.root_var, fg_color=CARD2, text_color=WHITE).pack(
-            side="left", fill="x", expand=True)
+        self._root_entry = ctk.CTkEntry(row, textvariable=self.root_var, fg_color=CARD2, text_color=WHITE)
+        self._root_entry.pack(side="left", fill="x", expand=True)
+        self._root_entry.bind("<Return>", lambda _e: (self.scan(), "break")[1])
         ctk.CTkButton(row, text="Choose…", width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=self._pick).pack(side="left", padx=(6, 0))
         self.scan_btn = ctk.CTkButton(row, text="Scan", width=90, fg_color=BTN, hover_color=BTN_HOVER,
@@ -6188,19 +6617,7 @@ class OrganizeView:
         self.status_var = TextVar(value="Pick a folder and press Scan. Nothing moves before Apply.")
         ctk.CTkLabel(v, textvariable=self.status_var, text_color=MUTED, anchor="w", justify="left").grid(
             row=3, column=0, sticky="ew", padx=18, pady=(2, 6))
-        style = ttk.Style(v)
-        try:
-            style.theme_use("default")          # the Aqua theme ignores the colours below
-        except Exception:
-            pass
-        _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
-        style.configure("Org.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
-                        foreground=_pal["text"], rowheight=round(24 * ui_kit.SCALE), borderwidth=0)
-        style.configure("Org.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
-        if ui_kit.SCALE != 1:                   # Tk's default fonts stay at 96 dpi on Windows
-            style.configure("Org.Treeview", font=self.app.kit.fonts.body)
-            style.configure("Org.Treeview.Heading", font=self.app.kit.fonts.small)
-        style.map("Org.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
+        _pal = style_tree(v, "Org.Treeview", self.app.kit)
         tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
         tframe.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 6))
         self.tree = ttk.Treeview(tframe, columns=("game", "src", "dst"), style="Org.Treeview", selectmode="browse")
@@ -6209,6 +6626,7 @@ class OrganizeView:
             self.tree.column(col, width=round(w * ui_kit.SCALE), minwidth=round((30 if col == "#0" else 80) * ui_kit.SCALE),
                              stretch=col != "#0", anchor="w")
         self.tree.tag_configure("stay", foreground=_pal["muted"])
+        watch_tree_theme(self.tree, "Org.Treeview", self.app.kit, lambda pal: self.tree.tag_configure("stay", foreground=pal["muted"]))
         vsb = ThinScrollbar(tframe, self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
@@ -6232,6 +6650,7 @@ class OrganizeView:
         if not self.root_var.get().strip():
             self.root_var.set(str(self.app.output_var.get() or ""))
         self._refresh_buttons()
+        self.frame.after(60, lambda: self._root_entry.winfo_exists() and self._root_entry.focus_set())
 
     def _pick(self):
         d = filedialog.askdirectory(title="Organize - the folder to sort in place", parent=self.app.root,
@@ -6242,11 +6661,13 @@ class OrganizeView:
 
     def _refresh_buttons(self):
         n = len(self._checked)
-        busy = self._busy or bool(getattr(self.app, "_batch_running", False))
-        self.apply_btn.configure(text=f"Apply ({n})" if n else "Apply",
+        queue_runs = bool(getattr(self.app, "_batch_running", False))
+        busy = self._busy or queue_runs
+        self.apply_btn.configure(text=(tr("Apply when the queue is done") if queue_runs and n else
+                                       tr("Apply ({n})", n=n) if n else "Apply"),
                                  state="normal" if n and not busy else "disabled")
         self.scan_btn.configure(state="disabled" if self._busy else "normal")
-        self.undo_btn.configure(state="normal" if self.journal.is_file() and not busy else "disabled")
+        self.undo_btn.configure(state="normal" if self._last_journal() is not None and not busy else "disabled")
 
     def _rel(self, p: str) -> str:
         root = (self._plan or {}).get("root", "")
@@ -6359,8 +6780,9 @@ class OrganizeView:
             return
         only = ",".join(str(i) for i in sorted(self._checked))
         self.status_var.set("Moving…")
+        journal = _organize_module().new_journal_path(self.journal_dir)
         self._run("apply", ("--organize-apply", "--organize-plan", str(self.plan_file),
-                            "--organize-journal", str(self.journal), "--organize-only", only))
+                            "--organize-journal", str(journal), "--organize-only", only))
 
     def _done_apply(self, rc, lines):
         for ln in lines:
@@ -6369,16 +6791,41 @@ class OrganizeView:
                              "Organize: " + ln.split("] ", 1)[-1])
         last = next((ln for ln in reversed(lines) if ln.startswith(("[OK]", "[ERROR]"))), "")
         self.app.log("OK" if rc == 0 else "WARN", "Organize: " + last.split("] ", 1)[-1])
-        self.scan(then_status=last.split("] ", 1)[-1] + ".")
+        self.scan(then_status=self._result_text(last) + ".")
+
+    @staticmethod
+    def _result_text(line: str) -> str:
+        """The backend's "[OK] Organized: 3 moved, 1 failed" in the interface language."""
+        m = re.match(r"\[OK\] (Organized|Undone): (\d+) moved(?: back)?(?:, (\d+) failed)?", line)
+        if not m:
+            return line.split("] ", 1)[-1]
+        moved, failed = int(m.group(2)), int(m.group(3) or 0)
+        text = (plural(moved, "Organized: 1 item moved", "Organized: {n} items moved") if m.group(1) == "Organized"
+                else plural(moved, "Undone: 1 item moved back", "Undone: {n} items moved back"))
+        return text + (plural(failed, ", 1 failed", ", {n} failed") if failed else "")
+
+    def _last_journal(self):
+        try:
+            found = _organize_module().journals(self.journal_dir, legacy=self.legacy_journal)
+        except Exception:
+            return None
+        return found[0] if found else None
 
     def undo(self):
-        if self._busy or not self.journal.is_file():
+        j = self._last_journal()
+        if self._busy or j is None:
             return
-        if not messagebox.askyesno("Undo last organize", "Move everything the last Apply moved back where it was?",
-                                   parent=self.app.root):
+        try:
+            d = _organize_module().describe(j)
+        except Exception:
+            d = {"root": "", "moves": 0, "when": ""}
+        text = plural(d["moves"], "Move back the 1 item the Apply of {when} moved in {root}?",
+                      "Move back the {n} items the Apply of {when} moved in {root}?",
+                      when=d["when"] or "–", root=d["root"] or "–")
+        if not ask_confirm("Undo last organize", text, "Move back", parent=self.app.root):
             return
         self.status_var.set("Moving back…")
-        self._run("undo", ("--organize-undo", "--organize-journal", str(self.journal)))
+        self._run("undo", ("--organize-undo", "--organize-journal", str(j)))
 
     def _done_undo(self, rc, lines):
         last = next((ln for ln in reversed(lines) if ln.startswith(("[OK]", "[ERROR]"))), "")
@@ -6387,9 +6834,9 @@ class OrganizeView:
             if ln.startswith("[WARN]"):
                 self.app.log("WARN", "Organize: " + ln[7:])
         if self.root_var.get().strip() and Path(self.root_var.get().strip()).is_dir():
-            self.scan(then_status=last.split("] ", 1)[-1] + ".")
+            self.scan(then_status=self._result_text(last) + ".")
         else:
-            self.status_var.set(last)
+            self.status_var.set(self._result_text(last))
 
 
 class KeystoneView:
@@ -6433,10 +6880,11 @@ class KeystoneView:
             row = ctk.CTkFrame(v, fg_color="transparent")
             row.grid(row=r, column=0, sticky="ew", padx=18, pady=(10, 2))
             ctk.CTkLabel(row, text=label, text_color=MUTED, width=110, anchor="w").pack(side="left")
-            ctk.CTkEntry(row, textvariable=var, fg_color=CARD2, text_color=WHITE,
-                         placeholder_text=placeholder).pack(side="left", fill="x", expand=True)
+            e = ctk.CTkEntry(row, textvariable=var, fg_color=CARD2, text_color=WHITE, placeholder_text=placeholder)
+            e.pack(side="left", fill="x", expand=True)
             ctk.CTkButton(row, text=pick_text, width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                           border_width=1, border_color=BTN_BORDER, command=pick_cmd).pack(side="left", padx=(6, 0))
+            return e
 
         def note(r, var, pady=(0, 2)):
             ctk.CTkLabel(v, textvariable=var, text_color=MUTED, anchor="w", justify="left", wraplength=760).grid(
@@ -6444,8 +6892,14 @@ class KeystoneView:
 
         self.base_var = tk.StringVar(value="")
         self.base_note = TextVar(value="Choose the PS4 game package (.pkg) to repair.")
-        field_row(2, "Game package:", self.base_var, "Choose…", self._pick_base)
-        note(3, self.base_note)
+        self._base_entry = field_row(2, "Package:", self.base_var, "Choose…", self._pick_base)
+        nr = ctk.CTkFrame(v, fg_color="transparent")
+        nr.grid(row=3, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
+        ctk.CTkLabel(nr, textvariable=self.base_note, text_color=MUTED, anchor="w", justify="left",
+                     wraplength=640).pack(side="left")
+        self._other_tool = ctk.CTkButton(nr, text="Open in PS5 repair", width=130, height=24, fg_color=BTN,
+                                         hover_color=BTN_HOVER, text_color=WHITE, border_width=1,
+                                         border_color=BTN_BORDER, command=self._to_ps5_repair)
         self.ks_var = tk.StringVar(value="")
         self.ks_note = TextVar(value=self.HOWTO)
         field_row(4, "Keystone:", self.ks_var, "File…", self._pick_keystone,
@@ -6468,21 +6922,19 @@ class KeystoneView:
         self.upd_note = TextVar(value="Updates of this game record the package they belong to; checked ones are "
                                       "bound to the changed package.")
         ctk.CTkLabel(upd_head, textvariable=self.upd_note, text_color=MUTED, anchor="w").pack(side="left", padx=(10, 0))
-        ctk.CTkButton(upd_head, text="Remove", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
-                      border_width=1, border_color=BTN_BORDER, command=self._remove_update).pack(side="right")
+        self.remove_btn = ctk.CTkButton(upd_head, text="Remove from list", width=120, fg_color=BTN, hover_color=BTN_HOVER,
+                                        text_color=WHITE, border_width=1, border_color=BTN_BORDER,
+                                        command=self._remove_update, state="disabled")
+        self.remove_btn.pack(side="right")
         ctk.CTkButton(upd_head, text="Add…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=self._add_update).pack(side="right", padx=(0, 6))
-        style = ttk.Style(v)
-        _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
-        style.configure("Ks.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
-                        foreground=_pal["text"], rowheight=round(24 * ui_kit.SCALE), borderwidth=0)
-        style.configure("Ks.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
-        style.map("Ks.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
+        _pal = style_tree(v, "Ks.Treeview", self.app.kit)
         tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
         tframe.grid(row=9, column=0, sticky="nsew", padx=18, pady=(0, 6))
         self.tree = ttk.Treeview(tframe, columns=("pkg", "ver", "note"), style="Ks.Treeview", selectmode="browse")
-        for col, text, w in (("#0", "", 34), ("pkg", "Package", 380), ("ver", "Version", 80), ("note", "", 300)):
-            self.tree.heading(col, text=text, anchor="w")
+        watch_tree_theme(self.tree, "Ks.Treeview", self.app.kit)
+        for col, text, w in (("#0", "", 34), ("pkg", "Package", 380), ("ver", "Version", 80), ("note", "Notes", 300)):
+            self.tree.heading(col, text=tr(text) if text else "", anchor="w")
             self.tree.column(col, width=round(w * ui_kit.SCALE), minwidth=round((30 if col == "#0" else 60) * ui_kit.SCALE),
                              stretch=col not in ("#0", "ver"), anchor="w")
         vsb = ThinScrollbar(tframe, self.tree.yview)
@@ -6491,6 +6943,7 @@ class KeystoneView:
         vsb.pack(side="right", fill="y", pady=6)
         self.tree.bind("<Button-1>", self._click)
         self.tree.bind("<space>", lambda _e: self._toggle(self.tree.focus()))
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._refresh_buttons(), add="+")
         bottom = ctk.CTkFrame(v, fg_color="transparent")
         bottom.grid(row=10, column=0, sticky="ew", padx=18, pady=(0, 14))
         ctk.CTkLabel(bottom, text="Changes the packages themselves. What it replaces is kept in the app folder; "
@@ -6505,6 +6958,8 @@ class KeystoneView:
     # ── state ──
     def on_show(self):
         self._refresh_buttons()
+        if not (self.base_var.get() or "").strip():
+            self.frame.after(60, lambda: self._base_entry.winfo_exists() and self._base_entry.focus_set())
 
     def preset(self, base: str | None = None):
         """Open on *base* (from the job editor's hint)."""
@@ -6538,6 +6993,8 @@ class KeystoneView:
         self.add_btn.configure(state="normal" if ok else "disabled", fg_color=ACCENT if ok else BTN)
         self.undo_btn.configure(state="normal" if not busy and _ks_job_module().last_journal(self.undo_root)
                                 else "disabled")
+        if getattr(self, "remove_btn", None) is not None and getattr(self, "tree", None) is not None:
+            self.remove_btn.configure(state="normal" if self.tree.selection() else "disabled")
 
     def _ks_changed(self):
         raw = (self.ks_var.get() or "").strip()
@@ -6548,6 +7005,11 @@ class KeystoneView:
             self.ks_note.set(tr("Keystone {fp}…, valid.", fp=ks[0x20:0x28].hex().upper()) if ks is not None
                              else tr(why) + ".")
         self._refresh_buttons()
+
+    def _to_ps5_repair(self):
+        p = (self.base_var.get() or "").strip()
+        self.app._show_view("ps5repair")
+        self.app._ps5_view.preset(p)
 
     def _pick_base(self):
         p = filedialog.askopenfilename(parent=self.app.root, title="Choose the PS4 game package",
@@ -6595,6 +7057,7 @@ class KeystoneView:
             self._base_sfo = box.get("sfo")
             self._own = box.get("own")
             self.base_note.set(box["note"])
+            (self._other_tool.pack(side="left", padx=(10, 0)) if box.get("ps5") else self._other_tool.pack_forget())
             self._updates = box.get("updates", [])
             self._version = box.get("version")
             if self._version is not None:
@@ -6656,13 +7119,20 @@ class KeystoneView:
         version and the updates of the same game in its folder and the folders below."""
         m = _ps4pkg_module()
         out = {"done": True, "ok": False}
+        if _package_platform(p) == "ps5":
+            out["note"] = tr("This is a PS5 package. PS5 repair checks and repairs it.")
+            out["ps5"] = True
+            return out
         try:
             ident = m.read_identity(p)
         except Exception as e:
-            out["note"] = tr("Not a readable PS4 package: {e}", e=e)
+            out["note"] = tr("This file cannot be read as a PS4 package: {e}", e=e)
             return out
         if ident.kind != "game":
-            out["note"] = tr("This is an {kind}, not the game: the keystone goes into the game package.", kind=ident.kind)
+            out["note"] = ({"update": tr("This is an update, not the game. Choose the game package: its updates "
+                                         "in the same folder show up below."),
+                            "dlc": tr("This is DLC, not the game. Choose the game package.")}.get(ident.kind)
+                           or tr("This is not a game package. Choose the game package."))
             return out
         out["ident"] = ident
         info = App._ps4_keystone_state(p)
@@ -6675,7 +7145,7 @@ class KeystoneView:
         elif not info.get("valid", True):
             state = tr("has a damaged keystone")
         else:
-            state = tr("has keystone {fp}…", fp=info["fingerprint"][:8])
+            state = tr("has keystone {fp}…", fp=info["fingerprint"][:16])
         out["note"] = f"{name} {state}."
         out["ok"] = True
         try:
@@ -6713,6 +7183,9 @@ class KeystoneView:
             iid = self.tree.insert("", "end", text=self.CHECK if u["on"] else self.UNCHECK,
                                    values=(u["name"], u["version"], u["note"]))
             self._iid_row[iid] = i
+        self._render_note()
+
+    def _render_note(self):
         self.upd_note.set(plural(sum(1 for u in self._updates if u["on"]), "1 update will be bound to the changed package.",
                                  "{n} updates will be bound to the changed package.") if self._updates
                           else tr("No update of this game found next to it; add one with Add… if you have it elsewhere."))
@@ -6723,11 +7196,18 @@ class KeystoneView:
         if i is None:
             return
         self._updates[i]["on"] = not self._updates[i]["on"]
-        self._render()
+        # the row changes in place, so the focus stays and Space goes on working
+        self.tree.item(iid, text=self.CHECK if self._updates[i]["on"] else self.UNCHECK)
+        self._render_note()
 
     def _click(self, e):
+        row = self.tree.identify_row(e.y)
+        if row:
+            self.tree.focus(row)
+            self.tree.selection_set(row)
+            self._refresh_buttons()
         if self.tree.identify_column(e.x) == "#0" and self.tree.identify_region(e.x, e.y) in ("tree", "cell"):
-            self._toggle(self.tree.identify_row(e.y))
+            self._toggle(row)
             return "break"
 
     def _add_update(self):
@@ -6751,7 +7231,9 @@ class KeystoneView:
         self._render()
 
     def _remove_update(self):
-        i = self._iid_row.get(self.tree.focus())
+        """Takes the update off this list; the file stays where it is."""
+        sel = self.tree.selection()
+        i = self._iid_row.get(sel[0] if sel else self.tree.focus())
         if i is not None:
             del self._updates[i]
             self._render()
@@ -6778,19 +7260,30 @@ class KeystoneView:
         self._edit_item = None
         self.add_btn.configure(text="Add to queue")
         self.app.update_queue_box(select_item=it)
-        self.app.log("OK", tr("Queued: {name}: {what}.  Press ▶ START to run.", name=it.display_name or it.name,
+        self.app.log("OK", tr("Queued: {name}: {what}.  Press Start to run.", name=it.display_name or it.name,
                               what=chain_summary(it)))
         self.app._show_view("queue")
 
     def undo(self):
-        if self._busy or not _ks_job_module().last_journal(self.undo_root):
+        job = _ks_job_module()
+        j = job.last_journal(self.undo_root)
+        if self._busy or j is None:
             return
-        if not messagebox.askyesno("Undo last change", "Put back what the last PS4 repair changed?",
-                                   parent=self.app.root):
+        try:
+            d = job.describe(j)
+        except Exception:
+            d = {"base": "", "when": "", "packages": 0}
+        name = Path(d["base"]).name if d["base"] else "–"
+        text = (tr("Put back what PS4 repair changed in {name} on {when}?", name=name, when=d["when"])
+                if d["when"] else tr("Put back what PS4 repair changed in {name}?", name=name))
+        if d["packages"] > 1:
+            text += " " + plural(d["packages"] - 1, "Its update is put back too.", "Its {n} updates are put back too.")
+        if not ask_confirm("Undo last change", text, "Put back", parent=self.app.root):
             return
         self._busy = True
+        self._undo_name = name
         self._refresh_buttons()
-        cmd = self.app._backend_cmd("--ps4-keystone-undo", "last")
+        cmd = self.app._backend_cmd("--ps4-keystone-undo", str(j))
 
         def work():
             lines = []
@@ -6817,6 +7310,11 @@ class KeystoneView:
             if ln.startswith(("[PS4]", "[ERROR]")):
                 self.app.log("ERROR" if ln.startswith("[ERROR]") else "INFO", "PS4 repair: " + ln.split("] ", 1)[-1])
         self.app.log("OK" if rc == 0 else "WARN", "PS4 repair: " + ("undone" if rc == 0 else "undo failed, see the log"))
+        name = getattr(self, "_undo_name", "")
+        NoticeWindow(self.app.root, "Undo last change",
+                     tr("{name} is as it was before that repair.", name=name) if rc == 0 else
+                     tr("{name} could not be put back completely. The Log says what failed.", name=name),
+                     warn=rc != 0)
         self._refresh_buttons()
         if (self.base_var.get() or "").strip():
             self._base_changed()
@@ -6911,8 +7409,9 @@ class Ps5RepairView:
             row = ctk.CTkFrame(parent_, fg_color="transparent")
             row.grid(row=r, column=0, sticky="ew", padx=18, pady=(10, 2))
             ctk.CTkLabel(row, text=label, text_color=MUTED, width=110, anchor="w").pack(side="left")
-            ctk.CTkEntry(row, textvariable=var, fg_color=CARD2, text_color=WHITE,
-                         placeholder_text=placeholder).pack(side="left", fill="x", expand=True)
+            row.entry = ctk.CTkEntry(row, textvariable=var, fg_color=CARD2, text_color=WHITE,
+                                     placeholder_text=placeholder)
+            row.entry.pack(side="left", fill="x", expand=True)
             for text, cmd in buttons:
                 ctk.CTkButton(row, text=text, width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                               border_width=1, border_color=BTN_BORDER, command=cmd).pack(side="left", padx=(6, 0))
@@ -6920,9 +7419,14 @@ class Ps5RepairView:
 
         self.base_var = tk.StringVar(value="")
         self.base_note = TextVar(value="Choose the PS5 package (.pkg) to check.")
-        field_row(v, 2, "Package:", self.base_var, [("Choose…", self._pick_base)])
-        ctk.CTkLabel(v, textvariable=self.base_note, text_color=MUTED, anchor="w", justify="left",
-                     wraplength=760).grid(row=3, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
+        self._base_entry = field_row(v, 2, "Package:", self.base_var, [("Choose…", self._pick_base)]).entry
+        nr = ctk.CTkFrame(v, fg_color="transparent")
+        nr.grid(row=3, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
+        ctk.CTkLabel(nr, textvariable=self.base_note, text_color=MUTED, anchor="w", justify="left",
+                     wraplength=640).pack(side="left")
+        self._other_tool = ctk.CTkButton(nr, text="Open in PS4 repair", width=130, height=24, fg_color=BTN,
+                                         hover_color=BTN_HOVER, text_color=WHITE, border_width=1,
+                                         border_color=BTN_BORDER, command=self._to_ps4_repair)
         chk_head = ctk.CTkFrame(v, fg_color="transparent")
         chk_head.grid(row=4, column=0, sticky="ew", padx=18, pady=(12, 4))
         ctk.CTkLabel(chk_head, text="Checks", text_color=WHITE, anchor="w").pack(side="left")
@@ -6933,12 +7437,7 @@ class Ps5RepairView:
         ctk.CTkCheckBox(chk_head, text="Show passed checks", variable=self.show_pass_var, fg_color=ACCENT,
                         hover_color=ACCENT_HOVER, text_color=MUTED, checkbox_width=16, checkbox_height=16,
                         command=self._render).pack(side="right")
-        style = ttk.Style(v)
-        _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
-        style.configure("P5.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
-                        foreground=_pal["text"], rowheight=round(24 * ui_kit.SCALE), borderwidth=0)
-        style.configure("P5.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
-        style.map("P5.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
+        _pal = style_tree(v, "P5.Treeview", self.app.kit)
         tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
         tframe.grid(row=5, column=0, sticky="nsew", padx=18, pady=(0, 6))
         self.tree = ttk.Treeview(tframe, columns=("area", "result", "fix"), style="P5.Treeview", selectmode="browse")
@@ -6946,8 +7445,11 @@ class Ps5RepairView:
             self.tree.heading(col, text=tr(text), anchor="w")
             self.tree.column(col, width=round(w * ui_kit.SCALE), minwidth=round((30 if col == "#0" else 60) * ui_kit.SCALE),
                              stretch=col == "result", anchor="w")
-        for lv, key in (("fail", "danger"), ("warn", "warning"), ("pass", "muted")):
-            self.tree.tag_configure(lv, foreground=_pal[key])
+        def _tags(pal):
+            for lv, key in (("fail", "danger"), ("warn", "warning"), ("pass", "muted")):
+                self.tree.tag_configure(lv, foreground=pal[key])
+        _tags(_pal)
+        watch_tree_theme(self.tree, "P5.Treeview", self.app.kit, _tags)
         vsb = ThinScrollbar(tframe, self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
@@ -6968,7 +7470,7 @@ class Ps5RepairView:
         fw.grid(row=2, column=0, sticky="ew", padx=18, pady=(8, 2))
         ctk.CTkLabel(fw, text="Firmware:", text_color=MUTED, width=110, anchor="w").pack(side="left")
         self.fw_on_var = tk.BooleanVar(value=False)
-        self._fw_cb = ctk.CTkCheckBox(fw, text="Lower the firmware to", variable=self.fw_on_var, fg_color=ACCENT,
+        self._fw_cb = ctk.CTkCheckBox(fw, text="Lower the required firmware to", variable=self.fw_on_var, fg_color=ACCENT,
                                       hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18,
                                       checkbox_height=18, command=self._refresh_buttons)
         self._fw_cb.pack(side="left")
@@ -6976,7 +7478,7 @@ class Ps5RepairView:
         self._fw_menu = ctk.CTkOptionMenu(fw, values=self._targets(), variable=self.fw_var, width=92, height=26,
                                           dynamic_resizing=False, command=lambda _v: self._fw_changed())
         self._fw_menu.pack(side="left", padx=(8, 0))
-        ctk.CTkLabel(fw, text="the firmware your console runs", text_color=MUTED, anchor="w").pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(fw, text="your console's firmware, also used by the checks in Add job", text_color=MUTED, anchor="w").pack(side="left", padx=(8, 0))
         pg = ctk.CTkFrame(rep, fg_color="transparent")
         pg.grid(row=3, column=0, sticky="ew", padx=18, pady=(6, 2))
         ctk.CTkLabel(pg, text="PlayGo:", text_color=MUTED, width=110, anchor="w").pack(side="left")
@@ -6997,9 +7499,12 @@ class Ps5RepairView:
         self._sa_cb.pack(side="left")
         self.out_var = tk.StringVar(value=(app.output_var.get() or "").strip())
         field_row(rep, 5, "Output:", self.out_var, [("Folder…", self._pick_out)])
+        self.becomes = TextVar(value="")
+        ctk.CTkLabel(rep, textvariable=self.becomes, text_color=MUTED, anchor="w", justify="left",
+                     wraplength=760).grid(row=6, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
         bottom = ctk.CTkFrame(v, fg_color="transparent")
         bottom.grid(row=7, column=0, sticky="ew", padx=18, pady=(10, 14))
-        ctk.CTkLabel(bottom, text="The repair unpacks the package and builds it again; images, licence and PlayGo "
+        ctk.CTkLabel(bottom, text="The repair unpacks the package and builds it again; images, license and PlayGo "
                                   "tables are put right on the way.", text_color=MUTED, anchor="w").pack(side="left")
         self.add_btn = ctk.CTkButton(bottom, text="Add to queue", width=130, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                      text_color=ON_ACCENT, command=self.add_to_queue, state="disabled")
@@ -7012,6 +7517,8 @@ class Ps5RepairView:
     # ── state ──
     def on_show(self):
         self._refresh_buttons()
+        if not (self.base_var.get() or "").strip():
+            self.frame.after(60, lambda: self._base_entry.winfo_exists() and self._base_entry.focus_set())
 
     def preset(self, base: str | None = None):
         """Open on *base* (from the job editor's hint)."""
@@ -7059,6 +7566,31 @@ class Ps5RepairView:
         has = bool((self.base_var.get() or "").strip()) and Path(self.base_var.get().strip()).is_file()
         for b in (self.look_btn, self.unpack_btn):
             b.configure(state="normal" if has else "disabled")
+        self.becomes.set(self._becomes_text() if ok else "")
+
+    def _becomes_text(self) -> str:
+        """Where the repaired package goes, so nobody wonders whether the original is replaced."""
+        src = Path((self.base_var.get() or "").strip())
+        out = (self.out_var.get() or "").strip()
+        try:
+            it = GameItem.from_chain(src, to="pkg", output_path=out)
+            it.chain_rebuild = it.ps5_repair = True
+            it.auto_organize = bool(self.app.auto_organize_var.get())
+            param = (self._info or {}).get("param") or {}
+            if param:
+                it.display_name = param_title(param) or None
+            target = self.app._predicted_output(it)
+        except Exception:
+            target = None
+        if target is None:
+            return tr("Becomes a new package in {folder}; the original stays as it is.", folder=out)
+        if self.app._is_own_source(it, target):
+            return tr("Becomes {name} beside the original, which stays as it is.",
+                      name=f"{Path(target).stem} (2){Path(target).suffix}")
+        if Path(target).exists():
+            return tr("{name} is already in the output folder: Settings › General › When the output is "
+                      "already there decides.", name=Path(target).name)
+        return tr("Becomes {path}", path=target)
 
     def _ks_changed(self):
         """Read the keystone source off the main thread (a dump may need a small extraction)."""
@@ -7152,24 +7684,26 @@ class Ps5RepairView:
             m = _ps5_repair_module()
             try:
                 if m.fpkg.is_ps4(p):
-                    box["info"] = {"error": tr("a PS4 package: PS4 repair is the tool for it")}
+                    box["v"] = ({"error": "ps4"}, [])
                 else:
-                    box["info"] = m.examine(p, neighbours=True)
-                    box["rows"] = m.findings(box["info"], fw)
+                    info = m.examine(p, neighbours=True)
+                    box["v"] = (info, m.findings(info, fw))     # one value: the poll never sees half
             except Exception as e:
-                box["info"] = {"error": str(e)}
+                box["v"] = ({"error": str(e), "crash": True}, [])
 
         def poll():
             if seq != self._probe_seq:
                 return
-            if "info" not in box:
+            if "v" not in box:
                 self.frame.after(80, poll); return
-            info = box["info"]
+            info, rows = box["v"]
+            ps4 = info.get("error") == "ps4"
+            (self._other_tool.pack(side="left", padx=(10, 0)) if ps4 else self._other_tool.pack_forget())
             if info.get("error") and not info.get("results"):
-                self.base_note.set(tr("Not a readable PS5 package: {e}", e=info["error"]))
+                self.base_note.set(self._unreadable_text(info))
                 self._refresh_buttons()
                 return
-            self._info, self._rows = info, box.get("rows", [])
+            self._info, self._rows = info, rows
             self.base_note.set(self._identity_text(p, info)
                                + (" · " + tr("an update package: checked only") if self._is_update() else ""))
             want = self._wanted
@@ -7188,6 +7722,19 @@ class Ps5RepairView:
             self._render()
         threading.Thread(target=work, daemon=True).start()
         self.frame.after(80, poll)
+
+    @staticmethod
+    def _unreadable_text(info: dict) -> str:
+        if info.get("error") == "ps4":
+            return tr("This is a PS4 package. PS4 repair is the tool for it.")
+        if info.get("crash"):
+            return tr("The check failed: {e}", e=info.get("error"))
+        return tr("Not a readable PS5 package: {e}", e=info.get("error"))
+
+    def _to_ps4_repair(self):
+        p = (self.base_var.get() or "").strip()
+        self.app._show_view("keystone")
+        self.app._keystone_view.preset(p)
 
     @staticmethod
     def _identity_text(p: Path, info: dict) -> str:
@@ -7227,6 +7774,9 @@ class Ps5RepairView:
             if not bad and not show_pass:
                 self.tree.insert("", "end", text=self.MARK["pass"], tags=("pass",),
                                  values=("", tr("Every check passed. Show passed checks lists them."), ""))
+        elif self._info is not None:
+            self.tree.insert("", "end", text=self.MARK.get("info", "·"), tags=("info",),
+                             values=("", tr("No check could run on this package. The Log says why."), ""))
         self._refresh_buttons()
 
     # ── tools ──
@@ -7342,22 +7892,11 @@ class LookInsideView:
             side="right", padx=(0, 10))
         ctk.CTkLabel(srow, text="Filter", text_color=MUTED).pack(side="right", padx=(16, 6))
         self.filter_var.trace_add("write", lambda *_: self._render())
-        style = ttk.Style(v)
-        try:
-            style.theme_use("default")          # the Aqua theme ignores the colours below
-        except Exception:
-            pass
-        _pal = PALETTE["light" if ctk.get_appearance_mode().lower() == "light" else "dark"]
-        style.configure("PFS.Treeview", background=_pal["surface2"], fieldbackground=_pal["surface2"],
-                        foreground=_pal["text"], rowheight=round(24 * ui_kit.SCALE), borderwidth=0)
-        style.configure("PFS.Treeview.Heading", background=_pal["surface"], foreground=_pal["muted"], borderwidth=0)
-        if ui_kit.SCALE != 1:                   # Tk's default fonts stay at 96 dpi on Windows
-            style.configure("PFS.Treeview", font=self.app.kit.fonts.body)
-            style.configure("PFS.Treeview.Heading", font=self.app.kit.fonts.small)
-        style.map("PFS.Treeview", background=[("selected", _pal["select"])], foreground=[("selected", _pal["text"])])
+        _pal = style_tree(v, "PFS.Treeview", self.app.kit)
         tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
         tframe.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 6))
         self.tree = ttk.Treeview(tframe, columns=("size", "type"), style="PFS.Treeview", selectmode="extended")
+        watch_tree_theme(self.tree, "PFS.Treeview", self.app.kit)
         self.tree.heading("#0", text="Name", anchor="w"); self.tree.heading("size", text="Size", anchor="e")
         self.tree.heading("type", text="Type", anchor="center")
         self.tree.column("#0", width=round(470 * ui_kit.SCALE), anchor="w")
@@ -7369,9 +7908,10 @@ class LookInsideView:
         vsb.pack(side="right", fill="y", pady=6)
         bottom = ctk.CTkFrame(v, fg_color="transparent")
         bottom.grid(row=5, column=0, sticky="ew", padx=18, pady=(0, 14))
-        self.extract_all_btn = ctk.CTkButton(bottom, text="Extract all…", width=120, fg_color=BTN,
+        # the whole image is a job: it goes through the queue and its space check
+        self.extract_all_btn = ctk.CTkButton(bottom, text="Unpack all as a job…", width=160, fg_color=BTN,
                                              hover_color=BTN_HOVER, text_color=WHITE, border_width=1,
-                                             border_color=BTN_BORDER, command=lambda: self._extract(True),
+                                             border_color=BTN_BORDER, command=self._unpack_all,
                                              state="disabled")
         self.extract_all_btn.pack(side="left")
         self.cancel_btn = ctk.CTkButton(bottom, text="Cancel", width=90, fg_color=BTN, hover_color=BTN_HOVER,
@@ -7383,6 +7923,9 @@ class LookInsideView:
                                              hover_color=ACCENT_HOVER, text_color=ON_ACCENT,
                                              command=lambda: self._extract(False), state="disabled")
         self.extract_sel_btn.pack(side="right")
+        self._show_btn = ctk.CTkButton(bottom, text=REVEAL_LABEL, width=130, fg_color=BTN, hover_color=BTN_HOVER,
+                                       text_color=WHITE, border_width=1, border_color=BTN_BORDER,
+                                       command=lambda: open_path(getattr(self, "_ext_dest", "") or "."))
         self.frame.after(120, self._poll)
 
     def title(self) -> str:
@@ -7409,7 +7952,7 @@ class LookInsideView:
         self.image_path = Path(raw)
         kind = "  (fPKG)" if self.image_path.suffix.lower() == ".pkg" else ""
         self._title = tr("Look inside  ·  {name}{kind}", name=self.image_path.name, kind=kind)
-        self.status_var.set(f"Reading {self.image_path.name}…")
+        self.status_var.set(tr("Reading {name}…", name=self.image_path.name))
         self.extract_sel_btn.configure(state="disabled"); self.extract_all_btn.configure(state="disabled")
         cmd = self.app._backend_cmd("--list-image", str(self.image_path))
 
@@ -7430,7 +7973,7 @@ class LookInsideView:
                     if kind == "list_out":
                         self._on_list(payload)
                     elif kind == "list_err":
-                        self.status_var.set(f"Failed: {payload}")
+                        self.status_var.set(tr("Could not read it: {e}", e=payload))
                     elif kind == "ext_line":
                         self._on_ext_line(payload)
                     elif kind == "ext_done":
@@ -7438,7 +7981,7 @@ class LookInsideView:
                 except Exception as e:
                     # a handler failure must not stop the polling (the view would sit frozen)
                     try:
-                        self.status_var.set(f"Error: {e}")
+                        self.status_var.set(tr("Error: {e}", e=e))
                         self.app.log("ERROR", f"Look inside: '{kind}' handler failed: {e}")
                     except Exception:
                         pass
@@ -7489,22 +8032,23 @@ class LookInsideView:
             path = e["path"]
             parent = path.rsplit("/", 1)[0] if "/" in path else ""
             iid = self.tree.insert(node.get(parent, ""), "end", text="" + path.rsplit("/", 1)[-1],
-                                   values=("", "dir"), open=bool(flt))
+                                   values=("", tr("folder")), open=bool(flt))
             node[path] = iid
             self._iid_path[iid] = path
         for e in sorted((e for e in entries if e["type"] == "file"), key=lambda e: e["path"]):
             path = e["path"]
             parent = path.rsplit("/", 1)[0] if "/" in path else ""
             iid = self.tree.insert(node.get(parent, ""), "end", text="" + path.rsplit("/", 1)[-1],
-                                   values=(format_size(e.get("size", 0)), "file"))
+                                   values=(format_size(e.get("size", 0)), tr("file")))
             self._iid_path[iid] = path
-        self.count_var.set(f"{len(self._iid_path)} shown")
+        self.count_var.set(tr("{n} shown", n=len(self._iid_path)))
     def _on_ext_line(self, line):
         m = re.search(r"\[#{2,}\]\s*(\d{1,3})%", line)
         if m:
             self.progress.set(min(1.0, int(m.group(1)) / 100.0))
-            self.status_var.set(f"Extracting… {m.group(1)}%")
+            self.status_var.set(tr("Extracting… {pct} %", pct=m.group(1)))
         elif line.startswith("[ERROR]"):
+            self._ext_last_error = line[len("[ERROR]"):].strip()      # kept for the end of the run
             self.status_var.set(line)
 
     def _extract(self, extract_all):
@@ -7528,6 +8072,8 @@ class LookInsideView:
         except Exception as e:
             messagebox.showerror("Error", tr("Could not stage the selection: {e}", e=e), parent=self.app.root); return
         cmd = self.app._backend_cmd("--extract-from", str(self.image_path), "--dest", dest, "--members-file", mfpath)
+        self._ext_dest, self._ext_last_error = dest, ""
+        self._show_btn.pack_forget()
         self.status_var.set("Extracting…"); self.progress.set(0)
         self.extract_sel_btn.pack_forget()
         self.progress.pack(side="right", padx=(8, 0))
@@ -7552,6 +8098,24 @@ class LookInsideView:
                     pass
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _unpack_all(self):
+        """The whole image into a folder, as a queue job (space check, progress, Retry)."""
+        if not self.image_path:
+            return
+        dest = filedialog.askdirectory(parent=self.app.root, title="Unpack into folder")
+        if not dest:
+            return
+        src = Path(self.image_path)
+
+        def make(s):                        # runs on the add worker: no Tk here
+            if s.suffix.lower() == ".pkg":
+                return GameItem.from_fpkg_extract(s, output_path=dest)
+            it = GameItem.from_chain(s, to="folder", output_path=dest)
+            it.source_root = str(s.parent)
+            return it
+        self.app._add_jobs_async([src], make)
+        self.status_var.set(tr("Queued: unpack {name} into {dest}. Start runs it.", name=src.name, dest=dest))
+
     def _on_ext_done(self, rc):
         for w in (self.progress, self.cancel_btn):
             try:
@@ -7560,9 +8124,15 @@ class LookInsideView:
                 pass
         self.extract_sel_btn.pack(side="right")
         self.extract_sel_btn.configure(state="normal"); self.extract_all_btn.configure(state="normal")
-        self.status_var.set("Extracted." if rc == 0 else tr("Extraction failed ({rc}).", rc=rc))
-        if rc == 0 and self.app._view != "look":
-            self.app.log("OK", f"Look inside: extracted from {self.image_path.name if self.image_path else 'the image'}.")
+        dest = getattr(self, "_ext_dest", "")
+        last = getattr(self, "_ext_last_error", "")
+        self.status_var.set(tr("Extracted into {dest}.", dest=dest) if rc == 0 else
+                            (tr("Extraction failed: {why}", why=last) if last else
+                             tr("Extraction failed ({rc}).", rc=rc)))
+        if rc == 0:
+            self._show_btn.pack(side="right", padx=(0, 8))
+            self.app.log("OK", f"Look inside: extracted from {self.image_path.name if self.image_path else 'the image'} "
+                               f"into {dest}.")
 
     def _cancel(self):
         if self._proc is not None and self._proc.poll() is None:
@@ -7760,9 +8330,13 @@ class App:
         try:
             proc_alive = bool(self.current_process and self.current_process.poll() is None)
             if proc_alive or self._job_active():
-                if not messagebox.askyesno(
-                    "Quit?", "A job is still running.\n\nQuit and stop it?"
-                ):
+                q = self._stop_question() or tr("A job is still running.")
+                if not ask_confirm("Quit and stop the job?", q, "Quit", "Keep running", danger=True):
+                    return
+            elif getattr(self, "_after_busy", False):
+                if not ask_confirm("Quit now?", tr("A finished job is still moving or deleting its source "
+                                                   "(After the job). Quit now and that stops half-way."),
+                                   "Quit", "Wait", danger=True):
                     return
                 self.cancel_requested = True
                 self.extract_cancel_event.set()
@@ -8074,6 +8648,8 @@ class App:
         if name == "organize" and "organize" not in self._views:
             self._organize_view = OrganizeView(self._views_parent, self)
             self._views["organize"] = self._organize_view.frame
+            # Apply and Undo wait while the queue runs: their state follows it
+            self.batch_counter_var.trace_add("write", lambda *_: self._organize_view._refresh_buttons())
         if name == "keystone" and "keystone" not in self._views:
             self._keystone_view = KeystoneView(self._views_parent, self)
             self._views["keystone"] = self._keystone_view.frame
@@ -8188,6 +8764,8 @@ class App:
         self._q_sub_var = TextVar(value=self.queue_total_var.get())   # shortened when narrow
         head, btns = self._column_header(left, "Queue", subtitle_var=self._q_sub_var)
         head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
+        self._parked_btn = self._small(head, "", "drive", self._show_parked,
+                                       tooltip="Jobs whose drive is not connected: they come back when it is")
         self.queue_total_var.trace_add("write", lambda *_: self._fit_queue_header())
         self._clear_btn = self._small(btns, "Clear completed", "check-circle", lambda: self.clear_jobs("done"),
                                       tooltip="Remove the finished jobs. Right-click: clear failed, clear all")
@@ -8203,9 +8781,9 @@ class App:
         # Start, Pause and Stop share one place of fixed size: Start while idle, Pause and Stop
         # side by side while the queue runs. Nothing beside it moves when a run starts.
         self.transport = TransportControl(
-            btns, kit, on_start=self.start, on_pause=self.toggle_pause, on_stop=self.cancel,
+            btns, kit, on_start=self.start, on_pause=self.toggle_pause, on_stop=self.request_stop,
             start_tip=tr("Run the jobs from the top  {start}", start=SHORTCUT['start']), pause_tip=self._PAUSE_TIPS[False],
-            stop_tip=tr("Cancel the running job and stop the queue  {stop}", stop=SHORTCUT['stop']))
+            stop_tip=tr("Stop the running job and the queue  {stop}", stop=SHORTCUT['stop']))
         self.transport.grid(row=0, column=3)
         self.start_btn, self.pause_btn, self.stop_btn = self.transport.start, self.transport.pause, self.transport.stop
         self._details_btn = self._small(btns, "", "sidebar-right", self.toggle_inspector,
@@ -8361,22 +8939,23 @@ class App:
             return
         kept = [it for it in gone if getattr(it, "kept_extract", False)]
         if which == "all" and self._batch_running:
-            if not messagebox.askyesno("Clear all", "A job is running. Remove every other job from the queue?\n"
-                                                    "(The running job finishes normally.)"):
+            if not ask_confirm("Clear all", tr("A job is running. Remove every other job from the queue? The running "
+                                               "job finishes normally."), "Remove them", danger=True):
                 return
         elif kept:
             n = len(kept)
-            if not messagebox.askyesno(
+            if not ask_confirm(
                     "Clear jobs", plural(n, "1 of these jobs keeps what it extracted from its archive, for a retry. "
-                             "Clearing deletes that copy. Clear anyway?",
+                             "Clearing deletes that copy.",
                              "{n} of these jobs keep what they extracted from their archives, for a retry. "
-                             "Clearing deletes those copies. Clear anyway?")):
+                             "Clearing deletes those copies."), "Clear", danger=True):
                 return
         for it in gone:
             self._drop_kept_extract(it)
             self.queue.remove(it)
         if which == "all":
             self._queue_missing_saved = []   # a deliberate clear also drops parked entries
+            self._refresh_parked()
         word = {"done": "completed", "failed": "failed or cancelled", "all": ""}[which]
         self.log("INFO", f"Cleared {len(gone)} {word + ' ' if word else ''}job{'s' if len(gone) != 1 else ''}.")
         self.update_queue_box()
@@ -8464,7 +9043,7 @@ class App:
         tail_box.grid(row=5, column=0, sticky="nsew", pady=(14, 0))
         body.grid_rowconfigure(5, weight=1)
         self._log_tail = kit.text(tail_box.inner, bg="surface2", fg="log", font=kit.fonts.mono_small, height=4,
-                                  state="disabled", padx=0, pady=0, wrap="none")
+                                  state="disabled", padx=0, pady=0, wrap="word")
         tail_box.set_child(self._log_tail)
 
         def _tail_resized(e, line=line):
@@ -8489,8 +9068,8 @@ class App:
                 self.retry_btn = b
                 b.autohide = True          # only for a job that failed, was cancelled or skipped
                 b.configure(state="disabled")
-        self.cancel_btn = self._small(acts, "Cancel", "x", self.cancel, variant="danger",
-                                      tooltip="Stop the running job", bg=B)
+        self.cancel_btn = self._small(acts, "Stop", "x", self.request_stop, variant="danger",
+                                      tooltip="Stop the running job and the queue", bg=B)
         self.cancel_btn.grid(row=0, column=6, sticky="e")
         self.cancel_btn.autohide = True
         self.cancel_btn.configure(state="disabled")
@@ -8809,9 +9388,7 @@ class App:
             lib = tr("PS4 library") + (plural(n, " · 1 package", " · {n} packages") if n else "")
             if getattr(item, "ps4_keystone", None):
                 return [src, "Keystone", lib]
-            if getattr(item, "ps4_default_keystone", None):
-                return [src, "Default keystone", lib]
-            return [src, lib]
+            return [src, lib]          # a default keystone is a warning beside the row, not a step
         if op == "chain":
             ch = []
             if getattr(item, "ps5_repair", False):
@@ -8905,7 +9482,8 @@ class App:
 
         def _run_state(*_):
             running = bool(getattr(self, "_batch_running", False))
-            txt = self._footer_plain_var.get().lower()
+            # the state word as the code set it, not the translated footer text
+            txt = str(getattr(self, "_status_state", "") or self._footer_plain_var.get()).lower()
             color = ("danger" if any(w in txt for w in ("fail", "error", "cancel")) else
                      "success" if (not running and any(w in txt for w in ("ready", "done", "complete"))) else "accent")
             self._status_dot.set(color=color)
@@ -8967,6 +9545,8 @@ class App:
         fm.add_command(label="Add Job…", accelerator=ACCEL["add"], command=guard(self.open_job_dialog))
         fm.add_command(label="Look Inside…", accelerator=ACCEL["open"], command=lambda: self.open_pfs_browser())
         fm.add_command(label="Organize…", command=lambda: self._show_view("organize"))
+        fm.add_command(label="PS4 Repair…", command=lambda: self._show_view("keystone"))
+        fm.add_command(label="PS5 Repair…", command=lambda: self._show_view("ps5repair"))
         fm.add_separator()
         fm.add_command(label="Start Queue", accelerator=ACCEL["start"], command=guard(self.start))
         fm.add_command(label="Pause After This Job", command=self.toggle_pause)
@@ -8974,7 +9554,7 @@ class App:
         fm.add_command(label="Stop Queue", accelerator=ACCEL["stop"], command=self._stop_if_running)
         fm.add_command(label="Clear Completed Jobs", command=guard(lambda: self.clear_jobs("done")))
         fm.add_separator()
-        fm.add_command(label="Clean Temp Folder", command=guard(self.clear_temp_files))
+        fm.add_command(label="Clean Temp…", command=guard(self.clear_temp_files))
         if not IS_MAC:
             fm.add_separator()
             fm.add_command(label="Settings…", accelerator=ACCEL["settings"], command=self.open_settings)
@@ -9035,7 +9615,31 @@ class App:
 
     def _stop_if_running(self):
         if self._batch_running:
-            self.cancel()
+            self.request_stop()
+
+    def _stop_question(self) -> str | None:
+        """What Stop or Quit costs right now, for the question before it; None when nothing
+        is worth asking about (no job, or one that started seconds ago)."""
+        item = self._running_item() or getattr(self, "_active_item", None)
+        if item is None or not self._job_active():
+            return None
+        name = getattr(item, "display_name", None) or item.name
+        if getattr(item, "operation", "") == "ps4-keystone":
+            return tr("PS4 repair is changing {name} in place. Stopped now, the package stays half changed "
+                      "until you press Undo last change in PS4 repair.", name=name)
+        w = getattr(self, "worker", None)
+        ran = time.time() - w.start_time if w is not None and getattr(w, "start_time", 0) else 0
+        if ran < 20:
+            return None
+        return tr("{name} has run for {time}. The work done so far is lost, and the queue stops.",
+                  name=name, time=humanize_eta(int(ran)))
+
+    def request_stop(self):
+        """Stop, asked first when hours of work or a half-changed package are at stake."""
+        q = self._stop_question()
+        if q is not None and not ask_confirm("Stop the job?", q, "Stop job", "Keep running", danger=True):
+            return
+        self.cancel()
 
     def _open_log_folder(self):
         ensure_app_dir()
@@ -9237,6 +9841,7 @@ class App:
             self.kit.set_mode(self._theme)
         except Exception:
             pass
+        restyle_trees()             # the tables of the tool views are ttk: they need telling
 
 
 
@@ -9260,9 +9865,9 @@ class App:
         if image_path:
             self._look_view.open(image_path)
 
-    def open_job_dialog(self, init_src: str | None = None):
+    def open_job_dialog(self, init_src: str | None = None, init_sources: list | None = None):
         """The one door for every job: source → change the content → output (JobDialog)."""
-        JobDialog(self, init_src=init_src)
+        JobDialog(self, init_src=init_src, init_sources=init_sources)
 
     def _pkg_level_default(self) -> int:
         """The Kraken level a new .pkg job starts from (Settings › Compression), -4..9."""
@@ -9367,15 +9972,15 @@ class App:
         if not folder.is_dir():
             messagebox.showerror("Not a folder", tr("This is not a folder:\n{folder}", folder=folder))
             return
-        if not messagebox.askyesno(
-                "Fake Sign - in place",
-                tr("Queue a fake-sign job for:\n\n{folder}\n\nWhen it runs it modifies the executables IN PLACE "
-                  "(already-signed files are skipped, so it is safe to repeat). Add to queue?", folder=folder)):
+        if not ask_confirm(
+                "Fake-sign in place?",
+                tr("Queue a fake-sign job for:\n\n{folder}\n\nWhen it runs it changes the executables in that folder "
+                  "itself (files already signed are skipped, so it is safe to repeat).", folder=folder), "Add to queue"):
             return
         item = GameItem.from_fake_sign(folder)
         self.queue.append(item)
         self.update_queue_box(select_item=item)
-        self.log("OK", f"Fake-sign queued: {folder.name}.  Press ▶ START to run.")
+        self.log("OK", f"Fake-sign queued: {folder.name}.  Press Start to run.")
         self.status_update("Ready", tr("Fake-sign queued: {name} - press START.", name=folder.name),
                             "Ready", 0, 0, "00:00", " - ", " - ", side=True)
 
@@ -9396,7 +10001,7 @@ class App:
         item = GameItem.from_fpkg_extract(pkg, output_path=out)
         self.queue.append(item)
         self.update_queue_box(select_item=item)
-        self.log("OK", f"fPKG extract queued: {pkg.name} -> {out}.  Press ▶ START to run.")
+        self.log("OK", f"fPKG extract queued: {pkg.name} -> {out}.  Press Start to run.")
 
 
     # ── Drag & drop ───────────────────────────────────────────────────────────
@@ -9405,41 +10010,27 @@ class App:
             paths = self.root.tk.splitlist(event.data)
         except Exception:
             paths = [event.data]
-        # One dropped path opens the job dialog with it as the source - the user then says
-        # what to change and what comes out. Several paths at once keep the batch path
-        # below (remembered format), so a whole library can still be dropped in one go.
-        if len(paths) == 1:
-            p = Path(str(paths[0]).strip("{}").strip())
-            if not p.exists():
-                self.log("WARN", f"Dropped path not found: {p}"); return
-            self.open_job_dialog(init_src=str(p)); return
+        found = []
         for raw in paths:
-            p = Path(raw.strip("{}").strip())
-            if not p.exists():
-                self.log("WARN", f"Dropped path not found: {p}"); continue
-            # A dropped .pkg becomes an fPKG-extract job (into a "<name> [extracted]" folder
-            # next to it, unless a global Output is set).
-            if p.is_file() and p.suffix.lower() == ".pkg" and _is_ps4_source(p):
-                # a PS4 package goes into the library; without an Output the editor asks where
-                out = (self.output_var.get() or "").strip()
-                if not out:
-                    self.open_job_dialog(init_src=str(p)); continue
-                item = self._ps4_item_for(p, output_path=out)
-                self.queue.append(item)
-                self.update_queue_box(select_item=item)
-                self.log("OK", f"PS4 package queued from drop: {p.name} -> {out}.")
-                continue
-            if p.is_file() and p.suffix.lower() == ".pkg":
-                out = (self.output_var.get() or "").strip()
-                if not out:
-                    out = str(p.parent / (p.stem + " [extracted]"))
-                item = GameItem.from_fpkg_extract(p, output_path=out)
-                self.queue.append(item)
-                self.update_queue_box(select_item=item)
-                self.log("OK", f"fPKG extract queued from drop: {p.name} -> {out}.")
-                continue
-            self.source_var.set(str(p))
-            self.add_source_to_queue()   # handles folders AND archives uniformly
+            p = Path(str(raw).strip("{}").strip())
+            if p.exists():
+                found.append(p)
+            else:
+                self.log("WARN", f"Dropped path not found: {p}")
+        if not found:
+            return
+        # An open Add job takes the drop as its source; otherwise the dropped paths open one
+        # Add job, where the user says what to change and what comes out.
+        top = self._panels.stack[-1] if self._panels.stack else None
+        if isinstance(top, JobDialog) and top.edit_item is None and len(found) == 1:
+            top.src_var.set(str(found[0]))
+            return
+        if top is not None:
+            self._panels.close_all()
+        if len(found) == 1:
+            self.open_job_dialog(init_src=str(found[0]))
+        else:
+            self.open_job_dialog(init_sources=[str(p) for p in found])
 
     # ── Folder browse ─────────────────────────────────────────────────────────
     def browse_source_folder(self):
@@ -9818,7 +10409,7 @@ class App:
             item = self._ps4_item_for(src, output_path=out)
             self.queue.append(item)
             self.update_queue_box(select_item=item)
-            self.log("OK", f"PS4 packages queued: {src.name} -> {out}.  Press ▶ START to run.")
+            self.log("OK", f"PS4 packages queued: {src.name} -> {out}.  Press Start to run.")
             return
 
         # ── Existing uncompressed .ffpfs - a PACK source (re-pack to .ffpfsc, or copy
@@ -9918,10 +10509,10 @@ class App:
             warns = validate_game_structure(src)
             if warns:
                 msg = "\n".join(f"• {w}" for w in warns)
-                if not messagebox.askyesno(
-                    "Game Structure Warning",
-                    tr("Potential issues detected:\n\n{msg}\n\nExpected: sce_sys/param.json and eboot.bin\n\nAdd "
-                      "anyway?", msg=msg)
+                if not ask_confirm(
+                    "This may not be a game folder",
+                    tr("Potential issues detected:\n\n{msg}\n\nExpected: sce_sys/param.json and eboot.bin", msg=msg),
+                    "Add anyway"
                 ):
                     self.pending_start = False
                     self._pending_fpkg_identity = None
@@ -10798,14 +11389,14 @@ class App:
             item._inner_image = None
         except Exception:
             pass
+        if not _is_inner_image_path(inner):
+            self.log("WARN", f"Not removed, not an inner image: {inner}")
+            return
         def _work(p=Path(str(inner))):
             try:
-                if p.exists():
-                    sz = p.stat().st_size if p.is_file() else get_folder_size(p)
-                    try:
-                        p.unlink()
-                    except Exception:
-                        shutil.rmtree(str(p), ignore_errors=True)
+                if p.is_file() and not p.is_symlink():
+                    sz = p.stat().st_size
+                    p.unlink()
                     if sz:
                         self.log("INFO", f"Removed {format_size(sz)} inner image (pass-1 cache).")
                 par = p.parent
@@ -11171,10 +11762,9 @@ class App:
                     else "its size could not be trusted; the drive routing estimates it."))
                 return
             self.log("WARN", f"Password did not unlock '{arc.name}'.")
-            if not messagebox.askyesno(
+            if not ask_confirm(
                 "Wrong password",
-                tr("That password did not unlock '{name}'.\n\nTry again?", name=arc.name),
-                parent=self.root):
+                tr("That password did not unlock '{name}'.", name=arc.name), "Try again", "Give up"):
                 return
         self.log("WARN", f"Gave up on the password for '{arc.name}' - routing will use the size estimate.")
 
@@ -12200,7 +12790,7 @@ class App:
         return out / (getattr(item, "organize_folder", None) or folder), fname
 
     _FW_TAG = re.compile(r"\s*\[fw[\d.x]+\]$", re.I)
-    # Settings › Interface: skip (default, no question) | ask | overwrite | keep (both)
+    # Settings › General: skip (default, no question) | ask | overwrite | keep (both)
     OUTPUT_EXISTS_CHOICES = ("skip", "ask", "overwrite", "keep")
     OUTPUT_EXISTS_LABELS = {"skip": "Skip", "ask": "Ask", "overwrite": "Overwrite", "keep": "Keep both"}
 
@@ -12296,9 +12886,24 @@ class App:
         except OSError:
             return False
 
+    @staticmethod
+    def _is_own_source(item, path) -> bool:
+        """*path* is the file this job reads (its package, image or archive)."""
+        for src in (getattr(item, "path", None), getattr(item, "archive_path", None)):
+            try:
+                if src and path and Path(str(src)).is_file() and os.path.samefile(str(src), str(path)):
+                    return True
+            except OSError:
+                pass
+        return False
+
     def _existing_output(self, target: Path, item=None) -> Path | None:
-        """The file in the output folder that is this job's output already: same title, version and format."""
+        """The file in the output folder that is this job's output already: same title, version and format.
+        A PS5 repair whose library name is its own source is not a conflict: the repaired
+        package goes beside it."""
         try:
+            if item is not None and getattr(item, "ps5_repair", False) and self._is_own_source(item, target):
+                return None
             if target.exists():
                 return target
             parent = target.parent
@@ -12328,7 +12933,7 @@ class App:
         return None
 
     def _output_rule(self) -> str:
-        """Settings › Interface › When the output is already there: skip | ask | overwrite | keep."""
+        """Settings › General › When the output is already there: skip | ask | overwrite | keep."""
         try:
             v = self.output_exists_var.get()
         except Exception:
@@ -12378,6 +12983,8 @@ class App:
 
     def _apply_output_choice(self, item, hit: Path, choice: str) -> None:
         name = getattr(item, "display_name", None) or item.name
+        if choice == "overwrite" and self._is_own_source(item, hit):
+            choice = "keep"                      # never build over the file the job reads
         if choice == "overwrite":
             item._replace_output = True
             self.log("INFO", f"{name}: replaces {hit}.")
@@ -12446,10 +13053,11 @@ class App:
         """A running batch skips *item* after its archive was unpacked: it leaves this run
         (not counted as a failure), the scratch it wrote is reclaimed, the batch goes on."""
         self._cleanup_after_failure(item)
-        hit = None
+        hit, exact = None, False
         try:
             predicted = self._predicted_output(item)
             hit = self._existing_output(predicted, item) if predicted is not None else None
+            exact = hit is not None and Path(hit) == Path(predicted)
         except Exception:
             pass
 
@@ -12460,7 +13068,7 @@ class App:
                 else:
                     self._batch_total = max(0, self._batch_total - 1)
             self._skip_late_advance()
-        self._settle_existing(item, hit, hit_note, then=finish)
+        self._settle_existing(item, hit, hit_note, then=finish, exact=exact)
 
     def _skip_late_advance(self) -> None:
         if self._batch_running:
@@ -12575,6 +13183,8 @@ class App:
     def queue_remove_selected(self):
         """Remove every selected job. The running job stays (cancel it first); removing a job
         deletes the copy it kept from its archive, so several of those are asked about."""
+        if self._panels.stack:
+            return  # Backspace in an open editor never removes the job behind it
         rows = [i for i in self.queue_listbox.marked_rows() if 0 <= i < len(self.queue)]
         if not rows or not self.queue:
             return  # nothing selectable (e.g. the "Queue is empty" placeholder row)
@@ -12589,13 +13199,16 @@ class App:
             items = [it for it in items if it is not running]
             self.log("INFO", "The running job stays in the queue; cancel it first to remove it.")
         kept = [it for it in items if getattr(it, "kept_extract", False)]
-        if len(items) > 1 and kept:
+        if kept:
             n = len(kept)
-            if not messagebox.askyesno(
-                    "Remove jobs", plural(n, "1 of these jobs keeps what it extracted from its archive, for a retry. "
-                             "Removing deletes that copy. Remove anyway?",
-                             "{n} of these jobs keep what they extracted from their archives, for a retry. "
-                             "Removing deletes those copies. Remove anyway?")):
+            text = (tr("This job keeps what it extracted from its archive, for a retry. Removing it deletes that copy.")
+                    if len(items) == 1 else
+                    plural(n, "1 of these jobs keeps what it extracted from its archive, for a retry. "
+                              "Removing deletes that copy.",
+                           "{n} of these jobs keep what they extracted from their archives, for a retry. "
+                           "Removing deletes those copies."))
+            if not ask_confirm("Remove jobs" if len(items) > 1 else "Remove the job?", text,
+                               "Remove", danger=True):
                 return
         # What to show afterwards: the first job below the removed ones, else the one above.
         after = [it for it in self.queue[rows[-1] + 1:] if it not in items]
@@ -12618,9 +13231,9 @@ class App:
         """Every job but the running one (the same as Clear all, without the kept-copy question
         for callers that already asked)."""
         if self._batch_running:
-            ok = messagebox.askyesno("Clear Queue",
-                                      "A compression is running. Clear the waiting games?\n"
-                                      "(The current game will finish normally.)")
+            ok = ask_confirm("Clear the queue?",
+                             tr("A job is running. Remove the waiting jobs? The running job finishes normally."),
+                             "Remove them", danger=True)
             if not ok:
                 return
             run = self._running_item()
@@ -12633,10 +13246,57 @@ class App:
                 self._drop_kept_extract(it)
             self.queue.clear()
         self._queue_missing_saved = []   # a deliberate clear also drops parked entries
+        self._refresh_parked()
         self.update_queue_box()
 
     # GameItem fields that hold a Path (everything else is str/int/None and JSON-safe).
     _QUEUE_PATH_FIELDS = ("path", "archive_path", "bundle_dir", "patch_source", "output_path")
+
+    @staticmethod
+    def _parked_source(d: dict):
+        return d.get("archive_path") or d.get("path") or d.get("origin_archive")
+
+    def _recheck_parked(self):
+        """Every 20 s: a parked job whose drive is back joins the queue again."""
+        try:
+            parked = list(getattr(self, "_queue_missing_saved", None) or [])
+            if parked and not self._batch_running and any(
+                    self._parked_source(d) and Path(str(self._parked_source(d))).exists() for d in parked):
+                self._queue_missing_saved = []
+                self._restore_queue(saved=parked, quiet=True)
+        except Exception as e:
+            self.log("WARN", f"Could not look for parked jobs: {e}")
+        try:
+            self.root.after(20000, self._recheck_parked)
+        except tk.TclError:
+            pass
+
+    def _refresh_parked(self):
+        n = len(getattr(self, "_queue_missing_saved", None) or [])
+        btn = getattr(self, "_parked_btn", None)
+        if btn is None:
+            return
+        if n:
+            btn.configure(text=plural(n, "1 job waits for its drive", "{n} jobs wait for their drive"))
+            btn.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        else:
+            btn.grid_remove()
+
+    def _show_parked(self):
+        parked = list(getattr(self, "_queue_missing_saved", None) or [])
+        if not parked:
+            return
+        names = "\n".join("•  " + str(d.get("display_name") or d.get("name") or self._parked_source(d) or "?")
+                          + (f"  ({self._parked_source(d)})" if self._parked_source(d) else "")
+                          for d in parked[:10])
+        if ask_confirm("Jobs waiting for a drive",
+                       tr("Their source is on a drive that is not connected. They come back into the queue by "
+                          "themselves when it is.") + "\n\n" + names,
+                       "Forget them", "Keep waiting", danger=True):
+            self._queue_missing_saved = []
+            self._save_queue()
+            self._refresh_parked()
+            self.log("INFO", f"Forgot {len(parked)} parked job(s).")
 
     def _save_queue(self):
         """Persist the current queue (paths + metadata, minus the PIL artwork and the
@@ -12665,16 +13325,17 @@ class App:
         except Exception:
             return False
 
-    def _restore_queue(self):
+    def _restore_queue(self, saved=None, quiet: bool = False):
         """Rebuild the saved queue on startup. Items whose source path no longer exists
         are skipped; a mid-run status is reset to pending. Best-effort. Enables saving
-        afterwards (sets _queue_restored)."""
-        saved = []
+        afterwards (sets _queue_restored). With *saved*, the parked jobs whose drive came
+        back are added (see _recheck_parked)."""
         missing = []   # saved entries whose source is not reachable right now
-        try:
-            saved = load_settings().get("queue") or []
-        except Exception:
-            saved = []
+        if saved is None:
+            try:
+                saved = load_settings().get("queue") or []
+            except Exception:
+                saved = []
         restored = skipped = 0
         for d in saved:
             try:
@@ -12757,11 +13418,21 @@ class App:
             except Exception:
                 pass
         self._queue_restored = True   # from here on, queue mutations persist
+        if quiet:
+            if restored:
+                self.log("OK", f"{restored} parked job(s) are back: their drive is connected again.")
+                self.update_queue_box()
+                self._save_queue()
+            else:
+                self._refresh_parked()
+            return
         # Covers no job uses any more go after a while (the parked jobs keep theirs).
         _keep = {getattr(o, "art_key", "") for o in self.queue} | {str(d.get("art_key") or "") for d in missing}
         threading.Thread(target=prune_art_cache, args=(_keep,), daemon=True).start()
         if self.queue:
             self.update_queue_box()
+        self._refresh_parked()
+        self.root.after(20000, self._recheck_parked)
         if restored:
             self.log("INFO", f"Restored {restored} item(s) from the saved queue.")
         if getattr(self, "_cleared_libs_setting", ""):
@@ -12949,6 +13620,13 @@ class App:
             sub = "  →  ".join(tr(p) for p in self._job_recipe(item))
             if size_txt:
                 sub += f"   ·   {size_txt}"
+            _after = {"trash": tr("source to the {TRASH_NAME}", TRASH_NAME=TRASH_NAME),
+                      "move": tr("source moves"), "delete": tr("deletes the source")}.get(
+                          getattr(item, "after_source", None) or "keep")
+            if _after and st not in ("Done",):
+                sub += f"   ·   {_after}"
+            if getattr(item, "ps4_default_keystone", None) and not getattr(item, "ps4_keystone", None):
+                sub += "   ·   ⚠ " + tr("default keystone")
             tid = shown_title_id(item)
             if tid and tid not in str(disp):
                 sub = f"{tid}   ·   {sub}"
@@ -13022,7 +13700,7 @@ class App:
             size_txt = (tr("~{size} unpacked", size=format_size(item.extracted_size)) if shows_extracted_size(item)
                         else format_size(getattr(item, "size", 0) or 0))
             files = getattr(item, "files", 0) or 0
-            meta = [x for x in (getattr(item, "title_id", ""), f"v{ver}" if ver else "", size_txt,
+            meta = [x for x in (shown_title_id(item), f"v{ver}" if ver else "", size_txt,
                                 plural(files, "1 file", "{n} files", n=i18n.number(f"{files:,}")) if files else "") if x]
             self.card_meta_var.set("   ·   ".join(meta))
             out = self._job_output_dir(item)
@@ -14536,7 +15214,7 @@ class App:
             listing = "\n".join(f"  • {p}" for p in targets[:8]) + ("\n  • …" if n > 8 else "")
             msg = (tr("Found ~{total} of leftover working data from a previous run in {n} "
                      "folder(s):\n\n{listing}\n\nDelete it now to reclaim the space?", total=format_size(total), n=n, listing=listing))
-            if not messagebox.askyesno("Reclaim leftover temp space?", msg):
+            if not ask_confirm("Reclaim leftover temp space?", msg, "Delete", danger=True):
                 return
 
             def _work():
@@ -14675,7 +15353,10 @@ class App:
         def _ask():
             diag = SpaceDiagnosticsDialog(self.root, item, temp_dir, out_dir)
             self.root.wait_window(diag)
-            return "proceed" if diag.proceed else "cancel"
+            choice = getattr(diag, "choice", "proceed" if diag.proceed else "cancel")
+            if choice == "skip":
+                self._note_space_skip(item, space_shortfall(item, temp_dir, out_dir))
+            return choice
 
         if ok:
             return _ask() if self.show_space_dialog_var.get() else "proceed"
@@ -14735,6 +15416,13 @@ class App:
         return bool(src) and Path(str(src)).exists()
 
     _RETRYABLE = ("Failed", "Cancelled", "Skipped")
+
+    def _retry_failed(self):
+        """Run the failed jobs of the queue again (the queue report's button)."""
+        if self._batch_running:
+            return
+        if any(getattr(it, "status", "") == "Failed" for it in self.queue):
+            self.start()
 
     def _retry_selected(self):
         item = getattr(self, "_details_item", None)
@@ -14934,7 +15622,6 @@ class App:
         out = str(tpl.get("output") or "")
         sign = bool(tpl.get("sign"))
         target = tpl.get("backport_target") or None
-        patch = tpl.get("patch_source") or None
         pkg_params = tpl.get("pkg_params") or {}
         ff_level = int(tpl.get("ff_level") or 7)
         organize = bool(tpl.get("organize"))
@@ -14947,7 +15634,7 @@ class App:
 
         def build(src, to):
             it = GameItem.from_chain(src, to=to, output_path=out or None, sign=sign and to != "pkg",
-                                     patch_source=patch, backport_target=target,
+                                     patch_source=None, backport_target=target,
                                      backport_libs_root=None)
             if to == "pkg":
                 self._apply_fpkg_params(it, pkg_params or self.fpkg_defaults)
@@ -15190,7 +15877,7 @@ class App:
                         what = chain_summary(made[0]) + (f" × {len(made)}" if len(made) > 1 else "")
                         self.log("OK", f"Queued: {what} - {made[0].display_name or made[0].name}"
                                        + (f" (+{len(made) - 1} more)" if len(made) > 1 else "")
-                                       + ".  Press ▶ START to run.")
+                                       + ".  Press Start to run.")
                     self._add_state = {"total": 0, "done": 0, "made": [], "errors": 0}
                     if self.pending_start and self._scan_in_flight == 0:
                         self.pending_start = False
@@ -15385,8 +16072,8 @@ class App:
             self.start_btn.configure(state="normal")
             self.cancel_btn.configure(state="disabled")
             self._update_batch_counter()
-            self.status_update("Ready", "Batch cancelled.", "Ready", 0, 0, "00:00", " - ", " - ")
-            self.log("WARN", "Batch cancelled by user.")
+            self.status_update("Ready", "Queue stopped.", "Ready", 0, 0, "00:00", " - ", " - ")
+            self.log("WARN", "Queue stopped by the user.")
             return
         # Wait for any in-flight scratch reclaim to finish before re-reading free space - 
         # otherwise the gate sees a still-full drive and false-skips the next game. Cap the
@@ -15674,7 +16361,9 @@ class App:
         known = {os.path.realpath(g) for g in game} | {os.path.realpath(x) for x in self._download_extras(item)}
         try:
             for e in folder.iterdir():
-                if (os.path.realpath(e) in known or is_fs_junk_name(e.name) or e.name.startswith(".")
+                # a hidden folder may hold anything: then the folder stays
+                if (os.path.realpath(e) in known or is_fs_junk_name(e.name)
+                        or (e.name.startswith(".") and not e.is_dir())
                         or (e.is_file() and e.suffix.lower() in EXTRA_JUNK_EXTS)):
                     continue
                 return None
@@ -15767,16 +16456,23 @@ class App:
         threading.Thread(target=work, daemon=True).start()
         self.root.after(200, poll)
 
-    def _settle_existing(self, item, hit, hit_note: str = "", then=None) -> None:
+    def _settle_existing(self, item, hit, hit_note: str = "", then=None, exact: bool = True) -> None:
         """*item*'s output is already there (*hit*). With Move/Trash/Delete chosen, the source
         gets that now and the job is Done, as if it had run; with Keep, or when the action
-        cannot run, it is Skipped. then(done) moves the queue on."""
+        cannot run, it is Skipped. A hit that only matches title and version (another
+        firmware, say) never costs the source. then(done) moves the queue on."""
         then = then or (lambda done: None)
         name = getattr(item, "display_name", None) or item.name
         item._output_there = True
         note = tr("Its output is already there: {hit}", hit=hit) if hit else (hit_note or "Its output is already there.")
         self._retire_failed(item, "Skipped", note)
         act = getattr(item, "after_source", None) or "keep"
+        if hit is not None and act != "keep" and not exact:
+            note = tr("A build of the same title and version is there ({name}); the source stays",
+                      name=Path(hit).name)
+            self._retire_failed(item, "Skipped", note)
+            self.log("INFO", f"{name}: skipped; {note}.")
+            then(False); return
         if hit is None or act == "keep":
             self.log("INFO", f"{name}: skipped, {note[0].lower() + note[1:]}")
             then(False); return
@@ -15980,17 +16676,16 @@ class App:
         done  = self._batch_done
         fail  = self._batch_failed
         self.batch_counter_var.set(
-            tr("Queue finished  ·  {done} of {total} done", done=done, total=total) + (f"  ·  {fail} failed" if fail else "")
-        )
-        msg = (
-            tr("Batch finished.\n\nTotal items:  {total}\nSuccessful:   {done}\nFailed:       {fail}\n", total=total, done=done, fail=fail)
+            tr("Queue finished  ·  {done} of {total} done", done=done, total=total) + (tr("  ·  {n} failed", n=fail) if fail else "")
         )
         if fail == 0:
-            self.log("SUCCESS", f"Batch complete - all {total} item(s) processed successfully.")
+            self.log("SUCCESS", f"Queue finished - all {total} job(s) done.")
         else:
-            self.log("WARN", f"Batch complete - {done}/{total} succeeded, {fail} failed.")
+            self.log("WARN", f"Queue finished - {done} of {total} job(s) done, {fail} failed.")
         if self.after_queue_var.get() not in ("sleep", "quit"):   # a modal box would hold them up
-            messagebox.showinfo("Batch Complete", msg)
+            left = [it for it in (getattr(self, "_batch_items", None) or [])
+                    if it in self.queue and getattr(it, "status", "") in ("Failed", "Skipped", "Cancelled")]
+            QueueReportWindow(self.root, done, total, left, retry=self._retry_failed)
 
     def _ensure_batch_started(self):
         """Establish batch state for a FRESH queue run (idempotent via the _batch_running guard)."""
@@ -16086,6 +16781,9 @@ class App:
                     requeued += 1
             if requeued:
                 self.log("INFO", f"Retrying {requeued} previously failed/skipped job(s).")
+                self.status_update("Starting", plural(requeued, "Start runs 1 failed, skipped or stopped job again.",
+                                                      "Start runs {n} failed, skipped or stopped jobs again."),
+                                   "Starting", 0, 0, " - ", " - ", " - ", side=True)
                 self.update_queue_box()
 
         # Outputs that are already there: one question for all, before anything is unpacked.
@@ -16211,11 +16909,11 @@ class App:
                 if stale_items:
                     stale_size = sum(folder_size(p) for p in stale_items)
                     if stale_size > 1024 * 1024 * 1024:
-                        keep_running = messagebox.askyesno(
-                            "Temporary data found",
-                            tr("Found {stale_size} of old temporary data in:\n{temp_dir}\n\nContinue anyway?\n\nChoose No to "
-                              "manually delete old temp folders first.", stale_size=format_size(stale_size), temp_dir=temp_dir)
-                        )
+                        keep_running = ask_confirm(
+                            "Old temporary data found",
+                            tr("Found {stale_size} of old temporary data in:\n{temp_dir}\n\nStart anyway, or stop and "
+                               "clean it first with Clean temp.", stale_size=format_size(stale_size), temp_dir=temp_dir),
+                            "Start anyway", "Stop")
                         if not keep_running:
                             return
         except Exception:
@@ -16256,6 +16954,7 @@ class App:
             self.stop_btn.configure(state="disabled")
             self.big_status_var.set("Cancelling…")
             self.big_detail_var.set("Stopping the current job and reclaiming temp space…")
+            self._status_state = "Cancelling"
             self.footer_var.set("● Cancelling…")
             self.header_status_var.set(f"v{APP_VERSION}  |  Cancelling…")
             self.root.update_idletasks()
@@ -16309,14 +17008,18 @@ class App:
 
     # ── Tools ─────────────────────────────────────────────────────────────────
     def clear_temp_files(self):
+        """Clean temp: this app's working data on the temp folder, the extra temp drives and
+        the build folder a package job leaves in the output folder; nothing else."""
         tp = self.temp_var.get().strip()
         if not tp:
-            messagebox.showerror("No temp folder", "No temp folder is set.")
+            messagebox.showerror("Clean temp", "No temp folder is set.")
             return
-        temp_dir = Path(tp)
-        if not temp_dir.exists():
-            messagebox.showinfo("Clear Temp", "Temp folder does not exist. Nothing to clear.")
-            return
+        roots = [Path(tp)]
+        try:
+            roots += [Path(x) for x in self._temp_pool_dirs()]
+        except Exception:
+            pass
+        out = (self.output_var.get() or "").strip()
         # Only this app's own scratch folders - never everything inside a folder the
         # user may have pointed at a drive root or a shared directory.
         def _ours(p: Path) -> bool:
@@ -16324,41 +17027,50 @@ class App:
                                               "_patch_game", "_patch_files", "_ffpfsc_temp")
                                    or is_app_tmp_dir_in(p) or p.name.startswith("ffpfsc_spool_"))
         if self._job_active() or self._restores_inflight or getattr(self, "_cleanup_inflight", 0):
-            messagebox.showinfo("Clear Temp", "A job or a cleanup is working in the temp folder. Clear it once "
+            messagebox.showinfo("Clean temp", "A job or a cleanup is working in the temp folder. Clean it once "
                                               "the queue has stopped and the cleanup is done.")
             return
-        keep = self._open_extracts() | self._patch_backup_dirs([tp])
-        try:
-            targets = [q for p in temp_dir.iterdir() if _ours(p) for q in removable_parts(p, keep)]
-        except Exception as e:
-            messagebox.showerror("Error", tr("Cannot read the temp folder:\n{e}", e=e))
-            return
+        keep = self._open_extracts() | self._patch_backup_dirs([str(r) for r in roots])
+        targets, seen, unread = [], set(), []
+        for root in roots:
+            if not root.is_dir():
+                continue
+            try:
+                for q in (x for c in root.iterdir() if _ours(c) for x in removable_parts(c, keep)):
+                    if os.path.realpath(q) not in seen:
+                        seen.add(os.path.realpath(q)); targets.append(q)
+            except OSError as e:
+                unread.append(f"{root}: {e}")
+        if out and (Path(out) / "_ffpfsc_temp").is_dir():          # a package build stopped half-way
+            for q in removable_parts(Path(out) / "_ffpfsc_temp", keep):
+                if os.path.realpath(q) not in seen:
+                    seen.add(os.path.realpath(q)); targets.append(q)
+        for u in unread:
+            self.log("WARN", f"Clean temp: cannot read {u}")
         size = sum(get_folder_size(p) for p in targets)
         if not targets or size == 0:
-            messagebox.showinfo("Clear Temp", "No working data of this app in the temp folder.")
+            messagebox.showinfo("Clean temp", "No working data of this app in the temp folders.")
             return
-        listing = "\n".join(f"  • {p.name}" for p in targets[:8]) + ("\n  • …" if len(targets) > 8 else "")
-        ok = messagebox.askyesno(
-            "Clear Temp Files",
-            tr("Delete this app's working data inside:\n{temp_dir}\n\n{listing}\n\nSize to free: "
-              "{size}\n\nOther files in that folder are left alone. Continue?", temp_dir=temp_dir, listing=listing, size=format_size(size))
-        )
-        if not ok:
+        listing = "\n".join(f"  • {p}" for p in targets[:8]) + ("\n  • …" if len(targets) > 8 else "")
+        if not ask_confirm("Clean temp?",
+                           tr("Delete this app's working data ({size}):\n{listing}\n\nOther files in these "
+                              "folders are left alone.", size=format_size(size), listing=listing),
+                           "Delete", danger=True):
             return
         try:
             for p in targets:
                 shutil.rmtree(str(p), ignore_errors=True)
-            messagebox.showinfo("Clear Temp", tr("Temp folder cleared. Freed {size}.", size=format_size(size)))
-            self.log("OK", f"Temp folder cleared: {temp_dir} ({format_size(size)} freed)")
+            messagebox.showinfo("Clean temp", tr("Temp cleaned. Freed {size}.", size=format_size(size)))
+            self.log("OK", f"Clean temp: {len(targets)} folder(s), {format_size(size)} freed")
         except Exception as e:
-            messagebox.showerror("Error", tr("Failed to clear temp folder:\n{e}", e=e))
+            messagebox.showerror("Clean temp", tr("Could not clean the temp folder:\n{e}", e=e))
 
     def export_diagnostics(self):
         zip_path = export_diagnostic_zip(last_cmd=self._last_cmd_str)
         if zip_path and zip_path.exists():
-            ok = messagebox.askyesno(
-                "Diagnostic Package",
-                tr("Diagnostic ZIP saved to:\n{zip_path}\n\nOpen folder?", zip_path=zip_path)
+            ok = ask_confirm(
+                "Diagnostic package",
+                tr("Diagnostic ZIP saved to:\n{zip_path}", zip_path=zip_path), REVEAL_LABEL, "Close"
             )
             if ok:
                 open_path(APP_DIR)
@@ -16439,14 +17151,12 @@ class App:
         try:
             report = FINAL_REPORT_FILE.read_text(encoding="utf-8", errors="replace")
         except Exception:
-            report = "Compression complete."
-        if "Operation: Extract PFS image" not in report:
-            report += (
-                "\n\nNote: Compression does not improve FPS or graphics quality. "
-                "If the rating is POOR, keep the original uncompressed folder instead."
-            )
+            report = tr("Job complete.")
+        if f"{tr('Compression rating')}:" in report:
+            report += "\n\n" + tr("Note: compression does not change FPS or graphics. If the rating is poor, "
+                                   "keep the original uncompressed folder instead.")
         self._last_result_text = report
-        SummaryDialog(self.root, report)
+        SummaryDialog(self.root, report, on_show=self.open_output_folder)
 
     def copy_last_result(self):
         text = getattr(self, "_last_result_text", "")
@@ -16596,7 +17306,15 @@ class App:
                         self.log("INFO", msg)
                         self.status_update("Ready", msg, "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                     else:
-                        self.log("OK", f"Rescan: {len(sources)} new source(s) in {folder}{tail}.")
+                        _act = tpl.get("after_source")
+                        _clean = {"delete": " Their sources are deleted when done.",
+                                  "trash": " Their sources go to the Trash when done.",
+                                  "move": " Their sources are moved when done."}.get(_act, "")
+                        self.log("OK", f"Rescan: {len(sources)} new source(s) in {folder}{tail}.{_clean}")
+                        if _clean:
+                            self.status_update("Ready", tr("Rescan: {n} new jobs. After the job: {what}.", n=len(sources),
+                                                           what=tr(_after_job_module().LABELS.get(_act, _act))),
+                                               "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                         _bmap = payload.get("bundles") or {}
                         self._add_jobs_async(list(sources), self._rescan_make(dict(tpl, _rescan_root=folder)),
                                              plan=lambda srcs, _b=_bmap: ([(x, _b.get(str(x))) for x in srcs], []))
@@ -16639,11 +17357,11 @@ class App:
                     preview = "\n".join(f"  • {getattr(it, 'bundle_subfolder', it.name)}" for it in items[:12])
                     if count > 12:
                         preview += f"\n  … and {count - 12} more"
-                    proceed = count == 1 or messagebox.askyesno(
-                        f"Found {count} Games",
-                        tr("Found {count} game folder(s):\n\n{preview}\n\nConvert all {count}? Each keeps its own "
-                          "folder at the destination, with any extras/DLCs next to the .ffpfsc.", count=count, preview=preview)
-                    )
+                    proceed = count == 1 or ask_confirm(
+                        "Add these games?",
+                        tr("Found {count} game folder(s):\n\n{preview}\n\nEach keeps its own folder at the destination, "
+                           "with its extras next to the .ffpfsc.", count=count, preview=preview),
+                        plural(count, "Add 1 job", "Add {n} jobs"))
                     if proceed:
                         for it in items:
                             self.queue.append(it)
@@ -16655,7 +17373,7 @@ class App:
                             self.pending_start = False
                             self.start()
                     else:
-                        self.status_update("Ready", "Batch add cancelled.", "Ready", 0, 0, "00:00", " - ", " - ", side=True)
+                        self.status_update("Ready", "Adding the jobs was cancelled.", "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                         self.pending_start = False
 
                 elif status == "multi_found":
@@ -16665,10 +17383,10 @@ class App:
                     preview = "\n".join(f"  • {g.name}" for g in games[:10])
                     if count > 10:
                         preview += f"\n  … and {count - 10} more"
-                    ok = messagebox.askyesno(
-                        f"Found {count} Games",
-                        tr("Found {count} PS5 game folder(s):\n\n{preview}\n\nAdd all {count} to the queue?", count=count, preview=preview)
-                    )
+                    ok = ask_confirm(
+                        "Add these games?",
+                        tr("Found {count} PS5 game folder(s):\n\n{preview}", count=count, preview=preview),
+                        plural(count, "Add 1 job", "Add {n} jobs"))
                     if ok:
                         self.log("INFO", f"Queuing {count} games…")
                         self.status_update("Scanning", tr("Adding {count} games to queue…", count=count),
@@ -16681,7 +17399,7 @@ class App:
                                     self.log("ERROR", f"Skipped {gpath.name}: {e}")
                         threading.Thread(target=_add_all, daemon=True).start()
                     else:
-                        self.status_update("Ready", "Batch add cancelled.", "Ready", 0, 0, "00:00", " - ", " - ", side=True)
+                        self.status_update("Ready", "Adding the jobs was cancelled.", "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                         self.pending_start = False
 
                 elif status == "exfat_found":
@@ -16691,11 +17409,11 @@ class App:
                     preview = "\n".join(f"  • {f.name}" for f in image_list[:10])
                     if count > 10:
                         preview += f"\n  … and {count - 10} more"
-                    ok = messagebox.askyesno(
-                        f"Found {count} Disk Image{'s' if count > 1 else ''}",
-                        tr("Found {count} disk image(s) (.exfat / .ffpkg):\n\n{preview}\n\nAdd all {count} to the "
-                          "queue?\n(Each image will be compressed directly - no extraction needed.)", count=count, preview=preview)
-                    )
+                    ok = ask_confirm(
+                        "Add these disk images?",
+                        tr("Found {count} disk image(s) (.exfat / .ffpkg):\n\n{preview}\n\nEach image is compressed "
+                           "directly, without unpacking.", count=count, preview=preview),
+                        plural(count, "Add 1 job", "Add {n} jobs"))
                     if ok:
                         for img in image_list:
                             item = GameItem.from_exfat(img)
@@ -16719,11 +17437,11 @@ class App:
                     preview = "\n".join(f"  • {a.name}" for a in archives[:10])
                     if count > 10:
                         preview += f"\n  … and {count - 10} more"
-                    ok = messagebox.askyesno(
-                        f"Found {count} Archive{'s' if count > 1 else ''}",
-                        tr("Found {count} archive file(s):\n\n{preview}\n\nAdd all {count} to the queue?\n(Each archive "
-                          "will be extracted when it is its turn.)", count=count, preview=preview)
-                    )
+                    ok = ask_confirm(
+                        "Add these archives?",
+                        tr("Found {count} archive file(s):\n\n{preview}\n\nEach archive is unpacked when its turn "
+                           "comes.", count=count, preview=preview),
+                        plural(count, "Add 1 job", "Add {n} jobs"))
                     if ok:
                         added = []
                         for arc in archives:
@@ -16753,11 +17471,10 @@ class App:
                     preview = "\n".join(f"  • {f.name}" for f in images[:10])
                     if count > 10:
                         preview += f"\n  … and {count - 10} more"
-                    ok = messagebox.askyesno(
-                        f"Found {count} PFS Image{'s' if count > 1 else ''}",
-                        tr("Found {count} .ffpfs/.ffpfsc image(s):\n\n{preview}\n\nAdd all {count} to the queue for "
-                          "extraction?", count=count, preview=preview)
-                    )
+                    ok = ask_confirm(
+                        "Unpack these images?",
+                        tr("Found {count} .ffpfs/.ffpfsc image(s):\n\n{preview}", count=count, preview=preview),
+                        plural(count, "Add 1 unpack job", "Add {n} unpack jobs"))
                     if ok:
                         for image in images:
                             item = GameItem.from_pfs_image(image)
@@ -16843,6 +17560,7 @@ class App:
                 title, detail, stage, stage_pct, overall_pct, elapsed, speed, eta, job, side = self.status_q.get_nowait()
                 if side and self._batch_running and self.queue:
                     # Side message during a running job: the job's own status stays.
+                    self._status_state = str(title)
                     self.footer_var.set(f"● {title}: {detail}" if detail else f"● {title}")
                     continue
                 if job is not None:
@@ -16902,11 +17620,12 @@ class App:
                 self.overall_pct_var.set(f"{int(_qfrac * 100)}%")
                 self.overall_bar.set(_qfrac)
                 self.overall_title_var.set(
-                    f"QUEUE  ·  Game {min(_done + 1, _total)}/{_total}" if _total > 1 else "QUEUE")
+                    tr("QUEUE  ·  Job {n} of {total}", n=min(_done + 1, _total), total=_total) if _total > 1 else "QUEUE")
                 self.speed_var.set(f"Speed: {speed}")
                 self.elapsed_var.set(f"Elapsed: {elapsed}")
                 self.eta_var.set(f"ETA: {eta}")
                 self.header_status_var.set(f"v{APP_VERSION}  |  Stage: {stage}")
+                self._status_state = str(title)       # English: the dot's colour is read from it
                 self.footer_var.set(f"● {title}")
                 self.update_stages_display(stage, stage_pct)
                 self._cur_job_pct = overall_pct

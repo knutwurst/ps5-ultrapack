@@ -2889,14 +2889,14 @@ try:
         app.queue.remove(_q4); app.update_queue_box()
     # a single PS4 package offers Folder and .pkg only; an archive of them only .pkg
     _segv = lambda d: list(d._to_seg.cget("values"))
-    ok("ps4.dialog-targets-one-package", _segv(_d4) == ["Folder", ".pkg"], str(_segv(_d4)))
+    ok("ps4.dialog-targets-one-package", _segv(_d4) == ["Into the library", "Unpack to folder"], str(_segv(_d4)))
     _z4 = S / "ps4_set.zip"
     with zipfile.ZipFile(_z4, "w", zipfile.ZIP_STORED) as _zf:
         for _f in sorted(_p4dir.glob("*.pkg")):
             _zf.write(_f, "Sample.Set/" + _f.name)
     _dz = m.JobDialog(app, init_src=str(_z4)); root.update()
     pump(lambda: _dz._kind == "ps4", timeout=10.0)
-    ok("ps4.dialog-archive-detected", _dz._kind == "ps4" and _segv(_dz) == [".pkg"] and not _dz._crow.winfo_manager()
+    ok("ps4.dialog-archive-detected", _dz._kind == "ps4" and _segv(_dz) == ["Into the library"] and not _dz._crow.winfo_manager()
        and "Sample Game" in _dz.detect_var.get(), f"{_dz._kind} {_segv(_dz)} {_dz.detect_var.get()}")
     # an archive of PS4 packages next to a PS5 game: found in the background, then in the PS4 block
     _mx2 = S / "mixed_arch"; shutil.rmtree(_mx2, ignore_errors=True); _mx2.mkdir()
@@ -3107,14 +3107,16 @@ try:
     _t = "LibProsperoPKG [PPSA99099] [v01.000.000]"
     _after = sorted(x.name for x in _org.iterdir())
     ok("organize.apply-renames-in-place", _after == [_t] and sorted(x.name for x in (_org / _t).iterdir())
-       == ["LibProsperoPKG [PPSA99099] [v01.000] [fw2.00].ffpfsc", "info.nfo"] and _ov.journal.is_file(), str(_after))
+       == ["LibProsperoPKG [PPSA99099] [v01.000] [fw2.00].ffpfsc", "info.nfo"] and _ov._last_journal() is not None, str(_after))
+    _jn = _ov._last_journal()
     _ask = m.messagebox.askyesno; m.messagebox.askyesno = lambda *a, **k: True
     try:
         _ov.undo(); pump(lambda: not _ov._busy, timeout=60.0); pump(lambda: not _ov._busy, timeout=60.0); root.update()
     finally:
         m.messagebox.askyesno = _ask
     ok("organize.undo", sorted(x.name for x in _org.iterdir() if not x.name.startswith("._")) == ["Some.Release"]
-       and (_org / "Some.Release" / "x.ffpfsc").is_file() and not _ov.journal.is_file(), str(sorted(x.name for x in _org.iterdir())))
+       and (_org / "Some.Release" / "x.ffpfsc").is_file() and _jn is not None and not _jn.is_file()
+       and _ov._last_journal() != _jn, str(sorted(x.name for x in _org.iterdir())))
     app._show_view("queue"); root.update()
     # Organize as an Add job output: the source goes into the library in its own format
     _do = m.JobDialog(app, init_src=str(FF)); root.update()
@@ -3432,7 +3434,7 @@ try:
         # one transport control: Start while idle, Pause and Stop while the queue runs, same size
         _w_idle = app.transport.winfo_reqwidth()
         app._batch_running = True; app._sync_run_ui(); root.update()
-        ok("wire.header.stop-while-running", app.transport.running and app.stop_btn._command == app.cancel
+        ok("wire.header.stop-while-running", app.transport.running and app.stop_btn._command == app.request_stop
            and app.stop_btn._state == "normal" and app.transport._mix == 1.0, f"running={app.transport.running}")
         ok("wire.header.same-size-running", app.transport.winfo_reqwidth() == _w_idle,
            f"{_w_idle} -> {app.transport.winfo_reqwidth()}")
@@ -3472,7 +3474,7 @@ try:
         _select(1)
         acts["Remove"].invoke(); root.update()
         ok("wire.card.remove", len(app.queue) == 2 and all(x is not items[1] for x in app.queue), f"{len(app.queue)} left")
-        ok("wire.card.cancel", app.cancel_btn._command == app.cancel, "")
+        ok("wire.card.cancel", app.cancel_btn._command == app.request_stop, "")
 
         # the row's context menu
         app.queue[:] = items; app.update_queue_box(); root.update()
@@ -3589,6 +3591,107 @@ try:
             steady = steady and all(s == (want, "grid" if want else "") for s in seen)
         ok("wire.scrollbar.no-blink", steady, str(seen))
         sfd.destroy(); root.update()
+
+        # ── UI/UX and safety review (2.3.1) ─────────────────────────────────
+        # a file name in a package can fake the backend's markers: only the app's own paths count
+        ok("review.inner-marker-shape", not m._is_inner_image_path("/Volumes")
+           and not m._is_inner_image_path(str(S / "x")) and m._is_inner_image_path("/t/_ffpfsc_inner/PPSA00001.ffpfs"), "")
+        _victim = S / "review_victim"; _victim.mkdir(exist_ok=True); (_victim / "keep.bin").write_bytes(b"x")
+        _vi = types.SimpleNamespace(_inner_image=str(_victim))
+        app._cleanup_inner_image(_vi); pump(lambda: False, timeout=0.5)
+        ok("review.inner-cleanup-refuses-a-folder", (_victim / "keep.bin").is_file(), "")
+        _rw_out = S / "review_out"; _rw_out.mkdir(exist_ok=True)
+        _rwi = m.GameItem.from_chain(HBT, to="ffpfsc", output_path=str(_rw_out))
+        _rww = m.CLIWorker(app, _rwi, ["py", "cli.py", str(HBT), str(_rw_out)], str(REPO), _rw_out, S / "review_tmp")
+        _rww._handle_line("[OK] Compression complete: /Volumes")
+        _out_foreign = _rww.output_path
+        _rww._handle_line(f"[OK] Compression complete: {_rw_out / 'Game.ffpfsc'}")
+        ok("review.worker-takes-only-own-output", not _out_foreign and _rww.output_path == str(_rw_out / "Game.ffpfsc"),
+           f"{_out_foreign!r} {_rww.output_path!r}")
+        _rww._handle_line("[PASS1-DONE] /Volumes")
+        ok("review.worker-ignores-fake-pass1", getattr(_rwi, "_inner_image", None) in (None, ""), str(getattr(_rwi, "_inner_image", None)))
+        # an output that only matches title and version never costs the source
+        _rs = S / "review_src"; shutil.rmtree(_rs, ignore_errors=True); shutil.copytree(HBT, _rs)
+        _ri = m.GameItem.from_chain(_rs, to="ffpfsc", output_path=str(_rw_out)); _ri.after_source = "delete"
+        app.queue.append(_ri)
+        _hit = _rw_out / "Other [fw7.61].ffpfsc"; _hit.write_bytes(b"x")
+        app._settle_existing(_ri, _hit, exact=False); pump(lambda: False, timeout=0.5)
+        ok("review.inexact-output-keeps-the-source", _rs.is_dir() and _ri.status == "Skipped", f"{_rs.is_dir()} {_ri.status}")
+        if _ri in app.queue:
+            app.queue.remove(_ri)
+        # PS5 repair of a package whose library name is its own: no conflict, never written over
+        _pk = next((S / "c1_pkg").glob("*.pkg"), None)
+        if _pk is not None:
+            _pi = m.GameItem.from_chain(_pk, to="pkg", output_path=str(_pk.parent)); _pi.ps5_repair = True
+            _none = app._existing_output(_pk, _pi)
+            app._apply_output_choice(_pi, _pk, "overwrite")
+            ok("review.repair-never-overwrites-its-source", _none is None and not getattr(_pi, "_replace_output", False)
+               and getattr(_pi, "_keep_both", False), f"{_none} {getattr(_pi, '_replace_output', None)}")
+        # Rescan builds no job with the last job's patch
+        _mk = app._rescan_make({"to": "ffpfsc", "output": str(_rw_out), "patch_source": str(HBT)})
+        ok("review.rescan-reuses-no-patch", getattr(_mk(HBT), "patch_source", None) is None, "")
+        # same format, nothing to change: the options that would do nothing are hidden
+        _cd = m.JobDialog(app, init_src=str(FF), init_to="ffpfsc"); root.update(); _cd._refresh(); root.update()
+        ok("review.copy-only-hides-options", not _cd._comp_row.winfo_manager() and "copied" in _cd._to_hint.get(),
+           f"{_cd._comp_row.winfo_manager()!r} {_cd._to_hint.get()!r}")
+        _cd.after_var.set("delete"); root.update(); _cd._refresh(); root.update()
+        ok("review.delete-in-the-summary", m.tr("then the source is deleted") in _cd.summary_var.get(), _cd.summary_var.get())
+        _cd.destroy(); root.update()
+        # Backspace in an open editor never removes the job behind it
+        _bq = m.GameItem.from_chain(HBT, to="ffpfsc", output_path=str(_rw_out)); app.queue.append(_bq); app.update_queue_box(select_item=_bq)
+        _be = m.JobDialog(app, init_src=str(HBT)); root.update()
+        _n0 = len(app.queue); app.queue_remove_selected(); root.update()
+        ok("review.remove-ignored-under-an-editor", len(app.queue) == _n0, f"{_n0} -> {len(app.queue)}")
+        # a sidebar click keeps the half-filled editor for the next Add job
+        _be.out_var.set(str(_rw_out / "draft")); root.update()
+        app._show_view("history"); root.update(); app._show_view("queue"); root.update()
+        _bd = m.JobDialog(app); root.update()
+        ok("review.draft-comes-back", _bd.out_var.get() == str(_rw_out / "draft") and _bd.src_var.get() == str(HBT),
+           f"{_bd.out_var.get()} {_bd.src_var.get()}")
+        _bd.destroy(); root.update()
+        if _bq in app.queue:
+            app.queue.remove(_bq)
+        # several dropped paths open one Add job with them as the sources
+        app._on_drop(types.SimpleNamespace(data=f"{{{HBT}}} {{{FF}}}")); root.update()
+        _top = app._panels.stack[-1] if app._panels.stack else None
+        ok("review.drop-opens-one-editor", isinstance(_top, m.JobDialog) and len(_top._dropped) == 2
+           and _top._kind == "parent", f"{type(_top).__name__} {getattr(_top, '_kind', None)}")
+        app._panels.close_all(); app._job_draft = None; root.update()
+        # jobs of a missing drive stay in sight
+        app._queue_missing_saved = [{"name": "Away", "path": str(S / "not-there")}]; app._refresh_parked(); root.update()
+        ok("review.parked-jobs-shown", app._parked_btn.winfo_manager() == "grid", app._parked_btn.winfo_manager())
+        app._queue_missing_saved = []; app._refresh_parked(); root.update()
+        # the end of a run lists what did not finish; the stop question names the job
+        _fi = m.GameItem.from_chain(HBT, to="ffpfsc", output_path=str(_rw_out)); _fi.status = "Failed"; _fi.status_note = "no space"
+        _qr = m.QueueReportWindow(root, 1, 2, [_fi], retry=lambda: None); root.update()
+        ok("review.queue-report-builds", _qr.winfo_exists(), "")
+        _qr.destroy(); root.update()
+        ok("review.stop-question-idle", app._stop_question() is None, "")
+        _asked = []
+        _ac = m.ask_confirm
+        app._stop_question = lambda: "it ran long"
+        app.cancel = lambda: _asked.append("cancel")
+        m.ask_confirm = lambda *a, **k: (_asked.append(a[0]), False)[1]
+        try:
+            app.request_stop()
+        finally:
+            m.ask_confirm = _ac
+            del app._stop_question, app.cancel
+        ok("review.stop-asks-first", _asked == ["Stop the job?"], str(_asked))
+        # every settings page builds, with the folded advanced options and the reset buttons
+        app._show_view("settings"); root.update()
+        _pages_ok = True
+        for _k in ("general", "compression", "archives", "drives", "backport", "about"):
+            try:
+                app._settings_view.show(_k); root.update()
+            except Exception as _e:
+                _pages_ok = False; print("settings page", _k, _e, file=sys.stderr)
+        ok("review.settings-pages-build", _pages_ok, "")
+        app._show_view("queue"); root.update()
+        # one table style for the tool views; the theme reaches the ttk tables
+        app._show_view("ps5repair"); root.update(); app._show_view("keystone"); root.update()
+        ok("review.tables-follow-the-theme", len(m._TREES) >= 2, str(len(m._TREES)))
+        app._show_view("queue"); root.update()
 
         # theme switch
         app._set_theme("light"); root.update()
