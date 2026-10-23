@@ -2898,6 +2898,22 @@ try:
     pump(lambda: _dz._kind == "ps4", timeout=10.0)
     ok("ps4.dialog-archive-detected", _dz._kind == "ps4" and _segv(_dz) == [".pkg"] and not _dz._crow.winfo_manager()
        and "Sample Game" in _dz.detect_var.get(), f"{_dz._kind} {_segv(_dz)} {_dz.detect_var.get()}")
+    # an archive of PS4 packages next to a PS5 game: found in the background, then in the PS4 block
+    _mx2 = S / "mixed_arch"; shutil.rmtree(_mx2, ignore_errors=True); _mx2.mkdir()
+    shutil.copyfile(_z4, _mx2 / "ps4_set.zip"); shutil.copytree(HBT, _mx2 / "HomebrewTest")
+    _da = m.JobDialog(app, init_src=str(_mx2), init_to="ffpfsc"); root.update()
+    pump(lambda: _da._ps4_n == 1, timeout=15.0); root.update()
+    ok("mixed.ps4-archive-counted", _da._kind == "parent" and _da._ps4_n == 1 and _da._ps5_n == 1
+       and bool(_da._ps4_box.winfo_manager()), f"{_da._kind} {_da._ps4_n} {_da._ps5_n}")
+    _da.destroy(); root.update(); shutil.rmtree(_mx2, ignore_errors=True)
+    # a refused add leaves the remembered folders alone
+    _rec0, _q0r = app._recent_outputs("ps5"), len(app.queue)
+    _dr = m.JobDialog(app, init_src=str(HBT), init_to="ffpfsc"); root.update()
+    _dr.out_var.set(str(S / "refused_out")); _dr.patch_on_var.set(True); _dr.patch_var.set(str(S / "no_such_patch"))
+    _n_err = len(errors); _dr._add(); root.update()
+    ok("mixed.refused-add-not-remembered", len(errors) > _n_err and app._recent_outputs("ps5") == _rec0
+       and len(app.queue) == _q0r, f"{errors[_n_err:]} {app._recent_outputs('ps5')} {len(app.queue)}")
+    _dr.destroy() if _dr.winfo_exists() else None; root.update()
     _dz.out_var.set(str(OUT)); _qb = len(app.queue); _dz._add(); settle()
     _qz = app.queue[-1] if len(app.queue) > _qb else None
     ok("ps4.archive-job", _qz is not None and _qz.content_kind == "ps4" and _qz.operation == "copy"

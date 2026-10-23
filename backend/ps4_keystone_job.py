@@ -29,13 +29,20 @@ def _say(on_line, text):
 
 
 def plan_update(update, base_sfo: dict) -> dict:
-    """What the job does to *update* besides binding it: {'save_folder': (old, new)} when its saves
-    would go elsewhere than the game's."""
+    """What the job does to *update* besides binding it, or has to say about it:
+    {'save_folder': (old, new)} when its param.sfo names another save folder than the game's (the
+    job sets the game's), {'save_folder_note': (old, new)} when it names none, so its saves go to
+    its title id, and the game saves elsewhere (a field the param.sfo does not have cannot be
+    added in place)."""
     out = {}
     sfo = ps4pkg.read_sfo(update)
     own, want = str(sfo.get("INSTALL_DIR_SAVEDATA") or ""), ps4pkg.save_folder(base_sfo)
     if own and want and own != want:
         out["save_folder"] = (own, want)
+    elif not own and want:
+        tid = str(sfo.get("TITLE_ID") or "")
+        if tid and tid != want:
+            out["save_folder_note"] = (tid, want)
     return out
 
 
@@ -131,13 +138,18 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
         elif line.startswith(("[keystone]", "[rebind]", "[sfo]", "[ok]", "[ERROR]", "[error]", "[usage]")):
             _say(on_line, line if not line.startswith("[error]") else "[ERROR]" + line[7:])
 
+    changed: set[str] = set()          # packages an earlier step of this run changed
+
     def step(pkg: Path, rc_of, done: str, failed: str) -> bool:
         uf = undo_file()
         if rc_of(uf) != 0:
-            _say(on_line, f"[ERROR] {failed}; the package is unchanged")
+            _say(on_line, f"[ERROR] {failed}; " + ("the changes this run made to it before stay, Undo last "
+                                                   "change puts them back" if str(pkg) in changed
+                                                   else "the package is unchanged"))
             return False
         if uf.is_file():
             journal["steps"].append({"package": str(pkg), "undo": str(uf)})
+            changed.add(str(pkg))
             save_journal()
         _say(on_line, f"[PS4] {done}")
         return True
@@ -159,7 +171,12 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
         old = ps4pkg.general_digests(u)
         if (old.get(ps4pkg.BASE_CONTENT_SLOT) != before.get(1) and old.get(ps4pkg.BASE_CONTENT_SLOT) != ps4pkg.general_digests(base).get(1)):
             _say(on_line, f"[WARN] {u.name} was made for another build of this game; it is bound to this one anyway")
-        sf = plan_update(u, base_sfo).get("save_folder")
+        plan = plan_update(u, base_sfo)
+        note = plan.get("save_folder_note")
+        if note:
+            _say(on_line, f"[WARN] {u.name} saves under {note[0]}, the game under {note[1]}; its param.sfo has "
+                          f"no save folder field, so this cannot be changed in place")
+        sf = plan.get("save_folder")
         if sf and not step(u, lambda uf: fpkg.ps4_sfo(u, {"INSTALL_DIR_SAVEDATA": sf[1]}, undo=uf, on_line=relay),
                            f"{u.name}: saves go to {sf[1]} like the game's (was {sf[0]})",
                            f"the save folder of {u.name} could not be set"):
@@ -171,7 +188,7 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
     _say(on_line, copy_job.progress_line(100, size, size, t0, "keystone"))
     if journal["steps"]:
         _say(on_line, f"[INFO] undo data: {folder}")
-    _say(on_line, f"[OK] PS4 repair: {base}")
+    _say(on_line, f"[OK] PS4 repair: {base}" if rc_all == 0 else f"[WARN] PS4 repair: {base}, finished with errors")
     return rc_all
 
 

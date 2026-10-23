@@ -305,6 +305,9 @@ class VersionAndSaveFolder(unittest.TestCase):
             self.assertEqual(ps4_keystone_job.plan_update(other, game), {"save_folder": ("CUSA00002", "CUSA00001")})
             self.assertEqual(ps4_keystone_job.plan_update(same, game), {})
             self.assertEqual(ps4_keystone_job.plan_update(none, game), {})
+            # the game saves elsewhere, the update names no folder: said, not changed
+            moved = dict(game, INSTALL_DIR_SAVEDATA="CUSA00009")
+            self.assertEqual(ps4_keystone_job.plan_update(none, moved), {"save_folder_note": ("CUSA00001", "CUSA00009")})
 
 
 @unittest.skipUnless(GAME and UPDATE, "no real PS4 game and update in unzipped/ps4/")
@@ -353,6 +356,19 @@ class KeystoneJob(unittest.TestCase):
         self.assertEqual(self.job.run(self.base, None, [self.upd], self.tmp / "undo2", on_line=lines.append,
                                       fix_version=True), 0, "\n".join(lines))
         self.assertEqual(fpkg.ps4_keystone_info(self.base), fpkg.ps4_keystone_info(GAME))
+        self.assertEqual(self.job.undo(self.job.last_journal(self.tmp / "undo"), on_line=lambda _l: None), 0)
+        self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
+
+    def test_a_failed_update_ends_with_a_warning(self):
+        lines = []
+        os.chmod(self.upd, 0o444)
+        try:
+            rc = self.job.run(self.base, bytes(range(100, 132)).hex(), [self.upd], self.tmp / "undo", on_line=lines.append)
+        finally:
+            os.chmod(self.upd, 0o644)
+        self.assertEqual(rc, 1, "\n".join(lines))
+        self.assertTrue(lines[-1].startswith("[WARN] PS4 repair:"), lines[-1])
+        self.assertFalse(any(x.startswith("[OK] PS4 repair") for x in lines))
         self.assertEqual(self.job.undo(self.job.last_journal(self.tmp / "undo"), on_line=lambda _l: None), 0)
         self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
 

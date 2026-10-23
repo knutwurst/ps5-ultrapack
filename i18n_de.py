@@ -1220,4 +1220,5 @@ GERMAN: dict[str, str] = {
     '1 PS4 package unpacked': '1 PS4-Paket ausgepackt',
     '{n} PS4 packages unpacked': '{n} PS4-Pakete ausgepackt',
     'PS4: {folder}': 'PS4: {folder}',
+    'saves under {old}, the game under {new}; this update cannot be changed for that': 'speichert unter {old}, das Spiel unter {new}; das lässt sich bei diesem Update nicht ändern',
 }

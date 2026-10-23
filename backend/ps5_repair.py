@@ -87,11 +87,21 @@ def ampr_index_rows(data: bytes) -> dict:
     return out
 
 
+# files the index writer leaves out besides sce_sys: the index itself and the emulator's own files
+AMPR_UNINDEXED = ("ampr_emu.index", "ampr_commands.bin", "apr_emu.log")
+
+
 def ampr_mismatch(index: dict, sizes: dict) -> list[str]:
     """Game files (outside sce_sys) the index records with another size or not at all, and indexed
     files the package does not have. *sizes*: {'path' lowercased: size} of the package's files."""
+    try:
+        from ultra_core import is_fs_junk_name       # the app's list, when the app is around
+    except ImportError:                             # the backend on its own
+        def is_fs_junk_name(name: str) -> bool:
+            return name.startswith("._") or name.lower() in (".ds_store", "thumbs.db", "desktop.ini")
     bad = []
-    data = {p: n for p, n in sizes.items() if not p.startswith("sce_sys/") and p != "ampr_emu.index"}
+    data = {p: n for p, n in sizes.items() if not p.startswith("sce_sys/") and p not in AMPR_UNINDEXED
+            and not is_fs_junk_name(p.rsplit("/", 1)[-1])}
     for p, n in data.items():
         if index.get("/app0/" + p) != n:
             bad.append(p)
@@ -294,8 +304,9 @@ def peek(pkg, scratch=None, title_id: str = "") -> dict | None:
     return out
 
 
-def related(pkg, title_id: str, scratch=None, limit: int = 30) -> list[dict]:
-    """The other PS5 packages of *title_id* in *pkg*'s folder and two levels below."""
+def related(pkg, title_id: str, scratch=None, limit: int = 30, max_read: int = 150) -> list[dict]:
+    """Up to *limit* other PS5 packages of *title_id* in *pkg*'s folder and two levels below. Paths
+    that carry the title id are read first; at most *max_read* packages are read in all."""
     import os
     pkg = Path(pkg)
     out = []
@@ -306,7 +317,11 @@ def related(pkg, title_id: str, scratch=None, limit: int = 30) -> list[dict]:
         if len(Path(d).relative_to(pkg.parent).parts) >= 2:
             dirs[:] = []                    # the folder and two levels below, no deeper
         near += [Path(d) / f for f in files if f.lower().endswith(".pkg") and not f.startswith("._")]
-    for x in sorted(p for p in near if p != pkg)[:limit]:
+    tid = title_id.lower()
+    near = sorted((p for p in near if p != pkg), key=lambda p: (tid not in str(p).lower(), str(p)))
+    for n, x in enumerate(near):
+        if len(out) >= limit or n >= max_read:
+            break
         try:
             if fpkg.is_ps4(x):
                 continue

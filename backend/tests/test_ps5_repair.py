@@ -192,6 +192,8 @@ class AmprIndex(unittest.TestCase):
                          ["data/a.bin", "data/b.bin"])
         with self.assertRaises(ValueError):
             r.ampr_index_rows(b"nope")
+        # files the index writer leaves out are no mismatch
+        self.assertEqual(r.ampr_mismatch(idx, dict(files, **{"apr_emu.log": 3, "data/.DS_Store": 6})), [])
 
     def test_findings(self):
         def lv(ampr):
@@ -203,6 +205,29 @@ class AmprIndex(unittest.TestCase):
         self.assertEqual(lv({"emu": True, "index": True, "bad": []}), ("pass", None))
         self.assertFalse([x for x in r.findings({"ampr": {"emu": False, "index": False, "bad": []}})
                           if x["check"] == "ampr.index"])
+
+
+class Neighbours(unittest.TestCase):
+    def test_paths_with_the_title_id_are_read_first_and_the_limit_counts_matches(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            me = root / "Game [PPSA00001].pkg"
+            me.write_bytes(b"x")
+            for i in range(40):
+                (root / f"a{i:02d} other.pkg").write_bytes(b"x")
+            (root / "zz" ).mkdir()
+            upd = root / "zz" / "PPSA00001 update.pkg"
+            upd.write_bytes(b"x")
+            read = []
+
+            def peek(x, scratch=None, title_id=""):
+                read.append(Path(x).name)
+                return {"name": Path(x).name, "update": True} if "PPSA00001" in Path(x).name else None
+            with mock.patch.object(r, "peek", peek), mock.patch.object(r.fpkg, "is_ps4", lambda _p: False):
+                got = r.related(me, "PPSA00001", limit=1)
+            self.assertEqual([g["name"] for g in got], ["PPSA00001 update.pkg"])
+            self.assertEqual(read[0], "PPSA00001 update.pkg")
 
 
 class UpdatePackages(unittest.TestCase):

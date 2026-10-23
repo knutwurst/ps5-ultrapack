@@ -4792,7 +4792,7 @@ class JobDialog(EmbeddedDialog):
         """Run the PS5 repair checks on the package *p* off the main thread; say what they found
         under the option (on the main thread, when the source is still *p*)."""
         box: dict = {}
-        fw = load_settings().get("ps5_console_fw")
+        fw = _ps5_console_fw()
 
         def work():
             try:
@@ -4890,6 +4890,50 @@ class JobDialog(EmbeddedDialog):
         p = filedialog.askdirectory(parent=self, title="Choose the output folder for the PS4 packages")
         if p:
             self.ps4_out_var.set(p)
+
+    def _probe_parent_archives(self, sources, raw: str) -> None:
+        """Read, off the main thread, which archives of a folder of sources hold PS4 packages; once
+        known (and the source is still the same) they count with the PS4 packages, which get their
+        own target and folder."""
+        archives = [s for s in sources if is_archive_file(s)][:60]
+        if not archives:
+            return
+        pw = self.app._candidate_passwords()
+        box: dict = {}
+
+        def work():
+            found = set()
+            for a in archives:
+                try:
+                    if ArchiveExtractor.ps4_archive_info(a, pw) is not None:
+                        found.add(str(a))
+                except Exception:
+                    pass
+            box["v"] = found
+
+        def poll():                       # Tk is touched on the main thread only
+            try:
+                if not self.winfo_exists() or (self.src_var.get() or "").strip() != raw or self._kind != "parent":
+                    return
+            except Exception:
+                return
+            if "v" not in box:
+                self.after(120, poll); return
+            if box["v"]:
+                self._ps4_set |= box["v"]
+                self._ps4_n = len(self._ps4_set)
+                self._ps5_n = len(self._games) - self._ps4_n
+                self._refresh()
+        threading.Thread(target=work, daemon=True).start()
+        self.after(120, poll)
+
+    def _remember_outputs(self, out: str) -> None:
+        """The folders of an add that goes through, for the Save to lists of their platforms."""
+        if out:
+            self.app._remember_output("ps5", out)
+        route = getattr(self, "_route", None)
+        if route and route[0]:
+            self.app._remember_output("ps4", route[0])
 
     def _mixed(self) -> bool:
         """A folder of sources with PS4 packages and PS5 games side by side."""
@@ -5098,7 +5142,9 @@ class JobDialog(EmbeddedDialog):
                     self._ps4_set = {str(s) for s in sources if s.suffix.lower() == ".pkg" and _is_ps4_source(s)}
                     self._ps4_n = len(self._ps4_set)
                     self._ps5_n = len(sources) - self._ps4_n
-                    self.detect_var.set(tr("{parent} · {v} - one job each", parent=tr(self._KIND_LABEL['parent']), v=self._describe_sources(sources)))
+                    self.detect_var.set(tr("{parent} · {v} - one job each", parent=tr(self._KIND_LABEL['parent']),
+                                           v=self._describe_sources(sources, self._ps4_set)))
+                    self._probe_parent_archives(sources, raw)
                 else:
                     self._kind = "folder-unknown"
                     self.detect_var.set("No game folder, archive, disk image, .ffpfs, .ffpfsc or .pkg in this folder")
@@ -5292,8 +5338,9 @@ class JobDialog(EmbeddedDialog):
         return cache[key]
 
     @staticmethod
-    def _describe_sources(sources: list[Path]) -> str:
-        """'4 sources: 1 game folder, 2 archives, 1 .pkg'."""
+    def _describe_sources(sources: list[Path], ps4: set | None = None) -> str:
+        """'4 sources: 1 game folder, 2 archives, 1 .pkg'. *ps4*: the paths known to be PS4
+        packages (read from their headers when not given)."""
         counts: dict[str, int] = {}
         for s in sources:
             if s.is_dir():
@@ -5302,7 +5349,7 @@ class JobDialog(EmbeddedDialog):
                 label = "archive"
             elif s.suffix.lower() in (".exfat", ".ffpkg"):
                 label = "disk image"
-            elif s.suffix.lower() == ".pkg" and _is_ps4_source(s):
+            elif s.suffix.lower() == ".pkg" and (str(s) in ps4 if ps4 is not None else _is_ps4_source(s)):
                 label = "ps4"
             else:
                 label = s.suffix.lower()
@@ -5678,7 +5725,7 @@ class JobDialog(EmbeddedDialog):
 
         route = getattr(self, "_route", None)          # a folder of mixed sources: PS4 packages apart
         passwords = app._candidate_passwords() if route else None
-        app._remember_output("ps5", out)
+        self._remember_outputs(out)
 
         def make(s):
             it = ((app._ps4_route(s, route[0], passwords, route[1]) if route else None)
@@ -5753,11 +5800,8 @@ class JobDialog(EmbeddedDialog):
             messagebox.showerror("Output", "Choose an output folder for the PS4 packages.", parent=self); return
         ps4_to = self.ps4_to_var.get() if mixed else "pkg"
         self._route = (ps4_out, ps4_to) if mixed else None
-        if mixed:
-            self.app._remember_output("ps4", ps4_out)
         if to == ORGANIZE_TARGET:
             return self._add_organize(p, out)
-        self.app._remember_output("ps5", out)
         stand = self._stand_in(p)
         if chain_summary(stand).startswith("Nothing to do"):
             messagebox.showerror("Nothing to do", "A folder to a folder with no changes is nothing to do.", parent=self); return
@@ -5859,6 +5903,7 @@ class JobDialog(EmbeddedDialog):
             it.source_root = root
             return it
 
+        self._remember_outputs(out)
         if self.edit_item is None:
             # New jobs: built one by one on a worker, each joins the queue as it is ready,
             # with a progress line above the list. The editor closes right away. A parent
@@ -6591,12 +6636,16 @@ class KeystoneView:
         m, job = _ps4pkg_module(), _ks_job_module()
         try:
             belongs = m.general_digests(x).get(m.BASE_CONTENT_SLOT) == own
-            sf = job.plan_update(x, base_sfo or {}).get("save_folder")
+            plan = job.plan_update(x, base_sfo or {})
         except Exception:
             return [], True
+        sf, note = plan.get("save_folder"), plan.get("save_folder_note")
         out = [tr("belongs to this package") if belongs else tr("made for another build of this game")]
         if sf:
             out.append(tr("save folder {old} → {new}", old=sf[0], new=sf[1]))
+        if note:
+            out.append(tr("saves under {old}, the game under {new}; this update cannot be changed for that",
+                          old=note[0], new=note[1]))
         if job.region_changed(x):
             out.append(tr("converted from another region: its language can differ from the game's"))
         return out, not belongs or bool(sf)
@@ -6787,6 +6836,14 @@ def _ps5_row_text(r: dict) -> str:
     return tr(r["tmpl"], **r["args"]) if r.get("tmpl") else r["text"]
 
 
+def _ps5_console_fw() -> str:
+    """The firmware the PS5 checks compare a package with: the one set in PS5 repair, else the
+    backport target, else 7.61."""
+    st = load_settings()
+    fw = st.get("ps5_console_fw") or st.get("backport_target_default") or "7.61"
+    return fw if is_backport_target(fw) else "7.61"
+
+
 def _ps5_check_text(rows: list, keystone: bool = False, detail: bool = True) -> str:
     """The checks of a PS5 package in a line or two: all passed, or the problems (the first two
     with *detail*) and what the repair does about them. *keystone*: a keystone is given, so the
@@ -6915,9 +6972,7 @@ class Ps5RepairView:
                                       hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18,
                                       checkbox_height=18, command=self._refresh_buttons)
         self._fw_cb.pack(side="left")
-        st = load_settings()
-        fw0 = st.get("ps5_console_fw") or st.get("backport_target_default") or "7.61"
-        self.fw_var = tk.StringVar(value=fw0 if is_backport_target(fw0) else "7.61")
+        self.fw_var = tk.StringVar(value=_ps5_console_fw())
         self._fw_menu = ctk.CTkOptionMenu(fw, values=self._targets(), variable=self.fw_var, width=92, height=26,
                                           dynamic_resizing=False, command=lambda _v: self._fw_changed())
         self._fw_menu.pack(side="left", padx=(8, 0))
@@ -7069,8 +7124,7 @@ class Ps5RepairView:
             pass
         if self._info is not None:
             self._rows = _ps5_repair_module().findings(self._info, self.fw_var.get())
-            if any(r["fix"] == "firmware" for r in self._rows):
-                self.fw_on_var.set(True)
+            self.fw_on_var.set(any(r["fix"] == "firmware" and r["level"] in ("fail", "warn") for r in self._rows))
             self._render()
 
     def _base_changed(self):
