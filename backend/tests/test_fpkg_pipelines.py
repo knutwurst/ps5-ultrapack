@@ -653,7 +653,7 @@ def test_gui_progress_translation(r: Runner):
 
 
 def test_ps5_repair_rebuild(r: Runner):
-    """PS5 repair: the checks find the default keystone and the update URL; the rebuild (--to pkg
+    """PS5 PKG Tools: the checks find the default keystone and the update URL; the rebuild (--to pkg
     --rebuild) clears the URL and puts the given keystone in. The builder itself drops patch markers
     and a param.sfo of the source."""
     sys.path.insert(0, str(BACKEND))
@@ -702,7 +702,7 @@ def test_ps5_repair_rebuild(r: Runner):
 
 
 def test_ps5_repair_trophies_and_ampr(r: Runner):
-    """PS5 repair: a trophy archive with a wrong checksum and a missing AMPR index are found; the
+    """PS5 PKG Tools: a trophy archive with a wrong checksum and a missing AMPR index are found; the
     rebuild (--ps5-trophies) writes the checksum and the builder writes the index."""
     sys.path.insert(0, str(BACKEND)); sys.path.insert(0, str(HERE))
     import ps5_repair

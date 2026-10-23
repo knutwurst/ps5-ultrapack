@@ -21,13 +21,13 @@ SAFETY
     another firmware leaves the source in place.
   - A .pkg is built in a folder of its own inside the output folder and
     moved out when it is done. A package already in the output folder (the
-    source of a repair, an older build) is never written over half-way or
+    source of a PS5 rebuild, an older build) is never written over half-way or
     removed by a failed build; the job's own source is never replaced, and
     a finished package that cannot be moved stays where it is.
-  - PS5 repair of a package in the library writes the repaired package
-    beside it ("(2)") instead of skipping the job or replacing the
-    original; the view shows where the package will go.
-  - PS4 repair records every step before it starts, so a run that is
+  - PS5 PKG Tools rebuild a package from the library beside it ("(2)")
+    instead of skipping the job or replacing the original; the view shows
+    where the package will go.
+  - PS4 PKG Tools record every step before it starts, so a run that is
     stopped or crashes half-way can be undone; an undo file cut off while
     it was written is restored up to its last complete range. Undo last
     change goes back one run at a time and names the package and the time;
@@ -40,7 +40,7 @@ SAFETY
     renames when complete; a copy whose source vanished half-way is named
     "(incomplete)"; quitting while it runs asks first.
   - Stop asks before it ends a job that has run for a while, and Quit and
-    Stop during a PS4 repair say that the package stays half changed.
+    Stop during a PS4 PKG Tools job say that the package stays half changed.
   - Archive passwords go to 7-Zip at its prompt, not on the command line
     (non-ASCII ones still on the command line where 7-Zip would misread
     them).
@@ -85,9 +85,9 @@ QUEUE AND RESULTS
 
 TOOLS AND SETTINGS
 
-  - PS5 repair always shows its checks (the result could arrive half);
+  - PS5 PKG Tools always show their checks (the result could arrive half);
     a package for the other console names the right tool and opens it.
-  - PS4 repair: Space toggles one update after the other, "Remove from
+  - PS4 PKG Tools: Space toggles one update after the other, "Remove from
     list" takes an update off the list only, the notes column has a name.
   - Look inside: "Unpack all as a job" goes through the queue; a selection
     says where it was extracted, with Show in Finder.
@@ -101,8 +101,8 @@ TOOLS AND SETTINGS
   - The tables of the tool views follow light and dark mode and the
     Windows display scaling. Dim text has more contrast.
   - The first-run setup names every output and needs both folders.
-  - The File menu has PS4 Repair and PS5 Repair. In German, PS5 repair
-    and its labels were partly still English.
+  - PS4 repair and PS5 repair are now PS4 PKG Tools and PS5 PKG Tools, also
+    in the File menu. In German, their labels were partly still English.
 
 ────────────────────────────────────────────────────────────────────────
   v2.3.0

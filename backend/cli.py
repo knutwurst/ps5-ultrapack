@@ -2960,7 +2960,7 @@ def main() -> None:
                              "DLCs on; a title folder already in OUTPUT is joined). --copy-mode says "
                              "what happens to each source package.")
     parser.add_argument("--ps4-keystone-set", type=str, default=None, metavar="BASE",
-                        help="PS4 REPAIR MODE: repair the game package BASE in place: --ps4-keystone, --ps4-fix-version, and "
+                        help="PS4 PKG TOOLS: change the game package BASE in place: --ps4-keystone, --ps4-fix-version, and "
                              "every --ps4-rebind update bound to the changed package (its save folder set to the "
                              "game's). Undo data goes to the app folder.")
     parser.add_argument("--ps4-fix-version", action="store_true",

@@ -1,4 +1,4 @@
-"""PS5 repair: the checks and repairs that need no package (firmware, keystone, param.json)."""
+"""PS5 PKG Tools: the checks and repairs that need no package (firmware, keystone, param.json)."""
 import json
 import sys
 import tempfile

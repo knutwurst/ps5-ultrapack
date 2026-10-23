@@ -4,7 +4,7 @@
   <img src="images/overview.png" alt="Sources on the left, the steps of a job in the middle, the output formats on the right, the tools below" width="900">
 </p>
 
-A desktop app for macOS and Windows that packs, converts, patches, backports and signs PS5 games, builds installable `.pkg` files, and checks and repairs PS4 and PS5 packages. You add a game folder, an archive, a disk image, a `.ffpfs`/`.ffpfsc` or a `.pkg`, pick what should happen to it and what should come out, and the queue works through it.
+A desktop app for macOS and Windows that packs, converts, patches, backports and signs PS5 games, builds installable `.pkg` files, and checks and fixes PS4 and PS5 packages. You add a game folder, an archive, a disk image, a `.ffpfs`/`.ffpfsc` or a `.pkg`, pick what should happen to it and what should come out, and the queue works through it.
 
 The app used to be called PS5 FFPFSC ULTRA.
 
@@ -49,12 +49,12 @@ Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack
     <td align="center" width="50%"><img src="images/settings-auto.jpg" width="400" alt="Settings, Compression, with the Auto output table"><br><sub>Auto output in Settings</sub></td>
   </tr>
   <tr>
-    <td align="center" width="50%"><img src="images/add-job-ps4.jpg" width="400" alt="Add job with a PS4 package that carries the default keystone and a merged update"><br><sub>A PS4 package that needs a repair</sub></td>
-    <td align="center" width="50%"><img src="images/ps4-keystone.jpg" width="400" alt="The PS4 repair tool with a package, a keystone and one update"><br><sub>PS4 repair</sub></td>
+    <td align="center" width="50%"><img src="images/add-job-ps4.jpg" width="400" alt="Add job with a PS4 package that carries the default keystone and a merged update"><br><sub>A PS4 package that needs a fix</sub></td>
+    <td align="center" width="50%"><img src="images/ps4-keystone.jpg" width="400" alt="PS4 PKG Tools with a package, a keystone and one update"><br><sub>PS4 PKG Tools</sub></td>
   </tr>
   <tr>
-    <td align="center" width="50%"><img src="images/add-job-ps5.jpg" width="400" alt="Add job with a PS5 package and what the checks found"><br><sub>A PS5 package that needs a repair</sub></td>
-    <td align="center" width="50%"><img src="images/ps5-repair.jpg" width="400" alt="The PS5 repair tool with a package that has the default keystone"><br><sub>PS5 repair</sub></td>
+    <td align="center" width="50%"><img src="images/add-job-ps5.jpg" width="400" alt="Add job with a PS5 package and what the checks found"><br><sub>A PS5 package that needs a fix</sub></td>
+    <td align="center" width="50%"><img src="images/ps5-repair.jpg" width="400" alt="PS5 PKG Tools with a package that has the default keystone"><br><sub>PS5 PKG Tools</sub></td>
   </tr>
   <tr>
     <td align="center" colspan="2"><img src="images/main-window-light.jpg" width="400" alt="Main window in light mode"><br><sub>Light mode</sub></td>
@@ -134,15 +134,15 @@ python3 backend/cli.py --prepare-backport-libs 7.61 --fw-libs-root <firmware fol
 python3 backend/cli.py <game>.ffpfsc <output folder> --to ffpfsc --backport-target 7.61 --fw-libs-root <firmware folder> --backport-libs <patched folder>
 ```
 
-## PS4 repair
+## PS4 PKG Tools
 
 A PS4 save holds the keystone of the game that wrote it. A fake package built with a different keystone (most builders use a default one) shows saves of the retail game as corrupted. A full game with an update merged in can have a second problem: if its app version stayed at the game's, the console keeps offering the official update. Add job tells you about both.
 
 <p align="center">
-  <img src="images/ps4-keystone.jpg" alt="The PS4 repair tool with a package, a keystone and one update" width="760">
+  <img src="images/ps4-keystone.jpg" alt="PS4 PKG Tools with a package, a keystone and one update" width="760">
 </p>
 
-**PS4 repair** in the sidebar fixes them:
+**PS4 PKG Tools** in the sidebar fix them:
 
 1. Pick the game package.
 2. Give the keystone of the retail game, or leave the field empty to keep the one the package has. On a jailbroken console, open Apollo Save Tool, pick a save of the game, and either **Export Keystone** (then fetch `/data/apollo/<user id>/<title id>/keystone` by FTP and pick the file) or **Show Keystone Fingerprint** (then type the 64 hex digits).
@@ -152,22 +152,22 @@ A PS4 save holds the keystone of the game that wrote it. A fake package built wi
 
 The packages are changed in place, nothing is rebuilt. Everything the job replaces is kept in the app folder under `keystone-undo/`, and **Undo last change** puts it back, one run at a time and newest first. A run that is stopped half-way can be undone too.
 
-## PS5 repair
+## PS5 PKG Tools
 
 <p align="center">
-  <img src="images/ps5-repair.jpg" alt="The PS5 repair tool with a package that has the default keystone" width="760">
+  <img src="images/ps5-repair.jpg" alt="PS5 PKG Tools with a package that has the default keystone" width="760">
 </p>
 
-**PS5 repair** in the sidebar checks a PS5 package without unpacking it. It runs the validate checklist (package layout, param.json, PlayGo tables, images, licence, executables) and compares the firmware the game needs with the firmware your console runs. It also looks at the keystone, at update markers in param.json, for a stray param.sfo, at the checksums of the trophy archives, at the AMPR index of a game that ships the AMPR emulator, and, for an update package, at the game package next to it (the update has to be newer). Each finding says whether the repair fixes it. Add job shows the result for a PS5 package too.
+**PS5 PKG Tools** in the sidebar check a PS5 package without unpacking it. They run the validate checklist (package layout, param.json, PlayGo tables, images, license, executables) and compare the firmware the game needs with the firmware your console runs. They also look at the keystone, at update markers in param.json, for a stray param.sfo, at the checksums of the trophy archives, at the AMPR index of a game that ships the AMPR emulator, and, for an update package, at the game package next to it (the update has to be newer). Each finding says whether the rebuild fixes it. Add job shows the result for a PS5 package too.
 
-The repair builds a new package in the output folder and leaves the original as it is. A rebuild already puts images, licence and PlayGo tables right. On top of that you can:
+The tools build a new package in the output folder and leave the original as it is. The rebuild already puts images, license and PlayGo tables right. On top of that you can:
 
 - put in the keystone from the game's own dump (its folder, .ffpfsc or .pkg) or from a keystone file, instead of the default keystone a builder makes when the source has none,
 - lower the firmware to the one your console runs,
 - regenerate the PlayGo tables,
 - make it a standalone game, which clears the update-check URL in param.json.
 
-A trophy archive with a wrong checksum gets the right one, and a missing or stale AMPR index is written again. An update package is only checked, since the repair builds full games.
+A trophy archive with a wrong checksum gets the right one, and a missing or stale AMPR index is written again. An update package is only checked, since the rebuild is for full games.
 
 The view also has **Look inside** and **Unpack** for the package.
 

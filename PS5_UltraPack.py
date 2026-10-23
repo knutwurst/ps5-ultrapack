@@ -1352,7 +1352,7 @@ class ErrorDialog(MessageWindow):
         "fpkg-extract": "fPKG extraction failed",
         "fpkg-build":   "fPKG build failed",
         "fake-sign":    "Fake-signing failed",
-        "ps4-keystone": "PS4 repair failed",
+        "ps4-keystone": "PS4 PKG Tools job failed",
         "chain":        "Job failed",
     }
 
@@ -3016,7 +3016,7 @@ class CLIWorker(threading.Thread):
         self.app.log("INFO", f"MkPFS: {MKPFS_NAME} v{MKPFS_VERSION}")
         _op_label = {"unpack": "Unpack", "patch": "Integrate patch",
                      "fake-sign": "Fake sign", "fpkg-extract": "Extract fPKG",
-                     "fpkg-build": "Build fPKG", "ps4-keystone": "PS4 repair"}.get(self.operation, "Pack")
+                     "fpkg-build": "Build fPKG", "ps4-keystone": "PS4 PKG Tools"}.get(self.operation, "Pack")
         self.app.log("INFO", f"Operation: {_op_label}")
         self.app.log("INFO", f"Game: {self.item.title_id} | {self.item.name}")
         self.app.log("INFO", f"Original: {format_size(self.item.size)} | Files: {self.item.files}")
@@ -4389,10 +4389,10 @@ class JobDialog(EmbeddedDialog):
                   "so leaving it on costs nothing. A .pkg is always signed by its builder.",
         "keystone": "Saves hold the keystone of the game that wrote them. A package with a default keystone shows "
                     "saves of the retail game as corrupted, and a merged update whose app version stayed the game's "
-                    "makes the console offer the official update. Repair opens PS4 repair, which fixes both.",
+                    "makes the console offer the official update. PS4 PKG Tools… opens the tool that fixes both.",
         "ps5repair": "Checks the package the way the console's installer and loader look at it: the package "
                      "layout, param.json, PlayGo tables, images, license, executables, keystone and the firmware "
-                     "it needs. Repair opens the PS5 repair tool, which builds a repaired copy; the original stays "
+                     "it needs. PS5 PKG Tools… opens the tool that builds a fixed copy; the original stays "
                      "as it is.",
         "ps4out": "This folder holds PS4 packages too. They go to their own folder: sorted into the PS4 "
                   "library ('<Title> [CUSA…] [vX]', UPDATE and DLC named), or a package unpacked into a "
@@ -4736,25 +4736,25 @@ class JobDialog(EmbeddedDialog):
 
         # PS4 package: its keystone and version (the other changes are for PS5 games)
         # what the package carries now, read in the background when a PS4 game package is picked;
-        # repairing it is the PS4 repair tool's job (with the updates to bind)
+        # repairing it is PS4 PKG Tools's job (with the updates to bind)
         kb = self._ks_box = ctk.CTkFrame(cin, fg_color=PANEL)
         kl = ctk.CTkFrame(kb, fg_color=PANEL); kl.pack(fill="x")
-        ctk.CTkLabel(kl, text="Repair", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
+        ctk.CTkLabel(kl, text="Package", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
         self._ks_note = ctk.CTkLabel(kl, textvariable=self.ks_state_var, text_color=MUTED, font=ctk.CTkFont(size=12),
                                      wraplength=420, justify="left", anchor="w")
         self._ks_note.pack(side="left", padx=(10, 0), fill="x", expand=True)
-        ctk.CTkButton(kl, text="Repair…", width=140, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+        ctk.CTkButton(kl, text="PS4 PKG Tools…", width=140, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=self._open_keystone).pack(side="right")
         self._bind_help(self._HELP["keystone"], kl)
         self._ps5_boxes = (po.box, bo.box, so.box, lo.box)
-        # PS5 package: what the checks found, with a way to the PS5 repair tool
+        # PS5 package: what the checks found, with a way to PS5 PKG Tools
         pb = self._ps5r_box = ctk.CTkFrame(cin, fg_color=PANEL)
         pl = ctk.CTkFrame(pb, fg_color=PANEL); pl.pack(fill="x")
-        ctk.CTkLabel(pl, text="Repair", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
+        ctk.CTkLabel(pl, text="Package", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
         self._ps5_note = ctk.CTkLabel(pl, textvariable=self.ps5_state_var, text_color=MUTED, font=ctk.CTkFont(size=12),
                                       wraplength=420, justify="left", anchor="w")
         self._ps5_note.pack(side="left", padx=(10, 0), fill="x", expand=True)
-        ctk.CTkButton(pl, text="Repair…", width=140, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+        ctk.CTkButton(pl, text="PS5 PKG Tools…", width=140, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=self._open_ps5_repair).pack(side="right")
         self._bind_help(self._HELP["ps5repair"], pl)
 
@@ -5105,7 +5105,7 @@ class JobDialog(EmbeddedDialog):
         self.after(80, poll)
 
     def _probe_ps5(self, p: Path, raw: str):
-        """Run the PS5 repair checks on the package *p* off the main thread; say what they found
+        """Run the PS5 PKG Tools checks on the package *p* off the main thread; say what they found
         under the option (on the main thread, when the source is still *p*)."""
         box: dict = {}
         fw = _ps5_console_fw()
@@ -5140,7 +5140,7 @@ class JobDialog(EmbeddedDialog):
         self.after(80, poll)
 
     def _open_ps5_repair(self):
-        """Hand the package to the PS5 repair tool (closes this editor)."""
+        """Hand the package to PS5 PKG Tools (closes this editor)."""
         src = (self.src_var.get() or "").strip()
         self.app._show_view("ps5repair")
         self.app._ps5_view.preset(src)
@@ -5150,7 +5150,7 @@ class JobDialog(EmbeddedDialog):
         return self._kind == "ps4" and self._ks_default is not None
 
     def _open_keystone(self):
-        """Hand the package to the PS4 repair tool (closes this editor)."""
+        """Hand the package to PS4 PKG Tools (closes this editor)."""
         src = (self.src_var.get() or "").strip()
         self.app._show_view("keystone")
         self.app._keystone_view.preset(src)
@@ -6016,7 +6016,7 @@ class JobDialog(EmbeddedDialog):
             self._comp_row.pack_forget()
             self._pkg_opts.pack_forget()
             self._to_hint.set("same format and no changes: copied as it is"
-                              + ("; PS5 repair rebuilds a package" if to == "pkg" else ""))
+                              + ("; PS5 PKG Tools rebuild a package" if to == "pkg" else ""))
         act = self.after_var.get() if self._after_box.winfo_manager() else "keep"
         then = {"trash": tr("then the source goes to the {TRASH_NAME}", TRASH_NAME=TRASH_NAME),
                 "move": tr("then the source moves"),
@@ -6855,7 +6855,7 @@ class OrganizeView:
 
 
 class KeystoneView:
-    """PS4 repair as a view of the main window, laid out like Organize: a PS4 game package, the
+    """PS4 PKG Tools as a view of the main window, laid out like Organize: a PS4 game package, the
     keystone from a save of the retail game, the version fix for a full game with an update
     merged in, and the updates to bind to the changed package; Add to queue makes one job
     (--ps4-keystone-set). Undo last change runs at once (--ps4-keystone-undo last), like
@@ -6883,11 +6883,11 @@ class KeystoneView:
         v = self.frame = kit.frame(parent)
         v.grid_columnconfigure(0, weight=1)
         v.grid_rowconfigure(9, weight=1)
-        head, btns = app._column_header(v, "PS4 repair", subtitle="Makes a PS4 game package and its updates fit "
+        head, btns = app._column_header(v, "PS4 PKG Tools", subtitle="Makes a PS4 game package and its updates fit "
                                         "your saves, and stops the console offering an update that is merged in.")
         head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
         self.undo_btn = app._small(btns, "Undo last change", "history", self.undo,
-                                   tooltip="Put back what the last PS4 repair changed")
+                                   tooltip="Put back what the last PS4 PKG Tools job changed")
         self.undo_btn.pack(side="left", padx=(0, 2))
         kit.rule(v).grid(row=1, column=0, sticky="ew")
 
@@ -6912,7 +6912,7 @@ class KeystoneView:
         nr.grid(row=3, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
         ctk.CTkLabel(nr, textvariable=self.base_note, text_color=MUTED, anchor="w", justify="left",
                      wraplength=640).pack(side="left")
-        self._other_tool = ctk.CTkButton(nr, text="Open in PS5 repair", width=130, height=24, fg_color=BTN,
+        self._other_tool = ctk.CTkButton(nr, text="Open in PS5 PKG Tools", width=130, height=24, fg_color=BTN,
                                          hover_color=BTN_HOVER, text_color=WHITE, border_width=1,
                                          border_color=BTN_BORDER, command=self._to_ps5_repair)
         self.ks_var = tk.StringVar(value="")
@@ -7135,7 +7135,7 @@ class KeystoneView:
         m = _ps4pkg_module()
         out = {"done": True, "ok": False}
         if _package_platform(p) == "ps5":
-            out["note"] = tr("This is a PS5 package. PS5 repair checks and repairs it.")
+            out["note"] = tr("This is a PS5 package. PS5 PKG Tools check it and build a fixed copy.")
             out["ps5"] = True
             return out
         try:
@@ -7234,7 +7234,7 @@ class KeystoneView:
                 continue
             why = _ks_job_module().check(self.base_var.get().strip(), [p]) if self._base_ok else []
             if why:
-                messagebox.showerror("PS4 repair", "\n".join(why), parent=self.app.root)
+                messagebox.showerror("PS4 PKG Tools", "\n".join(why), parent=self.app.root)
                 continue
             try:
                 ver = m.read_identity(p).version
@@ -7284,7 +7284,7 @@ class KeystoneView:
         j = job.last_journal(self.undo_root)
         if self._busy or j is None:
             return
-        if getattr(self.app, "_batch_running", False):      # a PS4 repair may be writing that journal
+        if getattr(self.app, "_batch_running", False):      # a PS4 PKG Tools job may be writing that journal
             NoticeWindow(self.app.root, "Undo last change", tr("Undo waits until the queue has finished."))
             return
         try:
@@ -7292,8 +7292,8 @@ class KeystoneView:
         except Exception:
             d = {"base": "", "when": "", "packages": 0}
         name = Path(d["base"]).name if d["base"] else "–"
-        text = (tr("Put back what PS4 repair changed in {name} on {when}?", name=name, when=d["when"])
-                if d["when"] else tr("Put back what PS4 repair changed in {name}?", name=name))
+        text = (tr("Put back what PS4 PKG Tools changed in {name} on {when}?", name=name, when=d["when"])
+                if d["when"] else tr("Put back what PS4 PKG Tools changed in {name}?", name=name))
         if d["packages"] > 1:
             text += " " + plural(d["packages"] - 1, "Its update is put back too.", "Its {n} updates are put back too.")
         if not ask_confirm("Undo last change", text, "Put back", parent=self.app.root):
@@ -7326,11 +7326,11 @@ class KeystoneView:
         self._busy = False
         for ln in lines:
             if ln.startswith(("[PS4]", "[ERROR]")):
-                self.app.log("ERROR" if ln.startswith("[ERROR]") else "INFO", "PS4 repair: " + ln.split("] ", 1)[-1])
-        self.app.log("OK" if rc == 0 else "WARN", "PS4 repair: " + ("undone" if rc == 0 else "undo failed, see the log"))
+                self.app.log("ERROR" if ln.startswith("[ERROR]") else "INFO", "PS4 PKG Tools: " + ln.split("] ", 1)[-1])
+        self.app.log("OK" if rc == 0 else "WARN", "PS4 PKG Tools: " + ("undone" if rc == 0 else "undo failed, see the log"))
         name = getattr(self, "_undo_name", "")
         NoticeWindow(self.app.root, "Undo last change",
-                     tr("{name} is as it was before that repair.", name=name) if rc == 0 else
+                     tr("{name} is as it was before that change.", name=name) if rc == 0 else
                      tr("{name} could not be put back completely. The Log says what failed.", name=name),
                      warn=rc != 0)
         self._refresh_buttons()
@@ -7353,7 +7353,7 @@ def _ps5_row_text(r: dict) -> str:
 
 
 def _ps5_console_fw() -> str:
-    """The firmware the PS5 checks compare a package with: the one set in PS5 repair, else the
+    """The firmware the PS5 checks compare a package with: the one set in PS5 PKG Tools, else the
     backport target, else 7.61."""
     st = load_settings()
     fw = st.get("ps5_console_fw") or st.get("backport_target_default") or "7.61"
@@ -7377,25 +7377,25 @@ def _ps5_check_text(rows: list, keystone: bool = False, detail: bool = True) -> 
     fixable = len(bad) - unfixable - waiting
     parts = []
     if fixable:
-        parts.append(tr("The repair fixes it.") if fixable == len(bad) == 1 else
-                     tr("The repair fixes all of them.") if fixable == len(bad) else
-                     plural(fixable, "The repair fixes 1 of them.", "The repair fixes {n} of them."))
+        parts.append(tr("The rebuild fixes it.") if fixable == len(bad) == 1 else
+                     tr("The rebuild fixes all of them.") if fixable == len(bad) else
+                     plural(fixable, "The rebuild fixes 1 of them.", "The rebuild fixes {n} of them."))
     if waiting:
         parts.append(tr("The default keystone stays until you give the one from the game's dump."))
     if unfixable == len(bad):
-        parts.append(tr("The repair cannot fix it.") if unfixable == 1 else tr("The repair cannot fix them."))
+        parts.append(tr("The rebuild cannot fix it.") if unfixable == 1 else tr("The rebuild cannot fix them."))
     tail = " ".join(parts)
     return head + " " + tail
 
 
 class Ps5RepairView:
-    """PS5 repair as a view of the main window, laid out like PS4 repair: a PS5 package, what the
+    """PS5 PKG Tools as a view of the main window, laid out like PS4 PKG Tools: a PS5 package, what the
     console's installer and loader look at in it, and the repairs. Add to queue makes one job that
     unpacks the package and builds a repaired copy (--to pkg --rebuild); the original stays as it
     is. Look inside and Unpack are the other tools for the package."""
     MARK = {"fail": "✗", "warn": "!", "info": "·", "pass": "✓"}
     # what the Repair column says: the repair does it, or which option below does
-    FIX_TEXT = {"rebuild": "the repair fixes it", "trophy": "the repair fixes it",
+    FIX_TEXT = {"rebuild": "the rebuild fixes it", "trophy": "the rebuild fixes it",
                 "playgo": "PlayGo option below", "firmware": "Firmware option below",
                 "keystone": "Keystone field below", "standalone": "Updates option below"}
     HOWTO = ("The keystone of the game's own dump (its folder, .ffpfsc or .pkg), or a keystone file. "
@@ -7412,7 +7412,7 @@ class Ps5RepairView:
         v = self.frame = kit.frame(parent)
         v.grid_columnconfigure(0, weight=1)
         v.grid_rowconfigure(5, weight=1)
-        head, btns = app._column_header(v, "PS5 repair", subtitle="Checks a PS5 package and builds a repaired copy. "
+        head, btns = app._column_header(v, "PS5 PKG Tools", subtitle="Checks a PS5 package and builds a fixed copy. "
                                         "The original stays as it is.")
         head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
         self.look_btn = app._small(btns, "Look inside", "search", self._look,
@@ -7442,7 +7442,7 @@ class Ps5RepairView:
         nr.grid(row=3, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
         ctk.CTkLabel(nr, textvariable=self.base_note, text_color=MUTED, anchor="w", justify="left",
                      wraplength=640).pack(side="left")
-        self._other_tool = ctk.CTkButton(nr, text="Open in PS4 repair", width=130, height=24, fg_color=BTN,
+        self._other_tool = ctk.CTkButton(nr, text="Open in PS4 PKG Tools", width=130, height=24, fg_color=BTN,
                                          hover_color=BTN_HOVER, text_color=WHITE, border_width=1,
                                          border_color=BTN_BORDER, command=self._to_ps4_repair)
         chk_head = ctk.CTkFrame(v, fg_color="transparent")
@@ -7459,7 +7459,7 @@ class Ps5RepairView:
         tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
         tframe.grid(row=5, column=0, sticky="nsew", padx=18, pady=(0, 6))
         self.tree = ttk.Treeview(tframe, columns=("area", "result", "fix"), style="P5.Treeview", selectmode="browse")
-        for col, text, w in (("#0", "", 34), ("area", "Area", 110), ("result", "Result", 560), ("fix", "Repair", 160)):
+        for col, text, w in (("#0", "", 34), ("area", "Area", 110), ("result", "Result", 560), ("fix", "Fix", 160)):
             self.tree.heading(col, text=tr(text), anchor="w")
             self.tree.column(col, width=round(w * ui_kit.SCALE), minwidth=round((30 if col == "#0" else 60) * ui_kit.SCALE),
                              stretch=col == "result", anchor="w")
@@ -7522,7 +7522,7 @@ class Ps5RepairView:
                      wraplength=760).grid(row=6, column=0, sticky="ew", padx=(128, 18), pady=(0, 2))
         bottom = ctk.CTkFrame(v, fg_color="transparent")
         bottom.grid(row=7, column=0, sticky="ew", padx=18, pady=(10, 14))
-        ctk.CTkLabel(bottom, text="The repair unpacks the package and builds it again; images, license and PlayGo "
+        ctk.CTkLabel(bottom, text="The rebuild unpacks the package and builds it again; images, license and PlayGo "
                                   "tables are put right on the way.", text_color=MUTED, anchor="w").pack(side="left")
         self.add_btn = ctk.CTkButton(bottom, text="Add to queue", width=130, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                      text_color=ON_ACCENT, command=self.add_to_queue, state="disabled")
@@ -7744,7 +7744,7 @@ class Ps5RepairView:
     @staticmethod
     def _unreadable_text(info: dict) -> str:
         if info.get("error") == "ps4":
-            return tr("This is a PS4 package. PS4 repair is the tool for it.")
+            return tr("This is a PS4 package. PS4 PKG Tools are the tools for it.")
         if info.get("crash"):
             return tr("The check failed: {e}", e=info.get("error"))
         return tr("Not a readable PS5 package: {e}", e=info.get("error"))
@@ -7781,7 +7781,7 @@ class Ps5RepairView:
             if r["level"] == "pass" and not show_pass:
                 continue
             fix = ("" if r["level"] in ("pass", "info") and not r["fix"] else
-                   tr("the repair fixes it") if r["fix"] == "keystone" and ks_given else
+                   tr("the rebuild fixes it") if r["fix"] == "keystone" and ks_given else
                    tr(self.FIX_TEXT[r["fix"]]) if r["fix"] else tr("cannot be repaired here"))
             self.tree.insert("", "end", text=self.MARK.get(r["level"], "·"), tags=(r["level"],),
                              values=(tr(r["group"]), _ps5_row_text(r), fix))
@@ -8642,10 +8642,10 @@ class App:
                                 "Browse a .ffpfsc, .ffpfs or .pkg and pull single files out")
         self._nav["organize"] = nav(side, "Organize", "folders", lambda: self._show_view("organize"),
                                     "Name and sort everything in a folder in place")
-        self._nav["keystone"] = nav(side, "PS4 repair", "key", lambda: self._show_view("keystone"),
+        self._nav["keystone"] = nav(side, "PS4 PKG Tools", "key", lambda: self._show_view("keystone"),
                                     "Keystone, version and updates of a PS4 game package")
-        self._nav["ps5repair"] = nav(side, "PS5 repair", "package", lambda: self._show_view("ps5repair"),
-                                     "Check a PS5 package and build a repaired copy")
+        self._nav["ps5repair"] = nav(side, "PS5 PKG Tools", "package", lambda: self._show_view("ps5repair"),
+                                     "Check a PS5 package and build a fixed copy")
         nav(side, "Clean temp", "broom", self.clear_temp_files, "Delete leftovers in the temp folder")
         bottom = kit.frame(side, bg="sidebar")
         bottom.pack(side="bottom", fill="x", pady=(0, 10))
@@ -9411,7 +9411,7 @@ class App:
         if op == "chain":
             ch = []
             if getattr(item, "ps5_repair", False):
-                ch = (["Repair"] + (["Keystone"] if getattr(item, "fpkg_keystone", None) else [])
+                ch = (["Rebuild"] + (["Keystone"] if getattr(item, "fpkg_keystone", None) else [])
                       + (["PlayGo"] if getattr(item, "fpkg_regen_playgo", False) else [])
                       + (["Standalone"] if getattr(item, "ps5_standalone", False) else [])
                       + (["Trophies"] if getattr(item, "ps5_trophies", False) else []))
@@ -9564,8 +9564,8 @@ class App:
         fm.add_command(label="Add Job…", accelerator=ACCEL["add"], command=guard(self.open_job_dialog))
         fm.add_command(label="Look Inside…", accelerator=ACCEL["open"], command=lambda: self.open_pfs_browser())
         fm.add_command(label="Organize…", command=lambda: self._show_view("organize"))
-        fm.add_command(label="PS4 Repair…", command=lambda: self._show_view("keystone"))
-        fm.add_command(label="PS5 Repair…", command=lambda: self._show_view("ps5repair"))
+        fm.add_command(label="PS4 PKG Tools…", command=lambda: self._show_view("keystone"))
+        fm.add_command(label="PS5 PKG Tools…", command=lambda: self._show_view("ps5repair"))
         fm.add_separator()
         fm.add_command(label="Start Queue", accelerator=ACCEL["start"], command=guard(self.start))
         fm.add_command(label="Pause After This Job", command=self.toggle_pause)
@@ -9644,8 +9644,8 @@ class App:
             return None
         name = getattr(item, "display_name", None) or item.name
         if getattr(item, "operation", "") == "ps4-keystone":
-            return tr("PS4 repair is changing {name} in place. Stopped now, the package stays half changed "
-                      "until you press Undo last change in PS4 repair.", name=name)
+            return tr("A PS4 PKG Tools job is changing {name} in place. Stopped now, the package stays half "
+                      "changed until you press Undo last change in PS4 PKG Tools.", name=name)
         # since the job was picked (its unpack included); the worker only when it is this job's
         since = getattr(self, "_active_since", (None, 0))
         t0 = since[1] if since[0] == id(item) else None
@@ -12923,7 +12923,7 @@ class App:
 
     def _existing_output(self, target: Path, item=None) -> Path | None:
         """The file in the output folder that is this job's output already: same title, version and format.
-        A PS5 repair whose library name is its own source is not a conflict: the repaired
+        A PS5 PKG Tools rebuild whose library name is its own source is not a conflict: the repaired
         package goes beside it."""
         try:
             if item is not None and getattr(item, "ps5_repair", False) and self._is_own_source(item, target):
@@ -13717,7 +13717,7 @@ class App:
         self._sync_progress_box()
         self.game_name_var.set(f"Name: {getattr(item, 'display_name', None) or item.name}")
         mode = {"unpack": "Convert", "patch": "Integrate patch",
-                "fake-sign": "Fake sign", "ps4-keystone": "PS4 repair",
+                "fake-sign": "Fake sign", "ps4-keystone": "PS4 PKG Tools",
                 "fpkg-extract": "Extract fPKG",
                 "fpkg-build":   "Build fPKG"}.get(getattr(item, "operation", "pack"), "Pack")
         if getattr(item, "operation", "pack") == "chain":
@@ -15927,13 +15927,13 @@ class App:
                 added = True
                 if getattr(it, "ps4_default_keystone", None) and not getattr(it, "ps4_keystone", None):
                     self.log("WARN", tr("{name}: the package has the default keystone, so saves of the retail "
-                                        "game will show as corrupted. Tools › PS4 repair replaces it with the "
+                                        "game will show as corrupted. Tools › PS4 PKG Tools replaces it with the "
                                         "keystone exported from one of your saves.",
                                         name=it.display_name or it.name))
                 if getattr(it, "ps4_version_problem", False):
                     self.log("WARN", tr("{name}: an update is merged into this full game but its app version stayed "
                                         "the game's, so the console will offer the official update. Tools › PS4 "
-                                        "repair sets the version.", name=it.display_name or it.name))
+                                        "PKG Tools sets the version.", name=it.display_name or it.name))
                 try:
                     if getattr(it, "archive_path", None):
                         self._resolve_archive_password(it)

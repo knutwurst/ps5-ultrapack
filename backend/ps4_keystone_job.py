@@ -108,7 +108,7 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
         # already right, e.g. a retry after a later step failed: the other steps still run
         _say(on_line, f"[INFO] {base.name}: the version needs no fix")
         if keystone is None and not updates:
-            _say(on_line, "[OK] PS4 repair: nothing left to do")
+            _say(on_line, "[OK] PS4 PKG Tools: nothing left to do")
             return 0
     stamp = time.strftime("%Y-%m-%d %H%M%S")
     folder, n = Path(undo_root) / stamp, 2
@@ -197,7 +197,7 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
     _say(on_line, copy_job.progress_line(100, size, size, t0, "keystone"))
     if journal["steps"]:
         _say(on_line, f"[INFO] undo data: {folder}")
-    _say(on_line, f"[OK] PS4 repair: {base}" if rc_all == 0 else f"[WARN] PS4 repair: {base}, finished with errors")
+    _say(on_line, f"[OK] PS4 PKG Tools: {base}" if rc_all == 0 else f"[WARN] PS4 PKG Tools: {base}, finished with errors")
     return rc_all
 
 
@@ -267,7 +267,7 @@ def undo(journal_path, on_line=None) -> int:
             blocked.add(str(pkg)); left.append(step)
     if not left:
         journal_path.rename(journal_path.with_name("journal.undone.json"))
-        _say(on_line, "[OK] PS4 repair: undone")
+        _say(on_line, "[OK] PS4 PKG Tools: undone")
         return 0
     journal["steps"] = list(reversed(left))
     journal_path.write_text(json.dumps(journal, indent=1), encoding="utf-8")

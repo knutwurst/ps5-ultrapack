@@ -491,7 +491,7 @@ def findings(info: dict, console_fw: str | None = None) -> list[dict]:
     if patch:
         for r in rows:
             r["fix"] = None                 # the repair builds full games, never an update
-        own("update.kind", "Updates", "info", None, "an update package: it is checked only, the repair builds full games")
+        own("update.kind", "Updates", "info", None, "an update package: it is checked only, the rebuild is for full games")
     order = {lv: i for i, lv in enumerate(LEVELS)}
     return sorted(rows, key=lambda r: order.get(r["level"], 2))
 

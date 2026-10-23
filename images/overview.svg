@@ -140,12 +140,12 @@
   <text x="523" y="983" font-size="14" fill="#9aa3b2">in place, with undo</text>
   <rect x="813" y="904" width="350" height="96" rx="16" fill="#12161e" stroke="#262d3a"/>
   <g transform="translate(753 748)"><rect x="80" y="180" width="48" height="48" rx="12" fill="#16294a"/><circle cx="97" cy="210" r="6" fill="none" stroke="#7ab0ff" stroke-width="2"/><path d="M101.5 205.5 l12 -12 M109 198 l4 4 M112.5 194.5 l3.5 3.5" fill="none" stroke="#7ab0ff" stroke-width="2" stroke-linecap="round"/></g>
-  <text x="899" y="942" font-size="19" font-weight="600" fill="#e7ebf2">PS4 repair</text>
+  <text x="899" y="942" font-size="19" font-weight="600" fill="#e7ebf2">PS4 PKG Tools</text>
   <text x="899" y="965" font-size="14" fill="#9aa3b2">Keystone from a save, version,</text>
   <text x="899" y="983" font-size="14" fill="#9aa3b2">updates bound to the game</text>
   <rect x="1189" y="904" width="350" height="96" rx="16" fill="#12161e" stroke="#262d3a"/>
   <g transform="translate(1129 748)"><rect x="80" y="180" width="48" height="48" rx="12" fill="#16294a"/><path d="M104 191 l12 4.5 v8 c0 7.5 -5.2 12.5 -12 14.5 c-6.8 -2 -12 -7 -12 -14.5 v-8 z M98.5 204 l4 4 l7.5 -8" fill="none" stroke="#7ab0ff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></g>
-  <text x="1275" y="942" font-size="19" font-weight="600" fill="#e7ebf2">PS5 repair</text>
+  <text x="1275" y="942" font-size="19" font-weight="600" fill="#e7ebf2">PS5 PKG Tools</text>
   <text x="1275" y="965" font-size="14" fill="#9aa3b2">Checks, keystone, trophies,</text>
   <text x="1275" y="983" font-size="14" fill="#9aa3b2">AMPR index, firmware</text>
 

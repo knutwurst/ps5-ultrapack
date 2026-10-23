@@ -2842,7 +2842,7 @@ try:
         ok("ps5.repair-job-queued", _j5 is not None and _j5.ps5_repair and "--rebuild" in _c5
            and "--ps5-standalone" in _c5 and "--fpkg-regen-playgo" in _c5
            and _c5[_c5.index("--fpkg-keystone") + 1].lower() == _ks5.read_bytes().hex()
-           and app._job_recipe_parts(_j5)[1:] == ["Repair", "Keystone", "PlayGo", "Standalone", ".pkg"]
+           and app._job_recipe_parts(_j5)[1:] == ["Rebuild", "Keystone", "PlayGo", "Standalone", ".pkg"]
            and m.chain_summary(_j5) == "Replace the keystone, regenerate PlayGo, make it a standalone game, "
                                         "then rebuild the package",
            f"{_c5[-8:]} {app._job_recipe_parts(_j5) if _j5 else None} {m.chain_summary(_j5) if _j5 else None} "

@@ -363,8 +363,8 @@ class KeystoneJob(unittest.TestCase):
         finally:
             os.chmod(self.upd, 0o644)
         self.assertEqual(rc, 1, "\n".join(lines))
-        self.assertTrue(lines[-1].startswith("[WARN] PS4 repair:"), lines[-1])
-        self.assertFalse(any(x.startswith("[OK] PS4 repair") for x in lines))
+        self.assertTrue(lines[-1].startswith("[WARN] PS4 PKG Tools:"), lines[-1])
+        self.assertFalse(any(x.startswith("[OK] PS4 PKG Tools") for x in lines))
         self.assertEqual(self.job.undo(self.job.last_journal(self.tmp / "undo"), on_line=lambda _l: None), 0)
         self.assertTrue(filecmp.cmp(self.base, GAME, shallow=False))
 
