@@ -34,12 +34,11 @@ def _real(p) -> Path:
 
 
 def _within(a: Path, b: Path) -> bool:
-    """a is b or lies inside b."""
     return a == b or b in a.parents
 
 
 def size_of(paths: Iterable[Path]) -> int:
-    """Bytes of data under *paths*; a symbolic link counts as none."""
+    """symlinks count as zero"""
     total = 0
     for p in paths:
         p = Path(p)
@@ -98,14 +97,10 @@ def refusal(sources: list, *, output=None, dest=None, protected: Iterable = (),
     return None
 
 
-# ── the release folder and what is left behind ──────────────────────────────
-
-# Files a release ships next to the game that may go with it when Delete removes the game.
+# release extras that may go along when Delete removes the game
 SIDECAR_SUFFIXES = frozenset({".nfo", ".sfv", ".txt", ".md5", ".sha1", ".sha256", ".diz", ".url",
                               ".jpg", ".jpeg", ".png", ".gif", ".webp"})
-# OS clutter, lower-case, compared case-insensitively; the same list as backend/cli.py,
-# ultra_core.py and mkpfs/utils.py (a test keeps them equal). Never copied or moved along
-# with a source, never counted, and not what keeps a folder from being empty.
+# OS clutter; same list in cli.py, ultra_core.py, mkpfs/utils.py (a test checks)
 _JUNK_NAMES = frozenset({
     ".ds_store", ".localized", ".lsoverride", ".apdisk", ".volumeicon.icns", "icon\r",
     "thumbs.db", "ehthumbs.db", "desktop.ini",
@@ -126,7 +121,6 @@ def _is_junk(name: str) -> bool:
 
 
 def _strip_junk(root: Path) -> int:
-    """Delete the OS clutter under *root* (a folder the job moved). Returns how many went."""
     removed = 0
     for dp, dns, fns in os.walk(root, topdown=False):
         for fn in fns:
@@ -151,9 +145,7 @@ def _strip_junk(root: Path) -> int:
 
 
 def _is_protected_dir(folder: Path, protected: Iterable = ()) -> bool:
-    """A folder the app never moves or removes as a whole: a drive, the home folder or a
-    folder above it, the standard folders in it, and every *protected* folder (the folder a
-    job was added from, the output and destination folders, the app's own) or one above."""
+    """never moved or removed whole: drives, home and above, its standard folders, protected ones"""
     r = _real(folder)
     if os.path.ismount(str(r)) or r == Path(r.anchor):
         return True
@@ -165,12 +157,12 @@ def _is_protected_dir(folder: Path, protected: Iterable = ()) -> bool:
 
 def release_folder(sources: list, *, list_sources: Callable[[Path], list], title_id: str = "",
                    title: str = "", protected: Iterable = (), may_be=None) -> Optional[Path]:
-    """The folder that belongs to this game, so Move and Trash take it whole: the one folder all *sources* sit in, named after the game (its title id, the archive set's name or its title), holding no source of another game."""
+    """the one folder holding only this game's sources, so Move and Trash take it whole"""
     if not sources:
         return None
     if len({_real(s).parent for s in sources}) != 1:
         return None
-    folder = Path(sources[0]).parent             # as given; compared through real paths
+    folder = Path(sources[0]).parent
     if may_be is not None and _real(may_be) == _real(folder):
         protected = [q for q in protected if q and _real(q) != _real(folder)]
     if _is_protected_dir(folder, protected):
@@ -198,9 +190,7 @@ def release_folder(sources: list, *, list_sources: Callable[[Path], list], title
 
 
 def prune_empty_dirs(start_dirs: Iterable, protected: Iterable = ()) -> list:
-    """Remove each folder in *start_dirs* that is empty now (system clutter such as
-    .DS_Store does not count), then its parent while that is empty too. Never a protected
-    folder (see _is_protected_dir). Returns what was removed."""
+    """drop folders that are empty now (.DS_Store doesn't count) and empty parents; never protected ones"""
     removed = []
     for d in sorted({str(x) for x in start_dirs if x}, key=len, reverse=True):
         cur = Path(d)
@@ -223,9 +213,7 @@ def prune_empty_dirs(start_dirs: Iterable, protected: Iterable = ()) -> list:
 
 
 def sweep_sidecars(folder: Path, protected: Iterable = ()) -> bool:
-    """After Delete removed a game from its release folder: when what is left there is
-    only files a release ships beside the game (notes, checksums, pictures), delete them
-    and the folder. Anything else, or a subfolder, keeps the folder. True when it went."""
+    """after Delete: if only sidecars (notes, checksums, pictures) remain, remove them and the folder"""
     folder = Path(folder)
     if not folder.is_dir() or _is_protected_dir(folder, protected):
         return False
@@ -244,15 +232,11 @@ def sweep_sidecars(folder: Path, protected: Iterable = ()) -> bool:
     return True
 
 
-# ── the four actions ──────────────────────────────────────────────────────────
-
 def apply(action: str, sources: list, *, dest=None,
           on_progress: Optional[Callable[[int, int], None]] = None,
           trash: Optional[Callable[[Path], None]] = None,
           same_device: Optional[Callable[[Path, Path], bool]] = None) -> list:
-    """Run *action* on every path in *sources*. Returns where each one went (the Trash
-    or the folder) for the log. Raises OSError on the first failure; a path already
-    handled stays handled, the rest stay where they are."""
+    """raises OSError on the first failure; paths already handled stay handled"""
     sources = [Path(s) for s in sources]
     if action == KEEP:
         return []
@@ -290,7 +274,7 @@ def apply(action: str, sources: list, *, dest=None,
                         raise
             if moved:
                 if t.is_dir() and not t.is_symlink():
-                    _strip_junk(t)                      # the folder arrives without OS clutter
+                    _strip_junk(t)
                 tick(size_of([t]))
             else:
                 _copy_then_remove(s, t, tick)
@@ -317,8 +301,7 @@ def _same_device(a: Path, b: Path) -> bool:
 
 
 def _split(name: str, is_dir: bool):
-    """(base, rest) so that base + " (2)" + rest is the numbered name; the volume
-    suffix of a split archive stays at the end ("Game (2).part1.rar")."""
+    """base and rest for the (2) name; a split archive keeps its volume suffix last: Game (2).part1.rar"""
     if is_dir:
         return name, ""
     m = _VOLUME_RE.search(name)
@@ -329,14 +312,12 @@ def _split(name: str, is_dir: bool):
 
 
 def _free_names(sources: list, dest: Path) -> list:
-    """Target paths in *dest* that do not exist yet and differ from each other, also without
-    regard to case. The parts of one archive set get the same number, so the set still opens."""
+    """free target names in dest, case-insensitive; the parts of one archive set share a number"""
     groups: dict = {}
     for i, s in enumerate(sources):
         is_dir = s.is_dir()
         base, _rest = _split(s.name, is_dir)
-        # one set: its volumes share the exact base (two sets whose names differ only in case
-        # are two groups, so each finds a number of its own)
+        # volumes of one set share the exact base; sets differing only in case are separate
         key = (str(_real(s.parent)), base) if not is_dir and _VOLUME_RE.search(s.name) else i
         groups.setdefault(key, []).append(i)
     out: list = [None] * len(sources)
@@ -382,8 +363,7 @@ def _copy_file(src: Path, dst: Path, tick) -> None:
 
 
 def _rename_settled(a: Path, b: Path) -> None:
-    """os.rename, tried again for a few seconds: on Windows a scanner or the indexer can hold
-    a file of a tree that was just written."""
+    """Windows: a scanner or the indexer may still hold a file we just wrote, so retry a bit"""
     for attempt in range(6):
         try:
             os.rename(a, b)
@@ -402,14 +382,11 @@ def _free_name(p: Path) -> Path:
 
 
 def _copy_then_remove(src: Path, dst: Path, tick) -> None:
-    """Copy *src* to *dst* on another drive under a hidden temporary name, check every
-    file's size, give the copy its name, then remove *src*. An interrupted copy never sits
-    under the final name. A failed copy removes what it wrote and leaves *src* untouched;
-    when *src* is gone by then, the copy stays."""
+    """copy under a hidden .part name, check sizes, rename, then delete src; a failed copy leaves src alone"""
     if os.path.lexists(str(dst)):
         raise FileExistsError(f"{dst.name} is already there")
     stem = f".{dst.name[:80]}.part-"
-    for old in dst.parent.glob(f"{glob.escape(stem)}*"):       # an earlier move of it that was cut off
+    for old in dst.parent.glob(f"{glob.escape(stem)}*"):  # leftovers of an interrupted move
         if re.fullmatch(r"[0-9a-f]{8}", old.name[len(stem):]):
             try:
                 _delete(old)
@@ -433,12 +410,12 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
                 raise e                                        # a folder that cannot be listed fails the copy
             for dp, dns, fns in os.walk(src, onerror=unreadable):
                 rel = Path(dp).relative_to(src)
-                dns[:] = [d for d in dns if not _is_junk(d)]      # OS clutter is left behind
+                dns[:] = [d for d in dns if not _is_junk(d)]
                 fns = [f for f in fns if not _is_junk(f)]
                 for d in dns:
                     sd, td = Path(dp) / d, part / rel / d
                     if sd.is_symlink():
-                        os.symlink(os.readlink(sd), td, target_is_directory=True)   # Windows tells them apart
+                        os.symlink(os.readlink(sd), td, target_is_directory=True)  # Windows has separate file and dir symlinks
                     else:
                         td.mkdir()
                 for fn in fns:
@@ -458,7 +435,7 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
                 if os.path.lexists(str(src)):
                     _delete(part)
                 else:
-                    # the source is gone: this copy is all there is, under a name that says so
+                    # src is gone, so this copy is all there is: keep it under a name that says so
                     _rename_settled(part, _free_name(dst.with_name(f"{dst.name} (incomplete)")))
         except OSError:
             pass
@@ -466,11 +443,8 @@ def _copy_then_remove(src: Path, dst: Path, tick) -> None:
     _delete(src)
 
 
-# ── the Trash ─────────────────────────────────────────────────────────────────
-
 def move_to_trash(path: Path) -> str:
-    """Move *path* to the Trash of its drive, where Finder's Put Back can restore it.
-    Returns where it went ("Trash" when the system does not say)."""
+    """into the Trash of its own drive, so Finder's Put Back works"""
     path = Path(path)
     if sys.platform == "darwin":
         return _trash_mac(path)
@@ -526,9 +500,7 @@ def _trash_mac(path: Path) -> str:
 
 
 def _recycle_bin_limit(path: Path):
-    """(volume root, bytes the Recycle Bin of *path*'s drive takes for one item), 0 bytes when the
-    drive has none (network, removable) or deletes for good there. Windows deletes an item that
-    does not fit instead of recycling it."""
+    """(root, Recycle Bin cap per item), 0 when there is none; Windows nukes what doesn't fit"""
     import ctypes
     import winreg
     k32 = ctypes.windll.kernel32
@@ -554,7 +526,7 @@ def _recycle_bin_limit(path: Path):
         pass
     if nuke:
         return root.value, 0
-    if cap_mb is None:                                  # not set yet: Windows' default, about 5 %
+    if cap_mb is None:  # unset: Windows default is about 5%
         total = ctypes.c_ulonglong()
         k32.GetDiskFreeSpaceExW(root.value, None, ctypes.byref(total), None)
         return root.value, total.value // 20
@@ -584,7 +556,7 @@ def _trash_windows(path: Path) -> None:
                     ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_uint16), ("fAnyOperationsAborted", wintypes.BOOL),
                     ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
     FO_DELETE, FOF_SILENT, FOF_NOCONFIRMATION, FOF_ALLOWUNDO, FOF_NOERRORUI = 3, 0x4, 0x10, 0x40, 0x400
-    FOF_WANTNUKEWARNING = 0x4000        # asks instead of deleting for good when it cannot recycle
+    FOF_WANTNUKEWARNING = 0x4000  # ask instead of nuking when it cannot recycle
     op = SHFILEOPSTRUCTW(None, FO_DELETE, str(path) + "\0", None,
                          FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_WANTNUKEWARNING,
                          False, None, None)
@@ -593,11 +565,8 @@ def _trash_windows(path: Path) -> None:
         raise OSError(f"could not move {path.name} to the Recycle Bin (code {rc})")
 
 
-# ── notifications and the end of the queue ────────────────────────────────────
-
 def notify(title: str, message: str) -> None:
-    """A banner in Notification Center (macOS) or the notification area (Windows). Best effort:
-    nothing happens where it is not supported."""
+    """best effort: does nothing where notifications aren't supported"""
     if sys.platform == "win32":
         import threading
         threading.Thread(target=_notify_windows, args=(title, message), name="notify", daemon=True).start()
@@ -615,8 +584,7 @@ def notify(title: str, message: str) -> None:
 
 
 def _notify_windows(title: str, message: str, shown_s: float = 10.0) -> None:
-    """A tray balloon from a hidden window, which Windows 10 and 11 show as a notification with the
-    app's name and icon; the icon leaves the tray again afterwards."""
+    """tray balloon from a hidden window, Windows 10/11 turn it into a notification"""
     import ctypes
     import time
     from ctypes import wintypes
@@ -654,12 +622,10 @@ def _notify_windows(title: str, message: str, shown_s: float = 10.0) -> None:
 
 
 def sleep_now() -> None:
-    """Put the computer to sleep."""
     if sys.platform == "darwin":
         subprocess.run(["pmset", "sleepnow"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     elif sys.platform == "win32":
-        # called directly: through rundll32 the first argument is a window handle, which
-        # Windows reads as "hibernate"
+        # not via rundll32: it passes a window handle first, which Windows happily reads as hibernate
         import ctypes
         if not ctypes.windll.powrprof.SetSuspendState(False, False, False):
             raise ctypes.WinError()

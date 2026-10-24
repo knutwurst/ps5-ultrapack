@@ -1,7 +1,4 @@
-"""--param-report: HDR declaration and identity per game, read-only.
-
-    python3 -m unittest backend.tests.test_param_report
-"""
+"""python3 -m unittest backend.tests.test_param_report"""
 from __future__ import annotations
 
 import json

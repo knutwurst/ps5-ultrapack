@@ -1,4 +1,3 @@
-"""Unit tests for ArchiveExtractor - the saved-password loop (a wrong first password must not stop the right one from being tried), AES-encrypted zips (stdlib zipfile cannot read them; they go through the 7-Zip CLI), multi-root archives (a base game beside its patch) - and the settings redaction of the diagnostics export."""
 import contextlib
 import importlib.util
 import json
@@ -15,8 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 
-# Never touch the real profile: the app dir is computed (and an old one migrated) at
-# import time, so point it at a scratch folder first.
+# never touch the real profile: the app dir is set (and migrated) at import time
 os.environ.setdefault("PS5_FFPFSC_APP_DIR", tempfile.mkdtemp(prefix="ultrapack-test-profile-"))
 _spec = importlib.util.spec_from_file_location("ultra_under_test", str(REPO / "PS5_UltraPack.py"))
 m = importlib.util.module_from_spec(_spec)
@@ -35,9 +33,8 @@ def _make_game_tree(root: Path, name: str = "GAME") -> Path:
     game = root / name
     (game / "sce_sys").mkdir(parents=True)
     (game / "sce_sys" / "param.json").write_text('{"titleId": "PPSA00001"}')
-    (game / "eboot.bin").write_bytes(os.urandom(64 * 1024))   # incompressible payload
-    # A compressible member too: 7-Zip stores incompressible data as method 0 whatever
-    # -mm says, so without this the Deflate64 zip would hold no method-9 member.
+    (game / "eboot.bin").write_bytes(os.urandom(64 * 1024))
+    # 7-Zip stores random data as method 0 whatever -mm says; we need a method-9 member
     (game / "data.bin").write_bytes(b"compressible line of payload\n" * 8000)
     return game
 
@@ -51,7 +48,6 @@ def _sevenzip(args, cwd):
 
 @contextlib.contextmanager
 def _native_7z(value):
-    """Temporarily make ArchiveExtractor._find_native_7z() return *value*."""
     orig = AE.__dict__["_find_native_7z"]
     AE._find_native_7z = staticmethod(lambda: value)
     try:
@@ -62,7 +58,6 @@ def _native_7z(value):
 
 @contextlib.contextmanager
 def _forbid_py7zr():
-    """Install a py7zr stand-in that fails loudly if the extractor touches it."""
     def _boom(*_a, **_k):
         raise AssertionError("py7zr must not be used after a CLI data/password error")
     stub = types.ModuleType("py7zr")
@@ -79,8 +74,6 @@ def _forbid_py7zr():
 
 
 class _Base(unittest.TestCase):
-    """Shared fixtures: one game tree, the archives, a fake 7z CLI (sh wrappers)."""
-
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="ffpfsc-extractor-tests-"))
@@ -104,7 +97,6 @@ class _Base(unittest.TestCase):
                     if he:
                         sz.set_encrypted_header(True)
                     sz.writeall(str(cls.game), "GAME")
-        # Fake 7-Zip CLI: prints canned output and exits with the code of its mode.
         cls.fake = cls.tmp / "fake7z.py"
         cls.fake.write_text(
             "import sys\n"
@@ -146,8 +138,6 @@ class _Base(unittest.TestCase):
         self.assertTrue((root / "eboot.bin").is_file())
 
 
-# ── item 1: the password loop reaches the right password ──────────────────────
-
 @unittest.skipUnless(SEVENZZ, "no 7-Zip: run FETCH_7ZIP.sh")
 class NativeCliPasswordLoop(_Base):
 
@@ -165,8 +155,7 @@ class NativeCliPasswordLoop(_Base):
         self.assertTrue(progress and progress[-1] == 100)
 
     def test_all_wrong_ends_with_password_summary_not_a_hang(self):
-        # Also covers the trailing no-password attempt: an empty -p must fail fast
-        # (exit 2) instead of prompting for a password.
+        # an empty -p must fail fast (exit 2), not sit at a password prompt
         with self.assertRaises(RuntimeError) as cm:
             AE.extract_with_passwords(self.archives / "he.7z", self.dest_root, ["A", "B"], log_fn=self.log)
         self.assertIn("none of the 2 saved password(s) worked", str(cm.exception))
@@ -186,8 +175,6 @@ class NativeCliPasswordLoop(_Base):
 
 
 class FakeCliClassification(_Base):
-    """_run_extract_process / _sevenz decisions, driven by a fake tool - no 7zz needed."""
-
     def _run(self, mode):
         return AE._run_extract_process([sys.executable, str(self.fake), mode], "faketool", log_fn=self.log)
 
@@ -260,8 +247,6 @@ class Py7zrPasswordClassification(_Base):
         self.assertNotIn("saved password", str(cm.exception))
 
 
-# ── item 2: AES-encrypted zips ─────────────────────────────────────────────────
-
 @unittest.skipUnless(SEVENZZ, "no 7-Zip: run FETCH_7ZIP.sh")
 class AesZip(_Base):
 
@@ -272,7 +257,7 @@ class AesZip(_Base):
         self.assertIn("AES-encrypted ZIP", self._log_text())
 
     def test_zipcrypto_zip_still_uses_stdlib(self):
-        with _native_7z(None):     # no CLI available: ZipCrypto must still work via zipfile
+        with _native_7z(None):  # no CLI: ZipCrypto must still work via zipfile
             root = AE.extract_with_passwords(self.archives / "zipcrypto.zip", self.dest_root, ["WRONG", "RIGHT"],
                                              log_fn=self.log)
         self._assert_game_root(root)
@@ -313,8 +298,6 @@ class FindSevenZipWindows(unittest.TestCase):
             self.skipTest("FETCH_7ZIP.sh has not run")
         self.assertEqual(Path(AE._find_native_7z()), bundled)
 
-
-# ── item 3: _find_root with several game roots ─────────────────────────────────
 
 class FindRoot(unittest.TestCase):
 
@@ -365,8 +348,6 @@ class FindRoot(unittest.TestCase):
         self.assertEqual(AE._find_root(self.dest), self.dest)
 
 
-# ── item 4: diagnostics export never carries passwords ─────────────────────────
-
 class SettingsRedaction(unittest.TestCase):
 
     def test_redaction(self):
@@ -401,9 +382,6 @@ class PasswordErrorRecognition(unittest.TestCase):
 
 
 class HeaderProbe(unittest.TestCase):
-    """probe_header separates two answers: did a password open the header, and is the
-    size in it worth trusting. Only the first may lead to a password prompt."""
-
     def test_a_damaged_zip_is_damaged_not_locked(self):
         with tempfile.TemporaryDirectory() as td:
             z = Path(td) / "broken.zip"
@@ -494,12 +472,7 @@ class HeaderProbe(unittest.TestCase):
             m.save_settings({"archive_passwords": []})
 
 
-# ── names that collide on a case-insensitive drive ────────────────────────────
-
 class NameCollisions(_Base):
-    """Two members that differ only in letter case or Unicode form would overwrite each
-    other on APFS, NTFS or exFAT: the extraction must stop with a clear error."""
-
     def _zip(self, name, members):
         z = self.tmp / name
         with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -549,7 +522,7 @@ class NameCollisions(_Base):
         self._assert_collision(a, "GAME/Data.bin", "GAME/data.bin")
 
 
-# ── ZipCrypto: a wrong password can pass the one-byte check ───────────────────
+# ZipCrypto: a wrong password can pass the one-byte check
 
 @unittest.skipUnless(SEVENZZ, "no 7-Zip: run FETCH_7ZIP.sh")
 class ZipCryptoLuckyPassword(_Base):
@@ -571,7 +544,6 @@ class ZipCryptoLuckyPassword(_Base):
                 except Exception:
                     cls.lucky = pwd                  # passed the check, then the data failed
                     break
-        # the same zip with the first member's data damaged
         data = bytearray(cls.zc.read_bytes())
         start = cls.first.header_offset + 30 + len(cls.first.filename.encode()) + 12
         with zipfile.ZipFile(cls.zc) as zf:

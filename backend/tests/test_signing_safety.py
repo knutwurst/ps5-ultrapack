@@ -1,8 +1,4 @@
-"""A truncated executable is never fake-signed: the signer refuses it and the
-original stays as it was.
-
-    python3 -m unittest backend.tests.test_signing_safety
-"""
+"""python3 -m unittest backend.tests.test_signing_safety"""
 from __future__ import annotations
 
 import io

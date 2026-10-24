@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Build the OpenSSL libraries the fPKG tool needs on macOS into backend/native/:
-# libcrypto.3.dylib and libssl.3.dylib (arm64, macOS 12 like the tool), with LICENSE.OpenSSL.
-# .NET's crypto falls back to OpenSSL for some algorithms; without these a Mac that has no
-# Homebrew OpenSSL aborts the tool. Builds the pinned release once, checked against the hash below.
+# OpenSSL dylibs for the pkg tool; .NET needs them on a Mac without Homebrew
 set -euo pipefail
 cd "$(dirname "$0")"
 

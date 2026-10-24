@@ -1,10 +1,4 @@
-"""The originals a patch replaced, and the record that lets a patch be taken back out.
-
-overlay_patch (cli.py) copies every game file it is about to replace into <backup>/app0/ and
-writes one line per change into <backup>/restore.jsonl BEFORE the change is made. With that
-record restore_originals() puts the game folder back the way it was: replaced and removed
-files come back from app0/, files and folders the patch added are removed.
-"""
+"""patch backups: originals in app0/, restore.jsonl written before every change"""
 
 from __future__ import annotations
 
@@ -18,8 +12,6 @@ MANIFEST = "restore.jsonl"
 
 
 class Journal:
-    """Appends the changes of one overlay to <backup>/restore.jsonl, each synced to disk."""
-
     def __init__(self, backup_dir: Path, game_root: Path):
         self.backup_dir = Path(backup_dir)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -33,8 +25,7 @@ class Journal:
             os.fsync(fh.fileno())
 
     def record(self, op: str, rel: str) -> None:
-        """op: 'replaced' or 'removed' (the original is in app0/<rel>), 'added' (a new
-        file), 'mkdir' (a folder the patch created)."""
+        """op: replaced/removed (original in app0/), added, or mkdir"""
         self._write({"op": op, "path": rel})
 
     def keep_original(self, game_root: Path, rel: str) -> None:
@@ -76,10 +67,7 @@ def _inside(root: Path, rel: str) -> Path:
 
 
 def restore_originals(backup_dir: Path, game_root: Path) -> int:
-    """Undo a patch recorded in *backup_dir* on *game_root*. Returns the number of recorded
-    file changes now undone; 0 when there is no backup or no record. Safe to run again.
-    Raises ValueError when *game_root* is not the folder the patch was applied to, and
-    RuntimeError naming the files it could not put back (the backup is left as it is)."""
+    """safe to rerun; raises if game_root isn't the patched folder, backup kept on failure"""
     backup_dir, game_root = Path(backup_dir), Path(game_root).resolve()
     if not (backup_dir / MANIFEST).is_file():
         return 0

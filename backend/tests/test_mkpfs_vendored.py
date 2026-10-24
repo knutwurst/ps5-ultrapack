@@ -1,4 +1,3 @@
-"""Guards for the vendored MkPFS copy under backend/mkpfs."""
 from __future__ import annotations
 
 import struct
@@ -15,7 +14,6 @@ FMT_U32 = 0x0404
 
 
 def build_sfo(entries: list[tuple[str, object, int]]) -> bytes:
-    """Minimal PSF 1.1 file: header, index, key table, data table."""
     keys = b""
     datas = b""
     index = b""
@@ -51,8 +49,7 @@ class ParseSfoTests(unittest.TestCase):
         self.assertEqual(game_metadata._parse_sfo(data[:0x14 + 8]), {})
 
     def test_index_struct_format_is_two_u16(self):
-        # The index entry starts with two little-endian u16 fields; the format string
-        # must stay exactly this wide or every entry is misread.
+        # two little-endian u16s; any other width misreads every entry
         self.assertEqual(struct.calcsize("<HH"), 4)
         src = Path(game_metadata.__file__).read_text(encoding="utf-8")
         self.assertIn('struct.unpack_from("<HH", data, entry_base)', src)

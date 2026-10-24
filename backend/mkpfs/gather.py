@@ -14,7 +14,6 @@ from .utils import is_ignored_name
 
 
 def gather_files_scandir(root: Path) -> list[Path]:
-    """Walk ``root`` using os.scandir and return a list of file Paths."""
     root = Path(root)
     abs_files: list[Path] = []
     stack: list[Path] = [root]

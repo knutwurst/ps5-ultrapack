@@ -1,4 +1,4 @@
-"""Prepare a folder of backport libraries from the user's own firmware libraries."""
+"""backport libraries built from the user's own firmware libraries"""
 from __future__ import annotations
 
 import io
@@ -13,13 +13,11 @@ from typing import Callable, Iterable
 
 try:
     from . import bps_patch as bps
-except ImportError:                              # for `python backend/cli.py`
+except ImportError:  # when run as python backend/cli.py
     import bps_patch as bps                       # type: ignore[no-redef]
 
 
-# ── target inventory ─────────────────────────────────────────────────────
-# BackPork's own layout: patches/6xx/ and patches/7xx/. The library filename
-# and its bundle target follow the target-firmware convention.
+# BackPork's layout: patches/6xx and patches/7xx
 TARGETS: dict[str, str] = {"6.02": "6xx", "7.61": "7xx"}
 
 _REPO_OWNER = "BestPig"
@@ -30,11 +28,9 @@ _USER_AGENT = "ps5-ultrapack"
 
 
 class BackportLibsError(RuntimeError):
-    """A step failed with a message the user should see (the caller writes it to the log
-    and shows it in the UI)."""
+    """a failure the user should see, in the log and in the UI"""
 
 
-# ── HTTP (small, dependency-free) ────────────────────────────────────────
 def _http_get(url: str, *, timeout: float = 15.0) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT,
                                                "Accept": "application/vnd.github.raw, application/json"})
@@ -48,8 +44,7 @@ def _http_get(url: str, *, timeout: float = 15.0) -> bytes:
 
 
 def _list_patches(subdir: str) -> list[dict]:
-    """List the patches under BestPig/BackPork/patches/<subdir>. Returns a list of
-    {"name", "sha", "size"} taken straight from the GitHub contents API."""
+    """name, sha and size per patch, straight from the GitHub contents API"""
     url = _CONTENTS_URL.format(owner=_REPO_OWNER, repo=_REPO_NAME, sub=subdir)
     body = _http_get(url)
     data = json.loads(body)
@@ -65,7 +60,7 @@ def _cache_manifest_path(cache_dir: Path, target: str) -> Path:
 
 
 def _read_cache(cache_dir: Path, target: str) -> dict[str, str]:
-    """Return {filename: sha} from the target's manifest, or {} when there is none."""
+    """{filename: sha} from the target's manifest, {} when there is none"""
     p = _cache_manifest_path(cache_dir, target)
     if not p.is_file():
         return {}
@@ -82,15 +77,13 @@ def _write_cache(cache_dir: Path, target: str, shas: dict[str, str]) -> None:
 
 @dataclass
 class DownloadReport:
-    downloaded: list[str]                           # names newly fetched or refreshed
-    up_to_date: list[str]                           # names the cache already had
+    downloaded: list[str]
+    up_to_date: list[str]
 
 
 def download_patches(target: str, cache_dir: Path,
                      log: Callable[[str], None] | None = None) -> DownloadReport:
-    """Ensure *cache_dir/<sub>/*.bps* holds the current patches for *target*. Files whose
-    manifest SHA still matches the server are left alone; a new or changed file is
-    downloaded from raw.githubusercontent.com. Returns a small report."""
+    """patches whose manifest SHA still matches the server are not downloaded again"""
     if target not in TARGETS:
         raise BackportLibsError(f"unknown backport target {target!r}; expected 7.61 or 6.02")
     sub = TARGETS[target]
@@ -122,13 +115,11 @@ def download_patches(target: str, cache_dir: Path,
     return DownloadReport(downloaded=downloaded, up_to_date=up_to_date)
 
 
-# ── prepare ──────────────────────────────────────────────────────────────
 _LIB_SUFFIXES = (".sprx", ".prx")
 
 
 def _find_source_library(patch_stem: str, fw_libs_root: Path) -> Path | None:
-    """The patch is <libname>.bps; look for <libname>.sprx first, then .prx, in
-    *fw_libs_root* (root or one level deep) - Sony's library folder can have subdirs."""
+    """<libname>.sprx first, then .prx; Sony's lib folder has subdirs, so one level deep too"""
     for suf in _LIB_SUFFIXES:
         p = fw_libs_root / (patch_stem + suf)
         if p.is_file():
@@ -144,7 +135,7 @@ def _find_source_library(patch_stem: str, fw_libs_root: Path) -> Path | None:
 class PrepareResult:
     target: str
     patched: list[tuple[str, int]]                   # (filename, size)
-    missing_source: list[str]                        # patches whose source library is not here
+    missing_source: list[str]
     failed: list[tuple[str, str]]                    # (filename, error)
 
     def summary(self) -> str:
@@ -159,10 +150,7 @@ class PrepareResult:
 def prepare_target(target: str, fw_libs_root: Path, out_root: Path,
                    cache_dir: Path | None = None,
                    log: Callable[[str], None] | None = None) -> PrepareResult:
-    """Download the BackPork patches for *target* (using or refreshing *cache_dir*) and
-    write the patched libraries into *out_root* / *target* /. *fw_libs_root* must hold
-    the user's 10.01 libraries - BackPork patches only accept a 10.01 source. Missing or
-    mismatching sources are reported, never guessed at."""
+    """BackPork patches only take 10.01 libraries; a missing or wrong source is reported, never guessed"""
     if target not in TARGETS:
         raise BackportLibsError(f"unknown backport target {target!r}; expected 7.61 or 6.02")
     fw_libs_root = Path(fw_libs_root)
@@ -221,8 +209,7 @@ def prepare_target(target: str, fw_libs_root: Path, out_root: Path,
 def prepare_targets(targets: Iterable[str], fw_libs_root: Path, out_root: Path,
                     cache_dir: Path | None = None,
                     log: Callable[[str], None] | None = None) -> dict[str, PrepareResult]:
-    """Prepare several targets in one call. Returns a dict target → result. A failure on
-    one target does not stop the others; each raises through the log."""
+    """a failure on one target does not stop the others"""
     out: dict[str, PrepareResult] = {}
     for t in targets:
         try:

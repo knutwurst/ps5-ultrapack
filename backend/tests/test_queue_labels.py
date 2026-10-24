@@ -1,8 +1,4 @@
-"""The line under a job's name reads the same whatever became of the source: the archive's kind,
-Folder, or the container's type; never a placeholder glyph for the title id.
-
-    PYTHONPATH=. /tmp/ps5venv/bin/python -m unittest backend.tests.test_queue_labels
-"""
+"""PYTHONPATH=. /tmp/ps5venv/bin/python -m unittest backend.tests.test_queue_labels"""
 
 from __future__ import annotations
 

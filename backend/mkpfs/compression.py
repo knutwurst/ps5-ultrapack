@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Module-level state - set by ``set_backend`` / ``init_worker``.
 # ---------------------------------------------------------------------------
 
 _backend_name: str = "zlib-ng"
@@ -41,7 +40,6 @@ def _load_isal() -> object:
 
 
 # ---------------------------------------------------------------------------
-# Public API - set_backend / get_backend_name / init_worker.
 # ---------------------------------------------------------------------------
 
 
@@ -122,7 +120,6 @@ def init_worker(backend_name: str | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Compression helpers - level mapping for ISA-L backend.
 # ---------------------------------------------------------------------------
 
 
@@ -155,7 +152,6 @@ def _isal_level_map(level: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Public API - compress_block / decompress_block.
 # ---------------------------------------------------------------------------
 
 
@@ -186,7 +182,7 @@ def compress_block(data: bytes, level: int = 6) -> bytes:
         if name == "isal":
             compressed_data = _compress_with_isal(data, level)
         else:
-            # zlib-ng or stdlib zlib - both accept ``(data, level)``.
+            # zlib-ng and stdlib zlib both take (data, level)
             func = _backend.compress  # type: ignore[union-attribute]
             compressed_data = func(data, level)
     except Exception as exc:
@@ -238,7 +234,7 @@ def decompress_block(data: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Module-level bootstrap - try zlib-ng first, fall back to stdlib zlib.
+# zlib-ng if we have it, else stdlib zlib
 # ---------------------------------------------------------------------------
 
 try:

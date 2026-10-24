@@ -1,5 +1,3 @@
-"""Thin Python wrapper around the bundled `ffpfsc-pkg-tool` native binary."""
-
 from __future__ import annotations
 
 import json
@@ -11,24 +9,20 @@ import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
-# Located in backend/native/ next to this module.
 _TOOL_NAME = "ffpfsc-pkg-tool.exe" if os.name == "nt" else "ffpfsc-pkg-tool"
-# A console program: started from the windowless app it would open a console of its own
+# console program: without this Windows flashes a console window in your face
 _NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
 def _tool_search_paths() -> list[Path]:
-    """Where the CLI binary might live. Order matters: first hit wins."""
+    """first hit wins"""
     here = Path(__file__).resolve().parent
     frozen_dir = getattr(sys, "_MEIPASS", None)
     paths: list[Path] = []
-    # Regular dev / source-run layout (backend/native/ffpfsc-pkg-tool).
     paths.append(here / "native" / _TOOL_NAME)
-    # PyInstaller-bundled layout (adjacent copy under the frozen backend folder).
     if frozen_dir:
         paths.append(Path(frozen_dir) / "backend" / "native" / _TOOL_NAME)
         paths.append(Path(frozen_dir) / "native" / _TOOL_NAME)
-    # Allow an env-var override for developer overrides.
     env = os.environ.get("FFPFSC_PKG_TOOL")
     if env:
         paths.insert(0, Path(env))
@@ -36,11 +30,7 @@ def _tool_search_paths() -> list[Path]:
 
 
 def _use_bundled_openssl(tool: Path) -> None:
-    """.NET's crypto on macOS falls back to OpenSSL for some algorithms and looks it up by
-    name. Without Homebrew's OpenSSL that ends in /usr/lib/libcrypto.dylib, and macOS aborts
-    the tool ("loading libcrypto in an unsafe way"). The app ships libcrypto/libssl next to
-    the tool; the fallback search path finds them only where no other copy is found, so no
-    other library of the app is replaced. Children of this process inherit it."""
+    """without Homebrew .NET finds /usr/lib/libcrypto and macOS kills the tool, so point dyld at ours"""
     if sys.platform != "darwin" or not (tool.parent / "libssl.3.dylib").is_file():
         return
     here = str(tool.parent)
@@ -51,7 +41,6 @@ def _use_bundled_openssl(tool: Path) -> None:
 
 
 def tool_path() -> Path:
-    """Locate the bundled ffpfsc-pkg-tool binary, or raise FileNotFoundError."""
     for p in _tool_search_paths():
         if p.is_file() and os.access(p, os.X_OK):
             _use_bundled_openssl(p)
@@ -74,16 +63,14 @@ def is_available() -> bool:
 
 
 def _run(argv: list[str], *, on_line=None, on_start=None) -> int:
-    """Run the CLI, streaming its combined output through *on_line* (or stdout).
-    *on_start(proc)* gets the running process (a progress meter reads its I/O)."""
+    """on_start(proc) gets the running process, a progress meter reads its I/O"""
     proc = subprocess.Popen(
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=1,
         text=True,
-        # The tool echoes file names from the package; a byte that is not valid UTF-8
-        # must not turn into a UnicodeDecodeError after the build has already run.
+        # file names from the package may be invalid UTF-8; don't crash after the build ran
         encoding="utf-8",
         errors="replace",
         **_NO_WINDOW,
@@ -105,7 +92,6 @@ def _run(argv: list[str], *, on_line=None, on_start=None) -> int:
 
 
 def version() -> str:
-    """Return the CLI version banner, or an error string."""
     argv = [str(tool_path()), "version"]
     try:
         return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
@@ -122,8 +108,7 @@ def inspect(pkg: Path, *, json_out: bool = False) -> int:
 
 
 def inspect_json(pkg: Path) -> dict:
-    """The tool's header summary of a PS5 package (content_id, content_type: 32 game, 33/34
-    additional content, entries ...). Reads the header and the entry table only."""
+    """header and entry table only; content_type 32 is a game, 33/34 add-ons"""
     r = subprocess.run([str(tool_path()), "inspect", str(pkg), "--json"], capture_output=True, text=True,
                        timeout=120, encoding="utf-8", errors="replace", **_NO_WINDOW)
     if r.returncode != 0:
@@ -137,12 +122,7 @@ def extract(pkg: Path, out_dir: Path,
             outer: bool = False,
             on_line=None,
             on_start=None) -> int:
-    """
-    Extract a finalized fPKG (\\x7FFIH) or metadata CNT (\\x7FCNT).
-
-    outer=False (default) pulls the /app0-style inner-image content files.
-    outer=True dumps the outer-PFS entries (uroot, pfs_image.dat itself, naps).
-    """
+    """outer=True dumps the outer PFS entries (uroot, pfs_image.dat, naps) instead of the app files"""
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     if not outer and is_ps4(pkg):
         return _run([str(tool_path()), "ps4-extract", str(pkg), str(out_dir)], on_line=on_line, on_start=on_start)
@@ -152,15 +132,13 @@ def extract(pkg: Path, out_dir: Path,
 
 
 def is_ps4(pkg: Path) -> bool:
-    """A PS4 package (CUSA title id): read with the tool's ps4-* commands, never as a PS5 fPKG."""
+    """PS4 (CUSA) packages go through the ps4-* commands, never as a PS5 fPKG"""
     import ps4pkg
     return ps4pkg.is_ps4_package(pkg)
 
 
 def ps4_keystone(pkg: Path, keystone: Path, *, undo: Optional[Path] = None, on_line=None) -> int:
-    """Write *keystone* (96 bytes, e.g. exported from a save) into the PS4 fake package *pkg*,
-    in place. *undo* keeps the overwritten bytes (ps4_keystone_restore puts them back).
-    Progress lines '[####] NN% keystone' stream through *on_line*."""
+    """keystone is 96 bytes (e.g. from a save); undo keeps the overwritten bytes for restore"""
     argv = [str(tool_path()), "ps4-keystone", str(pkg), str(keystone)]
     if undo is not None:
         argv += ["--undo", str(undo)]
@@ -168,9 +146,7 @@ def ps4_keystone(pkg: Path, keystone: Path, *, undo: Optional[Path] = None, on_l
 
 
 def ps4_keystone_info(pkg: Path) -> Optional[dict]:
-    """{'fingerprint': hex, 'default': True when it is the keystone a builder makes from the
-    all-zero passcode, 'valid': False when its checksum does not match} for a PS4 game package; None when it has no keystone (updates, add-ons)
-    or cannot be read. Reads a few blocks, about 0.1 s."""
+    """default means the builder's all-zero passcode keystone; None for updates and add-ons"""
     try:
         r = subprocess.run([str(tool_path()), "ps4-keystone", str(pkg)], capture_output=True, text=True,
                            timeout=60, encoding="utf-8", errors="replace", **_NO_WINDOW)
@@ -184,8 +160,7 @@ def ps4_keystone_info(pkg: Path) -> Optional[dict]:
 
 
 def ps4_rebind(update: Path, base: Path, *, undo: Optional[Path] = None, on_line=None) -> int:
-    """Point the PS4 update *update* at the package *base* again (after the base's keystone
-    changed), in place. *undo* keeps the overwritten bytes (ps4_keystone_restore reads it)."""
+    """re-point an update at its base after the base's keystone changed, in place"""
     argv = [str(tool_path()), "ps4-rebind", str(update), str(base)]
     if undo is not None:
         argv += ["--undo", str(undo)]
@@ -193,8 +168,7 @@ def ps4_rebind(update: Path, base: Path, *, undo: Optional[Path] = None, on_line
 
 
 def ps4_sfo(pkg: Path, values: dict, *, undo: Optional[Path] = None, on_line=None) -> int:
-    """Change param.sfo values of the PS4 package *pkg* in place (strings that fit, integers),
-    resealing the package. *undo* keeps the overwritten bytes (ps4_keystone_restore reads it)."""
+    """in place and resealed; strings only when they fit"""
     argv = [str(tool_path()), "ps4-sfo", str(pkg)]
     for k, v in values.items():
         argv += ["--set", f"{k}={v}"]
@@ -204,12 +178,11 @@ def ps4_sfo(pkg: Path, values: dict, *, undo: Optional[Path] = None, on_line=Non
 
 
 def ps4_keystone_restore(pkg: Path, undo: Path, *, on_line=None) -> int:
-    """Put back the bytes a ps4_keystone run saved to *undo*."""
     return _run([str(tool_path()), "ps4-keystone", str(pkg), "--restore", str(undo)], on_line=on_line)
 
 
 def list_inner(pkg: Path, *, passcode: str = "0" * 32) -> dict:
-    """Directory tree of a package's inner image - plus the sce_sys metadata the CNT carries - WITHOUT decoding the whole image (the tool reads only the blocks it touches; a 240 MB package lists in ~0.1 s reading ~1.5 MiB)."""
+    """reads only the blocks it needs, never decodes the whole image"""
     argv = ([str(tool_path()), "ps4-list", str(pkg)] if is_ps4(pkg)
             else [str(tool_path()), "list-inner", str(pkg), "--passcode", passcode])
     r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
@@ -222,11 +195,7 @@ def list_inner(pkg: Path, *, passcode: str = "0" * 32) -> dict:
 
 def extract_members(pkg: Path, out_dir: Path, members_file: Path,
                     *, passcode: str = "0" * 32, on_line=None) -> int:
-    """
-    Extract only the members listed in *members_file* (one inner path per line; a
-    directory means its whole subtree) - decoded block-wise, never the whole image.
-    Progress lines '[####] NN% extract (path)' stream through *on_line*.
-    """
+    """one inner path per line, a folder means its whole subtree; decoded block-wise"""
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     if is_ps4(pkg):
         return _run([str(tool_path()), "ps4-extract", str(pkg), str(out_dir), "--members", str(members_file)],
@@ -250,7 +219,7 @@ def build(src_dir: Path, out_dir: Path,
           temp_dir: Optional[str] = None,
           level: Optional[int] = None,
           retail_normalize: bool = True,
-          hdr_flag: str = "auto",               # "auto" | "on" | "off" (bool accepted: True→on, False→off)
+          hdr_flag: str = "auto",  # auto, on or off; a bool works too
           regen_playgo: bool = False,
           fake_sign: bool = True,
           ampr_index: bool = True,
@@ -259,8 +228,7 @@ def build(src_dir: Path, out_dir: Path,
           parallelism: int = 0,
           keystone: Optional[str] = None,
           on_line=None) -> int:
-    """Build a debug fPKG from a prepared /app0-style source folder. *keystone*: a 96-byte
-    keystone file that goes in as sce_sys/keystone instead of the source's."""
+    """keystone: a 96-byte file that goes in as sce_sys/keystone instead of the source's"""
     src_dir = Path(src_dir); out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     argv = [
         str(tool_path()), "build", str(src_dir), str(out_dir),
@@ -294,12 +262,11 @@ def build(src_dir: Path, out_dir: Path,
     if not fake_sign:
         argv += ["--no-fake-sign"]
     if stage_in_place:
-        # src_dir is this app's own working copy (an image unpacked into its scratch): the
-        # tool's pre-build changes go straight into it instead of into one more copy.
+        # src_dir is our own scratch copy, so the tool stages straight into it
         argv += ["--stage-in-place"]
     if consume_source and stage_in_place:
-        # each source file is deleted the moment the inner image holds it, so the unpacked
-        # game shrinks while the image grows (only ever in our own working copy)
+        # deletes each source file once the image holds it
+        # only ever on our own scratch copy
         argv += ["--consume-source"]
     if parallelism and int(parallelism) > 0:
         argv += ["--parallelism", str(int(parallelism))]
@@ -309,7 +276,6 @@ def build(src_dir: Path, out_dir: Path,
 
 
 def validate(pkg: Path, *, json_out: bool = False, temp_dir: Optional[str] = None, on_line=None) -> int:
-    """Run the CLI's diagnostic checklist against a package."""
     argv = [str(tool_path()), "validate", str(pkg)]
     if json_out:
         argv.append("--json")

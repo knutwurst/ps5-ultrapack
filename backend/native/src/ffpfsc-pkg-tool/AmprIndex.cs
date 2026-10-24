@@ -5,31 +5,12 @@ using System.Text;
 
 namespace PkgTool;
 
-/// <summary>
-/// Writes /app0/ampr_emu.index (AMPRIDX3), the file table the AMPR emulator
-/// (fakelib/libSceAmpr.sprx) resolves APR file ids through.
-///
-/// Byte layout and key rules follow drakmor's reference builder
-/// (ampr_emu tools/build_ampr_index.py), which matches the emulator runtime:
-///   header  &lt;8sIIQQQII&gt;  magic "AMPRIDX3", version 3, record size 24, record count,
-///                         path-blob length, hash-table offset, slot size 16, slot count
-///   records &lt;IIQq&gt;       path-blob offset, path length, size, mtime (sorted by key)
-///   blob                  "/app0/&lt;rel&gt;\0" per record
-///   slots   &lt;QII&gt;        FNV-1a-64 of the key, record index + 1, duplicate flag;
-///                         open addressing with linear probing, power-of-two table ≥ 2n
-/// The key is the UTF-8 path with '\' → '/' and only ASCII A–Z folded to lower case.
-/// Skipped: the index itself, the emulator's own trace/log files, paths containing
-/// tab/CR/LF, and OS metadata (the same names MkPFS keeps out of images).
-/// </summary>
+// AMPRIDX3 layout follows drakmor's build_ampr_index.py, which matches the emulator
 internal static class AmprIndex
 {
     public const string FileName = "ampr_emu.index";
 
-    /// <summary>sce_sys files a package build must not index: the builder never packs
-    /// ext_info.dat, and it (re)creates the PlayGo set and the license at package time, so their
-    /// final bytes are not known when the index is written. Leaving them out makes the index
-    /// the same whether the source carried them or not; the emulator serves game data, never
-    /// these.</summary>
+    // the builder writes these at package time, their final bytes aren't known yet
     static readonly HashSet<string> PackageTimeFiles = new(StringComparer.Ordinal)
     {
         "/app0/sce_sys/ext_info.dat", "/app0/sce_sys/license.dat", "/app0/sce_sys/license.info",
@@ -64,16 +45,7 @@ internal static class AmprIndex
 
     sealed record Row(long Size, long Mtime, string Path, byte[] Key);
 
-    /// <summary>Rebuild &lt;root&gt;/ampr_emu.index over the files under <paramref name="root"/>.
-    /// Written to a temporary name and renamed into place, so an index that is a hard link
-    /// into the user's source is replaced, never written through. Returns the record count
-    /// (0 = nothing indexed, no file written).
-    /// <paramref name="fixedMtime"/>: record this mtime for every file instead of the file's
-    /// own. A package gives every file the same inode time (the build timestamp), so that is
-    /// what the console reports for the installed files — and it keeps builds reproducible.
-    /// <paramref name="packageView"/>: index the folder as the package will present it (skip
-    /// <see cref="PackageTimeFiles"/>); off for a plain folder, which then matches the reference
-    /// builder byte for byte.</summary>
+    // temp + rename: an index hard-linked into the user's source must never be written through
     public static int Write(string root, long? fixedMtime = null, bool packageView = false)
     {
         root = Path.GetFullPath(root);
@@ -156,8 +128,7 @@ internal static class AmprIndex
         return rows.Count;
     }
 
-    // Top-down, like os.walk: this directory's files (sorted by key), then each
-    // subdirectory (sorted by key) in turn. Directory symlinks are not followed.
+    // same order as os.walk in the reference builder; dir symlinks are not followed
     static void Walk(string root, string dir, List<Row> rows, HashSet<string> seen, string output, string tmp, bool packageView)
     {
         var files = new List<string>();

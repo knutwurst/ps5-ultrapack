@@ -1,5 +1,3 @@
-"""Settings-folder migration after the rename to PS5 UltraPack."""
-
 from __future__ import annotations
 
 import os
@@ -34,7 +32,6 @@ class AppDirMigration(unittest.TestCase):
         return d
 
     def _import_core(self, env_app_dir: str | None = None) -> str:
-        """Import ultra_core with HOME=self.home; return the APP_DIR it settled on."""
         env = {k: v for k, v in os.environ.items() if k != "PS5_FFPFSC_APP_DIR"}
         env["HOME"] = str(self.home)
         if env_app_dir is not None:

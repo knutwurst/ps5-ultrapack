@@ -1,5 +1,3 @@
-"""LZ4 asset packs: AMPR detection, packing with the default profile, the chain step and the
-.exfat output. The packs are checked against the originals by unpacking them again."""
 import filecmp
 import io
 import contextlib
@@ -25,8 +23,6 @@ HAVE_RUNTIME = (BACKEND / "native" / "ampr" / "libSceAmpr.sprx").is_file()
 
 
 def _game(root: Path, ampr: bool = True) -> Path:
-    """A small game folder: an eboot importing libSceAmpr (or not), data in subfolders, a
-    config, a movie, sce_sys and a file in the game's own folder."""
     random.seed(7)
     words = [b"alpha", b"beta", b"gamma", b"vertex", b"texture", b"mesh", b"[level]"]
     lib = "libSceAmpr" if ampr else "libSceAgc"

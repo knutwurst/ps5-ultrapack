@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Build the fPKG helper from backend/native/src/ffpfsc-pkg-tool into backend/native/:
-# the executable ffpfsc-pkg-tool and the ImageMagick library it loads from its own folder.
-# Neither is tracked in git. Needs the .NET SDK 9 or newer. BUILD_MACOS_APP.sh runs this
-# first; on a fresh clone run it yourself before the tests.
+# builds the fPKG helper + its ImageMagick lib into backend/native (not in git)
+# needs .NET SDK 9+; on a fresh clone run it before the tests
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -20,8 +18,7 @@ rm -rf "${OUT}"
 "${DOTNET}" publish "${SRC}/PkgTool.csproj" -c Release -r osx-arm64 --self-contained true -o "${OUT}"
 
 for f in ffpfsc-pkg-tool Magick.Native-Q8-arm64.dll.dylib; do
-    # Delete first: copying over a signed Mach-O in place can make macOS kill every later
-    # run of it (the kernel keeps the old code signature for that inode).
+    # rm first: macOS remembers the old signature per inode and kills the new binary
     rm -f "backend/native/${f}"
     cp "${OUT}/${f}" "backend/native/${f}"
 done

@@ -1,5 +1,3 @@
-"""Unit tests for the bundled UnRAR module (backend/unrar: rarfile.py over the _unrar C++ extension)."""
-
 from __future__ import annotations
 
 import os
@@ -32,8 +30,6 @@ def _skip(reason: str) -> None:
 
 @unittest.skipIf(rarfile is None, NOT_BUILT)
 class RarfileApiTests(unittest.TestCase):
-    """No fixture needed."""
-
     def test_api_surface(self):
         for name in ("RarFile", "RarInfo", "BadRarFile", "RarWrongPassword",
                      "NeedFirstVolume", "RarExtractionCancelled"):
@@ -52,9 +48,6 @@ class RarfileApiTests(unittest.TestCase):
 
 @unittest.skipIf(rarfile is None, NOT_BUILT)
 class RarfileArchiveTests(unittest.TestCase):
-    """Listing and extraction against a real archive: the shipped fixture, or one
-    generated with the `rar` tool when that is available."""
-
     fixture: Path
     expected: dict[str, int]          # member -> size; known only for a generated fixture
     _tmp: tempfile.TemporaryDirectory | None = None
@@ -120,9 +113,6 @@ class RarfileArchiveTests(unittest.TestCase):
 
 @unittest.skipIf(rarfile is None, NOT_BUILT)
 class NonAsciiNames(unittest.TestCase):
-    """A folder, a file name and a password outside ASCII reach UnRAR unchanged (on Windows
-    its char API reads them in the ANSI code page)."""
-
     PASSWORD = "p\u00e4 ss"
 
     def test_list_and_extract(self):
@@ -145,11 +135,6 @@ class NonAsciiNames(unittest.TestCase):
 
 
 class MultiPartSets(unittest.TestCase):
-    """A multi-part RAR 5 set with encrypted headers, brackets in its name and a dot in its
-    password, built with the `rar` tool: a password that works opens it among wrong ones,
-    a wrong one reads as locked, and a damaged or incomplete set reads as damaged, with a
-    reason, instead of asking for a password no one can give."""
-
     PASSWORD = "EXAMPLE.ORG"
     NAME = "[EXAMPLE.ORG]-PPSA00001"
 
@@ -201,8 +186,6 @@ class MultiPartSets(unittest.TestCase):
         self.assertIn(f"{self.NAME}.part2.rar", reason)
 
     def _extract(self, arc: Path, passwords) -> str:
-        """The error message of a failed extraction, run on a thread: a missing part must
-        end with an error, not wait for the part to appear (UnRAR's volume callback)."""
         import threading
         out = {}
         def work():
@@ -227,9 +210,7 @@ class MultiPartSets(unittest.TestCase):
         self.assertNotIn("password", msg.lower())
 
     def test_a_part_that_vanishes_during_extraction_ends_with_an_error(self):
-        # the listing has read the whole set; then a part goes away (a drive that drops
-        # out or sleeps). UnRAR asks for it; the answer must be "give up", or it waits
-        # for the part forever.
+        # UnRAR asks for the missing part; unless told to give up it waits forever
         import threading
         root = Path(tempfile.mkdtemp(prefix="unrar_vanish_"))
         try:

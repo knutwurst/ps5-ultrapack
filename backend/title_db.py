@@ -1,4 +1,4 @@
-"""Game names by title id, for a job whose game cannot be read before it is unpacked (an image or a game folder inside a solid 7z or RAR): the public PlayStation title lists by andshrew (https://github.com/andshrew/PlayStation-Titles, MIT), one for PS5 (PPSA) and one for PS4 (CUSA)."""
+"""title id to name, from andshrew's PlayStation-Titles lists (MIT)"""
 from __future__ import annotations
 
 import os
@@ -12,8 +12,8 @@ from pathlib import Path
 _BASE = "https://raw.githubusercontent.com/andshrew/PlayStation-Titles/main/"
 LISTS = {"PPSA": "PS5_Titles.tsv", "CUSA": "PS4_Titles.tsv"}
 MAX_AGE = 7 * 86400              # fetch a list again after a week
-RETRY_AFTER = 600                # after a failed fetch (two tries), the next waits 10 minutes
-RETRY_PAUSE = 2.0                # between the two tries of one fetch (a dropped connection)
+RETRY_AFTER = 600  # pause after a failed fetch
+RETRY_PAUSE = 2.0  # between the two tries of one fetch
 _REGIONS = ("UP", "EP", "HP", "IP", "KP", "JP")   # English names first
 _TITLE_ID = re.compile(r"\b(PPSA\d{5}|CUSA\d{5})\b", re.I)
 
@@ -48,14 +48,13 @@ FETCH = _download                # replaced by the tests
 
 
 def reset() -> None:
-    """Forget the lists in memory and the failed fetches (tests)."""
     with _lock:
         _tables.clear()
         _failed.clear()
 
 
 def parse(text: str) -> dict:
-    """{title id: name} from a list: one row per title and region; an English name wins."""
+    """one row per title and region, the English name wins"""
     lines = text.splitlines()
     if not lines:
         return {}
@@ -77,7 +76,6 @@ def parse(text: str) -> dict:
 
 
 def title_id_in(*names) -> str:
-    """The first PPSA/CUSA title id in *names* (an archive's name, its folder), or ''."""
     for n in names:
         m = _TITLE_ID.search(str(n or ""))
         if m:
@@ -86,9 +84,7 @@ def title_id_in(*names) -> str:
 
 
 def lookup(title_id: str, cache_dir, online: bool = True) -> str | None:
-    """The name the title list gives *title_id* ('PPSA01234' / 'CUSA01234'), or None. With
-    *online* a missing or week-old list is fetched first (tried twice; after a failure not
-    again for 10 minutes); a failed fetch keeps the list on disk."""
+    """online: fetch a missing or week-old list first; a failed fetch keeps the old one"""
     tid = (title_id or "").strip().upper()[:9]
     fname = LISTS.get(tid[:4])
     if fname is None or not re.fullmatch(r"[A-Z]{4}\d{5}", tid):
@@ -106,7 +102,7 @@ def lookup(title_id: str, cache_dir, online: bool = True) -> str | None:
                 try:
                     data = FETCH(url)
                 except OSError:
-                    time.sleep(RETRY_PAUSE)            # seen: a TLS connection cut once, fine the next time
+                    time.sleep(RETRY_PAUSE)  # a TLS connection got cut once, the retry was fine
                     data = FETCH(url)
                 if b"titleId\t" not in data[:200]:
                     raise ValueError("not a title list")

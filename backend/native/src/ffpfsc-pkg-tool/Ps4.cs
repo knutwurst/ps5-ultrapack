@@ -8,13 +8,7 @@ using Orbis = LibOrbisPkg;
 
 namespace PkgTool;
 
-/// <summary>
-/// PS4 packages (title ids CUSA…), read with LibOrbisPkg (vendored, LGPL-3): ps4-list prints
-/// the inner files as the same ListInnerDoc JSON that list-inner prints for a PS5 package;
-/// ps4-extract writes all or the listed files and folders with "[####] N% extract" lines.
-/// Only fake packages open: their PFS key is recovered with the library's fake keyset. A
-/// package that does not open that way (a retail package) fails with a plain message.
-/// </summary>
+// PS4 packages via LibOrbisPkg (LGPL-3); fake packages only, retail ones fail cleanly
 internal static partial class Program
 {
     sealed class Ps4Image : IDisposable
@@ -22,8 +16,7 @@ internal static partial class Program
         public readonly MemoryMappedFile Mmf;
         public readonly MemoryMappedViewAccessor Outer;
         public readonly Orbis.PFS.PfsReader Inner;
-        /// <summary>The package-header entries shown under sce_sys/ (param.sfo, icon0.png, …):
-        /// named, not encrypted, not bookkeeping ('.digests' and the like) and no license.</summary>
+        // header entries shown under sce_sys/: named, plain, no digests, no license
         public readonly SortedDictionary<string, Orbis.PKG.MetaEntry> Cnt = new(StringComparer.Ordinal);
         public Ps4Image(string path)
         {
@@ -35,9 +28,7 @@ internal static partial class Program
                 throw new InvalidDataException("not a PS4 package (no CUSA title id in the content id)");
             if (pkg.Header.pfs_image_size == 0)
                 throw new InvalidDataException("the package has no content image");
-            // Two kinds of fake package: the PFS key is stored in the package (opens with the
-            // library's fake keyset), or derived from the content id and the all-zero passcode.
-            // Both are tried; the first that opens the image wins.
+            // PFS key: stored in the pkg, or from content id + zero passcode. first that opens wins
             var keys = new List<(string how, Func<byte[]> key)>
             {
                 ("fake keyset", () => pkg.GetEkpfs()),
@@ -71,7 +62,7 @@ internal static partial class Program
         public void Dispose() { Outer?.Dispose(); Mmf?.Dispose(); }
     }
 
-    /// <summary>"/uroot/dir/file" → "dir/file".</summary>
+    // /uroot/dir/file -> dir/file
     static string Ps4Rel(Orbis.PFS.PfsReader.Node n)
     {
         var full = n.FullName.Replace('\\', '/');
@@ -155,7 +146,7 @@ internal static partial class Program
         long total = files.Sum(x => Ps4Size(x.Item1)), done = 0;
         int lastPct = -1;
         var buf = new byte[1 << 20];
-        // a selective extract ("Look inside") never replaces a file already in the destination
+        // Look inside never overwrites a file that is already there
         bool keepExisting = wanted != null;
         void Placed(string rel, string got)
         {

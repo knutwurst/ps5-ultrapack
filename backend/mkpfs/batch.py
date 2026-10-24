@@ -90,7 +90,6 @@ class BatchSummary:
 
 
 def discover_batch_items(source_dir: Path) -> list[BatchItem]:
-    """Return the packable items found directly inside *source_dir*."""
     items: list[BatchItem] = []
     try:
         entries = list(source_dir.iterdir())

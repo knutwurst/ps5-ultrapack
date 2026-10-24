@@ -11,25 +11,7 @@ using LibProsperoPkg.Util;
 
 namespace PkgTool;
 
-// Random access into the inner PPR-PFS of a finalized fPKG without decoding the whole image.
-//
-// LibProsperoPkg's own ExtractInnerFiles first materializes the complete logical inner image
-// (decrypt outer -> NAPS-decode everything to a temp file) and then walks it. For "list" and
-// "extract a few members" that is the wrong cost model: a 100 GB game would be decoded twice
-// to read a 1 MB directory tree. This class chains the library's public random-access pieces
-// instead:
-//
-//   package file
-//     -> plain SubStream, or ProsperoOuterPfsDecryptReader (AES-XTS per 64 KiB outer block)
-//     -> PfsReader (outer)               (finds pfs_image.dat + naps_pkg_layout.dat)
-//     -> NapsBlockReader                 (NAPS plan built once; Kraken/stored spans decoded on
-//                                         demand through the library's DecodeSpan; LRU cache)
-//     -> PfsReader (inner)               (the /app0 tree: names, sizes, offsets)
-//
-// Both outer layouts are handled: PlaintextNoAuth (mode 0x000D with the "PPPLAIN-NOAUTH!" seed
-// marker — what this tool builds since 1.1.10, read straight from the file) and the encrypted
-// one (mode 0x000D with a real seed, decrypted block by block). The library's own
-// DecodePlaintextInnerPfsRange covers only the former.
+// random access to the inner PFS; the library would decode 100 GB twice to list 1 MB of tree
 internal sealed class InnerImage : IDisposable
 {
     public const int OuterBlockSize = 65536;
@@ -46,7 +28,6 @@ internal sealed class InnerImage : IDisposable
     public long LogicalSize => _plan.UncompressedSize;
     public long SuperblockOffset { get; }
     public PfsReader Pfs { get; }
-    /// <summary>Number of DecompressRange calls made so far (diagnostics).</summary>
     public int RangeCalls => _blocks.RangeCalls;
     public long RangeBytes => _blocks.RangeBytes;
 
@@ -67,7 +48,7 @@ internal sealed class InnerImage : IDisposable
             if (blockCountL > int.MaxValue) throw new InvalidDataException("outer PFS block count exceeds Int32.");
             int blockCount = (int)blockCountL;
 
-            // Outer superblock: mode + seed decide between plaintext/no-auth and encrypted layouts.
+            // outer superblock: mode and seed tell plaintext/no-auth from encrypted
             var sb = new byte[OuterBlockSize];
             _fs.Position = map.OuterPfsOffset + (long)map.OuterSuperblockIndex * OuterBlockSize;
             _fs.ReadExactly(sb);
@@ -133,9 +114,7 @@ internal sealed class InnerImage : IDisposable
         => pfs.GetAllFiles().FirstOrDefault(f => string.Equals(Path.GetFileName(f.FullName), name, StringComparison.Ordinal))
            ?? throw new InvalidDataException("outer PFS does not contain " + name + ".");
 
-    // The library scans the decoded image forward in 64 KiB steps and takes the first hit. Our
-    // images are data-first, so that scan would decode everything. Try the cheap candidates
-    // first (they cost one cache block each) and only fall back to the library's full scan.
+    // the library scans forward and our images are data-first, so try the cheap spots first
     long LocateInnerSuperblock()
     {
         long total = _plan.UncompressedSize;
@@ -149,12 +128,12 @@ internal sealed class InnerImage : IDisposable
         var tried = new HashSet<long>();
         bool Try(long off) => tried.Add(off) && Hit(off);
 
-        // 1. Data-first layout: metadata is the last NAPS logical file, superblock at its start.
+        // 1. data-first: metadata is the last NAPS file, superblock at its start
         foreach (var f in _plan.Files.Reverse().Take(8))
             if (Try(f.UncompressedOffset)) return f.UncompressedOffset;
-        // 2. Metadata-first layout.
+        // 2. metadata-first
         if (Try(0)) return 0;
-        // 3. Backwards from the end (bounded), then the library's forward scan as a last resort.
+        // 3. backwards from the end (bounded), then the library's forward scan
         long lastBlock = (total / OuterBlockSize - 1) * OuterBlockSize;
         long backLimit = Math.Max(0, lastBlock - 4096L * OuterBlockSize); // 256 MiB
         for (long off = lastBlock; off >= backLimit; off -= OuterBlockSize)
@@ -168,7 +147,7 @@ internal sealed class InnerImage : IDisposable
     static bool IsSuperblock(ReadOnlySpan<byte> b)
         => BinaryPrimitives.ReadUInt64LittleEndian(b) == 2 && b[8] == 0x0B && b[9] == 0x2A && b[10] == 0x33 && b[11] == 0x01;
 
-    /// <summary>Path of a node relative to the user root, forward slashes, no leading slash.</summary>
+    // relative to the user root, forward slashes, no leading slash
     public string RelativePath(PfsReader.Node node)
     {
         var uroot = Pfs.GetURoot();
@@ -179,7 +158,6 @@ internal sealed class InnerImage : IDisposable
         return string.Join('/', parts);
     }
 
-    /// <summary>All directories below the user root (recursive), excluding the root itself.</summary>
     public IEnumerable<PfsReader.Dir> AllDirs()
     {
         var stack = new Stack<PfsReader.Dir>();
@@ -192,20 +170,13 @@ internal sealed class InnerImage : IDisposable
         }
     }
 
-    /// <summary>
-    /// Writes the logical (decompressed) content of <paramref name="file"/> to <paramref name="dest"/>,
-    /// exactly as the library's File.Save(path, decompress: true) would. Contiguous plain files
-    /// (every file a PPR direct-offset image holds) take a chunked fast path straight through
-    /// DecompressRange, 32 MiB at a time, so a large file never has to fit in RAM and the
-    /// per-call overhead stays negligible; the 1 MiB LRU blocks are for metadata random access.
-    /// </summary>
+    // contiguous plain files go through DecompressRange in 32 MiB chunks, never all in RAM
     public void CopyFile(PfsReader.File file, Stream dest, Action<long>? progress = null, int chunkSize = 32 << 20)
     {
         bool compressed = file.flags.HasFlag(InodeFlags.compressed);
         if (compressed || file.blocks != null)
         {
-            // Library path (legacy zlib PFSC inode or a non-contiguous extent). Same code the
-            // full extraction runs, just over the cached NAPS reader.
+            // legacy zlib inode or scattered extent: let the library do it
             file.CopyTo(dest, decompress: true);
             progress?.Invoke(file.size);
             return;
@@ -233,17 +204,7 @@ internal sealed class InnerImage : IDisposable
     }
 }
 
-/// <summary>
-/// IMemoryReader over the NAPS-decoded logical inner image. Serves reads from an LRU cache of
-/// aligned blocks; each miss decodes exactly the spans one block touches, so directory walks
-/// touch a few hundred KiB of a multi-GB image.
-///
-/// The library's ProsperoNapsImage.DecompressRange rebuilds the whole NAPS plan on every call
-/// and scans every span linearly (about 80 ms per call on a 100 GB image). Here the plan is
-/// built once, the overlapping spans are found by binary search and decoded with the library's
-/// own span decoder (its private DecodeSpan, bound once by reflection — the same code its
-/// DecompressRange runs per span). If that method cannot be bound, the library path is used.
-/// </summary>
+// the library rebuilds the NAPS plan on every DecompressRange call; we build it once
 internal sealed class NapsBlockReader : IMemoryReader
 {
     readonly Stream _pfsImage;
@@ -270,7 +231,6 @@ internal sealed class NapsBlockReader : IMemoryReader
         catch { return null; }
     }
 
-    /// <summary>True when spans are decoded through the bound DecodeSpan (diagnostics).</summary>
     public static bool UsesSpanDecoder => s_decodeSpan != null;
 
     public int RangeCalls { get; private set; }
@@ -289,8 +249,7 @@ internal sealed class NapsBlockReader : IMemoryReader
         if (s_decodeSpan == null) return ProsperoNapsImage.DecompressRange(_pfsImage, _layout, offset, length);
         if (length == 0) return Array.Empty<byte>();
 
-        // Spans are ascending in UncompressedOffset and cover the image contiguously (BuildPlan
-        // validates both). Binary search for the first span that ends past `offset`.
+        // spans are sorted and contiguous (BuildPlan checks), so binary search works
         var spans = _plan.Spans;
         long end = offset + length;
         int lo = 0, hi = spans.Count - 1, first = spans.Count;

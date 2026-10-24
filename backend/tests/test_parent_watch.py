@@ -1,5 +1,3 @@
-"""A backend ends, with everything it started, when the app that started it is gone (the
-app crashed once and left a pack job and a scan running on the drive)."""
 import os, subprocess, sys, tempfile, textwrap, time, unittest
 from pathlib import Path
 
@@ -34,8 +32,7 @@ class ParentWatch(unittest.TestCase):
             open({str(pids)!r}, "w").write(f"{{__import__('os').getpid()}} {{child.pid}}")
             time.sleep(30)
         """)
-        # the "app": starts the backend (in a session of its own, as the app does for jobs,
-        # or in its own group, as for a scan) and leaves at once
+        # the app: starts the backend in its own session or group, then leaves
         app = textwrap.dedent(f"""
             import subprocess, sys, time, pathlib
             subprocess.Popen([sys.executable, "-c", {backend!r}], start_new_session={own_group!r})

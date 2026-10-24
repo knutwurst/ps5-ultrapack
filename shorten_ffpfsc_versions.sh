@@ -1,25 +1,6 @@
 #!/usr/bin/env bash
-#
-# shorten_ffpfsc_versions.sh
-#
-# Shortens the version tag in .ffpfsc / .ffpfs filenames AND strips decorative symbols
-# (™ ® © ℠ ℗) that waste bytes against ShadowMount's filename limit:
-#     v01.123.456  ->  01.123        (drop the leading "v", drop the 3rd group)
-#     [v01.007.000] -> [01.007]      (brackets are preserved)
-#     [vv01.027.000] -> [01.027]     (handles stray double-"v" too)
-#     Example Title™ ... -> Example Title ...   (™/®/© removed)
-#
-# Searches the given directory recursively. If no directory is passed, it uses
-# the directory this script lives in.
-#
-# SAFE BY DEFAULT: this is a DRY RUN — it only prints what it WOULD rename.
-# Re-run with --apply (or -a) to actually rename the files.
-#
-# Usage:
-#   ./shorten_ffpfsc_versions.sh                 # dry run, script's own dir
-#   ./shorten_ffpfsc_versions.sh /Volumes/Games  # dry run, given dir
-#   ./shorten_ffpfsc_versions.sh /Volumes/Games --apply
-#
+# trims .ffpfs(c) names for ShadowMount's length limit; dry run unless --apply
+# usage: ./shorten_ffpfsc_versions.sh [dir] [--apply]
 set -euo pipefail
 
 APPLY=0
@@ -34,7 +15,6 @@ for arg in "$@"; do
   esac
 done
 
-# Default root = the directory this script resides in.
 if [[ -z "$ROOT" ]]; then
   ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
@@ -52,12 +32,7 @@ fi
 echo ">>> Searching under: $ROOT"
 echo
 
-# Compute the shortened version of a *basename*.
-# Three ordered passes (perl PCRE):
-#   1) bracketed:   [v*NN.NNN(.NNN)?]  -> [NN.NNN]
-#   2) v-prefixed:  v+NN.NNN(.NNN)?    -> NN.NNN
-#   3) bare 3-group: NN.NNN.NNN        -> NN.NNN   (collapse trailing group)
-# Then tidy any double spaces / trailing space before the extension.
+# [v01.007.000] -> [01.007], v01.123.456 -> 01.123; the passes run in this order
 shorten_name() {
   perl -CS -pe '
     s/[\x{2122}\x{00ae}\x{00a9}\x{2120}\x{2117}]//g;

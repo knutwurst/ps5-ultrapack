@@ -1,5 +1,3 @@
-"""Synthetic PS4 packages for tests: the header fields, entry table and param.sfo the app
-reads. Not installable; there is no PFS image inside."""
 import hashlib
 import hmac
 import struct
@@ -35,7 +33,7 @@ def make_pkg(path, *, content_id: str, content_type: int, sfo: dict) -> Path:
     sfo_blob = make_sfo(sfo)
     table_off, sfo_off = 0x2000, 0x3000
     body = bytearray(sfo_off + len(sfo_blob))
-    struct.pack_into(">I", body, 0x00, 0x7F434E54)              # "\x7FCNT"
+    struct.pack_into(">I", body, 0x00, 0x7F434E54)  # CNT magic
     struct.pack_into(">I", body, 0x10, 1)                       # entry_count
     struct.pack_into(">H", body, 0x14, 1)
     struct.pack_into(">H", body, 0x16, 1)
@@ -49,13 +47,12 @@ def make_pkg(path, *, content_id: str, content_type: int, sfo: dict) -> Path:
 
 
 def make_keystone(fingerprint: bytes = bytes(range(32))) -> bytes:
-    """A well-formed keystone: the v2 header, *fingerprint*, and the MAC over both."""
     head = b"keystone" + bytes((2, 0, 1, 0)) + bytes(20)
     key = bytes.fromhex("783D6F3AE91C0E0712FCAAB7950BDE06855CF7A22DCDBDE127E9BFCBAD0FF0FE")
     return head + fingerprint + hmac.new(key, head + fingerprint, hashlib.sha256).digest()
 
 
 def make_default_keystone() -> bytes:
-    """The keystone a builder makes from the all-zero passcode (LibOrbisPkg's CreateKeystone)."""
+    """what LibOrbisPkg's CreateKeystone makes from the zero passcode"""
     hkey = bytes.fromhex("C74405F67424BA342BC1276251BBC2F555F16025B6A1B6714780DBAEC852FA2F")
     return make_keystone(hmac.new(hkey, b"0" * 32, hashlib.sha256).digest())

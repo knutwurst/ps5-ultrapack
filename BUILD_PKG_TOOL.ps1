@@ -1,7 +1,5 @@
 #!/usr/bin/env pwsh
-# Build the fPKG helper for Windows x64 from backend\native\src\ffpfsc-pkg-tool into
-# backend\native\: ffpfsc-pkg-tool.exe and the ImageMagick library it loads from its own
-# folder. Neither is tracked in git. Needs the .NET SDK 9 or newer.
+# Windows x64 fPKG helper + ImageMagick lib into backend/native; needs .NET SDK 9+
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 

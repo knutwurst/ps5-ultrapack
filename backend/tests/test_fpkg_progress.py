@@ -1,4 +1,3 @@
-"""FpkgProgress: the package tool's log -> the GUI's phase markers and metered bars."""
 import importlib.util, re, sys, unittest
 from pathlib import Path
 
@@ -38,7 +37,6 @@ class KrakenMeter(unittest.TestCase):
                     "[+00:00:00.129]  [inner] Compressing and writing AFID-ordered inner data with 8 built-in Kraken worker(s)...")
 
     def test_late_source_scan_is_not_a_bar(self):
-        """The tool scans after staging; that must not credit 100 % to the running phase."""
         self.r.feed("[+00:00:00.022] Source scan: 3 files.")
         self.assertNotIn("source scan", " ".join(self.r.bars()))
         self.assertEqual(self.r.phases()[-1], "Creating Temp PFS")
@@ -83,7 +81,7 @@ class KrakenMeter(unittest.TestCase):
         labels = [b.split("% ", 1)[1] for b in self.r.bars()[-5:]]
         self.assertEqual(labels, ["CNT image", "CNT image", "finalize", "finalize (FIH digests)", "finalized .pkg written"])
         self.assertIn("80% finalize (FIH digests)", self.r.bars()[-2])
-        # the validate checklist prints its table at the end; its milestones move the bar
+        # validate prints its table at the end, its milestones move the bar
         self.r.feed("[INFO] Auto-validating: x.pkg", "[validate] file", "[validate] header", "[validate] cnt",
                     "[validate] entries", "[validate] inner", "[validate] report", "summary: 40 passed, 0 warned, 0 failed")
         self.assertEqual(self.r.phases()[-1], "Verifying Output")

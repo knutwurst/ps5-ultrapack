@@ -1,5 +1,3 @@
-"""Unit tests for backend/copy_job.py."""
-
 from __future__ import annotations
 
 import os
@@ -137,10 +135,7 @@ class RunCopyTests(unittest.TestCase):
         self.assertEqual((dst / "alias" / "a.bin").read_bytes(), b"a")
         self.assertFalse(src.exists())
 
-    # ── same-drive fast path ─────────────────────────────────────────────────
-
     def test_same_drive_keep_leaves_the_source(self):
-        # The default: nothing is taken away. On APFS (the test's temp drive) a clone.
         src = self._make_src()
         dst_dir = self.tmp / "dst"
         sink = LineSink()
@@ -203,17 +198,12 @@ class RunCopyTests(unittest.TestCase):
         self.assertTrue((dst_dir / "renamed.ffpfsc").is_file())
         self.assertFalse((dst_dir / "game.ffpfsc").exists())
 
-    # ── safety: src == dst ────────────────────────────────────────────────────
-
     def test_src_equals_dst_skips_with_code_2(self):
         src = self._make_src()
-        # Same folder, same name → resolves-same must catch it.
         sink = LineSink()
         rc = copy_job.run_copy(src, src.parent, on_line=sink)
         self.assertEqual(rc, 2, sink.joined())
         self.assertTrue(src.exists(), "src must NOT be deleted on the same-file guard")
-
-    # ── safety: collision ─────────────────────────────────────────────────────
 
     def test_collision_skips_with_code_3(self):
         src = self._make_src("game.ffpfsc", size=100)
@@ -229,8 +219,6 @@ class RunCopyTests(unittest.TestCase):
         self.assertEqual((dst_dir / "game.ffpfsc").read_bytes(), b"Y" * 999,
                          "existing target must be untouched on a collision skip")
 
-    # ── validation: unsupported suffix ────────────────────────────────────────
-
     def test_unsupported_suffix_rejected(self):
         bad = self.tmp / "src.bin"
         bad.write_bytes(b"x")
@@ -241,11 +229,7 @@ class RunCopyTests(unittest.TestCase):
         rc = copy_job.run_copy(self.tmp / "nope.ffpfsc", self.tmp / "dst")
         self.assertEqual(rc, 1)
 
-    # ── cross-drive path (simulated via monkeypatch) ─────────────────────────
-
     def test_cross_drive_copy_emits_progress_and_keeps_source_by_default(self):
-        # Force _same_device to return False so the cross-drive branch runs
-        # inside a single tmp filesystem (portable test).
         src = self._make_src("game.pkg", size=CHUNK_SIZE_FOR_TEST * 3 + 111)
         dst_dir = self.tmp / "dst"
 
@@ -261,7 +245,6 @@ class RunCopyTests(unittest.TestCase):
         self.assertTrue(src.exists(), "keep (the default) must keep the source")
         self.assertTrue((dst_dir / "game.pkg").is_file())
         self.assertEqual((dst_dir / "game.pkg").read_bytes(), src.read_bytes())
-        # Progress markers should have fired
         joined = sink.joined()
         self.assertIn("[####]", joined)
         self.assertIn("% copy", joined)
@@ -278,18 +261,14 @@ class RunCopyTests(unittest.TestCase):
             self.assertTrue((dst_dir / f"{mode}.ffpfs").is_file())
 
     def test_cross_drive_write_failure_leaves_no_visible_target(self):
-        # Simulate: force cross-drive, then make the write fail by making the
-        # destination folder read-only after mkdir. We fail cleanly and no
-        # half-written target sits under the final name.
         src = self._make_src(size=8)
         dst_dir = self.tmp / "dst"
         dst_dir.mkdir()
 
         original_same = copy_job._same_device
-        original_open = open  # not used in copy_job - we monkey the module's open
+        original_open = open
         copy_job._same_device = lambda a, b: False
 
-        # Replace copy_job's open with one that raises on the destination write
         real_open = open
 
         def evil_open(path, mode="r", *args, **kwargs):

@@ -1,4 +1,3 @@
-"""Organize a library in place, and write one source into a library (the "Organize" output)."""
 from __future__ import annotations
 
 import filecmp
@@ -19,8 +18,7 @@ import ultra_core as uc
 from ultra_core import is_fs_junk_name
 
 FILE_KINDS = {".ffpfs": "ffpfs", ".ffpfsc": "ffpfsc", ".exfat": "exfat", ".ffpkg": "ffpkg", ".pkg": "pkg"}
-# Half-written files of a copy or sort that is still running (or was cut short): never touched.
-# copy_job's temp names are '.<name>.copy-<random>.copy-tmp'; older runs left '<name>.copy-tmp'.
+# half-written files of a running or killed copy/sort: never touched
 PARTIAL_SUFFIXES = (".copy-tmp", ".ps4sort-part")
 _TAG = re.compile(r"\[((?:PPSA|CUSA)\d{5})\]", re.I)
 _NAME_ROLE = ((re.compile(r"\bback-?port(?:ed)?\b", re.I), "backport"),
@@ -29,7 +27,7 @@ _NAME_ROLE = ((re.compile(r"\bback-?port(?:ed)?\b", re.I), "backport"),
 
 @dataclass
 class Entry:
-    """A game folder, an image, a package or an archive set (*parts* lists its volumes)."""
+    """folder, image, package or archive set; parts lists the volumes"""
     path: Path
     kind: str                       # folder | ffpfs | ffpfsc | exfat | ffpkg | pkg | archive
     platform: str = ""              # ps5 | ps4
@@ -78,7 +76,6 @@ def _say(on_line, text):
     (on_line or (lambda t: print(t, flush=True)))(text)
 
 
-# ── scan ─────────────────────────────────────────────────────────────────────
 def _game_folder_kind(d: Path) -> str:
     """'ps5' / 'ps4' for an unpacked game (sce_sys + eboot.bin), else ''."""
     try:
@@ -99,8 +96,7 @@ def _skipped(name: str) -> bool:
 
 
 def walk(root) -> tuple[list[Entry], list[Path]]:
-    """(entries, companions) under *root*, unread. Links are not followed. A folder that
-    holds no entry at any depth is one companion."""
+    """(entries, companions), unread; links not followed; an entry-less folder is one companion"""
     root = Path(root)
     entries: list[Entry] = []
     companions: list[Path] = []
@@ -158,9 +154,7 @@ def _name_role(name: str) -> str:
 
 
 def role_folder(path, root) -> str:
-    """The nearest folder between *root* and *path* whose name gives the file its role, as a
-    path below *root* ('' when none): a backport keeps it, so backports for different firmwares
-    never meet under one name."""
+    """nearest role-naming folder below root; backports keep it so firmwares never collide"""
     path, root = Path(path), Path(root)
     for d in _below(path, root):
         if _name_role(d.name):
@@ -169,8 +163,7 @@ def role_folder(path, root) -> str:
 
 
 def name_role(path, root=None) -> str:
-    """The role a file's name says, else the nearest folder between *root* and it that says
-    one ('backport (4.xx to 10.xx)/game.pkg'); '' when neither does."""
+    """role from the file name, else from the nearest folder that says one"""
     path = Path(path)
     role = _name_role(path.stem)
     if not role and root is not None:
@@ -182,9 +175,7 @@ def name_role(path, root=None) -> str:
 
 
 def scan(root, identify: Callable, on_progress=None) -> tuple[list[Entry], list[Path]]:
-    """walk() plus the game of every entry, read through *identify(path, kind)* →
-    {'title','title_id','version','fw','role','platform','ps4'} or None (it may raise; the
-    message becomes the entry's note). *on_progress(done, total, name)* after each read."""
+    """identify(path, kind) gives a dict or None; if it raises, the message becomes the note"""
     entries, companions = walk(root)
     for n, e in enumerate(entries, 1):
         try:
@@ -210,9 +201,8 @@ def scan(root, identify: Callable, on_progress=None) -> tuple[list[Entry], list[
     return entries, companions
 
 
-# ── plan ─────────────────────────────────────────────────────────────────────
 def _below(p: Path, root: Path) -> list[Path]:
-    """The folders between *root* (excluded) and *p* (excluded), nearest first."""
+    """folders strictly between root and p, nearest first"""
     out = []
     q = p.parent
     while q != root and root in q.parents:
@@ -230,14 +220,14 @@ def _set_stem(name: str) -> str:
 
 
 def _known_folder(d: Path, tid: str):
-    """A Ps4Library for *d* when its name carries *tid*'s tag (a title folder already there)."""
+    """a title folder already there, if d's name carries tid's tag"""
     if not d or not _TAG.search(d.name) or _TAG.search(d.name).group(1).upper() != tid:
         return None
     return uc.Ps4Library(d.name, uc._lib_version_tag(d.name), (d / uc.PS4_DLC_PACK).is_dir())
 
 
 def _game_name(tid: str):
-    """The game's name from the title list on disk (no download here), or None."""
+    """from the title list on disk, never downloads"""
     try:
         import title_db
         return title_db.lookup(tid, Path(uc.APP_DIR) / "titles", online=False)
@@ -293,7 +283,7 @@ def plan(root, entries: list[Entry], companions: list[Path]) -> Plan:
                 moves.append(Move(home, title_dir, tid, label, is_dir=True))
 
         def now(p: Path, home=home, title_dir=title_dir) -> Path:
-            """Where *p* is once the home folder has its new name."""
+            """where p is once the home folder has its new name"""
             if home is not None and (p == home or home in p.parents):
                 return title_dir / p.relative_to(home)
             return p
@@ -316,17 +306,14 @@ def plan(root, entries: list[Entry], companions: list[Path]) -> Plan:
                 in_place += 1
                 continue
             moves.append(Move(e.path, dst, tid, label, is_dir=e.kind == "folder"))
-        # What sits beside the game: in a folder of this game alone it goes along (the home
-        # moves as a whole; any other such folder is emptied into the title folder).
+        # companions in a one-game folder go along; the home itself moves as a whole
         for top in tops:
             if top == home:
                 continue
             for c in companions:
                 if top == c.parent or top in c.parents:
                     moves.append(Move(c, title_dir / c.relative_to(top), tid, label, is_dir=c.is_dir()))
-    # In a folder shared by several games (or the root), a companion goes along only when its
-    # name ties it to exactly one game there: the title id, the title, or the name of an
-    # archive set or container of that game.
+    # in a shared folder a companion goes along only if its name ties it to one game
     owned = {m.src for m in moves}
     titles_in: dict[Path, dict] = defaultdict(dict)
     for e in entries:
@@ -361,12 +348,11 @@ def _same_entry(a: Path, b: Path) -> bool:
 
 
 def _drop_conflicts(p: Plan) -> Plan:
-    """Two things that would get the same name both stay; so does one whose target is taken
-    by something that does not move away. A case-only rename is no conflict."""
+    """colliding names both stay, as does a move onto something that stays; case-only is fine"""
     homes = {m.src: m.dst for m in p.moves if m.is_dir}
 
     def now(target: Path) -> Path:
-        """What sits at *target* today: inside a folder that is renamed, its old place."""
+        """what sits at target today, mapped back through renamed folders"""
         for src, dst in homes.items():
             if target == dst or dst in target.parents:
                 return src / target.relative_to(dst)
@@ -406,7 +392,6 @@ def plan_from_json(d: dict) -> Plan:
                 int(d.get("in_place", 0)))
 
 
-# ── apply / undo ─────────────────────────────────────────────────────────────
 def _drop_sidecar(p: Path) -> None:
     try:
         sc = p.parent / ("._" + p.name)
@@ -417,9 +402,7 @@ def _drop_sidecar(p: Path) -> None:
 
 
 def _drop_sidecars_of(ops: list) -> None:
-    """On exFAT macOS gives a folder it creates, and a file it moves, a '._' sidecar (the
-    provenance attribute); remove those beside everything the operations touched, and
-    beside the folders above them."""
+    """on exFAT macOS sprinkles ._ sidecars on new folders and moved files; sweep them up"""
     seen: set = set()
     for op in ops:
         for key in ("src", "dst", "path"):
@@ -432,8 +415,7 @@ def _drop_sidecars_of(ops: list) -> None:
 
 
 def _rename(src: Path, dst: Path, step: Optional[Callable[[Path, Path], None]] = None) -> None:
-    """os.rename, also for a change of case alone on a drive that ignores case (in two steps
-    through a temporary name). *step(a, b)* after each rename that happened, for the journal."""
+    """case-only renames on case-blind drives go via a temp name; step() feeds the journal"""
     step = step or (lambda _a, _b: None)
     if str(src) != str(dst) and str(src).lower() == str(dst).lower():
         tmp = src.with_name(src.name + ".organize-case")
@@ -462,7 +444,7 @@ def _only_clutter(d: Path) -> bool:
 
 
 def _remove_empty(d: Path) -> bool:
-    """Remove *d* when it is empty or holds only OS clutter. True when it went."""
+    """OS clutter alone counts as empty"""
     if not d.is_dir() or d.is_symlink() or not _only_clutter(d):
         return False
     uc.strip_fs_junk(d)
@@ -482,8 +464,7 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
-    """Carry out *p* (only the moves whose index is in *selected*, when given). Renames only:
-    a move that would cross drives fails and nothing is copied. Returns {'moved', 'failed'}."""
+    """renames only: a cross-drive move fails, nothing is ever copied"""
     root = Path(p.root)
     ops: list[dict] = []
     moved_dirs: list[tuple[Path, Path]] = []
@@ -498,7 +479,7 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
         return src
 
     def record(op: dict) -> None:
-        """Every step goes into the journal at once: a run that is killed leaves an accurate one."""
+        """journal every step right away, so a killed run leaves an accurate one"""
         ops.append(op)
         _write_json(Path(journal_path), {"root": str(root), "ops": ops})
 
@@ -528,8 +509,7 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
                 continue
             try:
                 if src in dst.parents:
-                    # A game folder that already has its title folder's name goes inside a new
-                    # folder of that name: step aside first.
+                    # src would land inside a new folder of its own name: step aside first
                     aside = src.with_name(src.name + ".organize-move")
                     os.rename(src, aside)
                     moved_step(src, aside)
@@ -547,7 +527,6 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
             moved += 1
             _say(on_line, f"[ORGANIZE] {src.relative_to(root) if root in src.parents else src} -> "
                           f"{dst.relative_to(root) if root in dst.parents else dst}")
-        # Folders the moves left empty (or holding only clutter) go, up to the root.
         for d in sorted(touched, key=lambda q: len(q.parts), reverse=True):
             q = now(d)
             while q != root and root in q.parents and _remove_empty(q):
@@ -561,8 +540,7 @@ def apply(p: Plan, journal_path, selected=None, on_line=None) -> dict:
 
 
 def _journal_order(j: Path):
-    """When the journal was written (a clock set back keeps the order), then '<time>.json'
-    before '<time>-2.json' (two runs in one second)."""
+    """mtime first, then <time>.json before <time>-2.json (two runs in one second)"""
     m = re.match(r"^(.*?)(?:-(\d+))?$", j.stem)
     try:
         t = j.stat().st_mtime_ns
@@ -572,8 +550,7 @@ def _journal_order(j: Path):
 
 
 def journals(folder, legacy=None) -> list[Path]:
-    """The journals of the Apply runs not undone yet, newest first (*legacy*: the single
-    journal file older versions kept, counted as the oldest)."""
+    """Apply journals not undone yet, newest first; legacy is the old single file, counted oldest"""
     found = sorted((j for j in Path(folder).glob("*.json") if not j.name.endswith(".undone.json")),
                    key=_journal_order, reverse=True) if Path(folder).is_dir() else []
     if legacy and Path(legacy).is_file():
@@ -582,7 +559,6 @@ def journals(folder, legacy=None) -> list[Path]:
 
 
 def new_journal_path(folder) -> Path:
-    """A journal file of its own for the next Apply, named by the time."""
     Path(folder).mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%d %H%M%S")
     j, n = Path(folder) / f"{stamp}.json", 2
@@ -592,8 +568,7 @@ def new_journal_path(folder) -> Path:
 
 
 def describe(journal_path) -> dict:
-    """What an Apply moved, for the question before its undo: the library folder, how many
-    items and when."""
+    """for the undo prompt: library folder, item count, when"""
     data = json.loads(Path(journal_path).read_text(encoding="utf-8"))
     moves = sum(1 for op in data.get("ops", []) if op.get("op") == "move")
     try:
@@ -604,7 +579,7 @@ def describe(journal_path) -> dict:
 
 
 def undo(journal_path, on_line=None) -> dict:
-    """Move back everything the journal moved that is still where Organize put it."""
+    """only moves back what is still where Organize put it"""
     journal_path = Path(journal_path)
     data = json.loads(journal_path.read_text(encoding="utf-8"))
     back, failed = 0, []
@@ -637,12 +612,8 @@ def undo(journal_path, on_line=None) -> dict:
     return {"moved": back, "failed": failed}
 
 
-# ── the real readers ─────────────────────────────────────────────────────────
 def make_identify(read_image_member: Callable, firmware_of: Callable, passwords=None) -> Callable:
-    """identify(path, kind) for scan(), over the app's readers: *read_image_member(image,
-    member)* returns a member's bytes out of a .ffpfs/.ffpfsc, *firmware_of(path)* the
-    firmware a game's eboot.bin needs ('' when unknown). Only param.json / param.sfo and
-    eboot.bin are ever read, never a whole game."""
+    """reads only param.json/param.sfo and eboot.bin, never a whole game"""
     import ps4pkg
 
     def ps4_dict(i) -> dict:
@@ -707,9 +678,8 @@ def make_identify(read_image_member: Callable, firmware_of: Callable, passwords=
     return identify
 
 
-# ── one source into a library (the "Organize" job output) ───────────────────
 def library_folders(out) -> dict:
-    """{title id: Ps4Library} for the title folders directly under *out* (first by name wins)."""
+    """{title id: Ps4Library} for title folders right under out; first by name wins"""
     found: dict = {}
     try:
         children = sorted(Path(out).iterdir(), key=lambda q: q.name.lower())
@@ -724,7 +694,7 @@ def library_folders(out) -> dict:
 
 
 def _free_name(dst_dir: Path, name: str, taken=(), key=str, is_dir: bool = False) -> str:
-    """'<stem> (n)<ext>' that is not on disk and whose key(path) is not in *taken*."""
+    """'<stem> (n)<ext>' free on disk and not in taken"""
     stem, ext = (name, "") if is_dir else os.path.splitext(name)
     n = 2
     while os.path.lexists(dst_dir / f"{stem} ({n}){ext}") or key(dst_dir / f"{stem} ({n}){ext}") in taken:
@@ -733,8 +703,7 @@ def _free_name(dst_dir: Path, name: str, taken=(), key=str, is_dir: bool = False
 
 
 def case_blind(d: Path) -> bool:
-    """True when the drive of folder *d* does not tell names apart by case (the default on macOS
-    and Windows); found by a probe file. Unknown counts as True, the careful answer."""
+    """probe-file test; unknown counts as case-blind, the careful answer"""
     try:
         fd, probe = tempfile.mkstemp(prefix=".CaseProbe-", dir=str(d))
         os.close(fd)
@@ -758,8 +727,7 @@ _SET_ASIDE = re.compile(r"^(?P<base>.+)\.copy-old(?: \(\d+\))?$")
 
 
 def restore_set_aside(folder: Path, on_line=None) -> int:
-    """An Overwrite cut short leaves the old item as '<name>.copy-old': where '<name>' is gone,
-    it takes its name back (it may be the only intact copy). How many came back."""
+    """<name>.copy-old from a cut-short Overwrite gets its name back: may be the only intact copy"""
     back = 0
     try:
         entries = list(Path(folder).iterdir())
@@ -782,7 +750,6 @@ def restore_set_aside(folder: Path, on_line=None) -> int:
 
 
 def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists: str = "skip", on_line=None) -> int:
-    """Copy (mode keep) or move (mode move) what *src* holds into the library *out*, in its own format and under its library name."""
     import copy_job
     src, out = Path(src), Path(out)
     if src.is_dir() and (out == src or src in out.parents):
@@ -832,9 +799,9 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
     key = (lambda p: str(p).casefold()) if case_blind(out) else str
     known = library_folders(out)
     sizes = {e.path: max(1, _size_of(e.path)) for e in ok}
-    # the game first and the biggest first: when two get the same name, the main one keeps it
+    # game and biggest first: on a name clash the main one keeps the name
     ok.sort(key=lambda e: (e.role != "game", -sizes[e.path]))
-    # library_layout groups by title: match its answers to the entries by source path, not order
+    # library_layout groups by title, so match by source path, not order
     _by_key = {Path(k): (k, f, sb, n) for k, f, sb, n in
                uc.library_layout([_lib_item(e) for e in ok], {t: k for t, k in known.items() if k},
                                  title_of=_game_name)}
@@ -843,7 +810,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
         for _d in {out / _folder[0], out / _folder[0] / _folder[1]} if _folder[1] else {out / _folder[0]}:
             if _d.is_dir():
                 restore_set_aside(_d, on_line)
-    # A title folder already there takes its new name (a newer version) by a rename.
+    # an existing title folder gets its new name (newer version) by rename
     renamed: dict[str, str] = {}
     for e, (_k, folder, _s, _n) in zip(ok, placed):
         lib = known.get(e.title_id)
@@ -944,8 +911,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
         else:
             rc_all = 1
         done += size
-    # What came with one game (checksums, tools, notes) goes into its title folder, as it sat
-    # in the source. With several titles in the source nobody knows whose it is: it stays.
+    # extras follow a single game into its folder; with several titles they stay put
     if companions and single and folders:
         home = folders[0]
         for c in companions:
@@ -982,8 +948,7 @@ def organize_into(src, out, identify: Callable, *, mode: str = "keep", if_exists
 
 
 def _bring_file(src: Path, dst: Path, *, move: bool) -> int:
-    """Any file (run_copy takes containers only) to *dst*: a rename on one drive, else a copy
-    under a temporary name that takes the real one when complete; a move then drops the source."""
+    """rename on one drive, else copy to a temp name and swap it in; move drops the source after"""
     if move:
         try:
             os.rename(src, dst)
@@ -992,7 +957,7 @@ def _bring_file(src: Path, dst: Path, *, move: bool) -> int:
             pass
     part = None
     try:
-        fd, part = tempfile.mkstemp(prefix=".copy-", suffix=".tmp", dir=dst.parent)   # ours alone
+        fd, part = tempfile.mkstemp(prefix=".copy-", suffix=".tmp", dir=dst.parent)
         os.close(fd)
         shutil.copy2(src, part)
         os.replace(part, dst)

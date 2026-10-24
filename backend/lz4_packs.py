@@ -1,9 +1,4 @@
-"""LZ4 asset packs for games that load through AMPR (drakmor's ampr_emu).
-
-The game's data files go into seekable LZ4 packs (ampr_assets-*.pak) that ampr_emu, placed in
-the game's fakelib/, reads while the game runs. The result is still a plain game folder: it
-goes into a folder or an .exfat like any other game. The packer is drakmor's ampr_pack, vendored
-in backend/ampr_pack/; the runtime that reads the packs ships in backend/native/ampr/."""
+"""LZ4 asset packs for AMPR games, read at runtime by drakmor's ampr_emu in fakelib/"""
 from __future__ import annotations
 
 import os
@@ -24,11 +19,7 @@ ASSETS_INDEX = "ampr_assets.index"
 RUNTIME_VERSION = "0.4.2.1"
 MIN_GAIN_PERCENT = 5
 
-# Packed: game data below the game's own folder. Loose, whatever a rule above said: the files
-# a game or the console opens before AMPR runs or reads past it, as ps5-dump-forge and the
-# LZ4 Compression payload keep them (executables, modules, system folders, indexes, configs,
-# text, pictures, video and audio). The last matching rule wins. Patterns are fnmatch, where
-# "*" also crosses "/", so the files in the game's own folder are listed one by one.
+# loose: anything opened before AMPR runs. last rule wins, fnmatch * crosses /
 _LOOSE_DIRS = ("sce_sys", "sce_module", "fakelib", "system", "save", "mods")
 _LOOSE_EXT = ("prx", "sprx", "elf", "self", "pak", "utoc", "ucas", "rpkg",
               "ini", "json", "xml", "txt", "cfg", "toml", "yaml", "yml",
@@ -49,7 +40,7 @@ def _toml_list(items) -> str:
 
 
 def default_profile(root: Path) -> str:
-    """The conservative profile for *root*: data in subfolders packed, the rest loose."""
+    """subfolder data packed, everything else loose"""
     top = sorted(_glob_literal(p.name) for p in Path(root).iterdir() if not p.is_dir())
     loose = list(top)
     for d in _LOOSE_DIRS:
@@ -90,7 +81,7 @@ class Lz4Error(RuntimeError):
 
 
 def runtime_path() -> Path:
-    """The bundled pack-capable libSceAmpr.sprx (source checkout or frozen app)."""
+    """the bundled libSceAmpr.sprx that can read packs"""
     candidates = [_HERE / "native" / "ampr" / RUNTIME_NAME]
     frozen = getattr(sys, "_MEIPASS", None)
     if frozen:
@@ -103,8 +94,7 @@ def runtime_path() -> Path:
 
 
 def uses_ampr(root: Path) -> bool | None:
-    """True when the game's eboot.bin imports libSceAmpr, False when it does not, None when it
-    cannot be read (missing, encrypted)."""
+    """None when eboot.bin can't be read (missing, encrypted)"""
     import backport
     eboot = Path(root) / "eboot.bin"
     try:
@@ -132,7 +122,7 @@ def _bar(pct: int, label: str, started: float, done: int = 0) -> str:
 
 
 class _Progress:
-    """ampr_pack's build progress as the backend's bar lines (the GUI reads those)."""
+    """ampr_pack progress as the bar lines the GUI parses"""
 
     def __init__(self, log):
         self.log, self.started, self.last = log, time.monotonic(), 0.0
@@ -154,10 +144,7 @@ class _Progress:
 
 
 def pack_game(root: Path, *, profile: Path | None = None, workers: int = 0, log=print) -> dict:
-    """Turn *root* (the app's own working copy of /app0) into an LZ4-packed game in place:
-    install the runtime, index the complete game, pack, verify every block and every packed
-    file against the original, then remove the packed originals and put the packs next to the
-    loose files. *root* must be a copy the app may change. Returns the packer's numbers."""
+    """in place, deletes the packed originals: root must be a copy the app may change"""
     import ampr_pack
     import build_ampr_index
 
@@ -168,7 +155,7 @@ def pack_game(root: Path, *, profile: Path | None = None, workers: int = 0, log=
     for leftover in root.glob("ampr_assets*"):
         raise Lz4Error(f"the game already holds LZ4 packs ({leftover.name}); unpack it first")
 
-    # the runtime first: the index lists every file of the game as it is deployed
+    # runtime goes in first, the index has to list it too
     fakelib = root / "fakelib"
     fakelib.mkdir(exist_ok=True)
     old = fakelib / RUNTIME_NAME
@@ -233,9 +220,7 @@ def is_packed(root: Path) -> bool:
 
 
 def unpack_game(root: Path, *, log=print) -> dict:
-    """The way back: put every file of the LZ4 packs in *root* back where it was, remove the
-    packs and rebuild ampr_emu.index for the files now there. *root* must be a copy the app
-    may change. The ampr_emu runtime stays: it reads loose files as well."""
+    """in place, root must be a copy the app may change. runtime stays, it reads loose files too"""
     import ampr_pack
     import build_ampr_index
 
@@ -258,7 +243,7 @@ def unpack_game(root: Path, *, log=print) -> dict:
         got = ampr_pack.extract_packs(index, root, (), False, True)
     except (ampr_pack.PackError, ValueError, OSError) as e:
         raise Lz4Error(f"LZ4 unpacking failed: {e}") from e
-    for name in volumes:                      # the volumes the manifest names, wherever they sit
+    for name in volumes:
         vol = (index.parent / name).resolve()
         if vol.is_file() and root.resolve() in vol.parents:
             vol.unlink()

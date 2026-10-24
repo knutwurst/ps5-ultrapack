@@ -1,8 +1,4 @@
-"""OS clutter (._*, .DS_Store, __MACOSX, …) is never extracted, copied, moved along or
-packed: one list across the app, and the extractors drop it on the way in.
-
-    PYTHONPATH=. /tmp/ps5venv/bin/python -m unittest backend.tests.test_junk_filter
-"""
+"""PYTHONPATH=. /tmp/ps5venv/bin/python -m unittest backend.tests.test_junk_filter"""
 
 from __future__ import annotations
 
@@ -92,7 +88,6 @@ class Extraction(unittest.TestCase):
         self.assertEqual(tree(root.parent), CLEAN_TREE)
 
     def test_a_whole_extraction_is_swept(self):
-        # what the RAR and 7z readers leave behind: clutter beside and below the game
         d = self.tmp / "ex2"
         plant(d)
         self.assertEqual(ultra_core.strip_fs_junk(d), 7)
@@ -116,9 +111,7 @@ class Extraction(unittest.TestCase):
         self.assertEqual(tree(root.parent), CLEAN_TREE)
 
     def test_unwrapping_a_nested_image_moves_no_clutter_up(self):
-        # exFAT: macOS adds a "._<file>" beside a file the extractor just wrote and may take
-        # it away again moments later. It is not moved into place, and one that vanished
-        # between listing and moving is no error.
+        # exFAT: macOS adds ._ files and may take them back a moment later. lovely
         out = self.tmp / "unpacked"
         out.mkdir()
         (out / "inner.ffpfs").write_bytes(b"")
@@ -156,7 +149,6 @@ def tearDownModule():
 
 
 class WrittenClutter(unittest.TestCase):
-    """strip_written_clutter: only the job's own output and the sidecars beside it."""
     def test_file_output(self):
         import tempfile
         root = Path(tempfile.mkdtemp()); title = root / "Title [PPSA00001]"; title.mkdir()
@@ -182,9 +174,6 @@ class WrittenClutter(unittest.TestCase):
 
 
 class EmptyScratch(unittest.TestCase):
-    """The app's own work folders go once they are empty (or hold only OS clutter); real
-    files and folders of the user's own stay."""
-
     def setUp(self):
         import ultra_core
         self.uc = ultra_core
@@ -223,8 +212,6 @@ class EmptyScratch(unittest.TestCase):
         self.assertEqual(gone, [b / "_ffpfsc_temp" / "_extracted", b / "_ffpfsc_temp"])
 
 class RemovableParts(unittest.TestCase):
-    """What a cleanup may delete under a scratch folder while queued jobs still read parts of it."""
-
     def setUp(self):
         import ultra_core
         self.uc = ultra_core

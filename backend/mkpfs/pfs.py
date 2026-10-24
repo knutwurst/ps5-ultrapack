@@ -418,8 +418,6 @@ def encrypt_image_filesystem(
 
 @dataclass(frozen=True)
 class SignedInodeLayout:
-    """Describe the signed inode layout currently being written or parsed."""
-
     inode_size: int
     entry_size: int
     block_format: str
@@ -1815,15 +1813,13 @@ def write_source_to_blocks(
             remaining_bytes -= block_bytes_to_copy
 
 
-# Files below this size stay: they free little, and small metadata may be read again.
+# smaller files stay: they free little and metadata may be read again
 CONSUME_MIN_SIZE: int = 1 << 20
 _CONSUME_REPORT_STEP: int = 1 << 30
 
 
 def _consume_written_source(path: Path, source_root: Path, freed: int, files: int) -> tuple[int, int]:
-    """Delete one source file whose bytes the image now holds (an uncompressed build whose
-    caller owns the source copy). Only below *source_root*, never under sce_sys, never a link,
-    never a small file. Prints '[consume] freed …' each GB. Returns the new (bytes, files)."""
+    """only below source_root, never sce_sys, a link or a small file"""
     try:
         rel = path.resolve().relative_to(source_root.resolve())
     except (OSError, ValueError):
@@ -3883,9 +3879,7 @@ def build_pfs(
     try:
         image_size = final_ndblock * block_size
         with tmp_path.open("w+b") as out:
-            # Consuming the source, the image grows as its files arrive (they are laid out in
-            # ascending order): presized, it would claim the whole game at once on a drive
-            # without sparse files (exFAT, NTFS) while the source still holds it too.
+            # consuming: grow as we go, exFAT/NTFS have no sparse files to presize into
             consume_source = consume_source and not compress and not signed
             if not consume_source:
                 out.truncate(image_size)
@@ -4014,7 +4008,7 @@ def build_pfs(
                     bytes_processed=written_bytes,
                 )
             if consume_source:
-                out.truncate(image_size)        # the full size, now that all of it is written
+                out.truncate(image_size)  # full size once everything is written
 
             if signed:
                 sign_key = pfs_gen_sign_key(resolved_ekpfs, seed)
@@ -6234,7 +6228,6 @@ def read_pfs_info(image: Path) -> PFSImageInfo:
 
 
 def detect_image_format(image: Path, *, hint: ImageFormat = ImageFormat.AUTO) -> ImageFormat:
-    """Return the effective image format for verify/unpack workflows."""
     if hint in (ImageFormat.PFS, ImageFormat.EXFAT):
         return hint
 
@@ -6520,8 +6513,6 @@ def verify_pfs_image(
 
 
 class _LogicalFileView:
-    """Seekable, read-only view over one inode's logical payload."""
-
     _CACHE_BLOCKS: int = 16
 
     def __init__(
@@ -6772,7 +6763,7 @@ def _normalize_extract_selectors(selectors: list[str] | None) -> list[str] | Non
 
 
 def _exfat_target_inside(base: Path, rel: str) -> bool:
-    """True when *rel* stays inside *base* (the reader already refuses such names)."""
+    """belt and braces, the reader already refuses such names"""
     try:
         root = base.resolve()
         return (root / rel).resolve().is_relative_to(root) and (root / rel).resolve() != root
@@ -6903,7 +6894,7 @@ def _extract_inner_exfat(
     new_crypt: bool,
     selectors: list[str] | None = None,
 ) -> PFSExtractionResult | None:
-    """Extract the contents of an inner exFAT image, or None if there isn't one."""
+    """None when the image holds no inner exFAT"""
     opened: tuple[_LogicalFileView, BinaryIO, str] | None = open_inner_file_view(
         image, ekpfs=ekpfs, new_crypt=new_crypt
     )

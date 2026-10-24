@@ -1,9 +1,4 @@
-"""Downloader + prepare_target - Tk-free. The downloader is exercised against a local
-HTTP server (no live GitHub), so the tests run offline; prepare_target runs an actual
-BPS end-to-end using a synthetic 10.01-shaped source and a patch this test builds itself.
-
-    python3 -m unittest backend.tests.test_backport_libs
-"""
+"""python3 -m unittest backend.tests.test_backport_libs"""
 from __future__ import annotations
 
 import hashlib
@@ -21,9 +16,6 @@ from backend.tests.test_bps_patch import make_bps
 
 
 class _LocalRepo:
-    """A tiny stand-in for GitHub's contents + raw endpoints. `add(sub, name, body)`
-    registers a file; the server responds to /contents/patches/<sub> (as JSON) and to
-    /raw/HEAD/patches/<sub>/<name> (as bytes)."""
     def __init__(self):
         self.files: dict[tuple[str, str], bytes] = {}
 
@@ -64,7 +56,7 @@ def _serve(repo: _LocalRepo):
 class DownloadPatches(unittest.TestCase):
     def setUp(self):
         self.repo = _LocalRepo()
-        # The bytes are just placeholders - the downloader only cares about size + SHA.
+        # placeholder bytes, the downloader only checks size and SHA
         self.repo.add("7xx", "libSceX.bps", b"BPS1" + b"\x80" * 4 + struct.pack("<I", 0) * 3)
         self.repo.add("7xx", "libSceY.bps", b"BPS1" + b"\x80" * 6 + struct.pack("<I", 0) * 3)
         self.srv, self.th = _serve(self.repo)
@@ -104,8 +96,6 @@ class DownloadPatches(unittest.TestCase):
 
 
 class PrepareTarget(unittest.TestCase):
-    """A synthetic 10.01 "library" (real BPS source blob) plus a patch that flips a run
-    of bytes. prepare_target applies it and writes the result to <out>/<target>/."""
     def setUp(self):
         self.td = tempfile.TemporaryDirectory(); self.root = Path(self.td.name)
         self.fw = self.root / "fw"; self.fw.mkdir()
@@ -124,7 +114,6 @@ class PrepareTarget(unittest.TestCase):
             json.dumps({"libSceExample.bps":
                         hashlib.sha1(f"blob {len(patch)}\0".encode() + patch).hexdigest()}),
             encoding="utf-8")
-        # Bypass the downloader: the patch is already on disk and matches its manifest.
         self._save_dp = bl.download_patches
         bl.download_patches = lambda target, cache_dir, log=None: bl.DownloadReport(
             downloaded=[], up_to_date=["libSceExample.bps"])
@@ -149,14 +138,12 @@ class PrepareTarget(unittest.TestCase):
         self.assertEqual(r.failed, [])
 
     def test_wrong_source_reports_a_failure(self):
-        # Wrong size (fails the header size check) and wrong content (would fail the CRC)
-        # both surface as a per-library failure, never a crash, never a silent skip.
         (self.fw / "libSceExample.sprx").write_bytes(bytes(200))
         r = bl.prepare_target("7.61", self.fw, self.out, cache_dir=self.cache)
         self.assertEqual(r.patched, [])
         self.assertEqual(len(r.failed), 1)
         self.assertIn("expects", r.failed[0][1])
-        # Right size, wrong bytes → the CRC check catches it.
+        # right size, wrong bytes: the CRC catches it
         (self.fw / "libSceExample.sprx").write_bytes(bytes(len(self.source)))
         r = bl.prepare_target("7.61", self.fw, self.out, cache_dir=self.cache)
         self.assertEqual(len(r.failed), 1)

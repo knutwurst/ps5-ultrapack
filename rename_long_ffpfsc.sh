@@ -1,30 +1,13 @@
 #!/usr/bin/env bash
-#
-# rename_long_ffpfsc.sh
-#
-# One-off renamer for the .ffpfsc files whose names exceed ShadowMount's ~63-byte
-# filename limit because the GAME TITLE is long (edition fluff). Each entry below maps a
-# Title ID (unique, ASCII — robust to match on) to a hand-shortened target name.
-#
-# EDIT the MAP entries below to taste before applying — change any name you don't like.
-# Files are matched by "*<TITLEID>*.ffpfsc" under the search dir and renamed IN PLACE
-# (same folder). The folder names are left alone (only the path-component .ffpfsc matters
-# to ShadowMount).
-#
-# SAFE BY DEFAULT: DRY RUN. Re-run with --apply (or -a) to actually rename.
-#
-# Usage:
-#   ./rename_long_ffpfsc.sh "/Volumes/Games/PS5"
-#   ./rename_long_ffpfsc.sh "/Volumes/Games/PS5" --apply
-#
+# renames .ffpfsc files too long for ShadowMount (~63 bytes); dry run unless --apply
+# usage: ./rename_long_ffpfsc.sh <dir> [--apply]
 set -euo pipefail
 
-# --- EDIT ME: "TITLEID|New base name (without .ffpfsc extension)" -------------------
+# EDIT ME: TITLEID|new base name without .ffpfsc
 MAP=(
   "PPSA00001|Example Title [PPSA00001] [01.009]"
   "PPSA00002|Another Example Title [PPSA00002] [01.004]"
 )
-# ------------------------------------------------------------------------------------
 
 APPLY=0
 ROOT=""
@@ -47,7 +30,6 @@ done_n=0; miss_n=0; skip_n=0
 for entry in "${MAP[@]}"; do
   tid="${entry%%|*}"
   newbase="${entry#*|}"
-  # First .ffpfsc whose name contains the Title ID.
   f="$(find "$ROOT" -type f -iname "*${tid}*.ffpfsc" -print 2>/dev/null | head -1)"
   if [[ -z "$f" ]]; then
     echo "  [MISS] no .ffpfsc found for $tid"

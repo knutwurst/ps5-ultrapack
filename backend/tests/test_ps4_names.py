@@ -59,7 +59,7 @@ class Layout(unittest.TestCase):
         got = uc.ps4_layout([(Path("d.pkg"), ident("dlc", "01.00", title="Sample Game - Skin"))], known=known)
         self.assertEqual(got, [(Path("d.pkg"), "Sample Game [CUSA00001] [v01.62]", "DLC Pack",
                                 "Sample Game DLC Skin [CUSA00001] [v01.62].pkg")])
-        # an update newer than the folder: the folder is to carry the higher version
+        # a newer update bumps the folder version
         known = {"CUSA00001": uc.Ps4Library("Sample Game [CUSA00001] [v01.05]", "01.05", has_dlc_pack=False)}
         got = uc.ps4_layout([(Path("u.pkg"), ident("update", "01.07"))], known=known)
         self.assertEqual(got[0][1:], ("Sample Game [CUSA00001] [v01.07]", "", "Sample Game [CUSA00001] UPDATE [v01.07].pkg"))
@@ -90,7 +90,6 @@ class Layout(unittest.TestCase):
 
 
 class DashSeparators(unittest.TestCase):
-    """Titles often separate parts with an en or em dash instead of a hyphen."""
     EN, EM = "\u2013", "\u2014"
 
     def test_lone_dlc_with_dash(self):
@@ -111,8 +110,6 @@ class DashSeparators(unittest.TestCase):
 
 
 class ParamTitle(unittest.TestCase):
-    """The title out of a param.json: English when the game has it, else its default language."""
-
     def param(self, default, *langs):
         lp = {"defaultLanguage": default}
         for lang, name in langs:

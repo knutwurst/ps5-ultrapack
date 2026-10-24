@@ -1,5 +1,3 @@
-"""Guards in backend/cli.py and backend/copy_job.py that protect the user's files."""
-
 from __future__ import annotations
 
 import inspect
@@ -29,7 +27,6 @@ MARKER = b"previous build - must survive"
 
 
 def make_game(root: Path) -> Path:
-    """A minimal PS5-style game folder: sce_sys/param.json + eboot.bin + one data file."""
     game = root / "game"
     (game / "sce_sys").mkdir(parents=True)
     (game / "sce_sys" / "param.json").write_text(json.dumps({
@@ -44,7 +41,6 @@ def make_game(root: Path) -> Path:
 
 
 def run_cli(*argv: str, temp_dir: Path) -> subprocess.CompletedProcess:
-    """Run cli.py the way the GUI does: stdin closed, output captured."""
     return subprocess.run(
         [sys.executable, str(CLI), *argv, "--temp-dir", str(temp_dir)],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180,
@@ -53,7 +49,7 @@ def run_cli(*argv: str, temp_dir: Path) -> subprocess.CompletedProcess:
 
 class PackGuardTests(unittest.TestCase):
     def setUp(self):
-        # resolve(): cli.py prints resolved paths, and macOS maps /var -> /private/var.
+        # macOS: /var is really /private/var, and cli.py prints resolved paths
         self.root = Path(tempfile.mkdtemp(prefix="cli_guards_")).resolve()
         self.game = make_game(self.root)
         self.out = self.root / "out"
@@ -66,8 +62,6 @@ class PackGuardTests(unittest.TestCase):
 
     def _pack(self, output: Path, *extra: str) -> subprocess.CompletedProcess:
         return run_cli(str(self.game), str(output), "--pack", *extra, temp_dir=self.temp)
-
-    # ── item 2: source == output ─────────────────────────────────────────────
 
     def test_same_path_overwrite_is_refused_and_the_image_survives(self):
         image = self.out / "X.ffpfs"
@@ -84,8 +78,6 @@ class PackGuardTests(unittest.TestCase):
         self.assertTrue(image.is_file(), "the source image must not be deleted")
         self.assertEqual(image.read_bytes(), before, "the source image must be untouched")
 
-    # ── item 1: stale pass-1 inner image ─────────────────────────────────────
-
     def test_stale_pass1_image_does_not_block_a_rebuild(self):
         inner_dir = self.temp / "_ffpfsc_inner"
         inner_dir.mkdir()
@@ -98,8 +90,6 @@ class PackGuardTests(unittest.TestCase):
         self.assertNotIn("EOFError", res.stdout + res.stderr)
         self.assertNotIn("Overwrite?", res.stdout)
         self.assertTrue((self.out / "G.ffpfsc").is_file())
-
-    # ── item 3: overwrite swaps the finished build in ────────────────────────
 
     def test_overwrite_replaces_the_output_only_with_a_finished_build(self):
         target = self.out / "G.ffpfsc"
@@ -117,8 +107,7 @@ class PackGuardTests(unittest.TestCase):
     def test_failed_overwrite_build_keeps_the_previous_file(self):
         target = self.out / "G.ffpfsc"
         target.write_bytes(MARKER)
-        # A directory where mkpfs wants to open its temp file makes pass 2 fail
-        # deterministically (the same effect as ENOSPC or an unplugged drive).
+        # a dir where mkpfs wants its temp file: pass 2 fails like on ENOSPC
         (self.out / "G.ffpfsc.partial.tmp").mkdir()
 
         res = self._pack(target, "--overwrite")
@@ -141,8 +130,6 @@ class PackGuardTests(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
         self.assertEqual(target.read_bytes(), src_image.read_bytes())
         self.assertFalse((self.out / "Y.ffpfs.partial").exists())
-
-    # ── item 6: --keep-pfs picks a free name ─────────────────────────────────
 
     def test_keep_pfs_does_not_clobber_an_existing_ffpfs(self):
         kept = self.out / f"{TITLE_ID}.ffpfs"
@@ -167,8 +154,6 @@ class PackGuardTests(unittest.TestCase):
 
 
 class ZipSourceTests(unittest.TestCase):
-    """Item 7: only the extraction is inside the try; the body's errors are its own."""
-
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="cli_zip_"))
 
@@ -198,9 +183,6 @@ class ZipSourceTests(unittest.TestCase):
 
 
 class _DroppingWriter:
-    """Claims to write every chunk but silently drops the second one, so the bytes
-    on disk fall short of the source size while the caller's own count is complete."""
-
     def __init__(self, raw):
         self._raw = raw
         self._calls = 0
@@ -225,8 +207,6 @@ class _DroppingWriter:
 
 
 class CopyJobIntegrityTests(unittest.TestCase):
-    """Item 4: a cross-drive move verifies the copy before the source is deleted."""
-
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="copy_guard_"))
         self.src = self.root / "src" / "game.pkg"
@@ -294,8 +274,6 @@ class CopyJobIntegrityTests(unittest.TestCase):
 
 
 class FpkgBuildOrderTests(unittest.TestCase):
-    """Item 5: the checklist runs first; SUCCESS/OK markers follow; failures get a WARN."""
-
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="cli_fpkg_")).resolve()
         self.game = make_game(self.root)
@@ -329,7 +307,7 @@ class FpkgBuildOrderTests(unittest.TestCase):
         saved_argv = sys.argv
         out = io.StringIO()
         sys.modules["fpkg"] = fake
-        # OUTPUT is the second positional (as the GUI passes it); --fpkg-build names the source.
+        # OUTPUT is the second positional, like the GUI passes it
         sys.argv = ["cli.py", str(self.game), str(self.out), "--fpkg-build", str(self.game),
                     "--temp-dir", str(self.temp)]
         code = 0
@@ -367,14 +345,11 @@ class FpkgBuildOrderTests(unittest.TestCase):
 
 
 class MkpfsResolverTests(unittest.TestCase):
-    """Item 8: only the bundled package; a missing one is a hard, explicit error."""
-
     def test_uses_the_bundled_package_only(self):
         with redirect_stdout(io.StringIO()):
             cmd, cwd = cli._locate_mkpfs()
         self.assertEqual(cmd, [sys.executable, "-m", "mkpfs"])
         self.assertEqual(cwd, str(BACKEND))
-        # No runtime pip install, no PATH lookup, no sibling-directory scan left in the code.
         src = inspect.getsource(cli._locate_mkpfs)
         self.assertNotIn('"pip"', src)
         self.assertNotIn("subprocess.run", src)
@@ -396,9 +371,6 @@ class MkpfsResolverTests(unittest.TestCase):
 
 
 class SilentStepProgress(unittest.TestCase):
-    """A full .pkg extract prints nothing until it is done; the backend measures the files
-    already on disk and prints mkpfs-style bars the GUI reads (stage, %, speed, ETA)."""
-
     PROGRESS = __import__("re").compile(r"\[(?P<bar>[#\-]{4,})\]\s*(?P<pct>\d{1,3})%\s*(?P<label>.*)")
 
     def test_bars_follow_the_bytes_on_disk(self):
@@ -448,8 +420,6 @@ class SilentStepProgress(unittest.TestCase):
             self.assertEqual(cli._drive_label(Path("/tmp")), "the system drive")
 
     def test_the_extract_bar_counts_the_files_only(self):
-        # the package tool writes the files straight out: the bar's total is their size, and
-        # its last line reads like the others (no function name, no placeholders)
         with tempfile.TemporaryDirectory() as td:
             folder = Path(td)
             line = cli._progress_line(150 * 1024 ** 3, 200 * 1024 ** 3, 60,
@@ -481,9 +451,7 @@ class SilentStepProgress(unittest.TestCase):
             self.assertTrue(cli._tree_has_links(d))
 
     def test_the_writers_counter_wins_over_file_sizes(self):
-        # the .pkg tool creates each file at its full size first, then fills it: the size
-        # on disk says 100 % while the data is still coming. The tool's own write counter
-        # is the truth; the folder size is only the fallback.
+        # the .pkg tool presizes each file, so the size on disk says 100% way too early
         import time
         with tempfile.TemporaryDirectory() as td:
             folder = Path(td)
@@ -532,8 +500,7 @@ class SilentStepProgress(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin" or __import__("importlib").util.find_spec("psutil"),
                          "needs proc_pid_rusage or psutil")
     def test_a_coarse_tool_bar_gets_a_byte_meter(self):
-        # MkPFS pass 1 counts whole files; the meter counts the bytes the process wrote,
-        # and stays quiet until 1 % is written (the tool's scan/read bars come first)
+        # MkPFS pass 1 counts whole files; the meter counts bytes and stays quiet below 1%
         import subprocess
         with tempfile.TemporaryDirectory() as td:
             target = Path(td) / "img.bin"

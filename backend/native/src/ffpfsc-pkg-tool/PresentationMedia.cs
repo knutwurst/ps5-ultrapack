@@ -10,20 +10,8 @@ using ImageMagick;
 
 namespace PkgTool;
 
-/// <summary>
-/// The presentation images in sce_sys must be real 8-bit, non-interlaced PNGs in a fixed colour
-/// mode: icon0/pic0/pic1 (and their _NN variants) RGB without alpha, pic2 (the foreground image
-/// shown while the application starts) RGBA. icon0 is 512x512 (retail packages; the publishing
-/// tools reject other resolutions). A dump can carry a PNG under the wrong name or in the wrong
-/// form — one sample had 532 bytes of unrelated data as pic2.png while the real picture was
-/// intact as pic2.dds. This step, run on the staged mirror, makes every presentation PNG valid:
-///   • valid                              → kept as is;
-///   • a readable PNG in the wrong form   → converted (mode, depth, interlace; icon0 resized);
-///   • unreadable or missing, .dds exists → regenerated from the DDS;
-///   • unreadable, no DDS                 → removed (nothing is built from garbage).
-/// Files are replaced by delete + write, so a hard link into the user's source is never
-/// written through. Output PNGs carry no time or text chunks, so builds stay reproducible.
-/// </summary>
+// sce_sys PNGs must be 8-bit, not interlaced, RGB (pic2 RGBA), icon0 512x512
+// replace by delete + write: never write through a hard link into the user's source
 internal static class PresentationMedia
 {
     public const int ColourRgb = 2, ColourRgba = 6;
@@ -32,8 +20,7 @@ internal static class PresentationMedia
 
     public readonly record struct PngInfo(int Width, int Height, int Depth, int Colour, int Interlace);
 
-    /// <summary>"icon0", "pic0", "pic1" or "pic2" for a presentation PNG name (also _NN
-    /// variants), else null.</summary>
+    // icon0, pic0, pic1 or pic2 for a PNG name (also _NN variants), else null
     public static string? Kind(string pngName)
     {
         var stem = Path.GetFileNameWithoutExtension(pngName).ToLowerInvariant();
@@ -49,7 +36,7 @@ internal static class PresentationMedia
         _ => null,
     };
 
-    /// <summary>IHDR fields of a PNG (signature + IHDR at the start), else null.</summary>
+    // IHDR fields of a PNG, else null
     public static PngInfo? ReadPng(ReadOnlySpan<byte> h)
     {
         if (h.Length < 29) return null;
@@ -73,9 +60,7 @@ internal static class PresentationMedia
         catch (UnauthorizedAccessException) { return null; }
     }
 
-    /// <summary>What is wrong with <paramref name="info"/> for <paramref name="pngName"/>
-    /// (null = valid). Size rules only for icon0; a pic of another size is reported by
-    /// <see cref="SizeNote"/> but not changed.</summary>
+    // null when valid; size is enforced for icon0 only, other pics just get a SizeNote
     public static string? Problem(string pngName, PngInfo? info)
     {
         if (info is not PngInfo p) return "not a PNG";
@@ -106,8 +91,7 @@ internal static class PresentationMedia
             img.Resize(new MagickGeometry(IconSize, IconSize) { IgnoreAspectRatio = true });
         if (colour == ColourRgb)
         {
-            // Flatten onto black, then drop the channel: colour stored under transparent pixels
-            // is often leftover data and must not show; an opaque image is unchanged.
+            // flatten onto black: colour under transparent pixels is often junk
             if (img.HasAlpha)
             {
                 img.BackgroundColor = MagickColors.Black;
@@ -122,8 +106,7 @@ internal static class PresentationMedia
             img.Format = MagickFormat.Png32;
         }
         img.Settings.Interlace = Interlace.NoInterlace;
-        // Only the critical chunks: ImageMagick otherwise stamps date:create/date:modify and
-        // tIME with the wall clock, and a deterministic build would differ from run to run.
+        // critical chunks only: ImageMagick stamps the wall clock and breaks reproducible builds
         img.Settings.SetDefine(MagickFormat.Png, "exclude-chunk", "all");
         var png = img.ToByteArray();
         var problem = Problem(pngName, ReadPng(png));
@@ -152,8 +135,7 @@ internal static class PresentationMedia
         File.WriteAllBytes(path, data);
     }
 
-    /// <summary>Normalise the presentation PNGs in <paramref name="sceSys"/> (the staged mirror).
-    /// Returns the number of files changed; every change is logged.</summary>
+    // runs on the staged mirror; every change is logged
     public static int Normalize(string sceSys, Action<string> log)
     {
         if (!Directory.Exists(sceSys)) return 0;
@@ -211,11 +193,7 @@ internal static class PresentationMedia
         return changed;
     }
 
-    // ── DDS ──────────────────────────────────────────────────────────────────
-
-    /// <summary>Why <paramref name="ddsPath"/> is not the DDS the package needs for the PNG
-    /// <paramref name="png"/> (null = fine): a DX10 header with BC7 (DXGI 98/99), the PNG's
-    /// size, and enough block data for one mip level.</summary>
+    // null when fine: DX10 header, BC7 (DXGI 98/99), the PNG's size, one full mip
     public static string? DdsProblem(string ddsPath, PngInfo? png)
     {
         byte[] h;

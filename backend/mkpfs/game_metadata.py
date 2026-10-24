@@ -1,5 +1,3 @@
-"""Game metadata extraction helpers for GUI imports."""
-
 from __future__ import annotations
 
 import contextlib

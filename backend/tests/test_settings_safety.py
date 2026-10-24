@@ -1,6 +1,3 @@
-"""The profile files survive a failed read: settings.json and history.json are never
-replaced by a near-empty copy, the scratch sweep only takes the app's own tmp folders,
-and same_drive() answers for folders that do not exist yet."""
 from __future__ import annotations
 
 import json
@@ -19,8 +16,6 @@ import ultra_core as m  # noqa: E402
 
 
 class _Profile(unittest.TestCase):
-    """Each test gets its own profile folder."""
-
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="profile-"))
         self._saved = (m.APP_DIR, m.SETTINGS_FILE, m.HISTORY_FILE)
@@ -201,8 +196,7 @@ class SameDrive(unittest.TestCase):
     def test_missing_folders_on_another_drive_are_not_the_same(self):
         here = Path(tempfile.mkdtemp(prefix="samedrive-"))
         try:
-            # /dev is its own filesystem; a deep folder that does not exist must not compare
-            # equal through an empty drive letter
+            # /dev is its own fs; a missing deep folder must not match via an empty drive letter
             self.assertFalse(m.same_drive(Path("/dev/no/such/folder"), here / "a" / "b"))
             self.assertFalse(m.same_drive(Path("/Volumes/NoSuchDrive_ffpfsc/x/y"), here / "a"))
             self.assertTrue(m.same_drive(Path("/Volumes/NoSuchDrive_ffpfsc/x"),

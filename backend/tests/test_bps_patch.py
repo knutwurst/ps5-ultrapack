@@ -1,9 +1,4 @@
-"""BPS patcher: round-trip with hand-crafted patches, then apply a real BackPork patch
-downloaded once and cached (skipped when offline). The reference cases cover every
-action mode: SourceRead, TargetRead, SourceCopy, TargetCopy, plus RLE overlap.
-
-    python3 -m unittest backend.tests.test_bps_patch
-"""
+"""python3 -m unittest backend.tests.test_bps_patch"""
 from __future__ import annotations
 
 import struct
@@ -17,9 +12,6 @@ from backend import bps_patch as bps
 
 
 def make_bps(source: bytes, target: bytes, actions: list[tuple[str, int, int | bytes]]) -> bytes:
-    """Build a .bps for tests. *actions* is a list of (mode, length, extra):
-      ("SourceRead", n, None), ("TargetRead", n, payload_bytes),
-      ("SourceCopy", n, signed_offset), ("TargetCopy", n, signed_offset)."""
     modes = {"SourceRead": 0, "TargetRead": 1, "SourceCopy": 2, "TargetCopy": 3}
     body = bytearray()
     body += b"BPS1"
@@ -65,10 +57,10 @@ class Apply(unittest.TestCase):
 
     def test_source_copy_relocates(self):
         src = b"ABCDEFGH"
-        tgt = b"EFGHABCD"           # swap halves
+        tgt = b"EFGHABCD"
         patch = make_bps(src, tgt, [
-            ("SourceCopy", 4, 4),   # cursor 0 → 4, read 4
-            ("SourceCopy", 4, -8),  # cursor 8 → 0, read 4
+            ("SourceCopy", 4, 4),  # cursor 0 to 4, read 4
+            ("SourceCopy", 4, -8),  # cursor 8 to 0, read 4
         ])
         self.assertEqual(bps.apply(patch, src), tgt)
 
@@ -77,8 +69,7 @@ class Apply(unittest.TestCase):
         tgt = b"A" * 32
         patch = make_bps(src, tgt, [
             ("TargetRead", 1, b"A"),
-            # cursor starts at 0 (where the "A" was written); offset 0 leaves it there,
-            # the 31 reads then run over the bytes we write in this same action.
+            # offset 0 keeps the cursor on the A, the 31 reads chase our own writes
             ("TargetCopy", 31, 0),
         ])
         self.assertEqual(bps.apply(patch, src), tgt)
@@ -102,8 +93,7 @@ class Apply(unittest.TestCase):
             bps.apply(b"NOPE" + b"\x00" * 32, b"")
 
     def test_an_oversized_copy_is_refused_before_it_runs(self):
-        # A hostile TargetCopy or SourceCopy far past target_size must fail before
-        # copying a byte, so it never grows the output (or eats memory).
+        # must fail before copying a byte, or a hostile patch eats memory
         import tracemalloc
         src = b"\x01" * 64
         for action in (("TargetCopy", 5_000_000, 0), ("SourceCopy", 5_000_000, 0)):
@@ -127,11 +117,6 @@ class Apply(unittest.TestCase):
 
 
 class RealBackPorkPatch(unittest.TestCase):
-    """Apply a real BackPork .bps to a synthetic 'source' file whose bytes match the
-    patch's source CRC. We fetch libSceNpAuth.bps (36 bytes, one of the smallest) and
-    reconstruct the source from the patch itself, so no Sony code is downloaded and the
-    test still validates the format the way BackPork emits it."""
-
     URL = "https://raw.githubusercontent.com/BestPig/BackPork/HEAD/patches/7xx/libSceNpAuth.bps"
 
     def test_bestpig_patch_parses(self):
@@ -144,12 +129,8 @@ class RealBackPorkPatch(unittest.TestCase):
                 self.skipTest(f"offline: {e}")
         patch = cache.read_bytes()
         hdr, _ = bps.read_header(patch)
-        # Every BackPork patch declares a source size (10.01 library) and a target size
-        # (the older-firmware library). Both are non-empty and BPS's own footer verifies.
         self.assertGreater(hdr.source_size, 0)
         self.assertGreater(hdr.target_size, 0)
-        # The footer's own CRC32 must verify - apply() enforces this before touching
-        # the source. Read the checksum directly to test it in isolation:
         footer_crc = struct.unpack_from("<I", patch, len(patch) - 4)[0]
         self.assertEqual(zlib.crc32(patch[:-4]), footer_crc)
 

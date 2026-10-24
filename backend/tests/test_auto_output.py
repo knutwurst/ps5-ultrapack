@@ -1,8 +1,4 @@
-"""The output Auto: what an archive holds, read from its member names, and the output the
-Settings table picks for each kind of source.
-
-    PYTHONPATH=. .venv/bin/python -m unittest backend.tests.test_auto_output
-"""
+"""PYTHONPATH=. .venv/bin/python -m unittest backend.tests.test_auto_output"""
 
 from __future__ import annotations
 

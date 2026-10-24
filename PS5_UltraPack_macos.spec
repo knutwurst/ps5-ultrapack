@@ -3,8 +3,7 @@
 import re as _re
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
-# Single source of truth: read APP_VERSION straight from the app script so the
-# bundle version always matches what the UI shows (bump APP_VERSION only).
+# APP_VERSION lives in the app script only; bump it there
 _m = _re.search(r'^APP_VERSION\s*=\s*["\']([^"\']+)["\']',
                 open("PS5_UltraPack.py", encoding="utf-8").read(), _re.M)
 APP_VERSION = _m.group(1) if _m else "1.0"
@@ -12,22 +11,20 @@ APP_VERSION = _m.group(1) if _m else "1.0"
 
 import os as _os
 
-# backend/ ships as data files, minus everything that does not run inside the app.
-# Directories (relative to backend/) holding no runtime material:
+# backend/ ships as data, minus what never runs inside the app
 _BACKEND_SKIP_DIRS = {
-    _os.path.join("native", "src"),    # fPKG tool sources + .NET build inputs/outputs (~160 MB)
-    "tests",                           # test suites
+    _os.path.join("native", "src"),  # fPKG tool sources and .NET build trees (~160 MB)
+    "tests",
     _os.path.join("unrar", "src"),     # UnRAR C++ sources (compiled into unrar/_unrar*.so)
-    _os.path.join("unrar", "build"),   # setuptools build tree of that extension
+    _os.path.join("unrar", "build"),
     _os.path.join("unrar", "build-win"),
     ".github",
 }
-# Build inputs, packaging metadata and documentation, not runtime files:
 _BACKEND_SKIP_FILES = {".gitignore", ".DS_Store", "setup.py", "pyproject.toml", "_unrar.cpp",
                        "LICENSE.7-Zip.windows"}
-# .exe / .dll / .pyd are the Windows build's parts, which share backend/ with these.
+# .exe/.dll/.pyd belong to the Windows build, which shares backend/
 _BACKEND_SKIP_SUFFIXES = (".pyc", ".pyo", ".md", ".exe", ".dll", ".pyd")
-# Files every bundle must contain; a missing one is a broken build, so fail early.
+# fail early: a bundle missing any of these is broken
 _BACKEND_REQUIRED = [
     "cli.py", "fpkg.py", "copy_job.py", "fake_sign.py", "make_fself.py",
     "backport.py", "self_file.py", "backport_libs.py", "bps_patch.py",
@@ -48,10 +45,6 @@ _BACKEND_REQUIRED = [
 
 
 def _backend_datas():
-    """backend/ as (source, dest_dir) data pairs: the runtime modules (cli.py, fpkg.py,
-    copy_job.py, fake_sign.py, make_fself.py), mkpfs/, the unrar package with its compiled
-    extension, the native fPKG tool and the license/notice texts. Tests, C++ and C# sources,
-    build trees, packaging metadata, docs and bytecode caches stay out."""
     out = []
     for root, dirs, files in _os.walk("backend"):
         rel = _os.path.relpath(root, "backend")
@@ -76,7 +69,7 @@ def _backend_datas():
 
 
 datas = _backend_datas()
-# the window icon the app sets at start (the bundle icon itself is set below)
+# window icon the app sets at start; the bundle icon comes further down
 datas += [(_os.path.join("assets", "icon", n), _os.path.join("assets", "icon"))
           for n in ("app-icon-256.png", "app-icon-32.png", "app-icon.ico")]
 datas += collect_data_files("customtkinter")
@@ -91,10 +84,10 @@ a = Analysis(
     binaries=cryptography_binaries,
     datas=datas,
     hiddenimports=cryptography_hiddenimports + [
-        "ultra_core",   # the Tk-free core next to the app script
-        "ui_kit",       # the main window widgets next to the app script
-        "i18n",         # the interface language
-        "i18n_de",      # German texts (imported when German is chosen)
+        "ultra_core",
+        "ui_kit",
+        "i18n",
+        "i18n_de",  # imported lazily when German is chosen
         "py7zr",
         "py7zr.helpers",
         "py7zr.compressor",
@@ -107,7 +100,7 @@ a = Analysis(
         "PIL._tkinter_finder",
         "cryptography",
         "cryptography.hazmat.primitives.ciphers",
-        # LZ4 asset packs: drakmor's packer (backend/ampr_pack) imports these only at run time
+        # ampr_pack (LZ4 asset packs) imports these only at run time
         "lz4", "lz4.block", "tomllib", "ftplib", "statistics", "fnmatch", "bisect", "heapq",
         "concurrent.futures", "urllib.parse",
         "mkpfs",
@@ -116,7 +109,7 @@ a = Analysis(
         "mkpfs.utils",
         "mkpfs.logging",
         "mkpfs.pbar",
-        # MkPFS 1.0.0 companion modules (pfs.py/cli.py hard-import these siblings).
+        # pfs.py and cli.py hard-import these siblings
         "mkpfs.consts",
         "mkpfs.compression",
         "mkpfs.exfat",
@@ -128,7 +121,7 @@ a = Analysis(
         "mkpfs.game_metadata",
         "make_fself",
         "fake_sign",
-        "fpkg",   # new fPKG build/extract wrapper (invokes backend/native/ffpfsc-pkg-tool)
+        "fpkg",
         "argparse",
         "contextlib",
         "dataclasses",
@@ -182,8 +175,7 @@ coll = COLLECT(
 )
 
 def _min_macos() -> str:
-    """The oldest macOS the bundle runs on: the highest minimum among the Python it is built
-    with and the bundled tools (a Homebrew build follows the Mac it was built on)."""
+    """highest minimum of our Python and the bundled tools; a Homebrew build follows the build Mac"""
     import subprocess, sys
     found = []
     for binary in (sys.executable, _os.path.join("backend", "native", "7zz")):
@@ -206,8 +198,7 @@ app = BUNDLE(
     coll,
     name="PS5 UltraPack.app",
     icon=_os.path.join("assets", "icon", "app-icon.icns"),
-    # Own identifier (distinct from the older PS5 FFPFSC PRO and ULTRA bundles) so Launch
-    # Services associates .ffpfsc with THIS app, not a legacy bundle.
+    # own id so Launch Services maps .ffpfsc to this app, not an old PRO or ULTRA bundle
     bundle_identifier="com.knutwurst.ps5ultrapack",
     info_plist={
         "CFBundleDisplayName": "PS5 UltraPack",
@@ -216,8 +207,7 @@ app = BUNDLE(
         "CFBundleVersion": APP_VERSION,
         "LSMinimumSystemVersion": _MIN_MACOS,   # Finder explains it on an older macOS
         "NSHighResolutionCapable": True,
-        # Double-click a .ffpfsc / .ffpfs in Finder -> the app opens the PFS browser for
-        # it (a cold launch shows ONLY the browser; see _wire_open_document in the GUI).
+        # double-click opens the PFS browser; a cold launch shows only that (_wire_open_document)
         "CFBundleDocumentTypes": [
             {
                 "CFBundleTypeName": "PS5 PFS image",

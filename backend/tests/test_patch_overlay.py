@@ -1,9 +1,4 @@
-"""Integrating a patch (backend/cli.py overlay_patch): what it replaces is kept with a README,
-an old AMPR index goes when the patch brings its own emulator, release notes stay out, and a
-patch for another game is refused.
-
-    PYTHONPATH=. /tmp/ps5venv/bin/python -m unittest backend.tests.test_patch_overlay
-"""
+"""PYTHONPATH=. /tmp/ps5venv/bin/python -m unittest backend.tests.test_patch_overlay"""
 
 from __future__ import annotations
 
@@ -97,10 +92,7 @@ class OverlayTests(unittest.TestCase):
         self.assertIn("backport made for version 01.200.000", log)
 
     def test_wrapper_is_still_descended_beside_sidecar_files(self):
-        # On an exFAT temp drive macOS writes a `._<folder>` AppleDouble file beside the
-        # wrapper folder an archive unpacks to; Finder leaves .DS_Store; a release may put its
-        # notes beside the wrapper. None of these is content: the wrapper still has to be
-        # descended, or the whole wrapper folder lands inside the game as a second game.
+        # macOS litters exFAT with ._ files, Finder adds .DS_Store; still descend the wrapper
         patch = self.backport()
         write(patch / "._Example_backport_files", b"\x00\x05\x16\x07" + b"\x00" * 4092)
         write(patch / ".DS_Store", b"\x00" * 16)
@@ -115,8 +107,7 @@ class OverlayTests(unittest.TestCase):
         self.assertFalse(any(p.name.startswith("._") or p.name == ".DS_Store" for p in self.game.rglob("*")))
 
     def test_unresolved_wrapper_is_refused_instead_of_nested(self):
-        # Two real folders at the top, one of them the game-shaped patch: no wrapper to
-        # descend. The patch must not be copied into the game as a folder.
+        # no single wrapper here: refuse instead of copying the patch in as a folder
         patch = self.backport()
         write(patch / "Other content" / "thing.bin", b"?")
         with self.assertRaises(RuntimeError) as cm:

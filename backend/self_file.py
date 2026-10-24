@@ -21,7 +21,7 @@ PT_SCE_VERSION = 0x6FFFFF01
 
 
 class MalformedSelf(ValueError):
-    """A SELF whose headers point outside the file."""
+    pass
 
 
 def is_self(data: bytes) -> bool:
@@ -30,7 +30,6 @@ def is_self(data: bytes) -> bool:
 
 @dataclass
 class SelfSegment:
-    """Where one program header's bytes sit inside the SELF file."""
     phdr_index: int
     self_offset: int
     filesz: int
@@ -41,22 +40,20 @@ class SelfSegment:
 @dataclass
 class SelfImage:
     flavour: str                       # "ps4" or "ps5", from the magic
-    elf_offset: int                    # where the embedded ELF header starts
+    elf_offset: int
     elf_header_size: int               # ELF header + program headers, as embedded
-    file_size: int                     # the header's file size (the version data follows)
+    file_size: int  # from the header, the version data follows
     phdrs: list[tuple] = field(default_factory=list)   # (type, flags, offset, vaddr, paddr, filesz, memsz, align)
     segments: dict[int, SelfSegment] = field(default_factory=dict)
 
     @property
     def readable(self) -> bool:
-        """True when every stored segment is plain: a fake-signed SELF."""
+        """every segment plain, i.e. a fake-signed SELF"""
         return all(not s.encrypted and not s.compressed for s in self.segments.values())
 
 
 def parse_self(data: bytes, size: int | None = None) -> SelfImage | None:
-    """The layout of a SELF, or None when *data* is not one this reader understands.
-    *size* is the whole file's size when *data* holds only its first bytes (the
-    headers): segments are then checked against the file, not against *data*."""
+    """None if not a SELF we understand; pass size when data holds only the headers"""
     limit = len(data) if size is None else size
     if len(data) < _HEADERS_END or not is_self(data):
         return None
@@ -84,14 +81,11 @@ def parse_self(data: bytes, size: int | None = None) -> SelfImage | None:
 
 
 def elf_image(data: bytes, img: SelfImage | None = None) -> bytes | None:
-    """An ELF image rebuilt from a fake-signed SELF: its headers, every stored segment at
-    its file offset, and the version segment. Section headers are not kept in a SELF,
-    so the image names none. None for a SELF with encrypted or compressed segments."""
+    """ELF from a fake-signed SELF, no section headers; None if encrypted or compressed"""
     img = img or parse_self(data)
     if img is None or not img.readable:
         return None
-    # The image only adds alignment gaps to the stored bytes, so it cannot be much
-    # larger than the SELF; a bigger one comes from a broken or hostile header.
+    # only alignment gaps get added, anything much bigger is a broken or hostile header
     cap = 2 * len(data) + (4 << 20)
     end = img.elf_header_size
     for index, seg in img.segments.items():
@@ -118,8 +112,7 @@ def elf_image(data: bytes, img: SelfImage | None = None) -> bytes | None:
 
 
 def self_offset(img: SelfImage, elf_offset: int, length: int = 1) -> int | None:
-    """The SELF file offset of *length* bytes at *elf_offset* in the ELF, when they lie
-    inside one stored segment; None otherwise."""
+    """ELF offset to SELF offset; None unless the range sits in one stored segment"""
     for index, seg in img.segments.items():
         start = img.phdrs[index][2]
         if start <= elf_offset and elf_offset + length <= start + seg.filesz:

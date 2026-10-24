@@ -1,4 +1,3 @@
-"""Backport engine - SDK version lowering, fakelib bundle assembly, NID compatibility analysis."""
 from __future__ import annotations
 
 import os
@@ -13,40 +12,33 @@ try:                                    # imported as backend.backport (tests) o
 except ImportError:                     # pragma: no cover - the cli.py path
     import self_file
 
-# ── SDK constants (verbatim from idlesauce's gist) ────────────────────────
-# Keyed by human label. Value: (ps5_sdk_word, ps4_sdk_word). Both are 4-byte
-# little-endian integers written into the SCE param struct.
+# (ps5_sdk, ps4_sdk) as u32 LE in the param struct, straight from idlesauce's gist
 SDK_TARGETS: dict[str, tuple[int, int]] = {
     "7.61":  (0x07000038, 0x10590001),
     "6.02":  (0x06000038, 0x10090001),
     "10.xx": (0x10000040, 0x12090001),
 }
 
-# ── ELF constants ─────────────────────────────────────────────────────────
 _ELF_MAGIC = b"\x7fELF"
 _ELFCLASS64 = 2
 _ELFDATA2LSB = 1
 
-# Elf64_Ehdr offsets used here.
 _EH_PHOFF = 32       # Elf64_Off  e_phoff
 _EH_PHENTSIZE = 54   # Elf64_Half e_phentsize
 _EH_PHNUM = 56       # Elf64_Half e_phnum
 
-# Elf64_Phdr: p_type (u32), p_flags (u32), p_offset (u64), p_vaddr (u64),
-# p_paddr (u64), p_filesz (u64), p_memsz (u64), p_align (u64) = 56 bytes.
+# Elf64_Phdr: type and flags u32, then offset, vaddr, paddr, filesz, memsz, align u64
 _PHDR_FMT = "<2I6Q"
 _PHDR_SIZE = struct.calcsize(_PHDR_FMT)
 
 PT_SCE_PROCPARAM = 0x61000001    # /app0/eboot.bin
 PT_SCE_MODULE_PARAM = 0x61000002  # every .prx / .sprx
 
-# Magic values at +0x08 inside the param struct. The layout is otherwise
-# identical between the two, and the writer treats them the same way.
+# magic at +0x08 of the param struct; otherwise both layouts match
 _MAGIC_PROC = 0x4942524F           # b"ORBI"
 _MAGIC_MODULE = 0x3C13F4BF
 _ACCEPTED_MAGICS = (_MAGIC_PROC, _MAGIC_MODULE)
 
-# Byte offsets of the two 4-byte SDK fields inside the param struct.
 _SDK_PS4_OFFSET = 0x10
 _SDK_PS5_OFFSET = 0x14
 
@@ -62,7 +54,6 @@ class BackportError(RuntimeError):
         self.report = report
 
 
-# ── result types ──────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class SdkChange:
     """One SDK field the downgrade would write, and what is there today."""
@@ -75,10 +66,8 @@ class SdkChange:
         return self.before == self.after
 
 
-# ── ELF walking ───────────────────────────────────────────────────────────
 def _is_ps5_elf64(data: bytes) -> bool:
-    """True if the blob starts with a 64-bit little-endian ELF header. Everything
-    the tool cares about is 64-bit LE; a stray 32-bit ELF is left alone."""
+    """64-bit LE only; a stray 32-bit ELF is left alone"""
     return (
         len(data) >= 64
         and data[:4] == _ELF_MAGIC
@@ -88,16 +77,14 @@ def _is_ps5_elf64(data: bytes) -> bool:
 
 
 def _as_elf(data: bytes) -> bytes | None:
-    """The ELF bytes behind *data*: itself for a raw ELF, the rebuilt image for a
-    fake-signed SELF, None for anything else (an encrypted SELF included)."""
+    """raw ELF as is, fake-signed SELF rebuilt, None for the rest (encrypted too)"""
     if self_file.is_self(data):
         return self_file.elf_image(data)
     return data if _is_ps5_elf64(data) else None
 
 
 def _iter_phdrs(data: bytes):
-    """Yield (ptype, p_offset, p_filesz) for each program header. Silently
-    stops at the end of the file - a truncated ELF returns what it can."""
+    """(ptype, p_offset, p_filesz); a truncated ELF gives what it has"""
     if not _is_ps5_elf64(data):
         return
     e_phoff = struct.unpack_from("<Q", data, _EH_PHOFF)[0]
@@ -115,9 +102,7 @@ def _iter_phdrs(data: bytes):
 
 
 def _find_param_segment(data: bytes) -> tuple[str, int] | None:
-    """Return ("proc"|"module", file offset of the param struct) or None.
-    Prefers the first PT_SCE_PROCPARAM (eboot); a module has PT_SCE_MODULE_PARAM
-    instead. A binary with both is unusual - the caller sees the first hit."""
+    """first proc or module param segment wins; a binary with both would be odd"""
     for p_type, p_offset, p_filesz in _iter_phdrs(data):
         if p_type not in (PT_SCE_PROCPARAM, PT_SCE_MODULE_PARAM):
             continue
@@ -134,10 +119,7 @@ def _find_param_segment(data: bytes) -> tuple[str, int] | None:
 
 
 def sdk_words_from_reader(read, size: int, head_size: int = 4 << 20) -> tuple[int, int] | None:
-    """(ps5, ps4) SDK words of an executable, raw or fake-signed, given *read(offset, n)*
-    over its bytes and its *size*: only the headers and the param struct are read (an
-    eboot can be hundreds of MB, maybe inside an image). None when there is none or
-    the file is encrypted."""
+    """reads only the headers and the param struct: an eboot can be hundreds of MB"""
     head = read(0, min(head_size, size))
     if self_file.is_self(head):
         img = self_file.parse_self(head, size)
@@ -162,7 +144,6 @@ def sdk_words_from_reader(read, size: int, head_size: int = 4 << 20) -> tuple[in
 
 
 def sdk_words_of_file(path: Path, head_size: int = 4 << 20) -> tuple[int, int] | None:
-    """sdk_words_from_reader for a file on disk."""
     try:
         with open(path, "rb") as f:
             size = os.fstat(f.fileno()).st_size
@@ -175,7 +156,7 @@ def sdk_words_of_file(path: Path, head_size: int = 4 << 20) -> tuple[int, int] |
         return None
 
 
-# ── targets: the public table, or the user's own firmware files ───────────
+# targets: the public table or the user's own firmware files
 _FW_NAME = re.compile(r"^\d{1,2}\.\d{2}$")
 
 
@@ -185,9 +166,7 @@ def _fw_key(name: str) -> tuple[int, int]:
 
 
 def firmware_folders(fw_root: Path | None) -> dict[str, Path]:
-    """{firmware: folder} for every subfolder of *fw_root* named like a firmware
-    (7.61, 10.01, ...), sorted by version. A root without such subfolders that is
-    itself named like one (the setting points at a single firmware) is that one."""
+    """subfolders named like 7.61, by version; a root named like one is that firmware"""
     if not fw_root:
         return {}
     root = Path(fw_root)
@@ -200,11 +179,7 @@ def firmware_folders(fw_root: Path | None) -> dict[str, Path]:
 
 
 def firmware_folder(fw_root: Path | None, target: str) -> Path | None:
-    """The folder holding *target*'s original libraries under *fw_root*.
-
-    With one subfolder per firmware: <root>/<target>; for the SDK-only target
-    "10.xx" the lowest 10.* folder. A root with libraries but no firmware name
-    anywhere (an older single-folder setting) is used for every target."""
+    """<root>/<target>; 10.xx takes the lowest 10.* folder; an unnamed root serves every target"""
     if not fw_root:
         return None
     root = Path(fw_root)
@@ -226,15 +201,12 @@ def _target_key(name: str) -> tuple[int, int]:
 
 
 def available_targets(fw_root: Path | None) -> list[str]:
-    """The public targets and every firmware found under *fw_root*, by version."""
     names = set(SDK_TARGETS) | set(firmware_folders(fw_root))
     return sorted(names, key=_target_key)
 
 
 def patched_libs_folder(libs_root: Path | None, target: str) -> Path | None:
-    """The patched libraries for *target*: <root>/<target> when Prepare made one, the
-    root itself when the user filled it by hand. None when the root only holds sets
-    for other targets."""
+    """<root>/<target> when Prepare made it, the root itself when filled by hand"""
     if not libs_root:
         return None
     root = Path(libs_root)
@@ -247,9 +219,7 @@ def patched_libs_folder(libs_root: Path | None, target: str) -> Path | None:
 
 
 def patched_libs_problem(libs_root: Path | None, fw_root: Path | None) -> str:
-    """Why *libs_root* cannot serve as the patched libraries; '' when it can. The firmware
-    libraries folder, or a folder inside it, holds ORIGINAL libraries: copied into
-    fakelib/ they would load in place of the console's own."""
+    """the firmware folder holds ORIGINAL libs: in fakelib/ they'd replace the console's own"""
     if not libs_root or not fw_root:
         return ""
     try:
@@ -263,15 +233,14 @@ def patched_libs_problem(libs_root: Path | None, fw_root: Path | None) -> str:
 
 
 def sdk_firmware(word: int) -> str:
-    """The firmware a PS5 SDK word names: its top half is BCD, 0x07610000 = 7.61."""
+    """top half is BCD: 0x07610000 = 7.61"""
     def bcd(b: int) -> int:
         return (b >> 4) * 10 + (b & 0xF)
     return f"{bcd((word >> 24) & 0xFF)}.{bcd((word >> 16) & 0xFF):02d}"
 
 
 def derive_sdk_words(fw_dir: Path, sample: int = 80) -> tuple[int, int] | None:
-    """(ps5, ps4) SDK words of a firmware, read from its own system libraries: the
-    most common pair in their module params. None when no library carries one."""
+    """most common (ps5, ps4) pair across the firmware's own module params"""
     counts: Counter = Counter()
     for path in sorted(Path(fw_dir).rglob("*.sprx"))[:sample]:
         try:
@@ -286,7 +255,6 @@ def derive_sdk_words(fw_dir: Path, sample: int = 80) -> tuple[int, int] | None:
 
 
 def firmware_problem(fw_dir: Path | None, name: str | None) -> str:
-    """Why the libraries in *fw_dir* cannot stand for firmware *name*; '' when they can."""
     label = name or "firmware"
     if fw_dir is None:
         return f"no {label} folder in the firmware libraries folder"
@@ -302,9 +270,7 @@ def firmware_problem(fw_dir: Path | None, name: str | None) -> str:
 
 
 def target_words(target: str, fw_root: Path | None = None) -> tuple[int, int]:
-    """(ps5, ps4) SDK words for *target*: the public table for 7.61, 6.02 and 10.xx,
-    otherwise read from that firmware's libraries under *fw_root*. ValueError when
-    neither knows the target, or when its folder cannot stand for that firmware."""
+    """public table for 7.61, 6.02 and 10.xx, else read from that firmware's libraries"""
     if target in SDK_TARGETS:
         return SDK_TARGETS[target]
     if not (fw_root and _FW_NAME.match(target)):
@@ -318,8 +284,7 @@ def target_words(target: str, fw_root: Path | None = None) -> tuple[int, int]:
 
 
 def is_encrypted_self(path: Path, head_size: int = 1 << 16) -> bool:
-    """A SELF whose segments are encrypted or compressed (a retail executable). Reads
-    the headers only."""
+    """encrypted or compressed segments, i.e. retail; reads the headers only"""
     try:
         with open(path, "rb") as f:
             head = f.read(head_size)
@@ -333,15 +298,13 @@ def is_encrypted_self(path: Path, head_size: int = 1 << 16) -> bool:
 
 
 def encrypted_selfs(root: Path) -> list[Path]:
-    """Executables under *root* that are SELFs with encrypted or compressed
-    segments: no backport can read or change them."""
+    """no backport can read or change these"""
     return [path for path in iter_source_elfs(root) if is_encrypted_self(path)]
 
 
-# ── the writes ────────────────────────────────────────────────────────────
 def lower_sdk_version(elf: bytes, target: str,
                       words: tuple[int, int] | None = None) -> tuple[bytes, list[SdkChange]]:
-    """Return a copy of *elf* with its SDK words lowered to *target*, plus one SdkChange per field considered (kept even when equal, so the caller can log a no-op)."""
+    """one SdkChange per field even when equal, so a no-op gets logged too"""
     if words is None:
         if target not in SDK_TARGETS:
             raise ValueError(f"unknown backport target {target!r}; expected one of {sorted(SDK_TARGETS)}")
@@ -378,14 +341,11 @@ def lower_sdk_version(elf: bytes, target: str,
     return bytes(buf), changes
 
 
-# ── file walking (for a game folder / staged /app0 root) ──────────────────
 _ELF_SUFFIXES = (".prx", ".sprx", ".elf", ".self")
 
 
 def iter_source_elfs(root: Path):
-    """Yield every path under *root* that could carry SDK metadata: eboot.bin,
-    plus every .prx / .sprx / .elf / .self. Symlinks are skipped (safety, and
-    the staging step handles their contents already)."""
+    """eboot.bin plus .prx/.sprx/.elf/.self; symlinks skipped, staging covers them"""
     root = Path(root)
     for p in sorted(root.rglob("*")):
         if not p.is_file() or p.is_symlink():
@@ -397,10 +357,7 @@ def iter_source_elfs(root: Path):
 
 @dataclass
 class LowerReport:
-    """What the downgrade pass did to a folder. `written` lists the files that
-    actually changed (source path, effective changes). `skipped` lists files
-    that carry no param segment or are not raw ELFs - the caller reports those
-    but never treats them as an error."""
+    """skipped files get reported, never treated as errors"""
     written: list[tuple[Path, list[SdkChange]]]
     skipped_no_param: list[Path]
     skipped_not_elf: list[Path]          # neither a raw ELF nor a SELF this reader understands
@@ -425,10 +382,7 @@ class LowerReport:
         return "; ".join(parts)
 
 
-# ── SCE dynamic tags (from pedrocluis/sce-elf + SocraticBliss PS4-SELF-Tools) ─
-# Every value is an Elf64_Xword d_tag as it appears in PT_DYNAMIC. The reader
-# only needs a handful of these - the rest are documented so a future user of
-# this module knows which tag is which without another round of research.
+# SCE d_tags from pedrocluis/sce-elf and PS4-SELF-Tools; most unused, kept for reference
 DT_NEEDED         = 0x00000001    # standard ELF, PS5 may still use it
 DT_STRTAB         = 0x00000005
 DT_SYMTAB         = 0x00000006
@@ -449,7 +403,7 @@ DT_SCE_STRSZ         = 0x61000037
 DT_SCE_SYMTAB        = 0x61000039
 DT_SCE_SYMENT        = 0x6100003B
 DT_SCE_SYMTABSZ      = 0x6100003F
-# PS5 respellings that appear in some retail modules (pedrocluis notes 2026).
+# PS5 respellings seen in some retail modules (pedrocluis)
 DT_SCE_NEEDED_MODULE_PS5 = 0x61000045
 DT_SCE_EXPORT_LIB_PS5    = 0x61000047
 DT_SCE_IMPORT_LIB_PS5    = 0x61000049
@@ -458,15 +412,13 @@ PT_DYNAMIC = 0x2
 PT_LOAD = 0x1
 PT_SCE_DYNLIBDATA = 0x61000000
 
-# NID base64 alphabet: standard base64 with '/' → '-' (no padding).
+# NID alphabet: base64 with '/' as '-', no padding
 _NID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-"
 NID_LENGTH = 11
 
 
 def encode_id(v: int) -> str:
-    """shadPS4's EncodeId: pack an unsigned 16-bit id into 1..3 base64 characters.
-    <0x40 → 1 char, <0x1000 → 2 chars, else 3 chars. Matches the id chars that
-    follow the '#' in an imported symbol name."""
+    """shadPS4's EncodeId: under 0x40 one char, under 0x1000 two, else three"""
     if v < 0 or v >= 0x10000:
         raise ValueError(f"library/module id out of range: {v}")
     out = []
@@ -478,18 +430,13 @@ def encode_id(v: int) -> str:
 
 @dataclass(frozen=True)
 class NidImport:
-    """One imported function: its 11-character NID, the library name it comes
-    from (resolved via DT_SCE_IMPORT_LIB), and the imported-module name it lives
-    in (resolved via DT_SCE_NEEDED_MODULE). `library` / `module` may be empty
-    when the id was not in the dynamic table (defensive)."""
+    """library/module come via DT_SCE_IMPORT_LIB/NEEDED_MODULE, empty when the id is unknown"""
     nid: str
     library: str
     module: str
 
 
 def _iter_dyn_entries(data: bytes):
-    """Yield (d_tag, d_val) for each Elf64_Dyn in the file's PT_DYNAMIC segment.
-    An ELF without a PT_DYNAMIC yields nothing."""
     if not _is_ps5_elf64(data):
         return
     for p_type, p_offset, p_filesz in _iter_phdrs(data):
@@ -507,8 +454,7 @@ def _iter_dyn_entries(data: bytes):
 
 
 def _dynlibdata_slice(data: bytes) -> bytes:
-    """Bytes of the PT_SCE_DYNLIBDATA segment, or b'' when absent (some PS5
-    modules keep the tables in PT_LOAD instead)."""
+    """some PS5 modules keep the tables in PT_LOAD instead"""
     for p_type, p_offset, p_filesz in _iter_phdrs(data):
         if p_type == PT_SCE_DYNLIBDATA:
             return data[p_offset:p_offset + p_filesz]
@@ -516,17 +462,12 @@ def _dynlibdata_slice(data: bytes) -> bytes:
 
 
 def _load_segments(data: bytes):
-    """List of (vaddr, size, file_offset, filesz) for each PT_LOAD segment,
-    used to resolve a virtual address in the PS5 dual-layout case."""
+    """(vaddr, size, file_offset, filesz) per PT_LOAD, for the PS5 dual layout"""
     out = []
     for p_type, p_offset, p_filesz in _iter_phdrs(data):
         if p_type != PT_LOAD:
             continue
-        # We need vaddr + memsz for a proper vaddr → file_offset walk; re-read.
-        # _iter_phdrs only exposes offset/filesz for the SDK-lowering job - a
-        # second parse here keeps that helper focused.
-        # (Not worth generalising; PT_LOAD count is tiny.)
-    # Full re-parse: pull vaddr/memsz too.
+    # _iter_phdrs has no vaddr/memsz, so parse the headers again
     if not _is_ps5_elf64(data):
         return out
     e_phoff = struct.unpack_from("<Q", data, _EH_PHOFF)[0]
@@ -543,9 +484,7 @@ def _load_segments(data: bytes):
 
 
 def _read_at_vaddr(data: bytes, loads, vaddr: int, size: int) -> bytes:
-    """Read *size* bytes at virtual address *vaddr* by walking PT_LOAD entries.
-    Returns b'' when the range is not covered (unusual; a game whose DT_STRTAB
-    points outside every PT_LOAD is malformed)."""
+    """b'' when no PT_LOAD covers the range, i.e. a malformed file"""
     for v, vsz, off, fsz in loads:
         if v <= vaddr < v + vsz:
             local = vaddr - v
@@ -555,14 +494,9 @@ def _read_at_vaddr(data: bytes, loads, vaddr: int, size: int) -> bytes:
 
 
 def _read_table(data: bytes, dynlibdata: bytes, loads, addr_or_off: int, size: int) -> bytes:
-    """The SCE dual layout: PS4-shaped SELFs put tables at *offsets into
-    PT_SCE_DYNLIBDATA*, while a PS5 module can put them at *virtual addresses
-    into PT_LOAD*. Try the dynlibdata first (it is what BestPig/Auto-Backpork
-    walk), fall back to vaddr resolution."""
+    """PS4-style tables are offsets into DYNLIBDATA, PS5 ones may be vaddrs into PT_LOAD"""
     if 0 <= addr_or_off < len(dynlibdata) and addr_or_off + size <= len(dynlibdata):
-        # Only trust this branch when dynlibdata actually holds the requested
-        # bytes; otherwise the offset happened to fit but the payload is not
-        # ours.
+        # trust dynlibdata only when it really holds all the bytes
         candidate = dynlibdata[addr_or_off:addr_or_off + size]
         if len(candidate) == size:
             return candidate
@@ -570,8 +504,6 @@ def _read_table(data: bytes, dynlibdata: bytes, loads, addr_or_off: int, size: i
 
 
 def _cstr(buf: bytes, offset: int) -> str:
-    """C-string starting at *offset* in *buf*, decoded as UTF-8 (Sony names are
-    ASCII in practice). Empty string for an out-of-range offset."""
     if offset < 0 or offset >= len(buf):
         return ""
     end = buf.find(b"\x00", offset)
@@ -579,7 +511,6 @@ def _cstr(buf: bytes, offset: int) -> str:
 
 
 def read_symbols(data: bytes) -> tuple[list[NidImport], list[NidImport]]:
-    """Return (imports, exports) as NidImport lists."""
     data = _as_elf(data)
     if data is None or not _is_ps5_elf64(data):
         return [], []
@@ -608,9 +539,7 @@ def read_symbols(data: bytes) -> tuple[list[NidImport], list[NidImport]]:
     if not strtab or not symtab:
         return [], []
 
-    # Library / module id → name maps. A dynamic value packs the id in its
-    # high halfword and the string-table offset in its low 32 bits (Sony's
-    # convention; see sce-elf/dynamic.rs). PS5 respellings share the layout.
+    # id in the high 16 bits, strtab offset in the low 32 (see sce-elf dynamic.rs)
     libs: dict[str, str] = {}
     mods: dict[str, str] = {}
     for t, v in dyn:
@@ -641,21 +570,15 @@ def read_symbols(data: bytes) -> tuple[list[NidImport], list[NidImport]]:
 
 
 def read_imported_nids(data: bytes) -> list[NidImport]:
-    """Convenience: just the imports from :func:`read_symbols`. Kept as a
-    named entry point because the compatibility check reads imports far more
-    often than exports."""
     return read_symbols(data)[0]
 
 
 def read_exported_nids(data: bytes) -> list[NidImport]:
-    """Convenience: just the exports from :func:`read_symbols`."""
     return read_symbols(data)[1]
 
 
-# ── firmware NID database + game compatibility check (phase 2) ────────────
 @dataclass
 class LibraryReport:
-    """One imported library's compatibility with the target firmware."""
     library: str                    # e.g. "libSceAgc"
     used_nids: set[str]             # NIDs the game imports from it
     in_firmware: bool               # firmware module exports at least one NID?
@@ -675,10 +598,9 @@ class LibraryReport:
 
 @dataclass
 class BackportReport:
-    """Whole-game compatibility summary."""
     target: str
     per_library: list[LibraryReport]
-    unnamed_imports: int            # symbols we could not map to a library name
+    unnamed_imports: int  # symbols with no library name
     firmware_checked: bool = False  # the target firmware's own libraries were read
     firmware_note: str = ""         # why the firmware folder could not stand for the target
     unreadable: list[str] = field(default_factory=list)   # encrypted executables of the game
@@ -706,8 +628,7 @@ class BackportReport:
         return any(l.fakelib_covers - l.firmware_covers - l.game_covers for l in self.per_library)
 
     def verdict(self, patched: bool = False) -> str:
-        """One plain sentence: what the report means for the build. *patched* says
-        whether patched libraries for the target were part of the check."""
+        """one plain sentence for the build; patched = patched libs were part of the check"""
         if self.unreadable:
             return (f"{len(self.unreadable)} executable(s) are encrypted, so nothing can be checked "
                     f"or changed. Decrypt the game first.")
@@ -732,7 +653,6 @@ class BackportReport:
 
 
 def build_firmware_nid_db(fw_libs_root: Path) -> dict[str, set[str]]:
-    """Read every *.prx/*.sprx under *fw_libs_root* and return {library_name: {NID, ...}}."""
     fw_libs_root = Path(fw_libs_root)
     db: dict[str, set[str]] = {}
     for path in sorted(fw_libs_root.rglob("*")):     # system/common/lib, system_ex/..., priv/lib
@@ -745,8 +665,7 @@ def build_firmware_nid_db(fw_libs_root: Path) -> dict[str, set[str]]:
         exports = read_exported_nids(data)
         if not exports:
             continue
-        # Every export declares its own library via the '#lib' field; a module
-        # may publish more than one (e.g. libc + libc_internal). Group by that.
+        # group by each export's own #lib: one module may publish libc and libc_internal
         for e in exports:
             db.setdefault(e.library or path.stem, set()).add(e.nid)
     return db
@@ -755,7 +674,6 @@ def build_firmware_nid_db(fw_libs_root: Path) -> dict[str, set[str]]:
 def analyse_backport(source_root: Path, target: str,
                      fw_libs_root: Path | None = None,
                      backport_libs_root: Path | None = None) -> BackportReport:
-    """Cross-check the ELFs under *source_root* against the target firmware."""
     fw_dir = firmware_folder(fw_libs_root, target) if fw_libs_root else None
     fw_db = build_firmware_nid_db(fw_dir) if fw_dir else {}
     note = "no firmware libraries folder given"
@@ -816,11 +734,9 @@ def analyse_backport(source_root: Path, target: str,
 
 
 def lower_sdk_in_folder(root: Path, target: str, words: tuple[int, int] | None = None) -> LowerReport:
-    """Walk *root* and apply lower_sdk_version to every eboot/prx/sprx it holds, in place.
-    Raises BackportError after the walk when a file could not be read or lowered."""
+    """in place; raises BackportError after the walk if any file failed"""
     paths = list(iter_source_elfs(root))
-    # first every module is read and lowered in memory only: one that cannot be leaves the
-    # whole folder as it was, instead of a game with some modules lowered and some not
+    # lower all in memory first: one failure leaves the whole folder as it was
     check = LowerReport(written=[], skipped_no_param=[], skipped_not_elf=[])
     for path in paths:
         try:

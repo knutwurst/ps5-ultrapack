@@ -1,4 +1,3 @@
-"""Sort PS4 packages into the library layout (ultra_core.ps4_layout) and copy or move them there with copy_job."""
 from __future__ import annotations
 
 import os
@@ -14,7 +13,7 @@ from organize_lib import case_blind
 from ultra_core import _PS4_TID_TAG, is_fs_junk_name, ps4_layout, scan_ps4_library, strip_fs_junk
 
 _BAR = re.compile(r"^\[#+\]\s*(\d+)%")
-PART = ".ps4sort-part"           # a complete new package waiting to replace the old one (Overwrite)
+PART = ".ps4sort-part"  # finished package waiting to replace the old one
 
 
 def _say(on_line, text):
@@ -22,7 +21,6 @@ def _say(on_line, text):
 
 
 def find_packages(src) -> list[Path]:
-    """*src* itself when it is a .pkg, else every .pkg below it (OS clutter skipped)."""
     src = Path(src)
     if src.is_file():
         return [src] if src.suffix.lower() == ".pkg" and not is_fs_junk_name(src.name) else []
@@ -31,8 +29,7 @@ def find_packages(src) -> list[Path]:
 
 
 def other_files(src) -> list[Path]:
-    """Files below *src* that are no .pkg (OS clutter skipped): a sort leaves them where they
-    are, so the run must say so."""
+    """non-.pkg files below src; a sort leaves them there, so the run must say so"""
     src = Path(src)
     if not src.is_dir():
         return []
@@ -57,8 +54,7 @@ def _same_file(a: Path, b: Path) -> bool:
 
 
 def _settle(part: Path, on_line) -> Path:
-    """Give a complete package left under PART a name every run sees: its own when that is
-    free, else a free '(n)' one beside it (both stay). Returns where it went."""
+    """a finished PART gets its own name if free, else a free (n) one; both stay"""
     dst_dir, name = part.parent, part.name[:-len(PART)]
     target = dst_dir / name
     if os.path.lexists(target):
@@ -69,7 +65,7 @@ def _settle(part: Path, on_line) -> Path:
 
 
 def recover_parts(out_dir: Path, on_line=None) -> None:
-    """Packages an interrupted Overwrite left under PART in the library (title folder, DLC Pack)."""
+    """picks up what an interrupted Overwrite left under PART"""
     for pattern in (f"*/*{PART}", f"*/*/*{PART}"):
         for part in sorted(Path(out_dir).glob(pattern)):
             if part.is_file() and not part.is_symlink() and not is_fs_junk_name(part.name):
@@ -80,7 +76,7 @@ def recover_parts(out_dir: Path, on_line=None) -> None:
 
 
 def _write_keystone(pkg: Path, keystone: Path, undo_dir, relay, on_line) -> int:
-    """0 once *keystone* is in *pkg*, 1 when the tool failed (it leaves the package as it was)."""
+    """the tool leaves the package as it was when it fails"""
     import fpkg
     undo = None
     if undo_dir is not None:
@@ -98,10 +94,7 @@ def _write_keystone(pkg: Path, keystone: Path, undo_dir, relay, on_line) -> int:
 
 def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "skip", on_line=None,
                   keystone=None, undo_dir=None) -> int:
-    """0 when every PS4 package found is in the library, 1 on an error, copy_job.KEPT (4) when
-    the run finished but packages stay in the source (not PS4, unreadable, or skipped).
-    *keystone*: a keystone file written into the package once it is in the library (one game
-    package only); the bytes it replaces go to a file in *undo_dir*."""
+    """KEPT (4) when packages stay in the source; keystone only for a single game package"""
     out_dir = Path(out_dir)
     _say(on_line, "[JOB] copy")
     _say(on_line, "[PHASE] Writing Final Image")
@@ -137,8 +130,7 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
             return 1
     known = scan_ps4_library(out_dir)
     placements = ps4_layout(items, known=known)
-    # A title folder already in the library whose version tag the set raises is renamed
-    # (same drive, nothing copied); when that name is taken the set goes into the old folder.
+    # a library folder whose version tag goes up is renamed; if that name is taken, use the old one
     moved: dict[str, str] = {}
     for folder in dict.fromkeys(f for _, f, _, _ in placements):
         m = _PS4_TID_TAG.search(folder)
@@ -262,10 +254,7 @@ def sort_packages(src, out_dir, *, mode: str = copy_job.KEEP, if_exists: str = "
             rc_all = _write_keystone(placed, Path(keystone), undo_dir, relay(placed.stat().st_size, "keystone"),
                                      on_line) or rc_all
     bar(0, 0, "")
-    # macOS tags every file it writes with a provenance attribute; on exFAT that becomes a
-    # '._' sidecar, which the system drops after a few seconds but which stays for good when
-    # the drive is ejected first. Remove them (and other clutter) from the folders this set
-    # touched, and the sidecar beside each folder, so the library holds only packages.
+    # macOS sprinkles ._ provenance sidecars on exFAT; eject too soon and they stay forever
     for f in folders:
         strip_fs_junk(f)
         try:

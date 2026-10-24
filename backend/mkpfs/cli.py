@@ -157,7 +157,6 @@ class MkPFSArgumentParser(argparse.ArgumentParser):
     """Argument parser that prepends the MkPFS version to help output."""
 
     def format_help(self) -> str:
-        """Return help text with a concise title and cleaned usage block."""
         # Build a clean usage line (drop the leading "usage:" label).
         raw_usage: str = self.format_usage().strip()
         usage_line: str = raw_usage
@@ -406,7 +405,7 @@ def calculate_source_raw_size_bytes(*, source_root: Path) -> int:
 
 
 def source_has_links(source_root: Path) -> bool:
-    """Whether a source tree holds a symbolic link: a link may point at a file freed earlier."""
+    """a link may point at a file we already freed"""
     for dirpath, dirnames, filenames in os.walk(source_root):
         for name in dirnames + filenames:
             if os.path.islink(os.path.join(dirpath, name)):
@@ -415,9 +414,7 @@ def source_has_links(source_root: Path) -> bool:
 
 
 def consuming_space_need(source_root: Path, block_size: int = 65536) -> int:
-    """Free space a consuming build needs on the source's own drive: the image's blocks for
-    what it never frees (sce_sys, small files), the block padding of the files it frees, the
-    largest file it holds twice for a moment, and the image's metadata."""
+    """kept files, padding of freed ones, largest file twice for a moment, metadata"""
     from .pfs import CONSUME_MIN_SIZE
 
     def blocks(size: int) -> int:
@@ -936,8 +933,6 @@ def _stream_fallback_reason(*, args: argparse.Namespace) -> str | None:
 
 @dataclass(frozen=True)
 class PackBuildConfig:
-    """Validated, derived pack options shared by folder and single-file flows."""
-
     block_size: int
     compress: bool
     threshold_gain: int
@@ -1239,8 +1234,7 @@ def _run_pack_build(
     if config.compress and _contains_direct_game_markers(build_source_root):
         _emit_game_folder_compression_warning()
 
-    # signed images write their pointer blocks up front, across the whole layout: no growth
-    # with the data there, so no freeing either
+    # signed images write all pointer blocks up front, so nothing can be freed
     consuming: bool = (bool(getattr(args, "consume_source", False)) and not config.compress
                        and not getattr(args, "signed", False)
                        and _resolve_pack_verification_mode(args) == PackVerificationMode.SKIP)
@@ -1293,7 +1287,7 @@ def _run_pack_build(
         min_file_gain=config.min_file_gain,
         min_compress_size=config.min_compress_size,
         temp_folder=temp_folder,
-        # a check against the source needs the source: consuming it only when none follows
+        # no consuming when a check against the source follows
         consume_source=consuming,
     )
 
@@ -1369,8 +1363,7 @@ def _stage_single_file_source_root(
         staging_file_name: str = staged_file_name if staged_file_name is not None else source_file.name
         staging_file: Path = staging_root / staging_file_name
         if names_only:
-            # a check of the structure compares names only: an empty stand-in is enough, so no
-            # drive without links (exFAT on Windows) needs a full copy of the image for it
+            # names-only check: an empty stand-in will do, no full copy on link-less exFAT
             staging_file.touch()
             yield staging_root
             return

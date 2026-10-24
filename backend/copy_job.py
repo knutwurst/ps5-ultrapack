@@ -1,5 +1,3 @@
-"""Same-format copy/move for the queue's ``copy`` operation."""
-
 from __future__ import annotations
 
 import os
@@ -10,28 +8,26 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-CHUNK = 4 * 1024 * 1024  # 4 MiB - same order as extract_members' write chunk
+CHUNK = 4 * 1024 * 1024  # 4 MiB, like extract_members' write chunk
 KEEP, ORGANIZE, MOVE = "keep", "organize", "move"
 MODES = (KEEP, ORGANIZE, MOVE)
 
 _ALLOWED_SUFFIXES = frozenset({".ffpfsc", ".ffpfs", ".pkg"})
-# Ends every temp name of a copy still under way, so organize_lib.PARTIAL_SUFFIXES knows it.
+# every in-flight copy ends in this; organize_lib.PARTIAL_SUFFIXES knows it
 TEMP_SUFFIX = ".copy-tmp"
-# Exit code of a sort or organize run that finished but left items in the source.
+# exit code: finished, but items stayed in the source
 KEPT = 4
 
 
 def kept_line(names) -> str:
-    """The one line that says which items stayed in the source (at most five named)."""
     names = list(names)
     more = f" and {len(names) - 5} more" if len(names) > 5 else ""
     return f"[KEPT] {len(names)} item(s) stay in the source: {', '.join(names[:5])}{more}"
 
 
 def _temp_next_to(dst: Path, folder: bool = False) -> Path:
-    """A new temp file (or folder) beside *dst* that no one else uses: created exclusively,
-    with the mode a plain new file or folder gets (mkstemp would make it private)."""
-    # a long target name is shortened in the temp name, so it stays within 255 bytes
+    """created exclusively, with normal permissions (mkstemp would make it private)"""
+    # shorten long names so the temp name stays within 255 bytes
     stem = dst.name
     while stem and len(f".{stem}.copy-00000000{TEMP_SUFFIX}".encode("utf-8")) > 250:
         stem = stem[:-1]
@@ -48,14 +44,13 @@ def _temp_next_to(dst: Path, folder: bool = False) -> Path:
     raise FileExistsError(f"no free temp name beside {dst}")
 
 def cross_device(e: OSError) -> bool:
-    """A rename refused because source and target are on different devices: two network shares
-    of one server can carry the same volume serial and look like one drive."""
+    """EXDEV or WinError 17; two shares of one server can carry the same volume serial"""
     import errno
     return getattr(e, "winerror", None) == 17 or e.errno == errno.EXDEV
 
 
 def rmtree_writable(path) -> None:
-    """shutil.rmtree that also removes files marked read-only, which Windows refuses to delete."""
+    """rmtree that also takes read-only files, which Windows refuses to delete"""
     if os.name != "nt":
         shutil.rmtree(path)
         return
@@ -76,7 +71,6 @@ def _print(on_line: Optional[Callable[[str], None]], msg: str) -> None:
 
 
 def progress_line(pct: int, done: int, total: int, t0: float, what: str = "copy") -> str:
-    """The bar line the app reads, with speed and time left once a rate is known."""
     secs = time.monotonic() - t0
     rate = done / secs if secs > 0.5 else 0
     tail = f" @ {rate / 1e6:.2f} MB/s ETA {int((total - done) / rate)}s" if rate > 0 else ""
@@ -84,10 +78,7 @@ def progress_line(pct: int, done: int, total: int, t0: float, what: str = "copy"
 
 
 def _same_device(a: Path, b: Path) -> bool:
-    """True when ``a`` and ``b`` live on the same filesystem, so ``os.rename``
-    is a metadata-only operation instead of a copy. Compares the closest
-    EXISTING parent for each - a not-yet-created destination folder has no
-    st_dev on its own."""
+    """checks the closest existing parent: a dest folder not created yet has no st_dev"""
     def dev(p: Path) -> int:
         q = p
         while not q.exists():
@@ -101,10 +92,7 @@ def _same_device(a: Path, b: Path) -> bool:
 
 
 def _fsync_file(fd: int) -> None:
-    """Push written data to stable storage before the source may be deleted. On
-    macOS a plain fsync only reaches the drive's own cache; F_FULLFSYNC asks the drive
-    to flush that too, which is what makes unplugging the destination after a move
-    safe. Falls back to fsync where the filesystem does not support it."""
+    """macOS fsync stops at the drive cache; F_FULLFSYNC makes unplugging after a move safe"""
     if sys.platform == "darwin":
         try:
             import fcntl
@@ -116,9 +104,7 @@ def _fsync_file(fd: int) -> None:
 
 
 def _fsync_dir(path: Path) -> None:
-    """Flush the directory entry of a just-renamed file. Best effort: Windows cannot
-    open a directory for fsync and some filesystems refuse it - neither is an error
-    for the copy itself."""
+    """best effort: Windows can't fsync a directory and some filesystems refuse it"""
     try:
         fd = os.open(str(path), os.O_RDONLY)
     except OSError:
@@ -132,8 +118,7 @@ def _fsync_dir(path: Path) -> None:
 
 
 def _clone(src: Path, dst: Path) -> bool:
-    """An APFS clone of *src* at *dst* (macOS clonefile): instant, shares the blocks,
-    takes no space until either copy changes. False where the filesystem cannot."""
+    """APFS clonefile: instant and free until one copy changes; False where unsupported"""
     if sys.platform != "darwin":
         return False
     try:
@@ -146,9 +131,7 @@ def _clone(src: Path, dst: Path) -> bool:
 
 
 def _resolves_same(src: Path, dst: Path) -> bool:
-    """True when ``src`` and ``dst`` resolve to the same file - including the
-    macOS case-insensitive equality that ``resolve()`` normalizes. A missing
-    ``dst`` cannot equal an existing ``src`` (nothing to resolve to)."""
+    """resolve() also catches macOS case-insensitive twins; a missing dst never matches"""
     try:
         return dst.exists() and src.resolve() == dst.resolve()
     except Exception:
@@ -159,20 +142,7 @@ def run_copy(src, dst_dir, *,
              dst_name: Optional[str] = None,
              mode: str = KEEP,
              on_line: Optional[Callable[[str], None]] = None) -> int:
-    """
-    Copy or move *src* into *dst_dir*.
-
-    Args:
-      src: source file path (must be an existing regular file with a supported
-           suffix).
-      dst_dir: destination directory (created if missing).
-      dst_name: destination filename (defaults to ``src.name``).
-      mode: ``keep`` (the default), ``organize`` or ``move``; see the module docstring.
-      on_line: line sink (mirrors backend logging). ``None`` prints to stdout.
-
-    Returns an exit code (see module docstring).
-    """
-    # first: whatever ends this run (also a skip, exit 2 or 3), the app reads it as a copy
+    # first line, so even a skip or exit 2/3 is read as a copy by the app
     _print(on_line, "[JOB] copy")
     if mode not in MODES:
         _print(on_line, f"[ERROR] copy: unknown mode {mode!r} (keep, organize or move)")
@@ -214,8 +184,6 @@ def run_copy(src, dst_dir, *,
     same_drive = _same_device(src, dst_dir)
     total = src.stat().st_size
 
-    # The "[JOB] copy" line at the top told the GUI this job is a plain copy, whatever command
-    # started it (a --copy job, or a chain job with nothing to change).
     _print(on_line, "[PHASE] Writing Final Image")
 
     if same_drive and mode == KEEP and _clone(src, dst):
@@ -225,8 +193,6 @@ def run_copy(src, dst_dir, *,
         return 0
 
     if same_drive and mode != KEEP:
-        # Metadata-only rename - no data movement. Feels instantaneous even on
-        # a 100 GB game because we never touch the payload bytes.
         _print(on_line, f"[INFO] copy: same-drive move - {src.name} → {dst}")
         try:
             os.rename(src, dst)
@@ -237,14 +203,11 @@ def run_copy(src, dst_dir, *,
             _print(on_line, "[INFO] copy: the drive could not rename across, copying instead")
         else:
             _print(on_line, f"[####] 100% move")
-            # No "[PHASE] Complete" - the worker owns stage transitions; emitting our own
-            # would race the completion path and briefly show "Complete: 0%" in the log.
+            # no [PHASE] Complete here: the worker owns stages, ours would race it (Complete: 0%)
             _print(on_line, f"[SUCCESS] Moved {src.name} → {dst}")
             return 0
 
-    # A real copy (across drives, or on a drive that cannot clone): chunked through a temp
-    # file of its own so an interrupted write never leaves a truncated target visible
-    # under the final name. It needs the whole size free on the destination.
+    # chunked through a temp file, so a cut-off copy never shows up under the final name
     try:
         free = shutil.disk_usage(dst_dir).free
     except OSError:
@@ -265,8 +228,7 @@ def run_copy(src, dst_dir, *,
                 buf = fin.read(CHUNK)
                 if not buf:
                     break
-                # An unbuffered write may accept fewer bytes than offered; count what
-                # actually went out and resubmit the rest.
+                # an unbuffered write may take fewer bytes than offered
                 view = memoryview(buf)
                 while view:
                     n = fout.write(view)
@@ -279,11 +241,8 @@ def run_copy(src, dst_dir, *,
                     if pct != last_pct:
                         _print(on_line, progress_line(pct, written, total, t0))
                         last_pct = pct
-            # Everything must be on the destination before the source may go: flush,
-            # sync, then compare the byte count AND the on-disk size with the source
-            # size, so a short read/write (drive unplugged, a source that changed under
-            # us, a silent ENOSPC) fails here instead of surfacing later as a truncated
-            # game on the destination drive.
+            # the source may only go once all of it is on disk: sync, then check count and size
+            # a short copy (unplugged drive, source changed, silent ENOSPC) must fail here
             fout.flush()
             _fsync_file(fout.fileno())
             landed = os.fstat(fout.fileno()).st_size
@@ -309,8 +268,7 @@ def run_copy(src, dst_dir, *,
             src.unlink()
             _print(on_line, f"[INFO] copy: source deleted after successful copy: {src}")
         except Exception as e:
-            # Copy succeeded - losing the source delete is a warning, not a fail:
-            # the target is intact, the user can delete the source manually.
+            # the copy is fine, so a failed source delete is only a warning
             _print(on_line, f"[WARN] copy: source could not be deleted: {e}")
 
     _print(on_line, f"[SUCCESS] {'Moved' if delete_source else 'Copied'} "
@@ -319,11 +277,7 @@ def run_copy(src, dst_dir, *,
 
 
 def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str], None]] = None) -> int:
-    """Copy or move the folder *src* to the new folder *dst* (an unpacked game). Same drive
-    and a move: one rename. Otherwise every file is copied in chunks into a new temp folder
-    beside *dst*, flushed, and the folder takes its name only once all of it is there; a move
-    then removes the source. A link stays a link. OS clutter is never copied. A folder that
-    cannot be listed fails the copy. Exit codes as run_copy (3: *dst* exists)."""
+    """copy or move an unpacked game folder; it only gets its name once complete"""
     _print(on_line, "[JOB] copy")
     if mode not in MODES:
         _print(on_line, f"[ERROR] copy: unknown mode {mode!r} (keep, organize or move)")
@@ -364,7 +318,7 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
     for dirpath, dirnames, filenames in os.walk(src, onerror=unreadable.append):
         rel = Path(dirpath).relative_to(src)
         dirnames[:] = [d for d in dirnames if not junk(d)]
-        # a link to a folder is copied as a link, like a link to a file (os.walk lists it here)
+        # folder links are copied as links too (os.walk lists them as dirs)
         files.extend(rel / d for d in dirnames if os.path.islink(os.path.join(dirpath, d)))
         dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
         dirs.extend(rel / d for d in dirnames)
@@ -394,7 +348,7 @@ def run_copy_tree(src, dst, *, mode: str = KEEP, on_line: Optional[Callable[[str
         for f in files:
             s, t = src / f, tmp / f
             if s.is_symlink():
-                os.symlink(os.readlink(s), t, target_is_directory=s.is_dir())   # Windows tells them apart
+                os.symlink(os.readlink(s), t, target_is_directory=s.is_dir())  # Windows has separate file and dir symlinks
                 continue
             with open(s, "rb", buffering=0) as fin, open(t, "wb", buffering=0) as fout:
                 while True:

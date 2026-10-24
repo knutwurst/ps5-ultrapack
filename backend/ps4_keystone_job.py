@@ -1,15 +1,4 @@
-"""Repair a PS4 game package and its updates: the original keystone, a merged game's version,
-the updates' save folder, and the updates bound to the changed package.
-
-Saves hold the keystone of the game that wrote them; a package built with another one (the
-default from the all-zero passcode) shows saves of the retail game as corrupted. The tool writes
-the keystone in place (ps4-keystone). That changes the package's content and game digests, which
-every update records as its base, so each update is rebound (ps4-rebind). A full game with an update
-merged in (master version above app version) gets the app version of the update, so the console stops
-downloading the official one, and an update whose save folder differs from the game's gets the game's
-(ps4-sfo). Every overwritten range is kept in an undo folder with a journal; undo() puts them back,
-newest first.
-"""
+"""PS4 game fixes in place; a new keystone changes the digests, so every update gets rebound"""
 from __future__ import annotations
 
 import json
@@ -29,11 +18,7 @@ def _say(on_line, text):
 
 
 def plan_update(update, base_sfo: dict) -> dict:
-    """What the job does to *update* besides binding it, or has to say about it:
-    {'save_folder': (old, new)} when its param.sfo names another save folder than the game's (the
-    job sets the game's), {'save_folder_note': (old, new)} when it names none, so its saves go to
-    its title id, and the game saves elsewhere (a field the param.sfo does not have cannot be
-    added in place)."""
+    """save folder fixes for an update; a field the sfo lacks can't be added in place"""
     out = {}
     sfo = ps4pkg.read_sfo(update)
     own, want = str(sfo.get("INSTALL_DIR_SAVEDATA") or ""), ps4pkg.save_folder(base_sfo)
@@ -47,8 +32,7 @@ def plan_update(update, base_sfo: dict) -> dict:
 
 
 def region_changed(update) -> bool:
-    """True when the update was converted from another region's release (its image carries the
-    marker some converters leave): its language can differ from the game's."""
+    """converted from another region (sce_sys/region.changed): its language may differ"""
     try:
         return any(e.get("path") == "sce_sys/region.changed" for e in fpkg.list_inner(Path(update))["entries"])
     except Exception:
@@ -56,7 +40,7 @@ def region_changed(update) -> bool:
 
 
 def check(base, updates) -> list[str]:
-    """Why these packages cannot go into one keystone job (empty when they can)."""
+    """why these packages can't share one keystone job, empty when they can"""
     base = Path(base)
     errors = []
     try:
@@ -81,8 +65,7 @@ def check(base, updates) -> list[str]:
 
 
 def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_version: bool = False) -> int:
-    """0 when every repair asked for is done and every update points at *base*, 1 on an error
-    (the package being changed is left as it was)."""
+    """on an error the package being changed is left as it was"""
     base = Path(base)
     updates = [Path(u) for u in updates]
     _say(on_line, "[JOB] copy")
@@ -202,10 +185,10 @@ def run(base, keystone_text: str | None, updates, undo_root, on_line=None, fix_v
 
 
 def journals(undo_root) -> list[Path]:
-    """The journals of the runs that changed something and are not undone yet, newest first."""
+    """runs not undone yet, newest first"""
     out = []
     def order(q):
-        # by when the journal was written (a clock set back keeps the order), then '<time>-2'
+        # by journal mtime, so a clock set back keeps the order; then the -2 suffix
         m = re.match(r"^(.*?)(?:-(\d+))?$", q.parent.name)
         try:
             t = q.stat().st_mtime_ns
@@ -223,14 +206,12 @@ def journals(undo_root) -> list[Path]:
 
 
 def last_journal(undo_root) -> Path | None:
-    """The journal Undo last change works on: the newest run not undone yet."""
     found = journals(undo_root)
     return found[0] if found else None
 
 
 def describe(journal_path) -> dict:
-    """What a journal changed, for the question before an undo: the game package, when, and
-    how many packages."""
+    """for the question before an undo: game package, when, how many packages"""
     j = json.loads(Path(journal_path).read_text(encoding="utf-8"))
     pkgs = {st.get("package") for st in j.get("steps") or []}
     try:
@@ -241,9 +222,7 @@ def describe(journal_path) -> dict:
 
 
 def undo(journal_path, on_line=None) -> int:
-    """Put back what the run of *journal_path* changed, newest first. A package that is not
-    there or cannot be restored keeps its steps in the journal for the next Undo; the rest
-    of the run is put back."""
+    """newest first; a package that can't be restored keeps its steps for the next Undo"""
     journal_path = Path(journal_path)
     journal = json.loads(journal_path.read_text(encoding="utf-8"))
     left, blocked = [], set()

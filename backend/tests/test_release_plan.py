@@ -1,8 +1,4 @@
-"""One game per download folder takes the rest of the folder along (ultra_core.plan_releases):
-the add-ons are copied next to its output instead of becoming jobs of their own.
-
-    PYTHONPATH=. .venv/bin/python -m unittest backend.tests.test_release_plan
-"""
+"""PYTHONPATH=. .venv/bin/python -m unittest backend.tests.test_release_plan"""
 
 from __future__ import annotations
 
@@ -121,7 +117,7 @@ class OneGamePerFolder(unittest.TestCase):
         self.assertEqual(addons, ["Some Title [PPSA00012] [v01.000]/Addon/dlc.zip"])
 
     def test_a_folder_not_named_after_the_game_takes_nothing(self):
-        # a drive or a collection: one loose game beside a series folder is no download folder
+        # a loose game beside a series folder is a drive, not a download folder
         drive = self.root / "Drive"
         _zip(drive / "PPSA00009-game.zip", GAME)
         (drive / "Some Series S01").mkdir(parents=True)
@@ -215,7 +211,6 @@ class PackageHeaders(unittest.TestCase):
 
 
 class AddonOnlyTitleFolder(unittest.TestCase):
-    """DLC organized without their game: the title folder takes the game's name."""
     def _dlc(self, title, version="01.000.000"):
         return ultra_core.LibItem(Path(f"/x/{title}.pkg"), "pkg", "dlc", title, "PPSA10621", version, "", None)
 

@@ -6,14 +6,7 @@ using Orbis = LibOrbisPkg;
 
 namespace PkgTool;
 
-/// <summary>
-/// ps4-rebind: points a PS4 update package at its base package again. An update stores the base's
-/// content digest and game digest in its general digests (slots 10 and 12); a base whose image
-/// changed (a new keystone) has new ones, and the console then refuses the update as incompatible.
-/// The two slots are rewritten in place and the entry digest, the four header hashes, the header
-/// digest and the fake header signature are recomputed. --undo FILE keeps the overwritten bytes
-/// in the format 'ps4-keystone --restore' reads.
-/// </summary>
+// ps4-rebind: re-point an update at a base whose digests changed (slots 10 and 12)
 internal static partial class Program
 {
     const int BaseContentSlot = 10, BaseGameSlot = 12;
@@ -30,7 +23,7 @@ internal static partial class Program
         foreach (var p in new[] { updPath, basePath })
             if (!File.Exists(p)) throw new FileNotFoundException("package not found", p);
 
-        // the base: its own content and game digest, checked against its header first
+        // base digests, checked against its header first
         Orbis.PKG.Pkg bpkg;
         byte[] bhead;
         using (var fs = File.OpenRead(basePath)) { bpkg = new Orbis.PKG.PkgReader(fs).ReadPkg(); bhead = new byte[0x1000]; fs.Position = 0; fs.ReadExactly(bhead); }

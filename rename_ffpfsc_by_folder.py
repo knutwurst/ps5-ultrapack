@@ -11,7 +11,6 @@ def process(root: Path, apply: bool):
     if not root.is_dir():
         print(f"!! root not found: {root}")
         return 0, 0, 0
-    # Every .ffpfsc under the root; name it after the folder it lives in.
     for ff in sorted(root.rglob("*.ffpfsc")):
         folder = ff.parent
         if folder == root:

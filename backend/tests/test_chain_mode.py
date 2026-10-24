@@ -1,4 +1,3 @@
-"""CHAIN MODE (--to): any source → [patch → backport → sign] → any output, in one call."""
 from __future__ import annotations
 
 import json
@@ -76,7 +75,6 @@ class ChainMode(unittest.TestCase):
         self.assertEqual(rc, 0, log[-1500:])
         imgs = list(out.glob("*.ffpfsc"))
         self.assertEqual(len(imgs), 1, log[-800:])
-        # The source folder was not changed (no transforms requested).
         self.assertEqual(sdk_of(self.game / "eboot.bin"), (SDK_HIGH_PS5, SDK_HIGH_PS4))
         type(self).ffpfsc = imgs[0]
 
@@ -94,7 +92,6 @@ class ChainMode(unittest.TestCase):
         self.assertFalse(list((self.temp / "_ffpfsc_temp").glob("chain-*")), "scratch must be cleaned up")
 
     def test_5_ffpfsc_to_ffpfsc_with_backport_is_one_job(self):
-        """The user's case: an existing .ffpfsc lowered to 7.61 and repacked, one call."""
         src = getattr(type(self), "ffpfsc", None) or self._pack_once()
         before = src.read_bytes()
         out = self.root / "o5"; out.mkdir()
@@ -105,7 +102,6 @@ class ChainMode(unittest.TestCase):
         self.assertEqual(len(built), 1, log[-800:])
         self.assertEqual(src.read_bytes(), before, "the source image must be untouched")
         self.assertIn("CHAIN:", log); self.assertIn("backport 7.61", log)
-        # Unpack the result and check the lowered SDK survived the repack.
         chk = self.root / "o5u"
         rc, log2 = run(str(built[0]), str(chk), "--unpack", "--overwrite", "--temp-dir", str(self.temp))
         self.assertEqual(rc, 0, log2[-1000:])
@@ -114,8 +110,6 @@ class ChainMode(unittest.TestCase):
         self.assertEqual(sdk_of(eboot), (SDK_761_PS5, SDK_761_PS4))
 
     def test_6_same_format_without_changes_is_a_copy(self):
-        """Same container format, nothing to change → the copy job. By default the source
-        stays (a clone on the same drive); --copy-mode move renames it into the output."""
         src = getattr(type(self), "ffpfsc", None) or self._pack_once()
         out = self.root / "o6"; out.mkdir()
         rc, log = run(str(src), str(out), "--to", "ffpfsc")
@@ -131,8 +125,6 @@ class ChainMode(unittest.TestCase):
         self.assertFalse(src.is_file(), "move: the source is renamed into the output")
 
     def test_7_sdk_of_reads_the_firmware_through_the_image(self):
-        """The firmware a game needs, read from eboot.bin inside a packed image (headers
-        only) and from a folder: the organized file name carries it as [fwN.NN]."""
         src = getattr(type(self), "ffpfsc", None)
         if not (src and src.is_file()):                   # test 6 moved it into its output
             src = self._pack_once()
@@ -153,9 +145,6 @@ class ChainMode(unittest.TestCase):
 
 
 class BackportRules(unittest.TestCase):
-    """folder → folder + backport, the cheapest chain: every rule of the backport pass
-    through the real CLI, without a container round trip."""
-
     def setUp(self):
         self._td = tempfile.TemporaryDirectory()
         self.root = Path(self._td.name)
@@ -270,8 +259,6 @@ class BackportRules(unittest.TestCase):
         return next(out.glob("*.ffpfsc"))
 
     def test_a_container_is_checked_before_it_is_unpacked(self):
-        # the check reads only the executables out of the image: a refusal comes before the
-        # whole game is unpacked, and nothing is left in the scratch
         img = self._image_of(self.game())
         rc, log = run(str(img), str(self.root / "out2"), "--to", "ffpfsc", "--backport-target", "7.61",
                       "--fw-libs-root", str(self.fw), "--temp-dir", str(self.root / "t"))
@@ -304,8 +291,6 @@ class BackportRules(unittest.TestCase):
 
 
 class ExfatSource(unittest.TestCase):
-    """An exFAT image the user hands in stays; one the app unwraps from its own copy goes."""
-
     def setUp(self):
         sys.path.insert(0, str(REPO / "backend"))
         import cli

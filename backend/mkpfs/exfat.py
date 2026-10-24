@@ -23,9 +23,8 @@ _NAME_CHARS_PER_ENTRY = 15
 
 
 
-# A separator, a control character, "." or ".." could take a name out of the target folder or
-# fake a line of the log. Other characters exFAT forbids stay readable (the app's own writer
-# may have put them there from a macOS name); the extractor checks every target anyway.
+# separators, control chars, . and .. could escape the target or fake a log line
+# other exFAT-illegal chars stay readable, the extractor checks every target anyway
 _BAD_NAME_CHARS = {"/"} | {chr(c) for c in range(0x20)}
 
 
@@ -38,8 +37,6 @@ class ExfatError(ValueError):
 
 @dataclass(frozen=True)
 class ExfatGeometry:
-    """Parsed exFAT volume geometry from the main boot sector."""
-
     bytes_per_sector: int
     sectors_per_cluster: int
     fat_offset_sectors: int
@@ -56,8 +53,6 @@ class ExfatGeometry:
 
 @dataclass
 class ExfatEntry:
-    """A file or directory entry parsed from an exFAT directory."""
-
     name: str
     rel_path: str
     is_dir: bool

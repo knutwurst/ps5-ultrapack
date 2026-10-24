@@ -1,4 +1,4 @@
-"""AMPR emulation index (``ampr_emu.index``) generation."""
+"""writes ampr_emu.index for the AMPR emulator"""
 
 from __future__ import annotations
 

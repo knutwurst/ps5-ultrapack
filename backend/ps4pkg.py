@@ -1,4 +1,3 @@
-"""Read PS4 packages (.pkg, title ids CUSA…): identity from the header and param.sfo."""
 from __future__ import annotations
 
 import hashlib
@@ -65,7 +64,7 @@ def header_from_bytes(h: bytes) -> Ps4Header:
 
 
 def is_ps4_package(path) -> bool:
-    """True for a CNT package whose content id carries a CUSA title id. Never raises."""
+    """CNT package with a CUSA title id; never raises"""
     try:
         h = read_header(path)
     except Exception:
@@ -126,10 +125,7 @@ def _kind(category: str, content_type: int) -> str:
 
 
 def identity_from_prefix(read_prefix, limit: int = 32 << 20, hints=()) -> Ps4Identity:
-    """The identity of a package that can only be read from its start (a member of an
-    archive): *read_prefix(n)* returns the first n bytes. Reads the header, then as far as
-    the entry table and param.sfo reach (at most *limit* bytes). *hints*: the names around
-    it (the member, the archive), see _identity."""
+    """for an archive member we can only read from the start; reads at most limit bytes"""
     head = read_prefix(0x1000)
     h = header_from_bytes(head)
     if not 0 < h.entry_count < 10000:
@@ -151,7 +147,7 @@ def identity_from_prefix(read_prefix, limit: int = 32 << 20, hints=()) -> Ps4Ide
 
 
 def read_icon(path) -> bytes | None:
-    """The package's icon0.png (stored in the clear like param.sfo), or None."""
+    """icon0.png sits in the clear, like param.sfo"""
     try:
         data = _read_entry(path, read_header(path), ENTRY_ICON0_PNG)
     except Ps4PackageError:
@@ -160,14 +156,12 @@ def read_icon(path) -> bytes | None:
 
 
 def identity_from_sfo(sfo: dict, hints=()) -> Ps4Identity:
-    """The identity of an unpacked PS4 game from its sce_sys/param.sfo (no package header)."""
     cid = str(sfo.get("CONTENT_ID") or "")
     return _identity(Ps4Header(cid, 0, 0, 0, 0, 0, 0), sfo, hints)
 
 
 def read_identity(path) -> Ps4Identity:
-    """The package's identity; the names of the file and the folders above it count as
-    hints (see _identity)."""
+    """the file name and the folders above it count as hints"""
     h = read_header(path)
     p = Path(path)
     return _identity(h, parse_sfo(_read_entry(path, h, ENTRY_PARAM_SFO)), [p.name] + [q.name for q in p.parents][:4])
@@ -187,7 +181,6 @@ def _named_versions(hints) -> set:
 
 
 def _identity(h: Ps4Header, sfo: dict, hints=()) -> Ps4Identity:
-    """APP_VER is the application's version."""
     app_ver = str(sfo.get("APP_VER") or "")
     master = str(sfo.get("VERSION") or "")
     kind = _kind(str(sfo.get("CATEGORY") or ""), h.content_type)
@@ -234,8 +227,7 @@ def _keystone_bytes_problem(data: bytes) -> str | None:
 
 
 def keystone_problem(path) -> str | None:
-    """None when *path* holds a keystone a package can take (an export from a save: 96 bytes,
-    version 2, a MAC that matches), else why not."""
+    """None for a usable keystone (save export: 96 bytes, v2, matching MAC), else why not"""
     try:
         data = Path(path).read_bytes() if Path(path).stat().st_size <= 4096 else b""
     except OSError as e:
@@ -244,19 +236,17 @@ def keystone_problem(path) -> str | None:
 
 
 def make_keystone(fingerprint: bytes) -> bytes:
-    """The 96-byte keystone for a 32-byte fingerprint (what Apollo shows as the save's
-    keystone fingerprint): the v2 header, the fingerprint, the MAC over both."""
+    """fingerprint is what Apollo shows for the save; v2 header, fingerprint, MAC over both"""
     head = _KEYSTONE_HEAD + fingerprint
     return head + hmac.new(_KEYSTONE_MAC_KEY, head, hashlib.sha256).digest()
 
 
-# the keystone a builder makes from the all-zero passcode; retail saves do not open with it
+# builder default from the all-zero passcode; retail saves won't open with it
 DEFAULT_KEYSTONE_FINGERPRINT = bytes.fromhex("294A5ED06DB170618F2EED8C424B9D828879C080CC66FBC4864F69E974DEB856")
 
 
 def keystone_from_text(text: str) -> tuple[bytes | None, str | None]:
-    """(keystone, None) or (None, why not) for what the user typed or picked: a keystone file,
-    its 64 hex digits fingerprint, or all 192 hex digits of the file."""
+    """takes a keystone file, its 64 hex digit fingerprint or all 192 hex digits"""
     raw = (text or "").strip().strip('"')
     if not raw:
         return None, "no keystone given"
@@ -282,7 +272,7 @@ def keystone_from_text(text: str) -> tuple[bytes | None, str | None]:
 
 
 def read_sfo(path) -> dict:
-    """The param.sfo values of the package (from its header, a few KB)."""
+    """only a few KB from the header"""
     h = read_header(path)
     return parse_sfo(_read_entry(path, h, ENTRY_PARAM_SFO))
 
@@ -295,11 +285,7 @@ def _ver(v) -> tuple:
 
 
 def version_problem(path, sfo: dict | None = None) -> dict | None:
-    """A full game whose master version (VERSION) is above its app version (APP_VER): an update
-    merged into the game. The console then still downloads the official update. Returns
-    {'app_ver', 'version', 'named'}: 'named' when the file or folder name gives the master version
-    as the package version, which marks a merged release (a re-released master looks the same in
-    the param.sfo, so that alone is no proof)."""
+    """VERSION above APP_VER means a merged update, and the console still downloads the official one"""
     sfo = sfo if sfo is not None else read_sfo(path)
     app, ver = str(sfo.get("APP_VER") or ""), str(sfo.get("VERSION") or "")
     if str(sfo.get("CATEGORY") or "") != "gd" or not app or not ver or not _ver(ver) > _ver(app):
@@ -311,7 +297,6 @@ def version_problem(path, sfo: dict | None = None) -> dict | None:
 
 
 def save_folder(sfo: dict) -> str:
-    """The title id a game's or update's saves live under."""
     return str(sfo.get("INSTALL_DIR_SAVEDATA") or sfo.get("TITLE_ID") or "")
 
 
@@ -320,8 +305,7 @@ BASE_CONTENT_SLOT, BASE_GAME_SLOT = 10, 12      # an update's record of its base
 
 
 def general_digests(path) -> dict[int, bytes]:
-    """{slot: 32 bytes} of the set general digests (1 content, 2 game, ... 10 and 12 the base
-    package an update belongs to)."""
+    """slot 1 content, 2 game, 10 and 12 the base package of an update"""
     h = read_header(path)
     for eid, _fn, _f1, _f2, off, size in _entries(path, h):
         if eid == ENTRY_GENERAL_DIGESTS:
@@ -334,8 +318,7 @@ def general_digests(path) -> dict[int, bytes]:
 
 
 if __name__ == "__main__":
-    # python3 backend/ps4pkg.py PKG [PKG ...]: what the app reads from a PS4 package (the
-    # header, the entry table and every param.sfo field). Reads a few MB, never the game.
+    # python3 backend/ps4pkg.py PKG [PKG ...]: dump header, entries and param.sfo
     import sys
     for arg in sys.argv[1:]:
         print(f"== {arg}")

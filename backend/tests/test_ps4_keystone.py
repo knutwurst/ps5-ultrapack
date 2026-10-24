@@ -1,5 +1,3 @@
-"""Replacing the keystone of a PS4 fake package: the file check, the tool command on a real
-package (skipped without one in unzipped/ps4/), and the library sort that writes it."""
 import filecmp
 import hashlib
 import os
@@ -22,7 +20,6 @@ from ps4_fixture import make_keystone, make_default_keystone, make_pkg  # noqa: 
 
 
 def _sample(kind: str):
-    """The first git-ignored sample package of *kind* (game, update) in unzipped/ps4/."""
     for p in sorted((REPO / "unzipped" / "ps4").glob("*.pkg")):
         try:
             if ps4pkg.read_identity(p).kind == kind:
@@ -36,7 +33,6 @@ GAME, UPDATE = _sample("game"), _sample("update")
 
 
 def _clone(src: Path, dst: Path) -> None:
-    """A copy that costs no space on APFS."""
     if sys.platform == "darwin" and subprocess.run(["cp", "-c", str(src), str(dst)]).returncode == 0:
         return
     shutil.copyfile(src, dst)
@@ -49,8 +45,6 @@ def _run(*args) -> tuple[int, str]:
 
 
 def _general_digests(pkg: Path) -> dict:
-    """{name: (stored, computed)} for the general digests that hang on the content image. The
-    formulas are the ones Sony's packages carry, checked against untouched samples."""
     with open(pkg, "rb") as f:
         b = f.read(0x10000)
         n, tbl = int.from_bytes(b[0x10:0x14], "big"), int.from_bytes(b[0x18:0x1c], "big")
@@ -181,7 +175,6 @@ class ToolOnARealPackage(unittest.TestCase):
         self.assertTrue(filecmp.cmp(pkg, GAME, shallow=False))
 
     def test_a_failed_swap_leaves_no_undo_file(self):
-        # a keystone that cannot be written (the package is read-only) leaves nothing behind
         pkg, undo = self.tmp / "ro.pkg", self.tmp / "ro.undo"
         _clone(GAME, pkg)
         os.chmod(pkg, 0o444)

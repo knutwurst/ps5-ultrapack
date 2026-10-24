@@ -1,8 +1,3 @@
-"""Organize: library names for every format, the scan of a folder, the plan, apply and undo.
-
-The containers in these tests are small files whose content is their identity as JSON; the
-readers handed to organize_lib parse that instead of opening a real image or package (the
-pipeline suite runs the real readers)."""
 import json, os, shutil, sys, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -82,7 +77,6 @@ FB = "Beta Game [PPSA00002] [v01.000.000]"
 
 
 def fake_identify(path, kind):
-    """The test containers carry their identity as JSON (a folder in sce_sys/param.json)."""
     f = path / "sce_sys" / "param.json" if kind == "folder" else path
     try:
         d = json.loads(f.read_text())
@@ -301,7 +295,6 @@ class Organize(Tree):
 
 
 class Into(Tree):
-    """The "Organize" job output: one source written into a library."""
     def lib(self):
         d = self.root / "library"
         d.mkdir(exist_ok=True)
@@ -341,8 +334,6 @@ class Into(Tree):
         self.assertFalse((self.root / "dl" / "lib").exists())
 
     def test_an_overwrite_cut_short_gets_its_old_item_back(self):
-        # a run killed between setting the old item aside and the new copy: the next run
-        # gives the old item its name back before it decides anything
         self.put(f"library/{FA}/Alpha Game [PPSA00001] [v01.000].ffpfsc.copy-old", A)
         lines = []
         rc = ol.organize_into(self.put("dl/a.ffpfsc", A), self.lib(), fake_identify, on_line=lines.append)
@@ -364,7 +355,6 @@ class Into(Tree):
         self.assertEqual(sorted(p.name for p in (self.lib() / FA).iterdir() if p.name.startswith(".")), [])
 
     def test_backport_package_in_a_backport_folder_keeps_its_role(self):
-        # an unpacked release: the game, its backport in a folder that says so, checksum tools
         g = dict(A, fw="11.00")
         self.put("dl/UP0001-PPSA00001_00-X.pkg", g, )
         (self.root / "dl/UP0001-PPSA00001_00-X.pkg").write_text(json.dumps(g) + " " * 4000)
@@ -382,7 +372,7 @@ class Into(Tree):
         self.assertGreater((self.lib() / folder / "Alpha Game [PPSA00001] [v01.000] [fw11.00].pkg").stat().st_size, 4000)
 
     def test_an_unreadable_package_and_an_inner_archive_come_along(self):
-        # what Organize cannot read is not left behind in an unpack that is deleted afterwards
+        # what Organize can't read must not stay behind in an unpack that gets deleted
         self.put("dl/game.pkg", dict(A, fw="11.00"))
         self.put("dl/backport (4.xx to 10.xx)/game-4xx.pkg", text="not readable")
         self.put("dl/extras/bonus.part1.rar", text="r1"); self.put("dl/extras/bonus.part2.rar", text="r2")
@@ -398,7 +388,6 @@ class Into(Tree):
         self.assertTrue(any("game-4xx.pkg" in l and "as it is" in l for l in lines), lines)
 
     def test_every_entry_goes_to_its_own_title(self):
-        # A's game, B's game, A's update: the layout groups by title, the placement must not shift
         big = self.put("dl/1/a.pkg", A); big.write_text(json.dumps(A) + " " * 4000)
         self.put("dl/2/b.pkg", B)
         self.put("dl/3/a-update.pkg", dict(A, version="01.100.000", role="update"))
@@ -409,7 +398,6 @@ class Into(Tree):
         self.assertEqual(got, sorted([f"{fa}/Alpha Game [PPSA00001] [v01.000].pkg",
                                       f"{fa}/Alpha Game [PPSA00001] UPDATE [v01.100].pkg",
                                       f"{FB}/Beta Game [PPSA00002] [v01.000].pkg"]))
-        # and behind each name sits the right file
         read = lambda rel: json.loads((self.lib() / rel).read_text())
         self.assertEqual(read(f"{FB}/Beta Game [PPSA00002] [v01.000].pkg")["title_id"], "PPSA00002")
         self.assertEqual(read(f"{fa}/Alpha Game [PPSA00001] UPDATE [v01.100].pkg")["version"], "01.100.000")
@@ -486,7 +474,6 @@ class Into(Tree):
         self.assertIn("[KEPT] 1 item(s) stay in the source: notes", lines)
 
     def test_names_that_differ_only_in_case_both_arrive(self):
-        # DLC names keep the case of their titles: "... DLC x ..." and "... DLC X ..."
         self.put("dl/g.pkg", A)
         self.put("dl/d1.pkg", dict(A, title="Alpha Game - x", role="dlc"))
         self.put("dl/d2.pkg", dict(A, title="Alpha Game - X", role="dlc"))
@@ -508,7 +495,6 @@ class Into(Tree):
         self.assertEqual(rc, 4, lines)
         self.assertIn("[KEPT] 1 item(s) stay in the source: what.ffpfsc", lines)
         self.assertTrue((self.root / "dl/what.ffpfsc").exists())
-        # the Skip rule leaves the second copy in the source as well
         self.put("dl/a.ffpfsc", A)
         lines = []
         rc = ol.organize_into(self.root / "dl" / "a.ffpfsc", self.lib(), fake_identify, mode="move",

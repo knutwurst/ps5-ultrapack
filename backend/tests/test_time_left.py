@@ -1,6 +1,3 @@
-"""The time a job still needs: the running step's own time left (the backend's, or its pace
-so far), then each later step at the speed this Mac has shown for it before, else in the
-proportion the progress bands give it to the running step."""
 import os, sys, tempfile, unittest
 from pathlib import Path
 
@@ -25,8 +22,7 @@ class ParseEta(unittest.TestCase):
 
 class TimeLeft(unittest.TestCase):
     def test_the_last_step_is_its_own_time_left(self):
-        # compressing is the last long step: its own time left is the job's (it was 11 min
-        # from the bands while the compress alone needed 38)
+        # compressing is the last long step, its own time left is the job's
         self.assertEqual(uc.job_time_left(PHASES, "Compressing", 2288, 60, 128 * GB, {}, WIDTHS), 2288)
 
     def test_later_steps_at_the_speed_seen_before(self):

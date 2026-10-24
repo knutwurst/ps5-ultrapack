@@ -1,4 +1,3 @@
-"""PS5 PKG Tools: the checks and repairs that need no package (firmware, keystone, param.json)."""
 import json
 import sys
 import tempfile
@@ -119,7 +118,6 @@ class ParamJson(unittest.TestCase):
 
 
 def _ucp(entries, good=True) -> bytes:
-    """A UCP archive built from the documented layout."""
     import hashlib
     import struct
     entries = sorted(entries)
@@ -137,7 +135,7 @@ def _ucp(entries, good=True) -> bytes:
 
 
 def _ampr_index(rows: dict) -> bytes:
-    """An AMPRIDX3 index of {path: size} (records and blob only; the hash table is not read)."""
+    """records and blob only, the reader skips the hash table"""
     import struct
     keys = sorted(rows)
     blob, recs = b"", b""

@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Build the Windows x64 parts of the app on a Mac: the fPKG helper (ffpfsc-pkg-tool.exe and
-# its ImageMagick library) and 7za.exe into backend/native/, and the UnRAR module for the Windows Python
-# that BUILD_WINDOWS_APP.ps1 bundles into backend/unrar/. Needs the .NET SDK 9+ and mingw-w64
-# (brew install mingw-w64). WIN_PYTHON is a copy of that Python's folder (include/ and
-# python3XX.dll are enough).
+# builds the Windows x64 parts on a Mac: pkg tool, 7za.exe, UnRAR module
+# needs .NET SDK 9+, mingw-w64 and WIN_PYTHON (a copy of the Windows Python folder)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -23,7 +20,7 @@ for f in ffpfsc-pkg-tool.exe Magick.Native-Q8-x64.dll; do
 done
 rm -rf "${OUT}"
 
-# The same sources as backend/unrar/setup.py on Windows, linked statically (no MinGW DLLs).
+# same sources as backend/unrar/setup.py, static so no MinGW DLLs tag along
 SOURCES=(rar strlist strfn pathfn smallfn global file filefn filcreat archive arcread unicode
          system crypt crc rawread encname resource match timefn rdwrfn consio options errhnd
          rarvm secpassword rijndael getbits sha1 sha256 blake2s hash extinfo extract volume

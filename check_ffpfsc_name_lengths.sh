@@ -1,23 +1,6 @@
 #!/usr/bin/env bash
-#
-# check_ffpfsc_name_lengths.sh
-#
-# Lists .ffpfsc / .ffpfs files whose FILENAME is too long for ShadowMountPlus.
-# SMP rejects over-long names with ENAMETOOLONG ("Dateiname zu lang"), which counts
-# UTF-8 BYTES, not characters (a "™" is 3 bytes). Observed: 59 bytes mounts, 69 fails, so
-# the cap is ~64; this script counts BYTES and defaults MAX to 63 (conservative). Override
-# by passing a different MAX.
-#
-# Searches the given directory recursively. If no directory is passed, it uses
-# the directory this script lives in.
-#
-# Read-only: never renames or deletes anything.
-#
-# Usage:
-#   ./check_ffpfsc_name_lengths.sh                  # script's own dir, limit 255
-#   ./check_ffpfsc_name_lengths.sh /Volumes/Games   # given dir
-#   ./check_ffpfsc_name_lengths.sh /Volumes/Games 240   # custom limit
-#
+# lists .ffpfs(c) names over ShadowMountPlus's ~64 byte limit (UTF-8 bytes). read-only
+# usage: ./check_ffpfsc_name_lengths.sh [dir] [max]
 set -euo pipefail
 
 MAX=63
@@ -40,15 +23,13 @@ if [[ ! -d "$ROOT" ]]; then
   exit 1
 fi
 
-# "near limit" warning band: within 15 of the cap.
 NEAR=$((MAX - 15))
 
 echo ">>> Limit: $MAX bytes per filename (ShadowMountPlus ENAMETOOLONG; bytes, not chars)."
 echo ">>> Searching under: $ROOT"
 echo
 
-# Build "length<TAB>fullpath" lines, counting the BASENAME in UTF-8 BYTES (wc -c),
-# because ENAMETOOLONG is a byte limit — a "™" costs 3 bytes, not 1.
+# bytes, not chars: ENAMETOOLONG counts UTF-8, a TM sign costs 3
 
 total=0
 over=0
@@ -56,8 +37,6 @@ near=0
 longest=0
 longest_name=""
 
-# Collect over-limit and near-limit names into temp arrays via a temp file
-# (keeps it sorted, longest first).
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 

@@ -1,8 +1,4 @@
-"""backend/cli.py never loses, overwrites or consumes what the user owns, and every failure
-exits non-zero with an [ERROR] line.
-
-    PYTHONPATH=. .venv/bin/python backend/tests/test_cli_safety.py
-"""
+"""PYTHONPATH=. .venv/bin/python backend/tests/test_cli_safety.py"""
 
 from __future__ import annotations
 
@@ -56,7 +52,6 @@ def run_cli(*argv: str, env: dict | None = None, timeout: int = 300) -> tuple[in
 
 
 def run_main(*argv: str, fpkg_module=None) -> tuple[int, str]:
-    """cli.main() in this process (so a fake package tool can stand in)."""
     saved_argv, saved_mod = sys.argv, sys.modules.get("fpkg")
     if fpkg_module is not None:
         sys.modules["fpkg"] = fpkg_module
@@ -109,7 +104,6 @@ class Case(unittest.TestCase):
         return z
 
 
-# ── 1: a nested image that cannot be unwrapped fails the job ─────────────────────
 class UnwrapFailures(Case):
     def test_unreadable_nested_exfat_raises(self):
         d = self.root / "unpacked"
@@ -127,7 +121,6 @@ class UnwrapFailures(Case):
             cli._fully_unwrap(d, None, None)
 
 
-# ── 2 + 3: the user's folder keeps its clutter and its extras ───────────────────
 class UserFolderUntouched(Case):
     def setUp(self):
         super().setUp()
@@ -149,7 +142,6 @@ class UserFolderUntouched(Case):
         rc, log = self._pack(self.out / "G.ffpfsc")
         self.assertEqual(rc, 0, log[-2000:])
         self.assertEqual(tree(self.game), self.before)
-        # the extras are kept out of the image and copied beside it
         self.assertEqual((self.out / "_bundle_" / "readme.txt").read_text(), "group notes")
         self.assertEqual((self.out / "info.nfo").read_text(), "nfo")
         self.assertFalse([p for p in self.root.iterdir() if "extras" in p.name], list(self.root.iterdir()))
@@ -196,7 +188,6 @@ class UserFolderUntouched(Case):
         self.assertEqual(tree(self.game), self.before)
 
 
-# ── 4: Look inside → Extract ───────────────────────────────────────────────────
 class PfsExtract(Case):
     @classmethod
     def setUpClass(cls):
@@ -264,7 +255,6 @@ class PfsExtract(Case):
         self.assertEqual(list(dest.iterdir()), [])
 
 
-# ── 5: a finished build whose rename fails is kept ──────────────────────────────
 class CommitFailure(Case):
     def test_the_partial_is_kept_and_named(self):
         src = self.root / "in.ffpfs"
@@ -292,7 +282,6 @@ class CommitFailure(Case):
         self.assertIn(str(partial), next(l for l in out.getvalue().splitlines() if l.startswith("[ERROR]")))
 
 
-# ── 7 + 8 + 9: chain jobs on exFAT sources and folder outputs ───────────────────
 class ChainSources(Case):
     def test_exfat_to_ffpfs_builds_an_uncompressed_ffpfs(self):
         from mkpfs.exfat_writer import write_exfat_image
@@ -353,7 +342,6 @@ class ChainSources(Case):
         self.assertFalse(list((self.temp / "_ffpfsc_temp").glob("chain-*")))
 
 
-# ── 10 + 13 + 14: the pack path's own files ─────────────────────────────────────
 class PackPath(Case):
     def test_keep_pfs_failure_leaves_no_partial(self):
         game = make_game(self.root)
@@ -400,7 +388,6 @@ class PackPath(Case):
         self.assertFalse((self.out / "G.ffpfsc").exists())
 
 
-# ── 11: fPKG extract ────────────────────────────────────────────────────────────
 class FpkgExtract(Case):
     def fake(self, rc=0):
         fake = types.ModuleType("fpkg")
@@ -457,7 +444,6 @@ class FpkgExtract(Case):
         self.assertEqual(sorted(p.name for p in self.dest.parent.iterdir()), ["G [extracted]"])
 
 
-# ── 12 + 18: temp folders ───────────────────────────────────────────────────────
 class TempFolders(Case):
     def linked_tmp(self) -> dict:
         real = self.root / "realtmp"
@@ -501,11 +487,9 @@ class TempFolders(Case):
             if target.stem == "Z":
                 found = re.search(r"\[OK\] Found game source at (.+)", log).group(1)
                 self.assertTrue(Path(found).is_relative_to(app), found)
-        # the app folder this run made goes again once it is empty: nothing loose is left
         self.assertEqual(sorted(p.name for p in self.temp.iterdir() if p.name != "_ffpfsc_inner"), [])
 
 
-# ── 17: an archive's other files come along ─────────────────────────────────────
 class ChainArchiveExtras(Case):
     def test_files_beside_the_game_are_copied_next_to_the_output(self):
         z = self.zip_of(make_game(self.root), {"DLC Pack/dlc.bin": b"dlc", "notes.txt": b"read me",

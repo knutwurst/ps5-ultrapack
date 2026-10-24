@@ -1,7 +1,4 @@
-"""Names read from downloaded images and packages never leave the target folder.
-
-    PYTHONPATH=. .venv/bin/python backend/tests/test_untrusted_names.py
-"""
+"""PYTHONPATH=. .venv/bin/python backend/tests/test_untrusted_names.py"""
 from __future__ import annotations
 
 import sys
@@ -19,7 +16,6 @@ PLAIN = "AAAAAAAAAAAAAAA"
 
 
 def _image_with_name(tmp: Path, name: str) -> Path:
-    """An exFAT image whose one file is called *name* (same length as PLAIN)."""
     assert len(name) == len(PLAIN)
     src = tmp / "src"
     src.mkdir()
@@ -52,7 +48,7 @@ class ExfatNames(unittest.TestCase):
                 self.assertFalse(any(out.rglob("*")) if out.exists() else False)
 
     def test_other_odd_names_stay_inside(self):
-        # legal on macOS, so the app's own writer may store them: readable, and never outside
+        # legal on macOS, so we may have written them ourselves; readable but never outside
         for odd in ("AAAAAA\\AAAAAAAA", "AAAAAAA:AAAAAAA", "what?AAAAAAAAAA", "..\\..\\AAAAAAAAA"):
             with self.subTest(name=repr(odd)), tempfile.TemporaryDirectory() as t:
                 tmp = Path(t)

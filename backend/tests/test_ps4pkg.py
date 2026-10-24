@@ -54,8 +54,7 @@ class Identity(unittest.TestCase):
         return make_pkg(d / name, content_id=CID, content_type=0x1A, sfo=sfo)
 
     def test_merged_update_version_needs_the_name(self):
-        # a game with its update merged in keeps the game's APP_VER; the update's version is in
-        # VERSION, which an ordinary game uses for its master revision (01.02 on a 01.00 game)
+        # merged update keeps the game's APP_VER, and VERSION also means master revision
         self.assertEqual(ps4pkg.read_identity(self._merged("g.pkg")).version, "01.00")
         self.assertEqual(ps4pkg.read_identity(self._merged("Sample Game (v1.71).pkg")).version, "01.71")
         self.assertEqual(ps4pkg.read_identity(self._merged("g.pkg", sub="Set-CUSA00001 - USA (v1.71).part01__ab12/x")).version, "01.71")
@@ -94,7 +93,6 @@ if __name__ == "__main__":
 
 @unittest.skipUnless(REAL, "no real PS4 packages in unzipped/ps4/")
 class RealThroughBackend(unittest.TestCase):
-    """Look inside and Unpack through cli.py, as the GUI calls them, on the real samples."""
     def run_cli(self, *args):
         import subprocess
         p = subprocess.run([sys.executable, str(HERE.parent / "cli.py"), *map(str, args)], capture_output=True, text=True)
@@ -115,7 +113,7 @@ class RealThroughBackend(unittest.TestCase):
             self.assertEqual(ps4pkg.parse_sfo((dest / "sce_sys" / "param.sfo").read_bytes())["TITLE_ID"],
                              ps4pkg.read_identity(pkg).title_id)
             if pkg.stat().st_size > 8 << 20:
-                continue        # never unpack a whole game in a test; the small DLCs show the full path
+                continue  # never unpack a whole game in a test
             full = work / ("full_" + pkg.stem)
             rc, out = self.run_cli("placeholder", full, "--fpkg-extract", pkg)
             self.assertEqual(rc, 0, out)
@@ -123,7 +121,6 @@ class RealThroughBackend(unittest.TestCase):
             self.assertEqual(files, {e["path"] for e in doc["entries"] if e["type"] == "file"})
 
     def test_game_executable_is_decrypted(self):
-        """eboot.bin of a real game or update reads back as a PS4 SELF (members only)."""
         import json
         work = Path(tempfile.mkdtemp())
         games = [p for p in REAL if ps4pkg.read_identity(p).kind in ("game", "update")]

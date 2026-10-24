@@ -7,15 +7,14 @@ from dataclasses import dataclass
 
 
 BPS_MAGIC = b"BPS1"
-# A system library is a few MB; a larger declared target is a hostile or broken patch.
+# system libs are a few MB, a bigger target means a hostile or broken patch
 MAX_TARGET_SIZE = 1 << 30
 
 
 class BpsError(ValueError):
-    """The patch is malformed, or does not match the source given to :func:`apply`."""
+    pass
 
 
-# ── variable-length integer ───────────────────────────────────────────────
 def _decode_vli(data: bytes, pos: int) -> tuple[int, int]:
     value = 0
     shift = 1
@@ -37,8 +36,7 @@ def _decode_signed_vli(data: bytes, pos: int) -> tuple[int, int]:
 
 
 def _encode_vli(value: int) -> bytes:
-    """Only used by the tests to build synthetic patches; the patcher itself never
-    writes a BPS. Encodes a non-negative integer as a byuu vli."""
+    """tests only, the patcher never writes a BPS"""
     if value < 0:
         raise ValueError("vli is unsigned")
     out = bytearray()
@@ -56,7 +54,6 @@ def _encode_signed_vli(value: int) -> bytes:
     return _encode_vli((abs(value) << 1) | (1 if value < 0 else 0))
 
 
-# ── header ────────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class BpsHeader:
     source_size: int
@@ -77,21 +74,15 @@ def read_header(patch: bytes) -> tuple[BpsHeader, int]:
     return BpsHeader(source_size=src, target_size=tgt, metadata=meta), pos + metasz
 
 
-# ── apply ─────────────────────────────────────────────────────────────────
 def apply(patch: bytes, source: bytes, *, verify_source: bool = True) -> bytes:
-    """Apply a .bps patch to *source* and return the target bytes.
-
-    Raises :class:`BpsError` on a truncated patch, a mismatching source, or a mismatching
-    output. *verify_source* off skips the source-CRC32 check for a source whose modest
-    corruption the caller wants to see reflected in the output (BackPork's patches were
-    built against pristine 10.01 libraries, so leave the check on for that use)."""
+    """verify_source=False skips the source CRC; leave it on for BackPork's 10.01 libs"""
     hdr, pos = read_header(patch)
     if len(source) != hdr.source_size:
         raise BpsError(f"source is {len(source)} bytes, patch expects {hdr.source_size}")
     if hdr.target_size > MAX_TARGET_SIZE:
         raise BpsError(f"patch declares a target size of {hdr.target_size} bytes, more than "
                        f"any library can be")
-    if len(patch) < pos + 12:                                # 3 × u32 footer
+    if len(patch) < pos + 12:  # 3 x u32 footer
         raise BpsError("patch is shorter than its footer")
     footer_start = len(patch) - 12
     src_crc, tgt_crc, patch_crc = struct.unpack_from("<III", patch, footer_start)
@@ -130,8 +121,7 @@ def apply(patch: bytes, source: bytes, *, verify_source: bool = True) -> bytes:
             tgt_cur += off
             if tgt_cur < 0 or tgt_cur >= len(out):
                 raise BpsError("TargetCopy starts past the target written so far")
-            # Byte-for-byte copy so an overlapping run (RLE) works: the end of the
-            # window may advance into bytes we write in this same action.
+            # byte by byte on purpose: an overlapping run (RLE) reads what we just wrote
             for i in range(length):
                 out.append(out[tgt_cur + i])
             tgt_cur += length
@@ -144,7 +134,6 @@ def apply(patch: bytes, source: bytes, *, verify_source: bool = True) -> bytes:
     return bytes(out)
 
 
-# Convenience for the caller: apply from paths.
 def apply_file(patch_path, source_path, target_path) -> None:
     from pathlib import Path
     Path(target_path).write_bytes(apply(Path(patch_path).read_bytes(), Path(source_path).read_bytes()))

@@ -23,8 +23,7 @@ from pathlib import Path
 
 
 def _ensure_std_streams() -> None:
-    """A Windows build without a console starts with no stdout/stderr in some processes;
-    writing to them must not end the job."""
+    """a windowed Windows build may start with no stdout/stderr; writes must not kill the job"""
     for name in ("stdout", "stderr"):
         if getattr(sys, name) is None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
@@ -47,12 +46,8 @@ def _run_packaged_cli_mode() -> None:
         return
 
     if sys.argv[1] == "--mkpfs-internal" and sys.platform == "darwin":
-        # 'fork' avoids re-exec'ing the frozen app per worker (which would re-launch
-        # the GUI = fork bomb). It is only safe here because this --mkpfs-internal
-        # process is pure compute (zlib/file IO) and has NOT initialized any macOS
-        # framework (Cocoa/CoreFoundation) - fork() after that is unsafe on macOS.
-        # KEEP this branch framework-free: do NOT import tkinter/customtkinter/PIL
-        # (or anything that pulls them in) before the pool runs.
+        # fork, not spawn: spawn re-execs the frozen app and every worker opens the GUI.
+        # only safe while this branch imports no Tk/CTk/PIL: fork after Cocoa init is unsafe
         try:
             multiprocessing.set_start_method("fork", force=True)
         except RuntimeError:
@@ -81,7 +76,7 @@ def _run_packaged_cli_mode() -> None:
     except (SystemExit, KeyboardInterrupt):
         raise
     except BaseException:
-        # into the job's log: the windowed Windows exe would show a crash window of its own
+        # into the job log, or the windowed exe pops a crash window of its own
         import traceback
         traceback.print_exc(file=sys.stdout)
         sys.stdout.flush()
@@ -122,23 +117,16 @@ except Exception:
 
 APP_NAME = "PS5 UltraPack"
 APP_VERSION = "2.3.1"
-# Windows builds are a preview for now: the title, sidebar and About say so.
 APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
-# For archive sources, the GUI extraction occupies the first slice of a game's overall
-# progress; the worker's pack progress is compressed into the remaining tail so the
-# whole-game percentage stays monotonic across extraction → pack (see CLIWorker._set_stage
-# and the extraction status_update calls).
+# archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
-# A copy job (PS4 library, Organize) unpacks its archive on the output drive: what follows is
-# a rename, so the unpack is nearly the whole job. Across drives a copy of the same size follows.
+# copy jobs unpack on the output drive, so a rename follows (or a copy across drives)
 ARCHIVE_EXTRACT_RENAME_PCT = 97
 ARCHIVE_EXTRACT_COPY_PCT = 50
 
 
 def unpack_rate(pct: float, secs: float, total_bytes: int) -> tuple[str, str]:
-    """(speed, time left) of an archive unpack at *pct* after *secs*: the time left from the
-    pace so far, the speed from the share of *total_bytes* done. ' - ' until there is enough
-    to go on (2 % and 3 s), and for a speed without a known size."""
+    """(speed, time left), ' - ' until 2% and 3 s are in or without a known size"""
     if pct < 2 or secs < 3 or pct >= 100:
         return " - ", " - "
     left = humanize_eta(f"{int(secs * (100 - pct) / pct)}s")
@@ -150,10 +138,7 @@ BACKEND_NAME = "bizkut/ps5-ffpfs-cli"
 MKPFS_NAME    = "MkPFS"
 MKPFS_VERSION = "1.0.0"
 
-# The Tk-free core (settings, naming, drive/space logic, archive extraction, GameItem)
-# lives in ultra_core.py; every name it defines is re-exported here.
-# The core sits next to this file; make sure it is importable however this module is
-# loaded (run as a script, frozen, or exec'd by a test from another directory).
+# ultra_core sits next to us; tests exec this file from other directories
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
@@ -161,14 +146,13 @@ import ultra_core  # noqa: E402
 from ultra_core import *  # noqa: E402,F401,F403
 import i18n  # noqa: E402
 from i18n import t as tr, plural  # noqa: E402
-# The language is read once at start; a change in Settings takes effect after a restart.
+# language is read once at start; a change needs a restart
 i18n.use(str((load_settings() or {}).get("language", "en")))
 i18n.install()
 
 
 class TextVar(tk.StringVar):
-    """A StringVar that a label shows: a text set on it appears in the interface language.
-    Only for display; a variable whose value the code compares stays a plain StringVar."""
+    """translated on set; display only, values the code compares stay plain StringVars"""
 
     def set(self, value):
         return super().set(tr(value) if isinstance(value, str) else value)
@@ -180,8 +164,7 @@ from ui_kit import (Kit, IconButton, IconView, ArtView, ProgressBar, QueueList, 
 
 
 def _backport_module():
-    """backend/backport.py, imported in-process for its read-only helpers (targets,
-    SDK words, the firmware folder checks). Jobs still run it through the CLI."""
+    """read-only helpers in-process; jobs still run backport.py through the CLI"""
     _bd = str(backend_base_dir())
     if _bd not in sys.path:
         sys.path.insert(0, _bd)
@@ -190,7 +173,6 @@ def _backport_module():
 
 
 def _title_db_module():
-    """backend/title_db.py: game names by title id from the public title lists."""
     _bd = str(backend_base_dir())
     if _bd not in sys.path:
         sys.path.insert(0, _bd)
@@ -199,7 +181,6 @@ def _title_db_module():
 
 
 def _ps4pkg_module():
-    """backend/ps4pkg.py: PS4 package identity (Tk-free)."""
     _bd = str(backend_base_dir())
     if _bd not in sys.path:
         sys.path.insert(0, _bd)
@@ -208,7 +189,7 @@ def _ps4pkg_module():
 
 
 def version_note(vp: dict) -> str:
-    """Why the PS4 game package with version_problem() *vp* makes the console offer the official update."""
+    """why the console will offer the official update for this PS4 package"""
     if vp["named"]:
         return tr("An update (v{ver}) is merged into this full game, but its app version is still {app}: the "
                   "console will offer the official update.", ver=vp["version"], app=vp["app_ver"])
@@ -217,7 +198,6 @@ def version_note(vp: dict) -> str:
 
 
 def _ks_job_module():
-    """backend/ps4_keystone_job.py: the keystone job and its undo journal (Tk-free)."""
     _bd = str(backend_base_dir())
     if _bd not in sys.path:
         sys.path.insert(0, _bd)
@@ -226,9 +206,7 @@ def _ks_job_module():
 
 
 def _is_ps4_source(p) -> bool:
-    """A PS4 package, or a folder (not a game folder) that holds PS4 packages and nothing else a
-    job starts from: a PS5 game folder, image, package or an archive next to them makes it a
-    folder of mixed sources, one job each (see _ps4_route)."""
+    """a PS4 .pkg or a PS4-only folder; anything PS5 beside them makes it mixed"""
     try:
         p = Path(p)
         m = _ps4pkg_module()
@@ -244,7 +222,6 @@ def _is_ps4_source(p) -> bool:
 
 
 def _organize_module():
-    """backend/organize_lib.py: library names and roles (Tk-free)."""
     _bd = str(backend_base_dir())
     if _bd not in sys.path:
         sys.path.insert(0, _bd)
@@ -253,7 +230,6 @@ def _organize_module():
 
 
 def _patch_backup_module():
-    """backend/patch_backup.py: the originals a patch replaced, and their restore (Tk-free)."""
     _bd = str(backend_base_dir())
     if _bd not in sys.path:
         sys.path.insert(0, _bd)
@@ -262,7 +238,6 @@ def _patch_backup_module():
 
 
 def _after_job_module():
-    """backend/after_job.py: what happens to a job's source once it is done (Tk-free)."""
     _bd = str(backend_base_dir())
     if _bd not in sys.path:
         sys.path.insert(0, _bd)
@@ -271,7 +246,7 @@ def _after_job_module():
 
 
 def _remove_scratch(p: Path) -> int:
-    """Delete a folder or file of the app's own scratch; the bytes it held."""
+    """our own scratch only; the int is what it freed"""
     try:
         if p.is_dir() and not p.is_symlink():
             size = get_folder_size(p)
@@ -287,19 +262,18 @@ def _remove_scratch(p: Path) -> int:
 
 
 def _drive_name(path: Path) -> str:
-    """The drive a path lives on: 'SAMSUNG', 'D: (Games)', or 'the system drive'."""
+    """'SAMSUNG', 'D: (Games)' or 'the system drive'"""
     return ultra_core.drive_display_name(path)
 
 
 def _drive_colon(path: Path) -> str:
-    """The drive's name followed by a colon, 'C:' stays 'C:' (not 'C::')."""
+    """'C:' stays 'C:', not 'C::'"""
     name = _drive_name(path)
     return name if name.endswith(":") else name + ":"
 
 
 def _sane_patched_libs(libs: str, fw_root: str) -> str:
-    """The patched libraries setting, or '' when it points at the firmware libraries folder
-    (or into it): that folder holds the ORIGINAL libraries, which never go into fakelib/."""
+    """'' when it points into the firmware folder: originals never go into fakelib/"""
     try:
         return "" if (libs and _backport_module().patched_libs_problem(libs, fw_root)) else libs
     except Exception:
@@ -307,7 +281,6 @@ def _sane_patched_libs(libs: str, fw_root: str) -> str:
 
 
 def _firmware_folder_status(raw: str) -> str:
-    """One line under the firmware libraries setting: what the app found there."""
     if not raw:
         return "Not set: backports use the three public targets, and Check has nothing to compare with."
     root = Path(raw)
@@ -327,9 +300,7 @@ def _firmware_folder_status(raw: str) -> str:
 
 
 def fit_notes(view, notes, beside=None) -> None:
-    """Wrap the notes under a tool view's fields at the room the view gives them: its width less
-    the 128 px indent and 18 px margin, and less *beside* for the first note while it is shown.
-    CTk scales wraplength itself, so it is set in logical pixels."""
+    """room = view width less indent and margin, in logical px since CTk scales wraplength"""
     try:
         s = notes[0]._get_widget_scaling()
         room = view.winfo_width() / s - 146 - 6
@@ -344,8 +315,7 @@ def fit_notes(view, notes, beside=None) -> None:
 
 
 def wrap_beside(row, label, *others, pad=16) -> None:
-    """Wrap *label* at the room *row* leaves it beside *others*, which are packed before it so a
-    narrow window wraps the text instead of pushing them out of sight."""
+    """others pack first, so a narrow window wraps the label instead of hiding them"""
     def _fit(e):
         try:
             s = label._get_widget_scaling()
@@ -357,8 +327,7 @@ def wrap_beside(row, label, *others, pad=16) -> None:
 
 
 def fit_columns(tree) -> None:
-    """Shrink a table's stretching columns, down to their minimum, when the table gets narrower
-    than its columns: Tk left them as wide and the last columns went out of sight."""
+    """Tk won't shrink stretching columns on its own, the last ones just slide out of sight"""
     def _fit(e):
         try:
             cols = ["#0", *tree["columns"]]
@@ -380,9 +349,7 @@ _WORD_WIDTHS: dict = {}
 
 
 def _wrapped_line_count(font, text: str, width: int) -> int:
-    """How many lines *text* takes in *font* when a Tk label wraps it at *width* pixels
-    (breaks between words, like Tk). Word widths are cached: each measure is a round trip
-    to Tk, and a page wraps the same help texts on every resize."""
+    """Tk-style word wrap; widths cached since every measure is a round trip to Tk"""
     try:
         fkey = tuple(sorted(font.actual().items()))   # a page makes new font objects each time it opens
     except (tk.TclError, AttributeError, TypeError):
@@ -412,10 +379,7 @@ def _wrapped_line_count(font, text: str, width: int) -> int:
 
 
 def _augment_path_for_gui() -> None:
-    """macOS/Linux GUI apps launched via Finder/Dock inherit only a minimal
-    PATH (/usr/bin:/bin:/usr/sbin:/sbin), so Homebrew / MacPorts tools such as
-    7z and unrar are invisible to shutil.which() and subprocess. Prepend the
-    common install dirs so the RAR / 7z CLI fallbacks can be located."""
+    """Finder hands GUI apps a bare PATH, so Homebrew 7z/unrar would go missing"""
     if os.name == "nt":
         return
     extra = [
@@ -434,40 +398,34 @@ def _augment_path_for_gui() -> None:
 
 _augment_path_for_gui()
 
-# Each constant is a (light_mode, dark_mode) tuple taken from the ui_kit palette, so the
-# CTk dialogs and the main window share one set of colours. CTk picks the right value on
-# set_appearance_mode(); the main window's Tk widgets are recoloured by the kit.
+# (light, dark) pairs from the ui_kit palette, shared with the main window
 BLACK   = ctk_pair("surface")         # dialog background
-PANEL   = ctk_pair("surface2")        # group box / panel
-CARD    = ctk_pair("control")         # entry / inner card
-CARD2   = ctk_pair("control")         # inner field / label fill
-BTN     = ctk_pair("btn")             # a normal button, the same as the main window's
+PANEL   = ctk_pair("surface2")
+CARD    = ctk_pair("control")
+CARD2   = ctk_pair("control")
+BTN     = ctk_pair("btn")
 BTN_HOVER = ctk_pair("btn_hover")
 BTN_BORDER = ctk_pair("btn_border")   # a hairline in light mode, the fill colour in dark
-BORDER  = ctk_pair("border")          # panel border
-BORDER2 = ctk_pair("border_strong")   # entry / button border
-ACCENT  = ctk_pair("accent_fill")     # the one primary action per window (PS5 blue)
+BORDER  = ctk_pair("border")
+BORDER2 = ctk_pair("border_strong")
+ACCENT  = ctk_pair("accent_fill")  # the one primary action per window
 ACCENT_HOVER = ctk_pair("accent_hover")
-ON_ACCENT = "#ffffff"                 # text on ACCENT
-HOVER   = ctk_pair("control_hover")   # hover of a normal button
+ON_ACCENT = "#ffffff"
+HOVER   = ctk_pair("control_hover")
 SUCCESS = ctk_pair("success")
 YELLOW  = ctk_pair("warning")
 RED     = ctk_pair("danger")
 DANGER_HOVER = ctk_pair("danger_hover")
 WHITE   = ctk_pair("text")            # primary text (dark text in light mode)
-MUTED   = ctk_pair("muted")           # secondary text
+MUTED   = ctk_pair("muted")
 MONO_FONT = "Consolas" if sys.platform == "win32" else "Menlo"   # each ships with its system
-# Shortcuts: Command on macOS, Control elsewhere. ACCEL is what a menu shows (Tk on macOS
-# turns "Command-N" into a real key equivalent), SHORTCUT what a tooltip says.
+# menus get ACCEL (Tk on macOS maps Command-N to a real key), tooltips SHORTCUT
 IS_MAC = sys.platform == "darwin"
 TRASH_NAME = "Recycle Bin" if sys.platform == "win32" else "Trash"
 
 
 def _without_sheet(fn):
-    """*fn* (a tkinter file or message dialog) without its parent window. On macOS Tk opens a
-    dialog with a parent as a sheet on that window, and AppKit ends the app with an abort
-    when it refuses the sheet (it did, on a folder chooser while a job ran). Without a
-    parent the dialog is a window of its own, modal to the app, which needs no sheet."""
+    """macOS turns a parented dialog into a sheet, and AppKit aborts when it refuses one"""
     def call(*args, **kw):
         kw.pop("parent", None)
         return fn(*args, **kw)
@@ -484,8 +442,7 @@ if IS_MAC:
             setattr(_mod, _n, _without_sheet(getattr(_mod, _n)))
 
 def native_path(p) -> str:
-    """A path as the system writes it: Windows uses backslashes, while Tk's dialogs and older
-    saved settings hand out forward ones. Empty stays empty."""
+    """Windows wants backslashes; Tk dialogs and old settings hand out forward ones"""
     p = str(p or "")
     return os.path.normpath(p) if (p and sys.platform == "win32") else p
 
@@ -518,16 +475,13 @@ else:
 DETAILS_SEQ = "<Command-Option-i>" if IS_MAC else "<Control-Alt-i>"
 REPO_URL = "https://github.com/knutwurst/ps5-ultrapack"
 DONATE_URL = "https://paypal.me/oliverkoester"
-# The dialogs use the main window's type scale (see ui_kit.Fonts): logical pixels, which
-# is also what CTkFont sizes are. If a CTk scaling is ever set, set it before any window
-# exists: changing it pins every open CTk window to its current size for a second.
+# set any CTk scaling before the first window, later it pins open windows' sizes
 
 
-# ─── Panels and message windows ────────────────────────────────────────────────
+# panels and message windows
 
 def set_window_appearance(win, mode: str) -> None:
-    """Give a window's title bar the app's light or dark look; macOS draws it after the
-    system setting otherwise (Tk's unsupported MacWindowStyle, present in Tk 8.6.11+)."""
+    """macOS follows the system setting otherwise; MacWindowStyle needs Tk 8.6.11+"""
     try:
         win.tk.call("::tk::unsupported::MacWindowStyle", "appearance", win._w,
                     "aqua" if str(mode).lower() == "light" else "darkaqua")
@@ -536,8 +490,7 @@ def set_window_appearance(win, mode: str) -> None:
 
 
 class ThinScrollbar(tk.Canvas):
-    """A plain canvas scrollbar. CTkScrollbar runs update_idletasks() on every set(), which
-    lays out a whole page again for each line it scrolls or each widget a page adds."""
+    """CTkScrollbar calls update_idletasks() on every set(): a full page relayout. no thanks"""
 
     def __init__(self, master, command, bg="transparent", thumb=None, hover=None):
         S = ui_kit.SCALE
@@ -560,14 +513,13 @@ class ThinScrollbar(tk.Canvas):
         self.bind("<ButtonRelease-1>", lambda e: setattr(self, "_grab", None))
         self.bind("<Enter>", lambda e: self._hover(True))
         self.bind("<Leave>", lambda e: self._hover(False))
-        # the wheel over the bar scrolls what it belongs to, as CTkScrollbar did
         self.bind("<MouseWheel>", self._wheel)
         self.bind("<Button-4>", lambda e: self.command("scroll", -1, "units"))
         self.bind("<Button-5>", lambda e: self.command("scroll", 1, "units"))
         try:
             self.bind("<TouchpadScroll>", self._touchpad)
         except tk.TclError:
-            pass                           # Tk 8.6
+            pass  # Tk 8.6: no such event
         ctk.AppearanceModeTracker.add(self._recolor, self)
         self._recolor()
 
@@ -658,7 +610,7 @@ class ThinScrollbar(tk.Canvas):
             return
         top, bottom = self._px
         if top <= event.y <= bottom:
-            self._grab = event.y - top     # held where it was taken
+            self._grab = event.y - top
         else:
             self._grab = (bottom - top) / 2
             self._move_thumb_to(event.y - self._grab)
@@ -692,8 +644,7 @@ class ThinScrollbar(tk.Canvas):
 
 
 def _skip_layout_pass(cls):
-    """CTkOptionMenu ends every _draw() with update_idletasks(): each menu a page builds
-    lays out the whole window once more. Tk paints the menu at idle time anyway."""
+    """CTkOptionMenu runs update_idletasks() after every draw; Tk paints at idle anyway"""
     draw = cls._draw
 
     def _draw(self, no_color_updates=False):
@@ -708,8 +659,7 @@ _skip_layout_pass(ctk.CTkOptionMenu)
 
 
 class _ScrollableFrameBar(ThinScrollbar):
-    """What CTkScrollableFrame builds as its scrollbar. A class, not a factory: CTk also uses
-    the name in isinstance() when it decides whether a wheel event scrolls the page."""
+    """a class, not a factory: CTk isinstance()-checks it for wheel scrolling"""
 
     def __new__(cls, master=None, orientation="vertical", command=None, fg_color=None, button_color=None,
                 button_hover_color=None, **kw):
@@ -728,23 +678,20 @@ _ctk_scrollable_frame.CTkScrollbar = _ScrollableFrameBar        # every scrollab
 
 
 class ScrollFrame(ctk.CTkScrollableFrame):
-    """A CTkScrollableFrame whose scrollbar shows only while the content is taller than the frame; CustomTkinter keeps it on screen even when there is nothing to scroll."""
+    """CTk keeps the scrollbar up even with nothing to scroll; this one hides it"""
 
     SETTLE_MS = 60
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
-        # CTk sets the scrollregion on every <Configure> of the content; Tk then lays out and
-        # paints the window again even when the region did not change.
+        # CTk resets scrollregion on every <Configure>, and Tk relays out even if unchanged
         self._region = None
         self.bind("<Configure>", lambda e: self._fit_region())
         self._sb_shown = True
         self._sb_job = None
         self._parent_canvas.bind("<Configure>", lambda e: self._queue_sb_check(), add="+")
         self.bind("<Configure>", lambda e: self._queue_sb_check(), add="+")
-        # CustomTkinter binds only <MouseWheel>; Tk 9 on macOS sends a trackpad swipe as
-        # <TouchpadScroll> (pixel deltas), so without this the pages scroll with a wheel but
-        # not with two fingers. Same containment rule as CTk's own handler.
+        # CTk binds only <MouseWheel>; Tk 9 on macOS sends two-finger swipes as <TouchpadScroll>
         try:
             self.bind_all("<TouchpadScroll>", self._touchpad_all, add=True)
         except tk.TclError:
@@ -808,9 +755,7 @@ class ScrollFrame(ctk.CTkScrollableFrame):
 
 
 class PanelHost:
-    """Shows the dialogs as panels over the main window's content area; the sidebar and the
-    status bar stay visible. Panels stack: the newest is shown, closing it shows the one
-    below. While any is open the sidebar is disabled, and Escape closes the top panel."""
+    """stacked panels over the content area; the sidebar stays but is disabled"""
 
     MARGIN = 24
     LARGE_MAX_W = 900
@@ -843,8 +788,7 @@ class PanelHost:
             self._layout()
 
     def close_all(self) -> None:
-        """Close every open panel, newest first: going to a view from the sidebar leaves
-        whatever was open, without a question."""
+        """sidebar navigation closes them all, no questions asked"""
         for panel in list(reversed(self.stack)):
             try:
                 keep = getattr(panel, "keep_draft", None)
@@ -893,16 +837,12 @@ class PanelHost:
 
 
 class EmbeddedDialog(ctk.CTkFrame):
-    """A dialog shown as a panel of the main window instead of a separate window."""
-
-    LARGE = False          # large panels fill the content area; small ones keep their size
-    host = None            # the App's PanelHost
+    LARGE = False  # large panels fill the content area
+    host = None
 
     def __init__(self, master=None, **kw):
         host = EmbeddedDialog.host
-        # Each panel sits in its own tk holder that goes away with it: CustomTkinter hooks
-        # the configure() of a CTk widget's tk master, and a hook left behind by a closed
-        # panel would break recolouring the shared backdrop.
+        # own holder per panel: CTk hooks its master's configure(), stale hooks break recolouring
         self._slot = host.app.kit.frame(host.frame, bg="bg")
         super().__init__(self._slot, fg_color=BLACK, corner_radius=12, border_width=1, border_color=BORDER2)
         self.pack(fill="both", expand=True)
@@ -963,7 +903,7 @@ class EmbeddedDialog(ctk.CTkFrame):
         except tk.TclError:
             pass
 
-    # Window-only calls: there is no window of its own to manage.
+    # Toplevel API stubs, a panel has no window to manage
     def transient(self, *a, **k): pass
     def grab_set(self, *a, **k): pass
     def grab_release(self, *a, **k): pass
@@ -983,8 +923,6 @@ REVEAL_LABEL = ("Show in Finder" if sys.platform == "darwin" else
 
 
 class MessageWindow(ctk.CTkToplevel):
-    """A message or a single question in a small window of its own: a job's result, an error report, the space check before a start, a password or folder prompt."""
-
     def __init__(self, parent=None, **kw):
         host = EmbeddedDialog.host
         self._owner = parent if parent is not None else (host.app.root if host else None)
@@ -1081,8 +1019,7 @@ class MessageWindow(ctk.CTkToplevel):
 
 
 class ConfirmWindow(MessageWindow):
-    """One question with two buttons that say what they do ("Stop job" / "Keep running").
-    A destructive action is red and never the Return default."""
+    """buttons say what they do; a destructive one is red and never the Return default"""
 
     def __init__(self, parent, title: str, text: str, action: str, cancel: str = "Cancel",
                  danger: bool = False, detail: str = ""):
@@ -1116,8 +1053,6 @@ class ConfirmWindow(MessageWindow):
 
 
 class NoticeWindow(MessageWindow):
-    """A short result in a window of its own, with one button."""
-
     def __init__(self, parent, title: str, text: str, warn: bool = False):
         super().__init__(parent)
         self.resizable(True, False)
@@ -1136,12 +1071,11 @@ class NoticeWindow(MessageWindow):
         self.geometry(f"520x{max(130, self.winfo_reqheight())}")
 
 
-_TREES: list = []          # (tree, style name, kit, tags) restyled when the theme changes
+_TREES: list = []  # (tree, style, kit, tags), restyled on theme change
 
 
 def style_tree(widget, name: str, kit) -> dict:
-    """One look for the tables of the tool views: palette colours, row height and, on a
-    scaled Windows display, the app's fonts (Tk's own stay at 96 dpi). Returns the palette."""
+    """on scaled Windows displays Tk's own fonts still think it's 96 dpi, so ours go in"""
     style = ttk.Style(widget)
     try:
         style.theme_use("default")              # the Aqua theme ignores the colours below
@@ -1177,8 +1111,7 @@ def restyle_trees() -> None:
 
 def ask_confirm(title: str, text: str, action: str, cancel: str = "Cancel", danger: bool = False,
                 detail: str = "", parent=None) -> bool:
-    """Ask in a ConfirmWindow and wait. With the main window hidden (the GUI test driver)
-    a message window cannot show, so the plain yes/no question stands in."""
+    """with the main window hidden (GUI test driver) a plain yes/no stands in"""
     owner = parent or (EmbeddedDialog.host.app.root if EmbeddedDialog.host else None)
     try:
         visible = owner is not None and bool(owner.winfo_toplevel().winfo_viewable())
@@ -1196,7 +1129,7 @@ def ask_confirm(title: str, text: str, action: str, cancel: str = "Cancel", dang
 
 class FirstRunWizard(EmbeddedDialog):
     LARGE = True
-    MAX_W = 700            # a readable column, not the full width of a wide window
+    MAX_W = 700  # a readable column, not the whole window
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -1249,7 +1182,7 @@ class FirstRunWizard(EmbeddedDialog):
         self.next_btn.configure(text="Finish" if n == 3 else "Next →")
         self._gate_next()
         self._clear_body()
-        ctk.CTkFrame(self.body, height=8, fg_color=PANEL).pack(fill="x")          # top padding of the box
+        ctk.CTkFrame(self.body, height=8, fg_color=PANEL).pack(fill="x")
 
         if n == 0:
             self.header.configure(text="Choose a temp folder")
@@ -1285,9 +1218,7 @@ class FirstRunWizard(EmbeddedDialog):
             if tp:
                 tpath = Path(tp)
                 tfree = get_free_space(tpath)
-                # The SSD/HDD probe may shell out (diskutil / PowerShell) for seconds, so
-                # it runs off the UI thread and fills in this label - plus the HDD
-                # warning - when done (see _probe_temp_drive_type).
+                # the SSD/HDD probe can take seconds (diskutil/PowerShell), so it fills this in later
                 lines.append(tr("Temp drive:    {tfree} free  ·  type: detecting…", tfree=format_size(tfree)))
             if op:
                 opath = Path(op)
@@ -1322,11 +1253,10 @@ class FirstRunWizard(EmbeddedDialog):
                 ctk.CTkLabel(self.body, text=line, text_color=WHITE, anchor="w",
                               font=ctk.CTkFont(family=MONO_FONT, size=11)).pack(anchor="w", padx=14, pady=2)
         self._bottom_pad = ctk.CTkFrame(self.body, height=14, fg_color=PANEL)
-        self._bottom_pad.pack(fill="x")                                            # bottom padding of the box
+        self._bottom_pad.pack(fill="x")
 
     def _probe_temp_drive_type(self, tpath: Path, label, tfree: int) -> None:
-        """Detect SSD/HDD for the temp drive on a worker thread (get_drive_type may block
-        on diskutil / PowerShell) and update the step-3 label - plus the HDD warning - once known. The result is dropped if the user has already left the step."""
+        """worker thread, get_drive_type may block; the result is dropped once the step is gone"""
         def _apply(dt: str) -> None:
             try:
                 if not (self.winfo_exists() and label.winfo_exists()):
@@ -1390,11 +1320,9 @@ class FirstRunWizard(EmbeddedDialog):
             self.destroy()
 
 
-# ─── Detailed Error Dialog ─────────────────────────────────────────────────────
+# error dialog
 
 class ErrorDialog(MessageWindow):
-    """One error window: the heading names the job kind, the body leads with the short message the backend already wrote, an inline explanation says what that means in plain words, and the log is one paragraph - not fifty repeated lines."""
-
     _TITLES = {
         "pack":         "Pack failed",
         "copy":         "Copy failed",
@@ -1425,10 +1353,8 @@ class ErrorDialog(MessageWindow):
         for seq in ("<Return>", "<KP_Enter>"):
             self.bind(seq, lambda e: self.destroy())
 
-    # ── diagnosis ────────────────────────────────────────────────────────────
     @staticmethod
     def _diagnose_windows(msg: str, t: str) -> str | None:
-        """The Windows error numbers the backend's lines carry, in plain words."""
         import re as _re
         m = _re.search(r"['\"]([a-z]:)\\", msg, _re.I)
         drive = m.group(1).upper() if m else "the drive"
@@ -1454,11 +1380,8 @@ class ErrorDialog(MessageWindow):
 
     @staticmethod
     def _diagnose(msg: str, log: str) -> str | None:
-        """A short, specific sentence for known failure shapes, or None. Reads the
-        backend's own line rather than guessing from a menu of causes."""
         t = (msg + "\n" + log).lower()
-        # A drop-out on a mounted external drive: the OS returns EACCES on the mount
-        # point itself when the volume vanished mid-run. The message names /Volumes/X.
+        # a USB drive that wanders off mid-run leaves EACCES on its mount point
         import re as _re
         if sys.platform == "win32":
             win = ErrorDialog._diagnose_windows(msg, t)
@@ -1505,13 +1428,10 @@ class ErrorDialog(MessageWindow):
                     "Settings › Backport & libraries and Retry.")
         return None
 
-    # ── layout ───────────────────────────────────────────────────────────────
     def _build(self):
-        # No big red repeat of the window title. The heading names what was doing what,
-        # one line, so the message underneath can read.
         ctk.CTkLabel(self, text=self._heading, font=ctk.CTkFont(size=15, weight="bold"),
                       text_color=RED).pack(anchor="w", padx=20, pady=(16, 2))
-        # The buttons go in first (at the bottom) so a short window never hides them.
+        # buttons pack first so a short window never hides them
         btns = ctk.CTkFrame(self, fg_color=BLACK)
         btns.pack(side="bottom", fill="x", padx=20, pady=(0, 14))
         ctk.CTkButton(btns, text="Close", width=100, fg_color=ACCENT, text_color=ON_ACCENT,
@@ -1520,7 +1440,6 @@ class ErrorDialog(MessageWindow):
                        hover_color=BTN_HOVER, command=self._open_folder, border_width=1, border_color=BTN_BORDER).pack(side="right", padx=(0, 8))
         ctk.CTkButton(btns, text="Copy details", width=110, fg_color=BTN, text_color=WHITE,
                        hover_color=BTN_HOVER, command=self._copy, border_width=1, border_color=BTN_BORDER).pack(side="right", padx=(0, 8))
-        # The job stays in the queue: change it, or run it again, straight from here.
         for text, cb, w in (("Edit job", self._on_edit, 90), ("Retry", self._on_retry, 76)):
             if cb is not None:
                 ctk.CTkButton(btns, text=text, width=w, fg_color=BTN, text_color=WHITE, hover_color=BTN_HOVER,
@@ -1550,8 +1469,7 @@ class ErrorDialog(MessageWindow):
 
     @staticmethod
     def _tail(text: str, n: int = 20) -> str:
-        """The last *n* non-empty lines, so the log box does not repeat itself. The header
-        row and the [LAST 10 MB] banner are dropped - they added noise, not context."""
+        """last n non-empty lines, minus the header row and the [LAST 10 MB] banner"""
         if not text:
             return ""
         lines = [ln for ln in text.splitlines()
@@ -1573,11 +1491,9 @@ class ErrorDialog(MessageWindow):
         open_path(APP_DIR)
 
 
-# ─── Summary Dialog ────────────────────────────────────────────────────────────
+# summary dialog
 
 class SummaryDialog(MessageWindow):
-    """Compression result summary with copy-to-clipboard button."""
-
     def __init__(self, parent, report: str, on_show=None):
         super().__init__(parent)
         self.title("Job complete")
@@ -1592,8 +1508,7 @@ class SummaryDialog(MessageWindow):
                       text_color=WHITE, font=ctk.CTkFont(size=17, weight="bold"),
                       anchor="w").grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 6))
 
-        # The window takes the report's height (4 to 24 lines), so a short result gets
-        # a short window; the text box scrolls beyond that.
+        # window height follows the report (4 to 24 lines), then the box scrolls
         mono = ctk.CTkFont(family=MONO_FONT, size=11)
         per_row = max(40, 490 // max(1, mono.measure("0")))
         rows = sum(max(1, -(-len(ln) // per_row)) for ln in (report.splitlines() or [""]))
@@ -1632,8 +1547,6 @@ class SummaryDialog(MessageWindow):
 
 
 class QueueReportWindow(MessageWindow):
-    """The end of a run: how many jobs are done, and every job that is not, with its reason."""
-
     def __init__(self, parent, done: int, total: int, left: list, retry=None):
         super().__init__(parent)
         self.resizable(True, False)
@@ -1670,8 +1583,6 @@ class QueueReportWindow(MessageWindow):
 
 
 class SpaceSkipWindow(MessageWindow):
-    """Jobs the space check skipped in this run, one paragraph each; the queue goes on."""
-
     _HINTS = {"output": "Free up space there, or pick another output with Edit, then Retry.",
               "temp": "Free up space there, or add a temp drive in Settings, then Retry."}
 
@@ -1712,11 +1623,10 @@ class SpaceSkipWindow(MessageWindow):
         return "\n\n".join(self._lines)
 
 
-# ─── Space Diagnostics Dialog ──────────────────────────────────────────────────
+# space check dialog
 
 class SpaceDiagnosticsDialog(MessageWindow):
-    """Pre-flight space check shown before compression starts.
-    Opens instantly - drive-type detection runs in a background thread."""
+    """opens at once; the drive type is probed in the background"""
 
     def __init__(self, parent, item, temp_dir: Path, out_dir: Path):
         super().__init__(parent)
@@ -1728,7 +1638,7 @@ class SpaceDiagnosticsDialog(MessageWindow):
         self.choice = "cancel"          # proceed | skip | cancel
         self._auto_timer = None
         self._countdown  = 0
-        self._proceed_btn = None   # set in _build
+        self._proceed_btn = None
         self._skip_btn = None
         self._low = not _space_preflight_ok(item, temp_dir, out_dir)
         self._build(item, temp_dir, out_dir)
@@ -1737,8 +1647,7 @@ class SpaceDiagnosticsDialog(MessageWindow):
         for seq in ("<Return>", "<KP_Enter>"):
             self.bind(seq, lambda e: self._skip() if self._low else self._ok())
         self.after(50, self.grab_set)
-        # With room on both drives the job starts after 4 s; without, it is skipped after a
-        # minute, so a queue left alone overnight goes on with the next job
+        # 4 s to start with room, a minute to skip without, so an overnight queue goes on
         self._countdown = 60 if self._low else 4
         self.after(1000, self._tick_countdown)
 
@@ -1752,7 +1661,7 @@ class SpaceDiagnosticsDialog(MessageWindow):
         panel = ctk.CTkFrame(self, fg_color=PANEL, corner_radius=10)
         panel.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
-        # ── Needs per drive: the same numbers the pre-flight gate decides on ────
+        # same numbers the pre-flight gate decides on
         temp_fs = get_filesystem_type(temp_dir)   # fast ctypes call
         out_fs  = get_filesystem_type(out_dir)
 
@@ -1773,7 +1682,6 @@ class SpaceDiagnosticsDialog(MessageWindow):
             ctk.CTkLabel(row, text=val, text_color=_color(st),
                           anchor="e").grid(row=0, column=1, sticky="e")
 
-        # ── Drive type row - populated by background thread ───────────────────
         dt_row = ctk.CTkFrame(panel, fg_color=PANEL)
         dt_row.pack(fill="x", padx=14, pady=2)
         dt_row.grid_columnconfigure(1, weight=1)
@@ -1783,13 +1691,11 @@ class SpaceDiagnosticsDialog(MessageWindow):
                                        anchor="e")
         self._dt_label.grid(row=0, column=1, sticky="e")
 
-        # ── Space result banner ────────────────────────────────────────────────
         result_color = SUCCESS if space_ok else YELLOW
         ctk.CTkLabel(panel, text=result_text, text_color=result_color,
                       font=ctk.CTkFont(size=13, weight="bold")
                      ).pack(anchor="w", padx=14, pady=(8, 2))
 
-        # Filesystem warnings (fast - already have temp_fs / out_fs)
         if temp_fs in ("exFAT", "FAT32", "FAT"):
             ctk.CTkLabel(panel,
                           text=tr("Temp drive is {temp_fs} - no hardlink support. Slower copy mode will be used.", temp_fs=temp_fs),
@@ -1801,13 +1707,11 @@ class SpaceDiagnosticsDialog(MessageWindow):
                           text_color=YELLOW, justify="left", wraplength=460
                          ).pack(anchor="w", padx=14, pady=(0, 2))
 
-        # HDD warning label - shown/hidden by background thread result
         self._hdd_warn = ctk.CTkLabel(panel,
                                        text="Temp folder is on a mechanical HDD - will be significantly slower.",
                                        text_color=YELLOW, justify="left", wraplength=460)
-        # packed conditionally in background callback
+        # packed only when the probe says HDD
 
-        # ── Buttons ───────────────────────────────────────────────────────────
         btns = ctk.CTkFrame(self, fg_color=BLACK)
         btns.pack(fill="x", padx=20, pady=(0, 16))
 
@@ -1834,7 +1738,6 @@ class SpaceDiagnosticsDialog(MessageWindow):
                        command=self._cancel, border_width=1, border_color=BTN_BORDER
                       ).pack(side="right")
 
-        # ── Background thread: drive type detection ───────────────────────────
         def _detect():
             dt = get_drive_type(temp_dir)   # may block up to 6 s
             try:
@@ -1896,13 +1799,10 @@ class SpaceDiagnosticsDialog(MessageWindow):
         self._close("cancel")
 
 
-# ─── Export Diagnostic Package ─────────────────────────────────────────────────
+# diagnostic export
 
 def _redact_settings_for_export(data):
-    """Copy of the settings with the secrets removed before they leave the machine:
-    the saved archive-password list is dropped and every other key that mentions
-    'password' (the one-off field, a per-queue-item override, …) is blanked - a
-    non-empty value becomes '<redacted>' so the reader can still tell one was set."""
+    """drops the password list; other password keys become '<redacted>' if they were set"""
     if isinstance(data, dict):
         out = {}
         for k, v in data.items():
@@ -1940,8 +1840,7 @@ def export_diagnostic_zip(last_cmd: str = "", extra_info: str = "") -> Path | No
                     return " - "
                 try:
                     pp = Path(p)
-                    # Cached probe only - this runs on the UI thread and get_drive_type()
-                    # may shell out for seconds. 'Unknown' = not probed yet.
+                    # cached probe only: this is the UI thread and get_drive_type() can take seconds
                     return (f"{get_filesystem_type(pp)} | "
                             f"{drive_type_cached(pp)} | "
                             f"Free: {format_size(get_free_space(pp))}")
@@ -1978,11 +1877,10 @@ def export_diagnostic_zip(last_cmd: str = "", extra_info: str = "") -> Path | No
         return None
 
 
-# ─── Settings Window ──────────────────────────────────────────────────────────
+# settings
 
 class SettingsView:
-    """Settings as a view of the main window: a page list, then the chosen page. A page
-    is built the first time it is shown. Everything applies immediately."""
+    """pages are built on first show; every change applies at once"""
 
     PAGES = [
         ("general", "General", "settings",
@@ -2040,7 +1938,6 @@ class SettingsView:
             b.configure(selected=(k == key))
 
     def _page_general(self, scroll):
-        # FOLDERS
         self._section_label(scroll, "Folders")
         fold = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         fold.pack(fill="x", pady=(4, 12))
@@ -2079,7 +1976,6 @@ class SettingsView:
             seg.pack(side="left")
             return seg
 
-        # WHEN A JOB IS DONE
         self._section_label(scroll, "When a job is done")
         jd = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         jd.pack(fill="x", pady=(4, 12))
@@ -2127,7 +2023,6 @@ class SettingsView:
             anchor="w", padx=14 + 28, pady=(0, 6))
         ctk.CTkFrame(jd, fg_color=PANEL, height=6).pack()
 
-        # WHEN THE QUEUE IS DONE
         self._section_label(scroll, "When the queue is done")
         qd = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         qd.pack(fill="x", pady=(4, 12))
@@ -2137,7 +2032,6 @@ class SettingsView:
                      text_color=MUTED, font=ctk.CTkFont(size=12), wraplength=600, justify="left").pack(
             anchor="w", padx=14 + 82, pady=(2, 10))
 
-        # USER INTERFACE
         self._section_label(scroll, "Interface")
         ui = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         ui.pack(fill="x", pady=(4, 12))
@@ -2176,7 +2070,6 @@ class SettingsView:
         if _saved != i18n.language():
             _lang_note.set(tr("Takes effect after a restart."))
 
-        # GAME NAMES
         self._section_label(scroll, "Game names")
         gn = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         gn.pack(fill="x", pady=(4, 12))
@@ -2192,7 +2085,6 @@ class SettingsView:
 
 
     def _advanced(self, scroll, title: str = "Advanced"):
-        """A section that stays folded until asked for: tuning and debugging options."""
         head = ctk.CTkFrame(scroll, fg_color="transparent")
         head.pack(fill="x", pady=(6, 0))
         box = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
@@ -2221,7 +2113,6 @@ class SettingsView:
                      wraplength=640).pack(anchor="w", padx=(indent, 14), pady=(0, 8))
 
     def _page_compression(self, scroll):
-        # PACKING
         self._section_label(scroll, "Packing")
         pk = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         pk.pack(fill="x", pady=(4, 12))
@@ -2230,8 +2121,7 @@ class SettingsView:
         self._check(pk, "Integrate a patch found in the release folder", self.app.auto_integrate_patch_var)
 
         def _confirm_fake_sign():
-            # Warn once when ENABLING: every pack will then mutate the source folder
-            # in place (the toolbar button asks per-run; the setting is persistent).
+            # ask only when turning it on: from then on every pack signs the source in place
             if not self.app.fake_sign_before_pack_var.get():
                 return
             if not ask_confirm("Fake-sign before packing?",
@@ -2245,7 +2135,6 @@ class SettingsView:
         self._help(pk, "Slower than the folder builder; worth a try when a folder-built .ffpfsc crashes the "
                        "console.", indent=14 + 28)
 
-        # DEFAULTS FOR NEW JOBS
         self._section_label(scroll, "Compression for new jobs")
         comp = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         comp.pack(fill="x", pady=(4, 12))
@@ -2291,8 +2180,6 @@ class SettingsView:
                          "the size the PS5 needs.")
         self._pkg_level_var = _pkg_level
 
-        # The output Auto (Add job › Output) picks per kind of source; an archive counts as
-        # what it holds.
         self._section_label(scroll, "Auto output")
         auto = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         auto.pack(fill="x", pady=(0, 12))
@@ -2313,7 +2200,7 @@ class SettingsView:
             row = ctk.CTkFrame(auto, fg_color=PANEL)
             row.pack(fill="x", padx=14, pady=4)
             ctk.CTkLabel(row, text=names[kind], text_color=WHITE, width=180, anchor="w").pack(side="left")
-            # a game folder into a folder has nothing to do; Organize keeps any format as it is
+            # a folder into a folder has nothing to do
             choices = [c for c in AUTO_CHOICES if not (kind == "folder" and c == "folder")]
             disp = {labels[c]: c for c in choices}
             menu = ctk.CTkOptionMenu(row, values=list(disp), width=200,
@@ -2367,7 +2254,6 @@ class SettingsView:
                       fg_color=CARD, border_color=BORDER2, text_color=WHITE).pack(
             fill="x", padx=14, pady=(4, 10))
 
-        # ── Global auto-tried password list ──────────────────────────────────
         ctk.CTkLabel(comp, text="Saved archive passwords (tried in order, one per line):",
                       text_color=MUTED, anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
         ctk.CTkLabel(comp, text="Every password here is tried automatically, in order - handy for a "
@@ -2409,7 +2295,6 @@ class SettingsView:
             ctk.CTkLabel(row, text=label, text_color=WHITE, width=180, anchor="w").pack(side="left")
             return row
 
-        # Drive usage - where archives get extracted (shared with the main panel).
         dm_labels = {"auto": "Auto (smart)", "temp": "Temp drive only", "spread": "Spread across drives"}
         dm_rev = {v: k for k, v in dm_labels.items()}
         dm_menu = ctk.CTkOptionMenu(
@@ -2418,7 +2303,7 @@ class SettingsView:
         dm_menu.set(dm_labels.get(self.app.drive_mode_var.get(), "Auto (smart)"))
         dm_menu.pack(side="left")
 
-        # Temp space safety factor - scales only the temp headroom requirement.
+        # scales only the temp headroom
         sf_labels = {0.7: "70% (risky)", 0.85: "85%", 1.0: "100% (recommended)",
                      1.2: "120%", 1.5: "150% (cautious)"}
         sf_rev = {v: k for k, v in sf_labels.items()}
@@ -2432,7 +2317,6 @@ class SettingsView:
         sf_menu.set(sf_labels[_cur_sf])
         sf_menu.pack(side="left")
 
-        # What to do when temp/output is too small for the game.
         lp_labels = {"ask": "Ask me", "auto": "Proceed anyway", "skip": "Skip the game"}
         lp_rev = {v: k for k, v in lp_labels.items()}
         lp_menu = ctk.CTkOptionMenu(
@@ -2448,7 +2332,6 @@ class SettingsView:
                          variable=self.app.keep_drives_awake_var, fg_color=ACCENT,
                          hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=(0, 4))
 
-        # ── Extra temp drives (pool) ─────────────────────────────────────────
         ctk.CTkLabel(ds, text="Extra temp drives (pool, one path per line):",
                       text_color=MUTED, anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
         ctk.CTkLabel(ds, text="Add more fast scratch drives here (e.g. external SSDs). For a big archive "
@@ -2473,7 +2356,7 @@ class SettingsView:
                     dirs.append(ln)
             self.app.temp_pool = dirs
             save_settings({"temp_pool": dirs})
-            self.app._warm_drive_types()   # probe SSD/HDD for the new drives
+            self.app._warm_drive_types()
 
         self._pool_box.bind("<FocusOut>", _save_pool, add="+")
         _pool_btns = ctk.CTkFrame(ds, fg_color=PANEL)
@@ -2504,9 +2387,7 @@ class SettingsView:
             row.pack(fill="x", padx=14, pady=6)
             ctk.CTkLabel(row, text=label, text_color=WHITE, width=180, anchor="w").pack(side="left")
             return row
-        # Same-drive read+write: costless on an SSD, slow (seek thrashing) on an HDD. When
-        # allowed, the build keeps the source on the temp drive instead of routing it to a
-        # slower output drive. Auto = allow only when the temp drive probes as an SSD.
+        # same-drive read+write: free on SSD, seek thrashing on HDD. Auto = SSD only
         sd_labels = {"auto": "Auto (allow on SSD)", "always": "Always allow", "never": "Never (always split)"}
         sd_rev = {v: k for k, v in sd_labels.items()}
         sd_menu = ctk.CTkOptionMenu(
@@ -2547,7 +2428,6 @@ class SettingsView:
     def _page_backport(self, scroll):
         ds = ctk.CTkFrame(scroll, fg_color=PANEL, corner_radius=8)
         ds.pack(fill="x", pady=(4, 12))
-        # ── AMPR / APR emu folder (PlayGo titles) ────────────────────────────
         ctk.CTkLabel(ds, text="AMPR / APR (PlayGo) - emu files folder:",
                       text_color=MUTED, anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
         ctk.CTkLabel(ds, text="Folder holding libSceAmpr.sprx + libScePlayGo.sprx (you supply these). "
@@ -2573,9 +2453,7 @@ class SettingsView:
         ctk.CTkButton(_ampr_row, text="Folder…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=_browse_ampr).pack(side="left")
 
-        # ── Backport folders ─────────────────────────────────────────────────
-        # The firmware folder comes first: Prepare reads from it, Check compares with it,
-        # and every subfolder in it is a backport target.
+        # firmware folder first: Prepare reads it, Check compares with it
         ctk.CTkLabel(ds, text="Backport - firmware libraries:",
                       text_color=MUTED, anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
         ctk.CTkLabel(ds, text="Your original system libraries, one subfolder per firmware named by its version "
@@ -2634,10 +2512,7 @@ class SettingsView:
         ctk.CTkButton(_bl_row, text="Folder…", width=80, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       border_width=1, border_color=BTN_BORDER, command=_browse_bl).pack(side="left")
 
-        # One-click prepare: BestPig BackPork patches (small, ~1 KB total per target) →
-        # applied to the user's 10.01 libraries → written into the patched-libraries
-        # folder above, in a target subfolder. Runs in a thread; log lines go to the app
-        # log so the user sees per-library progress.
+        # BackPork patches (~1 KB per target) applied to the user's 10.01 libs, in a thread
         _prep_row = ctk.CTkFrame(ds, fg_color="transparent")
         _prep_row.pack(fill="x", padx=14, pady=(6, 0))
         ctk.CTkLabel(_prep_row, text="Prepare from BestPig BackPork patches:",
@@ -2653,7 +2528,6 @@ class SettingsView:
                       text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
                       wraplength=640).pack(anchor="w", padx=14, pady=(4, 4))
 
-        # ── fPKG: optional Sony Publishing Tools DLL ─────────────────────────
         if sys.platform == "win32":     # LibProsperoPkg refuses this backend elsewhere
             ctk.CTkLabel(ds, text="fPKG - Publishing Tools DLL (optional):",
                           text_color=MUTED, anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
@@ -2751,10 +2625,10 @@ class SettingsView:
             save_settings({settings_key: p})
 
 
-# ─── CLI Worker ────────────────────────────────────────────────────────────────
+# CLI worker
 
 def _package_platform(p) -> str | None:
-    """"ps4" or "ps5" from the first bytes of a package, None for anything else."""
+    """ps4 or ps5 by the package magic, else None"""
     try:
         with open(p, "rb") as f:
             head = f.read(4)
@@ -2764,7 +2638,7 @@ def _package_platform(p) -> str | None:
 
 
 def _is_inner_image_path(p) -> bool:
-    """The pass-1 image the backend names: '<temp>/_ffpfsc_inner/<id>.ffpfs'."""
+    """pass-1 image: <temp>/_ffpfsc_inner/<id>.ffpfs"""
     try:
         q = Path(str(p or ""))
         return (q.is_absolute() and q.suffix.lower() == ".ffpfs" and q.parent.name == "_ffpfsc_inner"
@@ -2786,16 +2660,11 @@ class CLIWorker(threading.Thread):
         "Complete":            (100, 100),
     }
 
-    # A PATCH/auto-patch job runs the backend's PATCH MODE: it EXTRACTS the source
-    # first (one or two unpack passes) and THEN repacks (pass-1 build → pass-2
-    # compress). The normal WEIGHTS put "Extracting" at 18-93%, which makes the bar
-    # shoot to 93% during the extract and then jump BACKWARD when repacking starts.
-    # These weights order the bands the way a patch actually runs, so progress only
-    # ever moves forward. Selected when "--patch" is in the command.
+    # patch mode unpacks first, then repacks: own bands so the bar never jumps back
     PATCH_WEIGHTS = {
         "Scanning Files":      (0,    2),
-        "Extracting":          (2,   40),   # outer→inner→files unpack(s)
-        "Reading Game":        (40,  42),   # overlay / prep
+        "Extracting":          (2,   40),
+        "Reading Game":        (40,  42),
         "Creating Temp PFS":   (42,  64),   # pass-1: build patched PFS image
         "Compressing":         (64,  92),   # pass-2: compress to .ffpfsc
         "Writing Final Image": (92,  98),
@@ -2804,18 +2673,11 @@ class CLIWorker(threading.Thread):
         "Complete":            (100, 100),
     }
 
-    # fPKG BUILD (LibProsperoPkg): source scan → [optional image unwrap] → inner
-    # pfs_image.dat with Kraken (the long part) → NAPS + outer-PFS AES-XTS → CNT/FIH
-    # finalize → auto-validate. Bands keep the fixed breadcrumb order forward-only;
-    # the backend emits "[PHASE] <Stage>" markers + progress bars for each band.
-    # Bands from a real 160 GB run (2.2.0, fast preset): unpack 16 min, Kraken 75 min on one
-    # worker, outer PFS 22 min on one worker; both passes now use every core, so Kraken and
-    # the outer pass shrink toward the unpack. The split below is the middle of that range,
-    # an estimate; the bars inside each band are metered in bytes by the backend.
+    # band split is a guess from one 160 GB run; each band's bar is metered in bytes
     FPKG_BUILD_WEIGHTS = {
         "Scanning Files":      (0,    2),
         "Extracting":          (2,   34),   # only when the source is a .ffpfsc/.exfat image
-        "Reading Game":        (34,  38),   # the staging copy of a folder source, when one is needed
+        "Reading Game":        (34,  38),  # staging copy of a folder source, if needed
         "Creating Temp PFS":   (38,  74),   # inner image incl. Kraken
         "Compressing":         (74,  90),   # NAPS tables + outer-PFS write and hash
         "Writing Final Image": (90,  96),   # CNT + FIH finalize
@@ -2830,10 +2692,7 @@ class CLIWorker(threading.Thread):
         "Complete":            (100, 100),
     }
 
-    # A chain job (--to) that starts from a container unpacks it first, applies the
-    # changes ("Reading Game": patch / backport / sign), then builds the output. The
-    # bands follow that order so the bar only moves forward. The shares are an estimate:
-    # the unpack runs at temp-drive speed, the compress onto the output drive is slower.
+    # chain from a container: unpack, change, build. the shares are a guess
     CHAIN_WEIGHTS = {
         "Scanning Files":      (0,    2),
         "Extracting":          (2,   30),
@@ -2862,7 +2721,7 @@ class CLIWorker(threading.Thread):
         "Cleaning Up":         (99, 100),
         "Complete":            (100, 100),
     }
-    CHAIN_EXFAT_WEIGHTS = {       # unpack or copy, change, LZ4 packs ("Compressing"), write the image
+    CHAIN_EXFAT_WEIGHTS = {  # LZ4 packs show up as Compressing
         "Scanning Files":      (0,    2),
         "Extracting":          (2,   25),
         "Reading Game":        (25,  35),
@@ -2871,7 +2730,7 @@ class CLIWorker(threading.Thread):
         "Cleaning Up":         (98, 100),
         "Complete":            (100, 100),
     }
-    CHAIN_EXFAT_PLAIN_WEIGHTS = { # unpack (and change), then write the image
+    CHAIN_EXFAT_PLAIN_WEIGHTS = {
         "Scanning Files":      (0,    2),
         "Extracting":          (2,   45),
         "Reading Game":        (45,  50),
@@ -2879,28 +2738,26 @@ class CLIWorker(threading.Thread):
         "Cleaning Up":         (98, 100),
         "Complete":            (100, 100),
     }
-    CHAIN_FOLDER_WEIGHTS = {      # unpack (and change) into a folder
+    CHAIN_FOLDER_WEIGHTS = {
         "Scanning Files":      (0,    2),
         "Extracting":          (2,   90),
         "Reading Game":        (90,  98),
         "Cleaning Up":         (98, 100),
         "Complete":            (100, 100),
     }
-    # A plain copy or move (the copy job, also what a chain job with nothing to change
-    # becomes): the write is the whole job. Switched to on the backend's "[JOB] copy" line.
+    # plain copy or move, the write is the whole job; switched to on [JOB] copy
     COPY_WEIGHTS = {
         "Writing Final Image": (0,   97),
         "Cleaning Up":         (97, 100),
         "Complete":            (100, 100),
     }
     _COPY_ORDER = ["Writing Final Image", "Cleaning Up", "Complete"]
-    # Stage order for the jobs that unpack first (patch, chain, fPKG). The plain pack
-    # order below ranks "Extracting" late because an unpack job does nothing else.
+    # for jobs that unpack first; the plain order ranks Extracting late
     _EXTRACT_FIRST_ORDER = [
         "Scanning Files", "Extracting", "Reading Game", "Creating Temp PFS",
         "Compressing", "Writing Final Image", "Verifying Output", "Cleaning Up", "Complete",
     ]
-    # Container suffixes a chain target reads without unpacking (cli.py `native`).
+    # suffixes a chain target reads without unpacking (native in cli.py)
     _CHAIN_NATIVE = {"exfat": set(),
                      "ffpfs": {".exfat", ".ffpkg", ".ffpfs", ".zip", ".rar"},
                      "ffpfsc": {".exfat", ".ffpkg", ".ffpfs", ".zip", ".rar"},
@@ -2908,8 +2765,7 @@ class CLIWorker(threading.Thread):
 
     @staticmethod
     def _without_extract(weights: dict) -> dict:
-        """*weights* for a run that skips "Extracting": the later bands stretch over the
-        freed share, so a folder source does not jump straight past it."""
+        """later bands stretch over the freed share so a folder source doesn't skip ahead"""
         if "Extracting" not in weights:
             return dict(weights)
         a, b = weights["Extracting"]
@@ -2927,7 +2783,6 @@ class CLIWorker(threading.Thread):
             return None
 
     def _pick_weights(self, cmd):
-        """The progress bands and stage order for this job's command."""
         cmd = cmd or []
         if self._is_fpkg_build:
             src = self._cmd_value(cmd, "--fpkg-build")
@@ -2977,32 +2832,28 @@ class CLIWorker(threading.Thread):
         self.last_log_ui = 0
         self.phase = "Starting"
         self.operation = getattr(item, "operation", "pack")
-        # PATCH MODE (manual Integrate Patch OR auto-integrate) extracts-then-repacks,
-        # so it needs the forward-only patch weights and honours the backend's explicit
-        # [PHASE] markers to advance past "Extracting". Detected by the --patch flag.
+        # patch mode unpacks then repacks: forward-only weights, [PHASE] markers move it on
         self._is_patch = "--patch" in (cmd or []) and "--to" not in (cmd or [])
         self._is_fpkg_build   = "--fpkg-build"   in (cmd or [])
         self._is_fpkg_extract = "--fpkg-extract" in (cmd or [])
-        # A chain to .pkg ends in the fPKG builder: its bar labels are free text, so it
-        # needs the same stage lock, and no ShadowMount check on the .pkg it makes.
+        # a chain to .pkg ends in the fPKG builder: free-text bar labels, no ShadowMount check
         _chain_to = self._cmd_value(cmd or [], "--to")
         self._is_fpkg = self._is_fpkg_build or self._is_fpkg_extract or _chain_to == "pkg"
         self._weights, self._stage_order = self._pick_weights(cmd)
         self._is_copy = False
         self.patch_backup = ""        # the originals a patch replaced, staged by the backend
-        self.extras_left: list[str] = []   # extras that did not reach the output (backend lines, sibling copy)
+        self.extras_left: list[str] = []  # extras that never reached the output
         self.validate_failed = False   # the .pkg checklist reported failures: the source stays
-        self.consumed = False          # the backend took the unpacked copy's files into the package as it went
-        self._written: list[str] = []  # extra outputs of this job (bundle extras, PS4 title folders)
+        self.consumed = False  # backend ate the unpacked files while packing
+        self._written: list[str] = []  # extra outputs: bundle extras, PS4 title folders
         # Highest whole-job progress sent so far: the queue bar never moves backward.
         self._overall_sent = 0.0
-        # Snapshot the copy-extras toggle on the MAIN thread (CLIWorker is constructed
-        # there); Tk variables are not safe to read from the worker thread.
+        # read Tk vars here on the main thread; the worker thread must not touch them
         try:
             self.copy_siblings = bool(app.copy_siblings_var.get())
         except Exception:
             self.copy_siblings = True
-        try:    # for unpacking and sorting the add-ons (see _place_bundle_siblings)
+        try:  # add-on unpacking, see _place_bundle_siblings
             self._addon_passwords = app._candidate_passwords(item)
             self._if_exists = app.output_exists_var.get() or "skip"
         except Exception:
@@ -3025,38 +2876,33 @@ class CLIWorker(threading.Thread):
             "Complete": 0,
         }
         self.last_stage_bucket = {}
-        self._mem_error_shown = False   # reset per-job so next run can show it again
+        self._mem_error_shown = False
 
     def run(self):
         ensure_app_dir()
         self.start_time = time.time()
         self.last_heartbeat = self.start_time
-        _ticker_stop = threading.Event()   # stops the liveness ticker (see below)
+        _ticker_stop = threading.Event()
 
-        # A bundle writes its .ffpfsc into a recreated sub-folder; make sure that
-        # folder exists before the backend tries to write into it.
+        # a bundle writes into a recreated subfolder that has to exist first
         if self.operation != "unpack":
             try:
                 self.output_dir.mkdir(parents=True, exist_ok=True)
             except Exception:
                 pass
 
-        # Raw log strategy: rolling tail buffer.
-        # All backend lines are held in a deque; error lines are always kept in a
-        # separate list so they are never dropped.  At job end the last 10 MB of
-        # regular output + all errors are written to disk.
-        RAW_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB tail window
+        # raw log: the last 10 MB plus every error line, which is never dropped
+        RAW_LOG_MAX_BYTES = 10 * 1024 * 1024
         from collections import deque as _deque
-        _raw_lines: _deque[str] = _deque()   # rolling ring buffer (all lines)
-        _raw_errors: list[str]  = []          # every ERROR/FAILED line (always kept)
-        _raw_buf_bytes          = 0           # current byte count in _raw_lines
+        _raw_lines: _deque[str] = _deque()
+        _raw_errors: list[str]  = []
+        _raw_buf_bytes          = 0
 
         def _raw_append(text: str):
             nonlocal _raw_buf_bytes
             encoded = text.encode("utf-8", errors="replace")
             _raw_lines.append(text)
             _raw_buf_bytes += len(encoded)
-            # Keep last 10 MB - drop oldest lines from the front
             while _raw_buf_bytes > RAW_LOG_MAX_BYTES and _raw_lines:
                 dropped = _raw_lines.popleft()
                 _raw_buf_bytes -= len(dropped.encode("utf-8", errors="replace"))
@@ -3094,22 +2940,17 @@ class CLIWorker(threading.Thread):
                 bufsize=1,
                 env=env,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                # Own session/process group on POSIX so cancel/close can kill the
-                # whole tree (backend + mkpfs mp.Pool workers), not just the parent.
+                # own process group, so cancel kills the whole tree incl. the mkpfs pool workers
                 start_new_session=(os.name != "nt"),
             )
             self.app.current_process = self.proc
 
-            # ── Liveness ticker: heartbeat + temp-peak sampling on a wall-clock
-            #    timer, independent of stdout. Without this the heartbeat lived
-            #    inside the blocking stdout loop and never fired during silent
-            #    phases (e.g. the final-image write), making the app look hung.
+            # heartbeat on a wall clock: silent phases like the final write looked hung
             def _ticker():
                 _last_sample = 0.0
                 while not _ticker_stop.wait(5):
                     t = time.time()
-                    # Sizing the temp tree is a stat storm on the drive mkpfs is busy
-                    # with; sample it every 30 s, not on every tick.
+                    # sizing the temp tree is a stat storm on mkpfs's drive; every 30 s will do
                     if t - _last_sample >= 30:
                         _last_sample = t
                         try:
@@ -3120,11 +2961,7 @@ class CLIWorker(threading.Thread):
                         self.last_heartbeat = t
                         elapsed = format_duration(t - self.start_time)
                         try:
-                            # Keep the status panel alive (elapsed ticking) during silent
-                            # phases, but DON'T spam the log - a 30 s "Still working" line
-                            # helps no one and buries the useful output.
-                            # The detail the stage last showed, so the card text does not
-                            # flip between two messages (and the layout with it).
+                            # keep the card ticking, not the log; reuse the last detail so the text doesn't flicker
                             self.app.status_update("Still Working",
                                                     getattr(self, "_detail", "") or "Backend is active. Do not close the app.",
                                                     self.phase, self.stage_progress.get(self.phase, 0),
@@ -3134,9 +2971,8 @@ class CLIWorker(threading.Thread):
                             pass
             threading.Thread(target=_ticker, daemon=True).start()
 
-            # ── Define flush helper (used periodically during run AND at end) ─
             _last_flush_t = time.time()
-            FLUSH_INTERVAL = 30  # write raw log to disk every ~30 s during the run
+            FLUSH_INTERVAL = 30
 
             def _flush_raw_log():
                 try:
@@ -3156,7 +2992,6 @@ class CLIWorker(threading.Thread):
                 except Exception:
                     pass
 
-            # ── Read backend output line by line ──────────────────────────────
             for line in self.proc.stdout or []:
                 if self.app.cancel_requested:
                     self._terminate()
@@ -3164,33 +2999,24 @@ class CLIWorker(threading.Thread):
 
                 clean = line.rstrip("\r\n")
                 _raw_append(clean + "\n")
-                # Always collect error lines separately so they survive the tail trim
                 upper_c = clean.upper()
                 if re.search(r'\bERROR\b|\bFAILED\b', upper_c):
                     _raw_errors.append(clean + "\n")
                 self._handle_line(clean)
 
-                # Heartbeat now runs on the independent ticker thread (above), so
-                # it keeps firing during silent phases. Here we only flush the log.
                 t = time.time()
                 if t - _last_flush_t >= FLUSH_INTERVAL:
                     _flush_raw_log()
                     _last_flush_t = t
 
-            # ── stdout fully consumed - now wait for process to exit ───────────
             code = self.proc.wait() if self.proc else 1
 
-            # ── Final flush of rolling log buffer ─────────────────────────────
             _flush_raw_log()
 
             if self.app.cancel_requested:
                 self.app.finish(False, "Cancelled by user.", self.last_cmd_str)
                 return
-            # A copy job's exit 2 / 3 are deliberate SKIPS, not failures: the source and
-            # destination are the same file (2), or a different file already owns the
-            # destination name (3). Nothing was written, nothing was lost, and the
-            # pack-flavoured "Compression Failed" dialog (with MkPFS/temp-space causes)
-            # would be actively misleading. Report them as a plain skip instead.
+            # copy exit 2 = same file, 3 = name taken by another file: a skip, not a failure
             if (self.operation == "copy" or self._is_copy) and code in (2, 3):   # a chain that became a copy too
                 reason = ("source and destination are the same file"
                           if code == 2 else
@@ -3206,16 +3032,13 @@ class CLIWorker(threading.Thread):
                                 self.last_cmd_str)
                 return
             if code == 4 and self.operation == "copy":
-                # done, but some items stayed in the source ([KEPT] line): a success that keeps
-                # the unpack and leaves the source as it is
+                # exit 4: some items stayed in the source ([KEPT]), still a success
                 self.extras_left.append("items the backend left in the source (see the [KEPT] line)")
                 code = 0
             if code != 0:
                 smart = smart_error_from_log()
                 msg = smart if smart else tr("Backend exited with code {code}.", code=code)
-                # Flag an out-of-memory kill so the main thread can auto-retry with fewer
-                # cores: either a printed MemoryError, or a SIGKILL (-9 / 137) during a
-                # pack - the OS memory-pressure kill leaves mkpfs no chance to print one.
+                # OOM: a MemoryError, or SIGKILL (-9/137) since the OS kill gives mkpfs no time to say so
                 if (self.operation not in ("unpack", "fpkg-extract", "fpkg-build", "copy")
                         and (getattr(self, "_mem_error_shown", False) or code in (-9, 137))):
                     self.oom_killed = True
@@ -3228,9 +3051,7 @@ class CLIWorker(threading.Thread):
             except Exception:
                 pass
 
-            # Fake-sign produces NO new output file (it rewrites executables in place),
-            # so the output-detection / bundle / ShadowMount checks below don't apply - 
-            # a clean exit 0 is success.
+            # fake-sign rewrites in place: no output to look for, exit 0 is success
             if self.operation == "fake-sign":
                 self._write_report(True)
                 self.app.finish(True, "Fake-signing completed successfully.", self.last_cmd_str)
@@ -3240,12 +3061,7 @@ class CLIWorker(threading.Thread):
                 self.app.finish(True, "PS4 packages repaired.", self.last_cmd_str)
                 return
 
-            # A COPY job's output is a single file at a name the backend already picked
-            # ("--copy-name" for auto-organize, else the source's basename). It landed
-            # synchronously in this run - no post-hoc "did a new .ffpfsc appear" scan,
-            # no bundle-siblings copy (this is a straight file transport), no ShadowMount
-            # sniff (we didn't repack anything). Exit 0 with a printed [SUCCESS] line is
-            # the success signal.
+            # copy output lands at the name the backend picked: no scan, no ShadowMount sniff
             if self.operation == "copy":
                 if getattr(self.item, "bundle_release", None) and getattr(self.item, "content_kind", "") in (ORGANIZE_TARGET, "ps4"):
                     try:
@@ -3267,18 +3083,15 @@ class CLIWorker(threading.Thread):
                 self.app.finish(False, tr("Backend exited but no {expected} was created.", expected=expected), self.last_cmd_str)
                 return
 
-            # From here on the output exists and the job IS a success: bookkeeping
-            # errors are logged, never turned into a failure (that would trigger the
-            # failure cleanup and a full rebuild on the next START).
-            # Bundle: copy the extra files (DLCs etc.) next to the new .ffpfsc / .pkg.
+            # the output exists now: log bookkeeping errors, never fail the job,
+            # or the failure cleanup runs and the next Start rebuilds everything
             try:
                 if self.operation not in ("unpack", "fpkg-extract"):
                     self._place_bundle_siblings()
             except Exception as e:
                 self.app.log("WARN", f"Bundle copy failed: {e}")
             self._strip_written_clutter()
-            # ShadowMount compatibility checks (a .pkg is installed, not mounted - 
-            # the fPKG path has its own validate checklist in the backend log).
+            # a .pkg is installed, not mounted, and has its own checklist in the backend log
             try:
                 if not self._is_fpkg and self.operation != "unpack":
                     for w in self._validate_shadowmount():
@@ -3289,8 +3102,7 @@ class CLIWorker(threading.Thread):
                 self._write_report(True)
             except Exception as e:
                 self.app.log("WARN", f"Could not write the result report: {e}")
-            # NOTE: history is recorded on the MAIN thread in the done_q handler
-            # (add_history mutates Tk widgets, which are not thread-safe).
+            # history goes in on the main thread (done_q handler): add_history touches Tk
             success_msg = {"unpack": "Extraction completed successfully.",
                            "fpkg-extract": "fPKG extracted successfully.",
                            "fpkg-build": "fPKG built and validated - see the checklist above."
@@ -3302,8 +3114,7 @@ class CLIWorker(threading.Thread):
                 _flush_raw_log()
             except Exception:
                 pass
-            # The reader died, not the backend: stop the backend tree before reporting,
-            # or it keeps writing into scratch that the failure cleanup is about to remove.
+            # the reader died, maybe not the backend: kill it before cleanup removes its scratch
             try:
                 if self.proc is not None and self.proc.poll() is None:
                     self._terminate()
@@ -3315,19 +3126,10 @@ class CLIWorker(threading.Thread):
             self.app.current_process = None
 
     def _stage_from_label(self, label: str, raw: str) -> str | None:
-        """Return the stage name inferred from a progress-bar label, or None if uncertain.
+        """None when unsure: the caller then leaves the stage alone"""
+        text = f"{label} {raw}".lower()
 
-        Returning None means the caller should NOT update the stage - the line
-        didn't contain enough signal to be confident about which stage we're in.
-        This prevents unrecognised lines from locking the display on the current stage.
-        """
-        text = f"{label} {raw}".lower()  # full combined text for substring checks
-
-        # The backend progress-bar label is everything after the "%" - 
-        #   "[###] 65% compress @ 290.95 MB/s ETA 14s"  → label = "compress @ 290.95 MB/s ETA 14s"
-        #   "[###] 45% write @ 980.61 MB/s ETA 0s"      → label = "write @ 980.61 MB/s ETA 0s"
-        #   "[###]  2% scan"                             → label = "scan"
-        # Use the FIRST WORD of the label for reliable matching regardless of trailing speed/ETA.
+        # label is what follows the % (compress @ 290 MB/s ETA 14s); match its first word
         first_word = label.strip().lower().split()[0] if label.strip() else ""
 
         if self.operation == "unpack":
@@ -3337,40 +3139,34 @@ class CLIWorker(threading.Thread):
                 return "Reading Game"
             return "Extracting"
 
-        # ── Final output ──────────────────────────────────────────────────────
-        # Check before generic "write" so ".ffpfsc" always wins
+        # .ffpfsc checked before the generic write
         if ".ffpfsc" in text or "final image" in text or "final output" in text:
             return "Writing Final Image"
 
-        # ── Backend label "write" ─────────────────────────────────────────────
-        # Emitted during temp-PFS construction (before compress) AND final image write (after).
-        # Distinguish by whether compression has started yet.
+        # write shows up for the temp PFS and the final image: compression tells them apart
         if first_word in ("write", "writing"):
             if self.stage_progress.get("Compressing", 0) > 0:
                 return "Writing Final Image"
             else:
                 return "Creating Temp PFS"
 
-        # ── Scan / discovery ──────────────────────────────────────────────────
         if first_word in ("scan", "scanning") or "discover" in text:
             return "Scanning Files"
 
-        # ── Reading game files ────────────────────────────────────────────────
         if first_word in ("read", "reading"):
             return "Reading Game"
 
-        # ── Compression ───────────────────────────────────────────────────────
         if first_word in ("compress", "compressing") or "compress" in text:
             return "Compressing"
 
-        # ── Verify (only from a real progress bar, not plain-text messages) ───
+        # verify only from a real bar, not from plain messages
         if first_word in ("verify", "verifying"):
             return "Verifying Output"
 
         if first_word in ("extract", "extracting", "unpack", "unpacking") or "extract" in text or "unpack" in text:
             return "Extracting"
 
-        # ── Looser substring fallbacks for non-standard backend messages ──────
+        # looser fallbacks for odd backend messages
         if "scan" in text or "discover" in text:
             return "Scanning Files"
         if "read" in text and "write" not in text:
@@ -3378,8 +3174,7 @@ class CLIWorker(threading.Thread):
         if "clean" in text or "delete" in text or "removed" in text:
             return "Cleaning Up"
 
-        # "Complete" is NEVER returned here - set only by run() after exit.
-        # Returning None means: "uncertain - don't change the stage display."
+        # Complete is never returned here; run() sets it after exit
         return None
 
     def _overall_for_stage(self, stage: str, pct: float) -> float:
@@ -3390,10 +3185,7 @@ class CLIWorker(threading.Thread):
         return self._overall_for_stage(self.phase, self.stage_progress.get(self.phase, 0))
 
     def _job_overall(self) -> float:
-        """Whole-job progress for the queue: the current stage's band, squeezed behind
-        the archive unpack the GUI already showed (ARCHIVE_EXTRACT_OVERALL_PCT) and never
-        lower than a value sent before. Every status update uses this one value, so the
-        heartbeat and the progress lines can no longer disagree."""
+        """one value for every status update: behind the GUI's unpack share, never going down"""
         overall = self._overall()
         if getattr(self.item, "_from_archive", False):
             share = self.app._archive_extract_pct(self.item)
@@ -3401,9 +3193,7 @@ class CLIWorker(threading.Thread):
         self._overall_sent = max(self._overall_sent, overall)
         return self._overall_sent
 
-    # Ordered list used to prevent backward stage transitions.
-    # Must be a plain tuple/list literal here - _STAGE_DEFS is defined later in
-    # the module (after CLIWorker), so we can't reference it at class-body time.
+    # a literal on purpose: _STAGE_DEFS is defined after CLIWorker
     _STAGE_ORDER = [
         "Scanning Files", "Reading Game", "Creating Temp PFS",
         "Compressing", "Extracting", "Writing Final Image", "Verifying Output",
@@ -3411,8 +3201,7 @@ class CLIWorker(threading.Thread):
     ]
 
     def _set_stage(self, stage, pct, label="", eta=" - ", force=False):
-        # Never allow the stage to regress (e.g. backend prints "Writing PFS image"
-        # after compression has already started - that would snap back to Temp PFS).
+        # no going back: Writing PFS image after compression would snap back to Temp PFS
         order = getattr(self, "_stage_order", self._STAGE_ORDER)
         if not force and stage in order and self.phase in order:
             if order.index(stage) < order.index(self.phase):
@@ -3423,10 +3212,7 @@ class CLIWorker(threading.Thread):
             pct = 99
         self.stage_progress[stage] = max(self.stage_progress.get(stage, 0), pct)
 
-        # When a later stage begins, snap earlier stages to 100% so the
-        # breadcrumbs never show a stale partial % (e.g. "Temp PFS 5%").
-        # This handles backends that stop emitting progress before 100%.
-        # Only stages this job has: a copy never builds a temp PFS or compresses.
+        # a later stage snaps earlier ones to 100%: some backends stop short of it
         def snap(*earlier):
             for s in earlier:
                 if s in self._weights:
@@ -3451,7 +3237,7 @@ class CLIWorker(threading.Thread):
         overall = self._job_overall()
 
         detail = label or tr("{stage} is active.", stage=stage)
-        self._detail = None   # set below, once the stage's text is final
+        self._detail = None
         if stage == "Creating Temp PFS" and not label:
             # the backend meters this step in bytes; the fixed text is only a fallback
             detail = ("Building temporary PFS image. "
@@ -3481,9 +3267,7 @@ class CLIWorker(threading.Thread):
             self.app.status_update(stage, detail, stage, self.stage_progress[stage],
                                    overall, elapsed, self.speed, eta, job=self.item)
 
-        # Only log at 5 % bucket boundaries or when a stage hits 100 %.
-        # Do NOT log at 0 % on every bar - that floods the log when the backend
-        # emits dozens of 0 % lines before the first real progress tick.
+        # log at 5% steps and at 100% only, backends print dozens of 0% lines
         if self.last_stage_bucket.get(stage, -1) != bucket or int(self.stage_progress[stage]) == 100:
             self.last_stage_bucket[stage] = bucket
             self.app.log("PROGRESS", f"{stage}: {int(self.stage_progress[stage])}% {label}".strip())
@@ -3495,11 +3279,6 @@ class CLIWorker(threading.Thread):
         lower = line.lower()
         upper = line.upper()
 
-        # ── Explicit backend phase marker ────────────────────────────────────
-        # Multi-phase jobs (PATCH MODE: extract → repack) print "[PHASE] <Stage>"
-        # at each step. Force the stage so the display advances even when the new
-        # stage ranks "earlier" than the current one (the no-regress guard assumes
-        # one forward pack sequence; a patch extracts first, then packs).
         if line.startswith("[PATCH-BACKUP] "):
             self.patch_backup = line[len("[PATCH-BACKUP] "):].strip()
             return
@@ -3507,7 +3286,7 @@ class CLIWorker(threading.Thread):
             self.kept_build = line[len("[KEPT-BUILD] "):].strip()    # a finished image the rename refused
             return
         if line.startswith("[EXTRAS-LEFT] "):
-            self.extras_left.append(line[len("[EXTRAS-LEFT] "):].strip())   # not everything reached the output
+            self.extras_left.append(line[len("[EXTRAS-LEFT] "):].strip())
             return
         if line.startswith("[EXTRAS-ASIDE] "):
             self.extras_aside = line[len("[EXTRAS-ASIDE] "):].strip()   # "<aside> -> <game folder>"
@@ -3515,7 +3294,7 @@ class CLIWorker(threading.Thread):
         if line.startswith("[FPKG-INVALID] "):
             self.invalid_pkg = line[len("[FPKG-INVALID] "):].strip()   # built, but its checks failed
         if "[consume] freed" in line:
-            self.consumed = True           # the extraction is no longer complete: not kept for a retry
+            self.consumed = True  # extraction no longer complete, so no retry from it
         if line == "[JOB] copy":
             self._is_copy = True
             self._weights, self._stage_order = self.COPY_WEIGHTS, self._COPY_ORDER
@@ -3523,12 +3302,7 @@ class CLIWorker(threading.Thread):
         if line.startswith("[PHASE] "):
             stage = line[8:].strip()
             if stage in self._weights:
-                # Jobs with markers use the extract-first order, in which every marker
-                # of a normal run moves forward. A marker that would move back (the fPKG
-                # builder's own "Scanning Files" after a chain has unpacked) is dropped,
-                # so the bar never jumps backward - and so are the bars that follow it
-                # until the next accepted marker: a "100% source scan" credited to the
-                # running stage pinned "Temp PFS" at 99 % for the whole Kraken pass.
+                # backward markers are dropped with their bars, or Temp PFS sits at 99% through Kraken
                 order = getattr(self, "_stage_order", self._STAGE_ORDER)
                 forced = self._stage_order is self._STAGE_ORDER
                 self._phase_dropped = (not forced and stage in order and self.phase in order
@@ -3536,11 +3310,7 @@ class CLIWorker(threading.Thread):
                 self._set_stage(stage, 0, force=forced)
             return
 
-        # ── Pass-1 complete (folder two-pass build) ──────────────────────────
-        # The backend finished the inner uncompressed image and is about to start pass-2
-        # compression. The extracted source is no longer needed (pass 2 reads only the inner
-        # image) and an OOM/restart can now resume pass-2 from it - so record the image path
-        # and free the extracted source NOW to halve peak temp usage.
+        # pass 2 reads only the inner image: free the extracted source now, halves peak temp
         if line.startswith("[PASS1-DONE] "):
             inner = line[len("[PASS1-DONE] "):].strip()
             if not _is_inner_image_path(inner):
@@ -3557,15 +3327,7 @@ class CLIWorker(threading.Thread):
                 pass
             return
 
-        # ── Intercept raw Python exception tracebacks from the backend ────────
-        # Convert confusing Python tracebacks into readable, actionable messages
-        # and always include UI settings suggestions the user can act on right now.
-
-        # MemoryError - mkpfs multiprocessing pool ran out of RAM.
-        # Each parallel worker loads a chunk of the source file; too many cores = OOM.
-        # Only match raw Python exception lines (no leading '[' bracket like [INFO]/[OK]).
-        # This avoids false-positives from mkpfs info messages that mention "MemoryError".
-        # Only show once per job to avoid log spam.
+        # raw MemoryError lines only, mkpfs [INFO] lines mention it too; shown once per job
         stripped = line.strip()
         if (stripped == "MemoryError"
                 or ("memoryerror" in lower and not stripped.startswith("[") and "avoid" not in lower)):
@@ -3586,13 +3348,11 @@ class CLIWorker(threading.Thread):
                 )
             return
 
-        # Downstream noise caused by the MemoryError - suppress silently.
+        # MemoryError fallout, not worth showing
         if "concurrent send_bytes" in lower or "maybeencodingerror" in lower:
             return
 
-        # OSError [Errno 22] Invalid argument on write.
-        # Either the output drive is exFAT/FAT32 (4 GB file limit) or a corrupt
-        # chunk was written after an OOM crash.
+        # errno 22: exFAT/FAT32 and the 4 GB file limit, or a chunk mangled by an OOM crash
         if ("oserror" in lower or "ioerror" in lower) and (
             "errno 22" in lower or "invalid argument" in lower
         ):
@@ -3610,7 +3370,6 @@ class CLIWorker(threading.Thread):
             )
             return
 
-        # No-space-left / disk full
         if ("errno 28" in lower or "no space left" in lower
                 or "there is not enough space" in lower):
             self.app.log("ERROR",
@@ -3627,7 +3386,6 @@ class CLIWorker(threading.Thread):
         if "calledprocesserror" in lower and "non-zero exit status" in lower:
             self.app.log("ERROR", "mkpfs exited with an error - see messages above.")
             if not getattr(self, "_mem_error_shown", False):
-                # Generic hint only when a more specific error wasn't already shown.
                 self.app.log("ERROR",
                     "  Common causes & settings to try:\n"
                     "\n"
@@ -3642,8 +3400,7 @@ class CLIWorker(threading.Thread):
                 )
             return
 
-        # Paths in these lines come from the backend, but a crafted file name can fake a
-        # line: only a path inside this job's output folder (or its own source) counts.
+        # a crafted file name can fake these lines: only paths inside the job's folders count
         if line.startswith("[OK] Compression complete: "):
             self._take_output(line[len("[OK] Compression complete: "):])
         if line.startswith("[OK] fPKG complete: "):
@@ -3660,13 +3417,11 @@ class CLIWorker(threading.Thread):
                 self._written.append(self.output_path)
         _cm = re.match(r"\[SUCCESS\] (?:Copied|Moved) .+? → (.+)$", line)
         if _cm and self.operation == "copy":
-            self._take_output(_cm.group(1))                                 # the copied file
+            self._take_output(_cm.group(1))
         if "Validation reported failures" in line:
             self.validate_failed = True
         if "Extraction complete:" in line:
-            # Only an UNPACK job ends at extraction. In PATCH MODE the backend
-            # extracts then repacks, so latching "Extracting"=100 here would freeze
-            # the bar for the whole repack - the [PHASE] markers drive it instead.
+            # patch mode repacks after the unpack: latching Extracting=100 would freeze the bar
             if self.operation in ("unpack", "fpkg-extract"):
                 self._set_stage("Extracting", 100, "Extraction complete.")
             if line.startswith("[OK] Extraction complete: "):
@@ -3679,17 +3434,12 @@ class CLIWorker(threading.Thread):
         if prog:
             pct = max(0, min(100, int(prog.group("pct"))))
             label = prog.group("label").strip()
-            # fPKG and copy jobs: the backend drives the stage with explicit [PHASE] markers
-            # and its bar labels are free text - lock the bar to the current phase instead of
-            # guessing from keywords (a label like "extract inner PFS" is not mkpfs's extract,
-            # and "copy" matches no keyword at all).
+            # fPKG and copy bars are free text: stick to the current [PHASE] instead of guessing
             if getattr(self, "_phase_dropped", False) and (self._is_fpkg or self._is_copy):
-                return   # a bar of a phase the tracker refused (see the [PHASE] handling)
+                return  # a bar of a refused [PHASE]
             stage = (self.phase if ((self._is_fpkg or self._is_copy) and self.phase in self._weights)
                      else self._stage_from_label(label, line))
-            # Two bars for one step (MkPFS counts whole files, the backend's meter counts
-            # bytes): a line that lags behind the leading one within a few seconds is the
-            # coarser bar, and its label and speed would only make the display flicker.
+            # two bars per step (MkPFS counts files, our meter bytes): drop the laggard or it flickers
             _now = time.time()
             _lead = getattr(self, "_lead_line", None)
             if (stage is not None and stage == self.phase and pct < self.stage_progress.get(stage, 0)
@@ -3702,11 +3452,7 @@ class CLIWorker(threading.Thread):
             if sp:
                 self.speed = sp.group(1)
 
-            # Backend (mkpfs/pbar.py) emits ETA as integer seconds under 1h ('ETA 1695s')
-            # but as DECIMAL MINUTES at/over 1h ('ETA 84.2m'). The capture must allow a
-            # decimal AND the trailing unit, else '84.2m' grabs only '84' (no unit → read
-            # as 84 SECONDS) and the leftover '.2m' is re-appended → 'ETA 1m 24s.2m'.
-            # humanize_eta then renders it as 1h 05m / 28m 15s / 45s in the field + label.
+            # pbar prints ETA 1695s below 1h but ETA 84.2m above, so take decimals and the unit
             eta_match = re.search(
                 r"ETA\s*([0-9]+(?:\.[0-9]+)?\s*(?:h|hr|hrs|hours?|m|min|mins|minutes?|s|sec|secs|seconds?)?)",
                 label, re.I)
@@ -3717,7 +3463,6 @@ class CLIWorker(threading.Thread):
                 eta = " - "
 
             if stage is None:
-                # Unrecognised progress line - update speed/eta but don't change stage
                 return
 
             if stage == "Reading Game" and pct >= 100:
@@ -3727,58 +3472,40 @@ class CLIWorker(threading.Thread):
 
             if stage == "Compressing" and pct >= 100:
                 self._set_stage("Compressing", 100, label, eta)
-                # Auto-advance: compression finished - final image write is next.
-                # If the backend emits its own "write" progress bars for the final
-                # output, they will continue updating "Writing Final Image" from here.
-                # If it writes silently, this at least moves the display off "Compressing".
+                # a silent final write would leave the display stuck on Compressing
                 self._set_stage("Writing Final Image", 0, "Writing final .ffpfsc output file…", " - ")
                 return
 
             self._set_stage(stage, pct, label, eta)
             return
 
-        # Hardlink / symlink failure - warn immediately, don't wait for exit code
         if "unable to stage source file" in lower or "hard link and symlink both failed" in lower:
             self.app.log("WARN",
                 "Temp drive does not support hardlinks/symlinks. "
                 "Fallback to copy mode - compression will be slower and needs extra space.")
 
-        # Inner image auto-rename (MkPFS) - informational, not an error
         if "renaming inner image" in lower or "inner image renamed" in lower:
             self.app.log("INFO",
                 "ℹ  mkpfs renamed the inner image to match the outer filename. "
                 "This is normal - the .ffpfsc will mount correctly.")
 
-        # Plain-text (non-progress-bar) stage hints.
-        # IMPORTANT: only use very specific phrases here - broad keyword matches on
-        # paths (e.g. _ffpfsc_temp, pfs_image.dat) fire too early because those
-        # strings appear in the parameter dump before scanning even begins.
+        # specific phrases only: temp paths show up in the parameter dump before the scan
         if "writing pfs image to" in lower:
-            # Only the exact "Writing PFS image to <path>" line marks temp-PFS start.
-            # Use 0% so the subsequent [###] x% write progress bars can own the percentage
-            # cleanly (the max() guard in _set_stage would pin it at 5 otherwise).
+            # start at 0 so the write bars own the percent, max() in _set_stage would pin 5
             self._set_stage("Creating Temp PFS", 0, "Building PFS image…")
         elif ".ffpfsc" in lower and self.stage_progress.get("Compressing", 0) > 0:
-            # A line mentioning the final .ffpfsc output after compression has run
-            # means the final image is being written (or has just been written).
             self._set_stage("Writing Final Image",
                             max(5, self.stage_progress.get("Writing Final Image", 0)),
                             "Writing final .ffpfsc output file…")
         elif "successfully wrote" in lower or "pfs creation complete" in lower:
-            # PFS image fully written - advance to Compressing if not already there
             if self.stage_progress.get("Compressing", 0) == 0:
                 self._set_stage("Creating Temp PFS", 100, line)
         elif self.operation == "unpack" and ("extract" in lower or "files written" in lower or "dirs created" in lower):
             self._set_stage("Extracting", 100 if "complete" in lower else max(5, self.stage_progress.get("Extracting", 0)), line)
-        # NOTE: "Verifying Output" is NOT triggered from plain-text here because
-        # lines like "MkPFS post-build verify is disabled..." contain "verify" and
-        # would fire this stage at the very start of the run, blocking everything else.
-        # Verification stage is advanced only by progress bars in _stage_from_label.
-        # NOTE: "Complete" stage is intentionally NOT set here - only by run() after exit.
+        # never Verifying from plain text, 'verify is disabled' would fire it at the start
 
         tag = "INFO"
-        # Use word-boundary regex so "MemoryError", "TypeError", etc. don't
-        # falsely tag an INFO line as ERROR.
+        # word boundaries, or MemoryError would tag a line as ERROR
         if re.search(r'\bERROR\b|\bFAILED\b', upper):
             tag = "ERROR"
         elif re.search(r'\bWARN\b|\bWARNING\b', upper):
@@ -3786,7 +3513,7 @@ class CLIWorker(threading.Thread):
         elif "SUCCESS" in upper or "[OK]" in upper or "COMPLETE" in upper:
             tag = "OK"
 
-        # Errors and warnings are ALWAYS shown - never throttled.
+        # errors and warnings are never throttled
         always_show = tag in ("ERROR", "WARN")
         important = always_show or tag != "INFO" or any(k in upper for k in [
             "BUILD SUMMARY", "TOTAL FILES", "TOTAL UNCOMPRESSED", "TOTAL STORED",
@@ -3800,9 +3527,7 @@ class CLIWorker(threading.Thread):
             self.app.log(tag, line)
 
     def _chain_to(self):
-        """The output kind of a chain job ('folder' | 'ffpfs' | 'ffpfsc' | 'pkg'), None for
-        every other job - so the result detection can treat a chain like the legacy job
-        that produces the same thing."""
+        """None unless a chain; lets result detection treat it like the matching plain job"""
         if self.operation != "chain":
             return None
         return getattr(self.item, "chain_to", None) or "ffpfsc"
@@ -3816,9 +3541,7 @@ class CLIWorker(threading.Thread):
                     return True
                 if p.exists() and p.is_file() and p.stat().st_size > 0 and p.stat().st_mtime >= self.start_time - 2:
                     if self.operation == "fpkg-build" or self._chain_to() == "pkg":
-                        # The backend's "[OK] fPKG complete: <path>" marker lands here - the
-                        # usual path for a build, so the auto-organize rename must happen
-                        # here (the glob fallback below is only reached without the marker).
+                        # the fPKG marker lands here, so the auto-organize rename has to happen here too
                         p = self.app._finalize_pkg_name(self.item, p)
                         self.output_path = str(p)
                     self.final_size = p.stat().st_size
@@ -3827,7 +3550,6 @@ class CLIWorker(threading.Thread):
                 pass
 
         if self.operation == "fpkg-extract" or self._chain_to() == "folder":
-            # The backend writes straight into the job's output folder.
             if self.output_dir.exists() and self.output_dir.is_dir() and any(self.output_dir.iterdir()):
                 self.output_path = str(self.output_dir)
                 self.final_size = get_folder_size(self.output_dir)
@@ -3842,7 +3564,7 @@ class CLIWorker(threading.Thread):
                 cands = []
             if cands:
                 best = max(cands, key=lambda q: q.stat().st_mtime)
-                best = self.app._finalize_pkg_name(self.item, best)   # auto-organize name
+                best = self.app._finalize_pkg_name(self.item, best)
                 self.output_path = str(best)
                 self.final_size = best.stat().st_size
                 return True
@@ -3861,15 +3583,12 @@ class CLIWorker(threading.Thread):
                 self.final_size = get_folder_size(self.output_dir)
                 return True
 
-        # Prefer this job's expected name (<title_id>.ffpfsc) over "newest in the
-        # folder" - the latter can wrongly attribute a stale/unrelated .ffpfsc to
-        # a run that actually produced nothing, or pick the wrong one in a batch.
+        # expected name first: the newest file may be stale or another job's
         if self.operation != "unpack":
             tid = (getattr(self.item, "title_id", "") or "").strip()
             if tid and tid not in ("📦", "Unknown"):
                 try:
-                    # Match both "<tid>.ffpfsc"/".ffpfs" and the descriptive
-                    # "<name> [<tid>].ffpfsc"; pick the newest one this run created.
+                    # matches <tid>.ffpfsc as well as <name> [<tid>].ffpfsc
                     cands = [p for p in self.output_dir.glob(f"*{tid}*.ffpfs*")
                              if p.is_file() and p.stat().st_size > 0
                              and p.stat().st_mtime >= self.start_time - 2
@@ -3893,14 +3612,13 @@ class CLIWorker(threading.Thread):
         return False
 
     def _take_output(self, raw: str) -> bool:
-        """Set output_path from a backend line when the path lies inside this job's output
-        folder or its own source; anything else is logged and ignored."""
+        """only paths inside the output folder or own source count, the rest is logged"""
         raw = (raw or "").strip().strip('"')
         if not raw or not os.path.isabs(raw):
             return False
         roots = [(r, True) for r in (self.output_dir, getattr(self.item, "path", None),
                                      getattr(self.item, "archive_path", None)) if r]
-        # the folders the backend was told to write to: its output argument and the like
+        # plus the folders passed on the command line
         roots += [(a, False) for a in (self.cmd or []) if isinstance(a, str) and os.path.isabs(a) and os.path.isdir(a)]
         try:
             cand = Path(raw).resolve()
@@ -3921,8 +3639,7 @@ class CLIWorker(threading.Thread):
         return False
 
     def _strip_written_clutter(self) -> None:
-        """Remove the '._' sidecars and other clutter from what this job wrote (see
-        ultra_core.strip_written_clutter): its output, the bundle extras, PS4 title folders."""
+        """sweep '._' sidecars and other OS litter out of what this job wrote"""
         n = 0
         for p in [self.output_path, *self._written]:
             try:
@@ -3934,7 +3651,7 @@ class CLIWorker(threading.Thread):
 
     @staticmethod
     def _same_tree(a: Path, b: Path) -> bool:
-        """*a* and *b* hold the same files with the same bytes (OS clutter aside)."""
+        """same files, same bytes, OS clutter ignored"""
         def files(root):
             out = set()
             for dp, dn, fn in os.walk(root):
@@ -3944,14 +3661,13 @@ class CLIWorker(threading.Thread):
         fa = files(a)
         if fa != files(b):
             return False
-        filecmp.clear_cache()      # a file rewritten with the same size and time must be read again
+        filecmp.clear_cache()  # filecmp caches by size and mtime
         return all(filecmp.cmp(a / f, b / f, shallow=False) for f in fa)
 
     _TITLE_FOLDER_RE = re.compile(r"\[(?:PPSA|CUSA)\d{5}\]", re.I)
 
     def _extras_dest(self) -> Path:
-        """Beside the output file itself (a title folder Organize or auto-organize made), else
-        the job's output folder."""
+        """next to the output file (its title folder), else the output folder"""
         try:
             out = Path(str(self.output_path or "").strip('"'))
             if str(out) and out.is_file():
@@ -3964,11 +3680,7 @@ class CLIWorker(threading.Thread):
         return self.output_dir
 
     def _place_bundle_siblings(self) -> None:
-        """The extras of the job: packages go into the library by their own role (DLC and
-        updates into the game's title folder, a game into a title folder of its own), archives
-        among them are unpacked for that first; everything else is copied next to the output
-        as it was (_copy_bundle_siblings). A package or archive that cannot be sorted is
-        copied as it is, so nothing is left out."""
+        """packages sorted into the library by role, the rest copied as is; nothing gets left out"""
         siblings = [Path(x) for x in (getattr(self.item, "bundle_siblings", None) or [])]
         if not siblings or not getattr(self, "copy_siblings", True):
             return self._copy_bundle_siblings()
@@ -4011,8 +3723,7 @@ class CLIWorker(threading.Thread):
                         break
                     dest_dir = self._extras_dest()          # Organize may have renamed the title folder
                     rel = Path(sib.name) / f.relative_to(sib) if sib.is_dir() else Path(f.name)
-                    # a folder that names the role (a backport for one firmware, updates) keeps
-                    # the package where it is: sorted alone, it would pass for the game
+                    # a role folder (backport, updates) keeps its package: alone it would pass for the game
                     by_folder = sib.is_dir() and organize_lib.role_folder(f, sib.parent)
                     if f.suffix.lower() == ".pkg" and not by_folder:
                         ok = self._organize_addon(f, library, "keep")
@@ -4022,7 +3733,7 @@ class CLIWorker(threading.Thread):
                             continue
                         seen_sets.add(str(first))
                         ok = all(self._copy_extra(q, dest_dir / rel.parent / q.name)
-                                 for q in archive_set_parts(first))   # its role is the folder's: as it is
+                                 for q in archive_set_parts(first))  # role comes from the folder: copy as is
                         failed += 0 if ok else 1
                         continue
                     elif is_archive_file(f):
@@ -4052,8 +3763,7 @@ class CLIWorker(threading.Thread):
             self.extras_left.append(tr("{n} add-on item(s) could not be placed", n=failed))
 
     def _organize_addon(self, src: Path, library: Path, mode: str) -> bool:
-        """Sort one package (or an unpacked add-on folder) into the library through the
-        backend's Organize, the way an Organize job does. True when it went through."""
+        """through the backend's Organize, same as an Organize job"""
         pycmd = get_backend_python_command()
         if not pycmd:
             return False
@@ -4079,8 +3789,7 @@ class CLIWorker(threading.Thread):
                 if line.startswith(("[OK] Organized: ", "[OK] Came along: ", "[INFO] already there")):
                     placed = True
                     if line.startswith("[INFO] already there"):
-                        # a file of that name is in the library: maybe another version, so the
-                        # source must not be deleted on the strength of it
+                        # same name in the library may be another version: never delete the source over it
                         self._addons_skipped = getattr(self, "_addons_skipped", 0) + 1
                     self.app.log("INFO", f"Add-on: {line[5:] if line.startswith('[OK] ') else line[7:]}")
                     if line.startswith("[OK] Organized: "):
@@ -4094,8 +3803,7 @@ class CLIWorker(threading.Thread):
             return False
 
     def _title_folder_renamed(self, old: Path, new: Path) -> None:
-        """Organize gave the game's title folder a newer version's name: what this job wrote
-        is there now, its output included."""
+        """Organize renamed the title folder to a newer version: follow our outputs there"""
         def moved(x: str) -> str:
             try:
                 return str(new / Path(x).relative_to(old))
@@ -4108,10 +3816,7 @@ class CLIWorker(threading.Thread):
         self.app.log("INFO", f"The title folder took the newer version's name: {new.name}")
 
     def _sort_archive_addon(self, archive: Path, library: Path, staging: Path, rest_rel: Path) -> bool:
-        """Unpack an add-on archive into the job's scratch, sort its packages into the library
-        and copy what is left of it (pictures, tools) to <extras folder>/*rest_rel*/<archive
-        name>. False when it cannot be unpacked or holds no package: the caller copies the
-        archive as it is."""
+        """False when it can't be unpacked or holds no package; the caller then copies it as is"""
         names = ArchiveExtractor.member_entries(archive, self._addon_passwords)
         if names and not any(n.lower().endswith(".pkg") for n in names):
             return False                                   # nothing to sort: it goes as it is
@@ -4125,8 +3830,7 @@ class CLIWorker(threading.Thread):
             self.app.log("WARN", f"Could not unpack the add-on {archive.name}: {e}; it is copied as it is")
             shutil.rmtree(dest, ignore_errors=True)
             return False
-        # the whole extraction, not only the game-like folder the unpack picks; one folder that
-        # wraps everything is left out of the names
+        # the whole extraction, minus one wrapper folder if everything sits in it
         tops = [q for q in dest.iterdir() if not is_fs_junk_name(q.name)]
         base = tops[0] if len(tops) == 1 and tops[0].is_dir() else dest
         _bd = str(backend_base_dir())
@@ -4148,13 +3852,13 @@ class CLIWorker(threading.Thread):
                                       / pkg.relative_to(base)) and ok
         left = [q for q in dest.rglob("*") if q.is_file() and not is_fs_junk_name(q.name)]
         rest_dir = self._extras_dest() / rest_rel / archive_label_stem(archive)   # after any rename
-        for q in left:                                     # everything else the archive held, pictures too
+        for q in left:
             ok = self._copy_extra(q, rest_dir / q.relative_to(base)) and ok
         shutil.rmtree(dest, ignore_errors=True)
         return ok
 
     def _copy_extra(self, src: Path, target: Path) -> bool:
-        """Copy one file next to the output; another file of that name there stays too."""
+        """never overwrites: a different file of that name stays too"""
         try:
             if target.exists():
                 if filecmp.cmp(src, target, shallow=False):
@@ -4172,10 +3876,7 @@ class CLIWorker(threading.Thread):
             return False
 
     def _copy_bundle_siblings(self) -> None:
-        """Copy the extra files AND folders (DLCs etc.) next to the packed .ffpfsc.
-        Handles both loose files and whole subfolders (e.g. an '[ ALL DLC ]' wrapper),
-        copied 1:1 into the output directory. No-op unless the item carries siblings and
-        the user has 'copy extras' enabled. The source is never modified (copy, not move)."""
+        """copies DLC files and folders next to the output; the source is never touched"""
         siblings = getattr(self.item, "bundle_siblings", None)
         if not siblings:
             return
@@ -4192,10 +3893,9 @@ class CLIWorker(threading.Thread):
                     continue
                 target = dest_dir / src.name
                 if src.is_dir():
-                    # DLC / extra subfolder → copy the whole tree (merge). Skip when an
-                    # identical-size copy is already there so a re-run doesn't re-copy GBs.
+                    # skip an identical copy already there, so a re-run doesn't copy GBs again
                     if target.resolve() == src.resolve():
-                        continue   # source already sits in the destination - nothing to do
+                        continue  # source already sits there
                     if target.exists() and self._same_tree(src, target):
                         copied += 1
                         continue
@@ -4233,8 +3933,6 @@ class CLIWorker(threading.Thread):
         self.extras_copied = copied == len([x for x in siblings if Path(x).exists()]) and copied > 0
 
     def _validate_shadowmount(self) -> list:
-        """Post-compression ShadowMount compatibility checks.
-        Returns a list of warning strings (empty = all OK)."""
         warns = []
         if not self.output_path:
             return ["No output path recorded - cannot validate output."]
@@ -4286,8 +3984,7 @@ class CLIWorker(threading.Thread):
         saved = self.item.size - self.final_size if self.item.size and self.final_size else 0
         pct = (saved / self.item.size * 100) if self.item.size else 0
         temp_removed = max(0, self.temp_peak_size - get_folder_size(self.temp_dir))
-        # a rating only where the job compresses: an .exfat, a folder, a copy or a sort into
-        # the library keeps the size, and "not worth compressing" would only confuse
+        # rate compression only where we compress; a copy or sort keeps the size anyway
         out_ext = Path(str(self.output_path or "")).suffix.lower()
         compressing = (self.operation not in ("copy", "ps4-keystone", "fake-sign")
                        and (out_ext in (".ffpfsc", ".pkg") or (not out_ext and self._chain_to() in ("ffpfsc", "pkg"))))
@@ -4315,7 +4012,7 @@ class CLIWorker(threading.Thread):
         _kill_process_tree(self.proc)
 
 
-# Stage definitions: (full backend name, short display label)
+# (backend stage name, short label)
 _STAGE_DEFS = [
     ("Scanning Files",      "Scan"),
     ("Extracting",          "Extract"),    # archives extract first; folders skip this station
@@ -4329,10 +4026,7 @@ _STAGE_DEFS = [
 ]
 
 def _kill_process_tree(proc) -> None:
-    """Terminate a backend subprocess AND its child process group (the mkpfs
-    multiprocessing Pool workers). The backend is launched with start_new_session,
-    so its pgid == its pid; killing the group stops the forked workers too - a bare
-    proc.terminate() leaves them orphaned, burning CPU and writing temp with no UI."""
+    """kill the whole group: a bare terminate() orphans the mkpfs pool workers"""
     if proc is None:
         return
     try:
@@ -4360,8 +4054,7 @@ def _kill_process_tree(proc) -> None:
 
 
 def _kill_process_tree_windows(proc) -> None:
-    """Windows has no process groups: stop the backend's children (MkPFS and its workers, the
-    fPKG helper, 7-Zip) by walking the tree, then the backend itself."""
+    """no process groups on Windows: walk the tree, children first"""
     try:
         import psutil
         root = psutil.Process(proc.pid)
@@ -4386,8 +4079,7 @@ def _kill_process_tree_windows(proc) -> None:
 
 
 def _hdr_mode(v) -> str:
-    """Normalise the fPKG HDR-flag setting to 'auto' | 'on' | 'off'. 1.1.12/1.1.13 stored a
-    bool whose default (True) nobody chose consciously → 'auto'; an explicit False → 'off'."""
+    """an old bool True was never a real choice, so it means auto; False means off"""
     if v is True:
         return "auto"
     if v is False:
@@ -4399,13 +4091,12 @@ def _hdr_mode(v) -> str:
 
 
 class JobDialog(EmbeddedDialog):
-    """One job, three groups: 1."""
     LARGE = True
 
     _TARGET_LABEL = {"folder": "Folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "exfat": ".exfat", "pkg": ".pkg",
                      "organize": "Organize", "auto": "Auto"}
     _TARGETS = ("folder", "ffpfs", "ffpfsc", "exfat", "pkg", "organize", "auto")
-    # a PS4 package is sorted or unpacked, never converted: its own words for the same keys
+    # PS4 packages are sorted or unpacked, never converted: own labels, same keys
     _PS4_LABEL = {"pkg": "Into the library", "folder": "Unpack to folder"}
     _TARGET_KEY = {**{v: k for k, v in _PS4_LABEL.items()}, **{v: k for k, v in _TARGET_LABEL.items()}}
     _SOURCE_HINT = ("Game folder, parent folder of games, archive (.zip/.rar/.7z), disk image "
@@ -4498,7 +4189,6 @@ class JobDialog(EmbeddedDialog):
         super().__init__(app.root)
         self.app = app
         self.edit_item = item
-        # several paths dropped at once: they are the sources, shown under their common folder
         self._dropped, self._dropped_root = [], None
         if init_sources and not item:
             self._dropped = [Path(x) for x in init_sources if Path(x).exists()]
@@ -4521,26 +4211,22 @@ class JobDialog(EmbeddedDialog):
 
         settings = load_settings()
         self._defaults = dict(settings.get("job_dialog_defaults", {}) or {})
-        self._defaults_kind = None          # the source kind whose remembered choices are applied
+        self._defaults_kind = None
         self._kind = "none"
         self._games: list[Path] = []
         self._check_thread = None
-        # a folder of sources is read off the main thread: "folder" while it is walked,
-        # "archives" while its archives are checked for PS4 packages; Add waits for both
+        # 'folder' while walking it, 'archives' while checking them for PS4; Add waits for both
         self._reading, self._read_seq = "", 0
 
         src0 = init_src or ""
         if item is not None:
             src0 = str(getattr(item, "archive_path", None) or getattr(item, "path", "") or "")
         elif not src0:
-            # Add job without a drop: pre-fill with the last source the user picked, so
-            # the typical workflow (same library folder, add every new download) is one
-            # press less. An invalid or missing path is dropped silently.
+            # pre-fill the last source: new downloads usually land in the same folder
             _last = str(settings.get("last_source", "") or "").strip()
             if _last and Path(_last).exists():
                 src0 = _last
         self.src_var = tk.StringVar(value=src0)
-        # The folder the file / folder pickers open in: the parent of the last source.
         self._last_src_dir = native_path(str(settings.get("last_source_dir", "") or "").strip())
         self.detect_var = TextVar(value="Choose or drop a source.")
         self.help_var = TextVar(value=self._HELP_IDLE)
@@ -4551,16 +4237,16 @@ class JobDialog(EmbeddedDialog):
         self.lz4_profile_var = tk.StringVar(value=str(getattr(item, "lz4_profile", "") or "") if item else "")
         self.lz4_note_var = TextVar(value="")
         self.lz4_mode_var = tk.StringVar(value="unpack" if (item and getattr(item, "chain_lz4_unpack", False)) else "pack")
-        self._lz4_seen: dict[str, object] = {}     # folder → uses AMPR (True/False/None)
-        self._archive_content: dict[str, str] = {}  # archive → what it holds (see ultra_core.content_kind_from_members)
+        self._lz4_seen: dict[str, object] = {}  # folder: uses AMPR (True/False/None)
+        self._archive_content: dict[str, str] = {}  # archive: what it holds
         self._detect_rest: tuple = ()
-        self._auto_table = auto_actions(settings.get("auto_actions"))    # the output Automatic picks per source kind
+        self._auto_table = auto_actions(settings.get("auto_actions"))
         self.patch_on_var = tk.BooleanVar(value=bool(getattr(item, "patch_source", None)) if item else False)
         self.patch_var = tk.StringVar(value=str(getattr(item, "patch_source", "") or "") if item else "")
         self.ks_state_var = TextVar(value="")
         self.ps5_state_var = TextVar(value="")
-        self._ps5_rows = None         # the checks of the picked PS5 package, once they ran
-        self._ks_default = None       # the picked PS4 game package carries the default keystone (True/False/None)
+        self._ps5_rows = None
+        self._ks_default = None  # default keystone in the PS4 package (True/False/None)
         self.backport_on_var = tk.BooleanVar(value=bool(getattr(item, "backport_target", None)) if item else False)
         _bt0 = (getattr(item, "backport_target", None) if item else None) or settings.get("backport_target_default") or "7.61"
         self.backport_target_var = tk.StringVar(value=_bt0 if is_backport_target(_bt0) else "7.61")
@@ -4570,8 +4256,7 @@ class JobDialog(EmbeddedDialog):
         self.to_var = tk.StringVar(value=self._TARGET_LABEL.get(self._target_of(item) if item else "ffpfsc", ".ffpfsc"))
         out0 = str(getattr(item, "output_path", "") or "") if item else (app.output_var.get() or "").strip()
         self.out_var = tk.StringVar(value=out0)
-        # PS4 and PS5 sources each have their own output folder, remembered per platform; a folder
-        # of mixed sources shows both (the PS4 block), any other source the one of its platform
+        # PS4 and PS5 outputs are remembered per platform; a mixed folder shows both
         _r4 = app._recent_outputs("ps4")
         self._out_default = {"ps5": out0, "ps4": (_r4[0] if _r4 else out0)}
         self._platform = "ps5"
@@ -4610,14 +4295,13 @@ class JobDialog(EmbeddedDialog):
         self.back_var = tk.StringVar(value=fp.get("backend") if fp.get("backend") in self._BACKEND else "builtin")
         self._pkg_more = bool(item and (fp.get("content_id") or fp.get("title_id")))   # identity + codec rows
         self._ident_forced = False       # shown and required: a game folder without param.json
-        self._auto_ident: dict = {}      # the values filled in from param.json (cleared on a new source)
+        self._auto_ident: dict = {}  # filled in from param.json, cleared on a new source
         self.summary_var = TextVar(value="")
         self.summary_dest_var = TextVar(value="")
 
         self._build()
         self.src_var.trace_add("write", lambda *_: self._on_source_changed())
-        # LZ4 packs go into an .exfat or a folder: switching LZ4 on moves the output there,
-        # another output switches LZ4 off (both before the refresh below)
+        # LZ4 packs need an .exfat or folder: LZ4 on moves the output, other outputs turn it off
         self.lz4_var.trace_add("write", lambda *_: self._lz4_toggled())
         self.lz4_mode_var.trace_add("write", lambda *_: self._lz4_toggled())
         self.to_var.trace_add("write", lambda *_: self._lz4_output_changed())
@@ -4635,7 +4319,6 @@ class JobDialog(EmbeddedDialog):
             self._restore_draft(draft)
         app._job_draft = None
 
-    # ── layout ───────────────────────────────────────────────────────────────
     def _group(self, number: str, title: str, hint: str = ""):
         row = ctk.CTkFrame(self.body, fg_color=PANEL, corner_radius=8)
         row.pack(fill="x", padx=20, pady=5)
@@ -4649,8 +4332,7 @@ class JobDialog(EmbeddedDialog):
         return row
 
     def _fit_to_content(self):
-        """Size the window to its content (options that open grow it), within the screen,
-        until the user resizes it by hand; then leave the size alone."""
+        """grows with its content until the user resizes it by hand"""
         try:
             if not self.winfo_exists():
                 return
@@ -4675,14 +4357,12 @@ class JobDialog(EmbeddedDialog):
                       ).pack(anchor="w", padx=20, pady=(16, 2))
         ctk.CTkLabel(self, text="Pick a source, what to change in it and what comes out.",
                       text_color=MUTED, wraplength=720, justify="left").pack(anchor="w", padx=20, pady=(0, 6))
-        # Packed at the end of _build: filling a scrollable frame that is already on screen
-        # redraws its CTk scrollbar for every widget added (~0.4 s for this dialog).
+        # pack last: filling an on-screen CTk scroll frame redraws the bar per widget (~0.4 s)
         self.body = ScrollFrame(self, fg_color=BLACK)
-        if not self.LARGE:   # a large panel fills the content area; only a window fits its content
+        if not self.LARGE:  # only a window fits its content
             self.after(60, self._fit_to_content)
             self.body.bind("<Configure>", lambda e: self.after_idle(self._fit_to_content), add="+")
 
-        # 1 · Source
         srow = self._group("1", "Source", "folder, parent folder, archive, disk image, .ffpfs, .ffpfsc or .pkg")
         sinner = ctk.CTkFrame(srow, fg_color=PANEL); sinner.pack(fill="x", padx=10, pady=(2, 2))
         self._src_entry = ctk.CTkEntry(sinner, textvariable=self.src_var, fg_color=CARD2, text_color=WHITE)
@@ -4702,8 +4382,7 @@ class JobDialog(EmbeddedDialog):
         self._bind_help(self._HELP["source"], sinner)
         self._bind_help(self._HELP["look"], self._look_btn)
 
-        # 2 · Change the content - each change is a box: its checkbox line, and its options
-        #     frame INSIDE the same box, so the options always sit under their own checkbox.
+        # options sit inside their own box, so they stay under their checkbox
         crow = self._crow = self._group("2", "Change the content", "optional · applied in this order")
         cin = ctk.CTkFrame(crow, fg_color=PANEL); cin.pack(fill="x", padx=10, pady=(2, 6))
 
@@ -4724,7 +4403,6 @@ class JobDialog(EmbeddedDialog):
             self._bind_help(self._HELP[help_key], line)
             return types.SimpleNamespace(box=box, line=line, cb=cb, note=nl, opts=opts, inner=inner)
 
-        # Patch
         po = option(self.patch_on_var, "Integrate a patch", "merge an update (folder, .zip or .rar) into the game", "patch")
         self._patch_opts = po.opts
         pin = ctk.CTkFrame(po.inner, fg_color=PANEL); pin.pack(fill="x", pady=(2, 4))
@@ -4736,7 +4414,6 @@ class JobDialog(EmbeddedDialog):
                        command=self._pick_patch_folder, border_width=1, border_color=BTN_BORDER).pack(side="left", padx=(6, 0))
         self._bind_help(self._HELP["patch"], pin)
 
-        # Backport
         bo = option(self.backport_on_var, "Backport", "lower the SDK so the game runs on an older firmware", "backport")
         self._backport_opts = bo.opts
         b1 = ctk.CTkFrame(bo.inner, fg_color=PANEL); b1.pack(fill="x", pady=(2, 2))
@@ -4756,13 +4433,13 @@ class JobDialog(EmbeddedDialog):
                       wraplength=440, justify="left").pack(side="left", padx=(10, 0))
         self._bind_help(self._HELP["check"], b3)
 
-        # Sign - for a .pkg the checkbox gives way to a fixed line (the builder always signs)
+        # the .pkg builder always signs, so a fixed line replaces the checkbox there
         so = option(self.sign_var, "Sign executables", "fake-sign eboot.bin and every prx/sprx", "sign")
         self._sign_cb, self._sign_note_lbl, self._sign_line = so.cb, so.note, so.line
         self._sign_fixed = ctk.CTkLabel(so.line, text="Signed by the package builder - every executable in a .pkg is fake-signed",
                                         text_color=MUTED, font=ctk.CTkFont(size=12))
 
-        # LZ4 asset packs (AMPR games) - last, after the other changes
+        # LZ4 last, after the other changes
         lo = option(self.lz4_var, "LZ4 asset packs", "smaller and quicker from USB, for games that use AMPR", "lz4")
         self._lz4_opts, self._lz4_cb = lo.opts, lo.cb
         l0 = ctk.CTkFrame(lo.inner, fg_color=PANEL); l0.pack(fill="x", pady=(2, 2))
@@ -4783,13 +4460,11 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkLabel(lo.inner, textvariable=self.lz4_note_var, text_color=MUTED, font=ctk.CTkFont(size=12),
                      wraplength=560, justify="left", anchor="w").pack(fill="x", pady=(0, 4))
         self._bind_help(self._HELP["lz4"], l1)
-        # a game folder of the user's is changed itself, not a copy: said when it applies
+        # warns when the user's own game folder is changed in place, not a copy
         self._own_note = ctk.CTkLabel(cin, text="", text_color=YELLOW, font=ctk.CTkFont(size=12),
                                       wraplength=640, justify="left", anchor="w")
 
-        # PS4 package: its keystone and version (the other changes are for PS5 games)
-        # what the package carries now, read in the background when a PS4 game package is picked;
-        # repairing it is PS4 PKG Tools's job (with the updates to bind)
+        # PS4 package: keystone and version, read in the background; PS4 PKG Tools repairs
         kb = self._ks_box = ctk.CTkFrame(cin, fg_color=PANEL)
         kl = ctk.CTkFrame(kb, fg_color=PANEL); kl.pack(fill="x")
         ctk.CTkLabel(kl, text="Package", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
@@ -4800,7 +4475,6 @@ class JobDialog(EmbeddedDialog):
                       border_width=1, border_color=BTN_BORDER, command=self._open_keystone).pack(side="right")
         self._bind_help(self._HELP["keystone"], kl)
         self._ps5_boxes = (po.box, bo.box, so.box, lo.box)
-        # PS5 package: what the checks found, with a way to PS5 PKG Tools
         pb = self._ps5r_box = ctk.CTkFrame(cin, fg_color=PANEL)
         pl = ctk.CTkFrame(pb, fg_color=PANEL); pl.pack(fill="x")
         ctk.CTkLabel(pl, text="Package", text_color=WHITE, width=opt_w, anchor="w", font=opt_font).pack(side="left")
@@ -4811,7 +4485,6 @@ class JobDialog(EmbeddedDialog):
                       border_width=1, border_color=BTN_BORDER, command=self._open_ps5_repair).pack(side="right")
         self._bind_help(self._HELP["ps5repair"], pl)
 
-        # 3 · Output
         orow = self._orow = self._group("3", "Output")
         self._ps5_head_var = TextVar(value="")
         self._ps5_head = ctk.CTkLabel(orow, textvariable=self._ps5_head_var, text_color=WHITE, anchor="w",
@@ -4825,8 +4498,7 @@ class JobDialog(EmbeddedDialog):
                       wraplength=420, justify="left").pack(side="left", padx=(10, 0))
         self._bind_help(self._HELP["output"], oin)
         self._oin = oin
-        # Compression: one row for both compressed formats, each with its own control
-        # (zlib level for .ffpfsc, the Kraken preset for .pkg); packed by _refresh.
+        # one row for both: zlib level for .ffpfsc, Kraken preset for .pkg
         cr = self._comp_row = ctk.CTkFrame(orow, fg_color=PANEL)
         ctk.CTkLabel(cr, text="Compression:", text_color=MUTED, width=100, anchor="w",
                       font=ctk.CTkFont(size=12)).pack(side="left")
@@ -4874,7 +4546,7 @@ class JobDialog(EmbeddedDialog):
         self._out_btn.pack(side="left", padx=(6, 0))
         self._bind_help(self._HELP["saveto"], fin)
         self._fin = fin
-        # the PS4 packages of a folder of mixed sources: their own target and folder
+        # PS4 packages in a mixed folder get their own target and folder
         pb4 = self._ps4_box = ctk.CTkFrame(orow, fg_color=PANEL)
         self._ps4_head_var = TextVar(value="")
         ctk.CTkLabel(pb4, textvariable=self._ps4_head_var, text_color=WHITE, anchor="w",
@@ -4900,7 +4572,7 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkButton(p4f, text="Folder…", width=76, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                       command=self._pick_ps4_out, border_width=1, border_color=BTN_BORDER).pack(side="left", padx=(6, 0))
         self._bind_help(self._HELP["ps4out"], pb4)
-        # height=1: with Auto-organize hidden (PS4, Organize) an empty CTkFrame would ask for 200 px
+        # height=1: an empty CTkFrame asks for 200 px, because why not
         oline = ctk.CTkFrame(orow, fg_color=PANEL, height=1); oline.pack(fill="x", padx=10, pady=(2, 6))
         self._organize_cb = ctk.CTkCheckBox(oline, text="Auto-organize - folder and file named from the game's own metadata",
                                             variable=self.organize_var, checkbox_width=18, checkbox_height=18,
@@ -4908,11 +4580,10 @@ class JobDialog(EmbeddedDialog):
         self._organize_cb.pack(side="left")
         self._bind_help(self._HELP["organize"], self._organize_cb)
         self._oline = oline
-        # After the job: what happens to the source once this job is Done (shown by _refresh)
         aj = _after_job_module()
         self._after_box = ab = ctk.CTkFrame(orow, fg_color=PANEL)
         ar = self._after_row = ctk.CTkFrame(ab, fg_color=PANEL); ar.pack(fill="x")
-        # in a folder of PS4 and PS5 games the choice is for both, under the two blocks
+        # mixed folder: one choice for both platforms
         self._after_head = ctk.CTkLabel(ab, text="PS4 and PS5", text_color=WHITE, anchor="w",
                                         font=ctk.CTkFont(size=12, weight="bold"))
         ctk.CTkLabel(ar, text="After the job:", text_color=MUTED, width=100, anchor="w",
@@ -4935,7 +4606,6 @@ class JobDialog(EmbeddedDialog):
                                                     "the add-ons went along; it does not go to the {TRASH_NAME}.", TRASH_NAME=TRASH_NAME),
                                         text_color=RED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
                                         wraplength=620)
-        # .pkg options - two rows, shown only when .pkg is the output
         self._pkg_opts = ctk.CTkFrame(orow, fg_color=PANEL)
         ctk.CTkFrame(self._pkg_opts, width=2, height=1, fg_color=ACCENT_HOVER).pack(side="left", fill="y", padx=(10, 12), pady=2)
         pk = ctk.CTkFrame(self._pkg_opts, fg_color=PANEL); pk.pack(side="left", fill="x", expand=True)
@@ -4985,18 +4655,17 @@ class JobDialog(EmbeddedDialog):
                                 selected_hover_color=ACCENT_HOVER, height=24).pack(side="left")
         self._bind_help(self._HELP["codec"], cr)
         self._back_row = None
-        if sys.platform == "win32":      # LibProsperoPkg refuses the Publishing Tools backend elsewhere
+        if sys.platform == "win32":  # LibProsperoPkg refuses it elsewhere
             br = self._back_row = ctk.CTkFrame(ib, fg_color=PANEL); br.pack(fill="x", pady=(0, 4))
             ctk.CTkLabel(br, text="Kraken backend:", text_color=MUTED, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 6))
             ctk.CTkSegmentedButton(br, values=list(self._BACKEND), variable=self.back_var, selected_color=ACCENT,
                                     selected_hover_color=ACCENT_HOVER, height=24).pack(side="left")
         self._bind_help(self._HELP["identity"], ig)
 
-        # Help line + summary + buttons (outside the scroll area, always visible)
+        # footer lives outside the scroll area, always visible
         foot = self._foot = ctk.CTkFrame(self, fg_color=BLACK); foot.pack(fill="x", padx=20, pady=(0, 14))
         ctk.CTkFrame(foot, height=1, corner_radius=0, fg_color=BORDER).pack(fill="x", pady=(0, 10))
-        # The help line keeps one height while the pointer moves: the box is as tall as the
-        # longest hover text needs at the current width, so the buttons below never jump.
+        # help box fits the longest hover text, so the buttons never jump
         help_font = ctk.CTkFont(size=12)
         help_box = ctk.CTkFrame(foot, fg_color=BLACK, corner_radius=0,
                                 height=3 * help_font.metrics("linespace") + 4)
@@ -5037,13 +4706,11 @@ class JobDialog(EmbeddedDialog):
         self._help_wrap = _wrap          # also called by the GUI tests with a fixed width
         foot.bind("<Configure>", _wrap, add="+")
         info.bind("<Configure>", _wrap, add="+")
-        # Inset by the panel's 1 px border: flush, the scroll area painted over the frame's edge.
+        # 1 px inset, or the scroll area paints over the panel border
         self.body.pack(fill="both", expand=True, padx=1, before=foot)
 
     def _bind_help(self, text: str, *widgets):
-        """Show *text* in the help line while the pointer is over any of *widgets* or their
-        children; clear it when the pointer leaves the first widget's box. customtkinter
-        widgets are composites, so every descendant gets the binding."""
+        """CTk widgets are composites, so every descendant gets the binding"""
         def _show(_e=None):
             self.help_var.set(text)
         def _leave(_e=None):
@@ -5068,10 +4735,8 @@ class JobDialog(EmbeddedDialog):
         for w in widgets:
             _walk(w)
 
-    # ── pickers ──────────────────────────────────────────────────────────────
     def _initial_dir(self) -> str | None:
-        """Where the source pickers open: the folder of what is in the source field, else
-        the folder the last source came from."""
+        """the folder of the current source, else of the last one"""
         for cand in (self.src_var.get().strip(), self._last_src_dir):
             if not cand:
                 continue
@@ -5085,8 +4750,6 @@ class JobDialog(EmbeddedDialog):
         return None
 
     def _remember_source(self, p: str) -> None:
-        """Save the chosen source and the folder it came from, so the next Add job starts
-        there."""
         self.src_var.set(p)
         try:
             path = Path(p)
@@ -5115,9 +4778,7 @@ class JobDialog(EmbeddedDialog):
             self.patch_var.set(p)
 
     def _probe_keystone(self, p: Path, raw: str):
-        """Read, off the main thread, whether the PS4 game package *p* carries the default
-        keystone and whether its version makes the console offer the official update; say so
-        under the option (on the main thread, when the source is still *p*)."""
+        """reads off the main thread; the note shows only if the source is still p"""
         self._ks_default = None
         self.ks_state_var.set("")
         if not (p.is_file() and p.suffix.lower() == ".pkg"):
@@ -5158,8 +4819,7 @@ class JobDialog(EmbeddedDialog):
         self.after(80, poll)
 
     def _probe_ps5(self, p: Path, raw: str):
-        """Run the PS5 PKG Tools checks on the package *p* off the main thread; say what they found
-        under the option (on the main thread, when the source is still *p*)."""
+        """checks run off the main thread; the note shows only if the source is still p"""
         box: dict = {}
         fw = _ps5_console_fw()
 
@@ -5199,7 +4859,6 @@ class JobDialog(EmbeddedDialog):
         self.app._ps5_view.preset(src)
 
     def _keystone_shown(self) -> bool:
-        """A single PS4 game package whose keystone was read: the Keystone line is shown."""
         return self._kind == "ps4" and self._ks_default is not None
 
     def _open_keystone(self):
@@ -5231,8 +4890,7 @@ class JobDialog(EmbeddedDialog):
         return self._kind == "folder" and bool(raw) and (Path(raw) / "ampr_assets.index").is_file()
 
     def _lz4_state(self) -> object:
-        """Whether the chosen source can take LZ4 packs: True/False for a game folder (read
-        from its eboot.bin), None when only the job can tell (a container, an archive)."""
+        """True/False from a folder's eboot.bin, None when only the job can tell"""
         raw = (self.src_var.get() or "").strip()
         if self._kind != "folder" or not raw:
             return None
@@ -5261,14 +4919,12 @@ class JobDialog(EmbeddedDialog):
             self.ps4_out_var.set(p)
 
     def _probe_parent_archives(self, sources) -> None:
-        """Check, off the main thread, which archives of a folder of sources hold PS4 packages:
-        the line under the source counts them and Add waits until every one is checked. Those
-        found count with the PS4 packages, which get their own target and folder."""
+        """off the main thread; Add waits until every archive is checked"""
         archives = [s for s in sources if is_archive_file(s)]
         if not archives:
             return
         seq = self._read_seq
-        count = [0, len(archives)]               # this check's own: an older one may still finish an archive
+        count = [0, len(archives)]  # own counter: an older check may still finish one
         self._reading, self._read_count = "archives", count
         pw = self.app._candidate_passwords()
         box: dict = {}
@@ -5293,7 +4949,7 @@ class JobDialog(EmbeddedDialog):
             if stop():
                 return
             if "v" not in box:
-                self.summary_var.set(self._reading_text())     # beside Add, which waits for it
+                self.summary_var.set(self._reading_text())
                 self.after(120, poll); return
             self._reading = ""
             self._ps4_set |= box["v"]
@@ -5311,7 +4967,6 @@ class JobDialog(EmbeddedDialog):
         return tr("Checking the archives for PS4 packages: {i} of {n}…", i=done, n=total)
 
     def _remember_outputs(self, out: str) -> None:
-        """The folders of an add that goes through, for the Save to lists of their platforms."""
         if out:
             self.app._remember_output("ps5", out)
         route = getattr(self, "_route", None)
@@ -5319,20 +4974,17 @@ class JobDialog(EmbeddedDialog):
             self.app._remember_output("ps4", route[0])
 
     def _drop_shown(self) -> bool:
-        """The source field still shows the folder of a drop of several paths."""
         try:
             return bool(self._dropped) and Path((self.src_var.get() or "").strip()) == self._dropped_root
         except (TypeError, ValueError):
             return False
 
     def _mixed(self) -> bool:
-        """A folder of sources with PS4 packages and PS5 games side by side; dropped PS4
-        packages go the same way (the PS4 block) even without a PS5 game."""
+        """PS4 and PS5 side by side; dropped PS4 packages count as mixed even alone"""
         return self._kind == "parent" and self._ps4_n > 0 and (self._ps5_n > 0 or self._drop_shown())
 
     def _show_platform(self, platform: str) -> None:
-        """Point the Save to field at *platform*'s folders: its recent list, and its last folder
-        unless the field holds something the user chose."""
+        """keeps a folder the user picked, else switches to the platform's last one"""
         if platform == self._platform:
             return
         cur = (self.out_var.get() or "").strip()
@@ -5349,9 +5001,7 @@ class JobDialog(EmbeddedDialog):
         if p.is_file():
             self.app.open_pfs_browser(str(p))      # a view: this panel closes
 
-    # ── detection ────────────────────────────────────────────────────────────
     def _auto_hint(self) -> str:
-        """'each source as Settings sets it: Folder → .ffpfsc, .pkg → Organize, …'"""
         acts = self._auto_table
         name = {"folder": tr("Folder")}
         pairs = ", ".join(f"{name.get(k, '.' + k)} → {tr(self._TARGET_LABEL.get(v, v))}" for k, v in acts.items())
@@ -5365,8 +5015,7 @@ class JobDialog(EmbeddedDialog):
 
     @staticmethod
     def _sdk_text(folder: Path) -> str:
-        """'SDK 8.00' read from eboot.bin's SCE param segment (raw or fake-signed),
-        'encrypted eboot' when it cannot be read, '' when there is nothing to show."""
+        """'SDK 8.00' from eboot's SCE param segment, 'encrypted eboot', or ''"""
         try:
             eboot = folder / "eboot.bin"
             if not eboot.is_file():
@@ -5384,7 +5033,7 @@ class JobDialog(EmbeddedDialog):
         return Path(raw) if raw and Path(raw).is_dir() else None
 
     def _backport_targets(self) -> list[str]:
-        """7.61, 6.02, 10.xx and every firmware folder under the firmware libraries folder."""
+        """7.61, 6.02, 10.xx plus every folder under the firmware libraries"""
         try:
             names = _backport_module().available_targets(self._fw_root())
         except Exception:
@@ -5395,7 +5044,6 @@ class JobDialog(EmbeddedDialog):
         return names
 
     def _backport_hint(self, target: str) -> str:
-        """One line under the target: what the target is, or why it cannot be used."""
         if target in self._BACKPORT_HINTS:
             return self._BACKPORT_HINTS[target]
         if target not in self._hint_cache:
@@ -5412,8 +5060,7 @@ class JobDialog(EmbeddedDialog):
         return self._hint_cache[target]
 
     def _probe_ps4_archive(self, p: Path, raw: str):
-        """Read, off the main thread, whether the archive holds PS4 packages; when it does
-        (and the source is still the same), the editor switches to the PS4 view."""
+        """off the main thread; switches to the PS4 view only if the source is unchanged"""
         pw = self.app._candidate_passwords()
         box: dict = {}
 
@@ -5485,7 +5132,6 @@ class JobDialog(EmbeddedDialog):
                    "after_dir_var", "retail_var", "regen_var")
 
     def keep_draft(self):
-        """Called when the sidebar leaves this editor open: its choices wait for the next Add job."""
         if self.edit_item is not None or not (self.src_var.get() or "").strip():
             return
         d = {"src": self.src_var.get(), "dropped": [str(x) for x in self._dropped],
@@ -5537,7 +5183,7 @@ class JobDialog(EmbeddedDialog):
         self._ps5_rows = None
         self.ps5_state_var.set("")
         dropped_root = bool(self._dropped) and p == self._dropped_root
-        # a folder of PS4 packages only is known once the folder is read (_read_folder)
+        # a PS4-only folder is known only after _read_folder
         if p.is_file() and _is_ps4_source(p):
             self._kind = "ps4"; self._games = [p]
             self.detect_var.set(self._ps4_detect_text(p))
@@ -5599,7 +5245,7 @@ class JobDialog(EmbeddedDialog):
             if kind == "archive":
                 self._probe_ps4_archive(p, raw)
         self._update_identity_for_source(p)
-        # Remembered choices for this kind of source (add mode only, once per kind).
+        # remembered per source kind, add mode only
         if self.edit_item is None and self._defaults_kind != self._kind:
             self._defaults_kind = self._kind
             d = self._defaults.get(self._kind)
@@ -5613,7 +5259,6 @@ class JobDialog(EmbeddedDialog):
 
     @staticmethod
     def _target_of(item) -> str:
-        """The output format an existing job produces, whatever kind of job it is."""
         op = getattr(item, "operation", "pack")
         if op == "chain":
             return getattr(item, "chain_to", None) or "ffpfsc"
@@ -5630,13 +5275,11 @@ class JobDialog(EmbeddedDialog):
         if op == "copy":
             return {".ffpfsc": "ffpfsc", ".ffpfs": "ffpfs", ".pkg": "pkg"}.get(
                 Path(str(getattr(item, "path", "") or "")).suffix.lower(), "ffpfsc")
-        # pack: output_compressed None means "not chosen yet", which packs a .ffpfsc
+        # output_compressed None means not chosen yet, which packs a .ffpfsc
         return "ffpfs" if getattr(item, "output_compressed", None) is False else "ffpfsc"
 
-    # ── package identity ─────────────────────────────────────────────────────
     def _update_identity_for_source(self, p: Path | None):
-        """Fill the identity from a game folder's param.json (never over what was typed),
-        and make it required for a game folder that has none."""
+        """fills from param.json, never over typed values; required when there is none"""
         for key, val in list(self._auto_ident.items()):       # values of the previous source
             var = {"content_id": self.cid_var, "title_id": self.tid_var,
                    "title": self.title_var, "version": self.ver_var}[key]
@@ -5690,7 +5333,6 @@ class JobDialog(EmbeddedDialog):
         self._scroll_to_end()
 
     def _scroll_to_end(self):
-        """The rows just opened sit at the bottom of the options: scroll them into view."""
         def _go():
             try:
                 self.update_idletasks()
@@ -5713,8 +5355,7 @@ class JobDialog(EmbeddedDialog):
             pass
 
     def _collect_pkg_identity(self) -> dict | None:
-        """Check the identity and codec rows and return them for the package parameters,
-        or None after saying what is wrong (and showing the rows it is about)."""
+        """None after telling the user what's wrong and showing those rows"""
         cid = self.cid_var.get().strip().upper()
         tid = self.tid_var.get().strip().upper()
         ver = self.ver_var.get().strip()
@@ -5746,12 +5387,8 @@ class JobDialog(EmbeddedDialog):
         return {"content_id": cid, "title_id": tid, "title": title, "version": ver or "01.000.000",
                 "inner": inner, "backend": back, "dll": dll}
 
-    # ── live state ───────────────────────────────────────────────────────────
     def _cached_sources(self, p: Path):
-        """(sources, the PS4 packages among them, the PS4 line when they are all it holds) of a
-        folder read before, remembered per folder and its modification time; for the folder
-        of a drop of several paths, the dropped paths themselves (never one PS4 source).
-        None when the folder still has to be read (_read_folder)."""
+        """cached per folder and mtime; None means _read_folder still has to run"""
         if self._dropped and self._dropped_root is not None and Path(p) == self._dropped_root:
             got = list(self._dropped)
             return got, self._loose_ps4(got), None
@@ -5766,9 +5403,7 @@ class JobDialog(EmbeddedDialog):
         return {str(s) for s in sources if s.suffix.lower() == ".pkg" and _is_ps4_source(s)}
 
     def _read_folder(self, p: Path) -> None:
-        """Walk a folder of sources off the main thread: a big drive takes a while, the line
-        under the source counts what turns up and Add waits until it is read. While a path
-        is typed, only the folder the typing stops at is walked."""
+        """off the main thread; while typing, only the folder the typing stops at"""
         seq = self._read_seq
         self._kind, self._games, self._reading = "parent", [], "folder"
         self.detect_var.set("Reading the folder…")
@@ -5812,9 +5447,7 @@ class JobDialog(EmbeddedDialog):
         self.after(250, begin)
 
     def _show_parent(self, p: Path, sources: list, ps4: set, ps4_line: str | None) -> None:
-        """A folder of sources is read: one job each, its PS4 packages counted apart; its
-        archives are checked for PS4 packages next. A folder of PS4 packages only is one
-        PS4 source."""
+        """a PS4-only folder is one PS4 source; otherwise one job per source"""
         if ps4_line is not None:
             self._kind, self._games = "ps4", [p]
             self.detect_var.set(ps4_line)
@@ -5838,8 +5471,7 @@ class JobDialog(EmbeddedDialog):
 
     @staticmethod
     def _describe_sources(sources: list[Path], ps4: set | None = None) -> str:
-        """'4 sources: 1 game folder, 2 archives, 1 .pkg'. *ps4*: the paths known to be PS4
-        packages (read from their headers when not given)."""
+        """'4 sources: 1 game folder, 2 archives, 1 .pkg'; ps4 read from headers if not given"""
         counts: dict[str, int] = {}
         for s in sources:
             if s.is_dir():
@@ -5864,8 +5496,7 @@ class JobDialog(EmbeddedDialog):
         return plural(len(sources), "1 source: {parts}", "{n} sources: {parts}", parts=", ".join(parts))
 
     def _parent_todo(self) -> list[Path]:
-        """The parent folder's sources this job setup would change: a game folder to a
-        folder with nothing to change is left out (there is nothing to do for it)."""
+        """skips sources with nothing to do, like a game folder to folder without changes"""
         return [s for s in self._games if not chain_summary(self._stand_in(s)).startswith("Nothing to do")]
 
     @staticmethod
@@ -5878,7 +5509,7 @@ class JobDialog(EmbeddedDialog):
             return False
 
     def _own_folder_note(self, to: str, ps4: bool) -> str:
-        """What a change does to a game folder of the user's (not to a copy of it)."""
+        """for when a change hits the user's own game folder, not a copy"""
         own = (self._kind == "folder" or (self._kind == "parent" and bool(self._games)
                                           and all(Path(g).is_dir() for g in self._games)))
         if not own or ps4:
@@ -5897,8 +5528,7 @@ class JobDialog(EmbeddedDialog):
         return " ".join(parts)
 
     def _in_place(self, to: str) -> bool:
-        """Folder output changes a game folder where it is: true for a game folder source,
-        and for a parent folder that holds only game folders."""
+        """folder output changes game folders where they are"""
         if to != "folder":
             return False
         if self._kind == "folder":
@@ -5906,8 +5536,7 @@ class JobDialog(EmbeddedDialog):
         return self._kind == "parent" and bool(self._games) and all(s.is_dir() for s in self._games)
 
     def _auto_guess(self, p: Path | None, is_archive: bool) -> str:
-        """The output Automatic will most likely pick for *p*, for the dialog's sentences;
-        an archive whose content is not read yet counts as a game folder."""
+        """best guess for the dialog text; an unread archive counts as a game folder"""
         if p is None:
             kind = "folder"
         elif is_archive:
@@ -5919,7 +5548,7 @@ class JobDialog(EmbeddedDialog):
         return auto_target(kind, self._auto_table)
 
     def _stand_in(self, p: Path | None):
-        """A lightweight object with the attributes chain_summary reads - no folder walk."""
+        """just the attributes chain_summary reads, no folder walk"""
         kind = self._kind
         is_archive = kind == "archive" or (kind == "parent" and p is not None and p.is_file() and is_archive_file(p))
         to = self._to_key()
@@ -5938,8 +5567,7 @@ class JobDialog(EmbeddedDialog):
         ps4 = self._kind == "ps4"
         seg = getattr(self, "_to_seg", None)
         if ps4:
-            # a PS4 package is sorted into the library (.pkg) or unpacked (Folder, one package);
-            # an archive or a folder of them only goes to the library
+            # one PS4 .pkg goes to the library or gets unpacked; archives and folders library only
             src = Path((self.src_var.get() or "").strip())
             one_pkg = src.is_file() and src.suffix.lower() == ".pkg"
             allowed = ("pkg", "folder") if one_pkg else ("pkg",)
@@ -5959,7 +5587,7 @@ class JobDialog(EmbeddedDialog):
                 ocb.pack_forget()
             elif not ocb.winfo_manager():
                 ocb.pack(side="left")
-        if crow is not None and orow is not None:          # both exist once the dialog is built
+        if crow is not None and orow is not None:
             if (ps4 and not self._keystone_shown()) or org:
                 crow.pack_forget()
             elif not crow.winfo_manager():
@@ -5985,8 +5613,6 @@ class JobDialog(EmbeddedDialog):
                 pb.pack(fill="x", pady=(2, 2), after=self._ps5_boxes[-1])
             else:
                 pb.pack_forget()
-        # PS4 and PS5 output folders: a folder of mixed sources shows both blocks, any other
-        # source the folder of its platform
         if getattr(self, "_ps4_box", None) is not None:
             self._show_platform("ps4" if ps4 else "ps5")
             if self._mixed():
@@ -6004,7 +5630,6 @@ class JobDialog(EmbeddedDialog):
             seg.configure(values=[self._TARGET_LABEL[k] for k in self._TARGETS])
             seg.set(self.to_var.get())
         to = self._to_key()
-        # progressive disclosure
         (self._patch_opts.pack(fill="x", pady=(2, 2)) if self.patch_on_var.get() else self._patch_opts.pack_forget())
         (self._backport_opts.pack(fill="x", pady=(2, 2)) if self.backport_on_var.get() else self._backport_opts.pack_forget())
         ampr, packed = self._lz4_state(), self._lz4_source_packed()
@@ -6080,7 +5705,7 @@ class JobDialog(EmbeddedDialog):
                 w.configure(state="disabled" if in_place else "normal")
             except Exception:
                 pass
-        # A change in place writes into the source itself: no after-job action there.
+        # an in-place change writes into the source, so no after-job action
         try:
             aj = _after_job_module()
             if in_place or self._kind == "none":
@@ -6104,7 +5729,6 @@ class JobDialog(EmbeddedDialog):
                     self._after_note.pack(anchor="w", padx=(100, 0), pady=(4, 0))
         except Exception:
             pass
-        # summary
         raw = (self.src_var.get() or "").strip()
         p = Path(raw) if raw else None
         copy_only = False
@@ -6128,7 +5752,7 @@ class JobDialog(EmbeddedDialog):
                 text = chain_summary(_si) + plural(len(todo5), "  × 1 job", "  × {n} jobs")
             else:
                 text = "Nothing to do"
-            if mixed:          # the PS4 packages go their own way (see the PS4 block)
+            if mixed:
                 text += "  ·  " + (plural(self._ps4_n, "1 PS4 package into the library", "{n} PS4 packages into the library")
                                    if self.ps4_to_var.get() == "pkg" else
                                    plural(self._ps4_n, "1 PS4 package unpacked", "{n} PS4 packages unpacked"))
@@ -6171,20 +5795,15 @@ class JobDialog(EmbeddedDialog):
         self.summary_var.set(text)
         self.summary_dest_var.set(dest)
         try:
-            # Disabled, it greys out like the main window's Start instead of staying blue
-            # with barely readable text.
+            # disabled it greys out like Start instead of staying blue
             self._add_btn.configure(state="normal" if ok else "disabled", fg_color=ACCENT if ok else BTN)
         except Exception:
             pass
 
-    # ── compatibility check (backport analyser, read-only) ───────────────────
     _CHECK_CONTAINERS = (".pkg", ".ffpfs", ".ffpfsc")
 
     def _check_folder(self) -> Path | None:
-        """What Check reads: a game folder, a .pkg/.ffpfs/.ffpfsc (the backend reads only its
-        executables out of it), or the first of those in a parent folder. None for an archive
-        or a disk image: those are checked when the job runs, before the game is unpacked
-        where the source allows it."""
+        """None for archives and disk images: those are checked when the job runs"""
         raw = (self.src_var.get() or "").strip()
         if self._kind in ("pkg", "ffpfs", "ffpfsc") and raw:
             return Path(raw)
@@ -6252,9 +5871,7 @@ class JobDialog(EmbeddedDialog):
         worker.start()
         self.after(150, poll)
 
-    # ── commit ───────────────────────────────────────────────────────────────
     def _add_ps4(self, p: Path, to: str, out: str):
-        """A PS4 source: a sorted copy into the library, or (one package) an unpack job."""
         aj = _after_job_module()
         after = self.after_var.get() if self.after_var.get() in aj.ACTIONS else aj.KEEP
         after_dir = (self.after_dir_var.get() or "").strip()
@@ -6277,7 +5894,6 @@ class JobDialog(EmbeddedDialog):
         self.destroy()
 
     def _add_organize(self, p: Path, out: str):
-        """The Organize output: each source goes into the library in its own format."""
         aj = _after_job_module()
         after = self.after_var.get() if self._after_box.winfo_manager() else aj.KEEP
         after_dir = self.after_dir_var.get().strip() if after == aj.MOVE else ""
@@ -6286,7 +5902,7 @@ class JobDialog(EmbeddedDialog):
                                  parent=self); return
         self._defaults[self._kind] = dict(self._defaults.get(self._kind) or {}, to=ORGANIZE_TARGET)
         try:
-            # dropped paths have no folder of their own for Rescan: their common folder may be a drive
+            # dropped paths get no Rescan folder: their common folder may be a whole drive
             save_settings({"job_dialog_defaults": self._defaults} if self._drop_shown() else
                           {"job_dialog_defaults": self._defaults, "last_source": str(p),
                            "last_source_dir": str(p if p.is_dir() else p.parent),
@@ -6300,7 +5916,7 @@ class JobDialog(EmbeddedDialog):
         root = str(p if (p.is_dir() and not ultra_core.is_game_folder(p)) else p.parent)
         app = self.app
 
-        route = getattr(self, "_route", None)          # a folder of mixed sources: PS4 packages apart
+        route = getattr(self, "_route", None)
         passwords = app._candidate_passwords() if route else None
         self._remember_outputs(out)
 
@@ -6407,15 +6023,13 @@ class JobDialog(EmbeddedDialog):
             messagebox.showerror("After the job", "Choose the folder the source moves to once the job is Done.",
                                  parent=self); return
 
-        # Remember the choices for this kind of source, and the backport folder globally.
         self._defaults[self._kind] = {"to": to, "sign": bool(self.sign_var.get()),
                                       "backport": bool(self.backport_on_var.get()),
                                       "backport_target": self.backport_target_var.get()}
         upd = {"job_dialog_defaults": self._defaults,
                "last_source": str(p),
                "last_source_dir": str(p if p.is_dir() else p.parent),
-               # the recipe Rescan reuses on new sources from the same folder:
-               # (no patch: a patch belongs to one game, never to the new ones Rescan finds)
+               # what Rescan reuses on new sources; no patch, a patch belongs to one game
                "rescan_template": {"to": to, "output": out, "sign": bool(self.sign_var.get()),
                                    "backport_target": target,
                                    "organize": organize, "ff_level": ff_level,
@@ -6423,7 +6037,7 @@ class JobDialog(EmbeddedDialog):
                                    "pkg_params": pkg_params if to == "pkg" else None}}
         if target:
             upd["backport_target_default"] = target
-        if self._drop_shown():         # no Rescan folder from a drop (see the Organize path)
+        if self._drop_shown():  # no Rescan folder from a drop
             for k in ("last_source", "last_source_dir", "rescan_template"):
                 upd.pop(k, None)
         try:
@@ -6435,18 +6049,18 @@ class JobDialog(EmbeddedDialog):
                                                                 "hdr_flag", "regen_playgo", "fake_sign")}
             self.app.fpkg_defaults["v1112"] = True
             try:
-                save_settings({"fpkg_defaults": self.app.fpkg_defaults})   # remembered across restarts
+                save_settings({"fpkg_defaults": self.app.fpkg_defaults})
             except Exception:
                 pass
         elif to == "ffpfsc":
-            self.app.compression_level_var.set(ff_level)   # the next job starts from it (saved, shown in Settings)
+            self.app.compression_level_var.set(ff_level)
         if out:
             self.app.output_var.set(out)
         self.app.auto_organize_var.set(organize)
 
         sources = (self._parent_todo() if self._kind == "parent"
                    else self._games if self._kind == "folder" else [p])
-        # the folder picked here stays when sources are moved or cleaned up after their jobs
+        # the picked folder stays even when its sources are moved or cleaned up
         root = str(p if (p.is_dir() and not ultra_core.is_game_folder(p)) else p.parent)
         sign_on, lz4_on = bool(self.sign_var.get()), self._lz4_packs()
         lz4_unpack = bool(self.lz4_var.get()) and self.lz4_mode_var.get() == "unpack"
@@ -6475,11 +6089,11 @@ class JobDialog(EmbeddedDialog):
             return it
 
         def make(s):
-            # Tk-free: runs on the add thread for a new job (archive headers are read here)
+            # Tk-free: runs on the add thread and reads archive headers
             it = ((app._ps4_route(s, ps4_out, passwords, ps4_to) if routed else None)
                   or (app._auto_item_for(s, table, build, output_path=out or None, passwords=passwords) if auto
                       else build(s, to)))
-            if auto:      # what was asked for, should the unpacked content pick another output
+            if auto:  # in case the unpacked content picks another output
                 it.auto_sign, it.auto_lz4 = sign_on, lz4_on
                 it.auto_lz4_profile = lz4_profile or None
             it.after_source, it.after_move_to = after, after_dir or None
@@ -6488,9 +6102,6 @@ class JobDialog(EmbeddedDialog):
 
         self._remember_outputs(out)
         if self.edit_item is None:
-            # New jobs: built one by one on a worker, each joins the queue as it is ready,
-            # with a progress line above the list. The editor closes right away. A parent
-            # folder is sorted by download folder first: one game takes its add-ons along.
             plan = app._release_planner(p, app._candidate_passwords()) if self._kind == "parent" else None
             app._add_jobs_async(list(sources), make, plan=plan)
             self.destroy(); return
@@ -6511,8 +6122,7 @@ class JobDialog(EmbeddedDialog):
                     setattr(new, attr, getattr(old, attr))
             _old_src = getattr(old, "archive_path", None) or getattr(old, "path", None)
             if _old_src is not None and str(_old_src) == str(p):
-                # Same source: keep where it came from, so a retry runs from the copy the job
-                # kept (and a removal deletes it) instead of a stranger's path in the scratch.
+                # same source: keep the origin, so retry and removal hit the job's own kept copy
                 for attr in ("origin_archive", "origin_extracted_size", "origin_payload", "organize_folder",
                              "archive_games", "archive_index", "kept_extract", "bundle_siblings", "bundle_release",
                              "pkg_content_size", "pkg_largest_file", "pkg_kept_bytes",
@@ -6520,7 +6130,6 @@ class JobDialog(EmbeddedDialog):
                     if hasattr(old, attr):
                         setattr(new, attr, getattr(old, attr))
             new.status = "Pending Extract" if getattr(new, "archive_path", None) else "Queued"
-            # the new settings must be checked anew against the output folder
             new._output_checked = False
             new._replace_output = False
             new._keep_both = False
@@ -6551,16 +6160,14 @@ class JobDialog(EmbeddedDialog):
 
 
 class ArchivePasswordPrompt(MessageWindow):
-    """Modal: ask the user for ONE archive's password when no saved candidate unlocks
-    its header (so the routing pre-check has no honest extracted size to work with).
-    Result is exposed via .password ('' = Skip)."""
+    """Asks for one archive's password; .password is '' on Skip."""
 
     def __init__(self, app, archive_name: str):
         super().__init__(app.root)
         self.app = app
         self.password = ""
         self.title("Archive password needed")
-        self.configure(fg_color=BLACK); self.resizable(False, False)   # sized to its content
+        self.configure(fg_color=BLACK); self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", self._skip)
         self.after(50, self.grab_set)
 
@@ -6610,9 +6217,7 @@ class ArchivePasswordPrompt(MessageWindow):
 
 
 class OutputExistsDialog(MessageWindow):
-    """Before a start: jobs whose output file is already in the output folder. One answer
-    for all of them: Skip (the safe default), Overwrite, Keep both, or Cancel the start.
-    .choice is 'skip' | 'overwrite' | 'keep' | 'cancel'. Shown only when Settings says Ask."""
+    """One answer for all clashing outputs; .choice is skip, overwrite, keep or cancel."""
 
     MAX_ROWS = 8
 
@@ -6622,7 +6227,7 @@ class OutputExistsDialog(MessageWindow):
         n = len(conflicts)
         head = "Already in the output folder"
         self.title(head)
-        self.configure(fg_color=BLACK); self.resizable(False, False)   # sized to its content
+        self.configure(fg_color=BLACK); self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", lambda: self._done("cancel"))
         self.after(50, self.grab_set)
         ctk.CTkLabel(self, text=head, font=ctk.CTkFont(size=17, weight="bold"), text_color=WHITE
@@ -6666,9 +6271,6 @@ class OutputExistsDialog(MessageWindow):
 
 
 class CountdownWindow(MessageWindow):
-    """After the last job of a run: the computer sleeps or the app quits once SECONDS have
-    passed. Cancel stops it; the other button does it now."""
-
     SECONDS = 30
 
     def __init__(self, parent, action, on_go, on_cancel=None):
@@ -6732,10 +6334,7 @@ class CountdownWindow(MessageWindow):
 
 
 class OrganizeView:
-    """Organize as a view of the main window: pick a folder, see where everything in it
-    belongs (old -> new, a checkbox each; what stays and why), Apply. Apply only renames on
-    the folder's drive; Undo last organize moves it back. The backend does the work
-    (--organize-scan / --organize-apply / --organize-undo); nothing here touches the files."""
+    """The backend does all the moving; nothing here touches the files."""
     CHECK, UNCHECK = "☑", "☐"
 
     def __init__(self, parent, app):
@@ -6801,7 +6400,6 @@ class OrganizeView:
         self.apply_btn.pack(side="right")
         self._refresh_buttons()
 
-    # ── helpers ──
     def on_show(self):
         if not self.root_var.get().strip():
             self.root_var.set(str(self.app.output_var.get() or ""))
@@ -6859,7 +6457,6 @@ class OrganizeView:
         self._checked = set(range(len((self._plan or {}).get("moves", [])))) if on else set()
         self._render()
 
-    # ── backend runs ──
     def _run(self, kind, args):
         self._busy = True
         self._refresh_buttons()
@@ -6951,7 +6548,7 @@ class OrganizeView:
 
     @staticmethod
     def _result_text(line: str) -> str:
-        """The backend's "[OK] Organized: 3 moved, 1 failed" in the interface language."""
+        """Backend's '[OK] Organized: 3 moved, 1 failed' in the UI language."""
         m = re.match(r"\[OK\] (Organized|Undone): (\d+) moved(?: back)?(?:, (\d+) failed)?", line)
         if not m:
             return line.split("] ", 1)[-1]
@@ -6996,11 +6593,6 @@ class OrganizeView:
 
 
 class KeystoneView:
-    """PS4 PKG Tools as a view of the main window, laid out like Organize: a PS4 game package, the
-    keystone from a save of the retail game, the version fix for a full game with an update
-    merged in, and the updates to bind to the changed package; Add to queue makes one job
-    (--ps4-keystone-set). Undo last change runs at once (--ps4-keystone-undo last), like
-    Organize's Undo."""
     CHECK, UNCHECK = "☑", "☐"
     HOWTO = ("How to get the keystone: on a jailbroken console, open Apollo Save Tool and pick a save of this game "
              "that the retail game wrote. Choose Export Keystone and fetch the file by FTP from "
@@ -7063,7 +6655,7 @@ class KeystoneView:
         field_row(4, "Keystone:", self.ks_var, "File…", self._pick_keystone,
                   placeholder=tr("a file or its hex digits; empty: keep it"))
         ks_lbl = note(5, self.ks_note)
-        # a full game with an update merged in: shown only when the package has the problem
+        # version row: only for a full game with an update merged in
         self._ver_row = ctk.CTkFrame(v, fg_color="transparent")
         ctk.CTkLabel(self._ver_row, text="Version:", text_color=MUTED, width=110, anchor="w").pack(side="left")
         self.ver_var = tk.BooleanVar(value=False)
@@ -7122,14 +6714,12 @@ class KeystoneView:
         self.ks_var.trace_add("write", lambda *_: self._ks_changed())
         self._refresh_buttons()
 
-    # ── state ──
     def on_show(self):
         self._refresh_buttons()
         if not (self.base_var.get() or "").strip():
             self.frame.after(60, lambda: self._base_entry.winfo_exists() and self._base_entry.focus_set())
 
     def preset(self, base: str | None = None):
-        """Open on *base* (from the job editor's hint)."""
         self._edit_item = None
         self._wanted_fix = None
         self.add_btn.configure(text="Add to queue")
@@ -7137,7 +6727,6 @@ class KeystoneView:
             self.base_var.set(str(base))
 
     def edit(self, item):
-        """Show a queued repair job; Save changes replaces it in the queue."""
         self._edit_item = item
         self._wanted_fix = bool(getattr(item, "ps4_fix_version", False))
         self.add_btn.configure(text="Save changes")
@@ -7194,7 +6783,7 @@ class KeystoneView:
         fit_notes(self.frame, self._notes, beside=self._other_tool)
 
     def _base_changed(self):
-        """Read the package, its keystone and the updates beside it, off the main thread."""
+        """Reads package, keystone and the updates beside it off the main thread."""
         self._probe_seq += 1
         seq = self._probe_seq
         self._base_ok = False
@@ -7250,7 +6839,7 @@ class KeystoneView:
         self.frame.after(80, poll)
 
     def _show_version(self):
-        """The version line, only for a package whose version makes the console offer the update."""
+        """Only shown when the version makes the console offer the update."""
         vp = self._version
         if vp is None:
             self._ver_row.grid_remove()
@@ -7265,8 +6854,7 @@ class KeystoneView:
 
     @staticmethod
     def update_info(x, base_sfo, own) -> tuple[list[str], bool]:
-        """Notes on the update *x* of the game package whose content digest is *own*, and whether
-        the job changes anything in it besides a keystone (Tk-free)."""
+        """Notes on update x, and whether the job changes more than its keystone (Tk-free)."""
         m, job = _ps4pkg_module(), _ks_job_module()
         try:
             belongs = m.general_digests(x).get(m.BASE_CONTENT_SLOT) == own
@@ -7286,8 +6874,7 @@ class KeystoneView:
 
     @staticmethod
     def probe(p: Path) -> dict:
-        """What the view shows for the game package *p* (Tk-free): its identity, its keystone, its
-        version and the updates of the same game in its folder and the folders below."""
+        """Tk-free: identity, keystone, version and same-game updates of package p."""
         m = _ps4pkg_module()
         out = {"done": True, "ok": False}
         if _package_platform(p) == "ps5":
@@ -7402,14 +6989,13 @@ class KeystoneView:
         self._render()
 
     def _remove_update(self):
-        """Takes the update off this list; the file stays where it is."""
+        """Off the list only, the file stays put."""
         sel = self.tree.selection()
         i = self._iid_row.get(sel[0] if sel else self.tree.focus())
         if i is not None:
             del self._updates[i]
             self._render()
 
-    # ── queue and undo ──
     def add_to_queue(self):
         base = (self.base_var.get() or "").strip()
         raw = (self.ks_var.get() or "").strip()
@@ -7495,7 +7081,6 @@ class KeystoneView:
 
 
 def _ps5_repair_module():
-    """backend/ps5_repair.py: PS5 package checks and the repair plan (Tk-free)."""
     _bd = str(backend_base_dir())
     if _bd not in sys.path:
         sys.path.insert(0, _bd)
@@ -7504,22 +7089,16 @@ def _ps5_repair_module():
 
 
 def _ps5_row_text(r: dict) -> str:
-    """A check row in the interface language (the tool's own checklist stays English)."""
     return tr(r["tmpl"], **r["args"]) if r.get("tmpl") else r["text"]
 
 
 def _ps5_console_fw() -> str:
-    """The firmware the PS5 checks compare a package with: the one set in PS5 PKG Tools, else the
-    backport target, else 7.61."""
     st = load_settings()
     fw = st.get("ps5_console_fw") or st.get("backport_target_default") or "7.61"
     return fw if is_backport_target(fw) else "7.61"
 
 
 def _ps5_check_text(rows: list, keystone: bool = False, detail: bool = True) -> str:
-    """The checks of a PS5 package in a line or two: all passed, or the problems (the first two
-    with *detail*) and what the repair does about them. *keystone*: a keystone is given, so the
-    repair also replaces the default one."""
     bad = [r for r in rows if r["level"] in ("fail", "warn")]
     if not bad:
         return plural(sum(1 for r in rows if r["level"] == "pass"), "1 check passed.", "{n} checks passed.")
@@ -7545,12 +7124,8 @@ def _ps5_check_text(rows: list, keystone: bool = False, detail: bool = True) -> 
 
 
 class Ps5RepairView:
-    """PS5 PKG Tools as a view of the main window, laid out like PS4 PKG Tools: a PS5 package, what the
-    console's installer and loader look at in it, and the repairs. Add to queue makes one job that
-    unpacks the package and builds a repaired copy (--to pkg --rebuild); the original stays as it
-    is. Look inside and Unpack are the other tools for the package."""
+    """Repair builds a new copy (--to pkg --rebuild); the original stays as it is."""
     MARK = {"fail": "✗", "warn": "!", "info": "·", "pass": "✓"}
-    # what the Repair column says: the repair does it, or which option below does
     FIX_TEXT = {"rebuild": "the rebuild fixes it", "trophy": "the rebuild fixes it",
                 "playgo": "PlayGo option below", "firmware": "Firmware option below",
                 "keystone": "Keystone field below", "standalone": "Updates option below"}
@@ -7635,7 +7210,6 @@ class Ps5RepairView:
         vsb.pack(side="right", fill="y", pady=6)
         fit_columns(self.tree)
 
-        # the repairs
         rep = ctk.CTkFrame(v, fg_color="transparent")
         rep.grid(row=6, column=0, sticky="ew")
         rep.grid_columnconfigure(0, weight=1)
@@ -7704,14 +7278,12 @@ class Ps5RepairView:
         self.out_var.trace_add("write", lambda *_: self._refresh_buttons())
         self._refresh_buttons()
 
-    # ── state ──
     def on_show(self):
         self._refresh_buttons()
         if not (self.base_var.get() or "").strip():
             self.frame.after(60, lambda: self._base_entry.winfo_exists() and self._base_entry.focus_set())
 
     def preset(self, base: str | None = None):
-        """Open on *base* (from the job editor's hint)."""
         self._edit_item = None
         self._wanted = None
         self.add_btn.configure(text="Add to queue")
@@ -7719,7 +7291,6 @@ class Ps5RepairView:
             self.base_var.set(str(base))
 
     def edit(self, item):
-        """Show a queued repair job; Save changes replaces it in the queue."""
         self._edit_item = item
         self.add_btn.configure(text="Save changes")
         self._wanted = {"fw": getattr(item, "backport_target", None),
@@ -7759,7 +7330,7 @@ class Ps5RepairView:
         self.becomes.set(self._becomes_text() if ok else "")
 
     def _becomes_text(self) -> str:
-        """Where the repaired package goes, so nobody wonders whether the original is replaced."""
+        """Says where the repair lands, so nobody fears for the original."""
         src = Path((self.base_var.get() or "").strip())
         out = (self.out_var.get() or "").strip()
         try:
@@ -7783,7 +7354,7 @@ class Ps5RepairView:
         return tr("Becomes {path}", path=target)
 
     def _ks_changed(self):
-        """Read the keystone source off the main thread (a dump may need a small extraction)."""
+        """Off the main thread: a dump may need a small extraction."""
         raw = (self.ks_var.get() or "").strip()
         self._ks_ok = False
         self._ks_seq = getattr(self, "_ks_seq", 0) + 1
@@ -7853,7 +7424,6 @@ class Ps5RepairView:
         fit_notes(self.frame, self._notes, beside=self._other_tool)
 
     def _base_changed(self):
-        """Run the checks on the package off the main thread."""
         self._probe_seq += 1
         seq = self._probe_seq
         self._info = None
@@ -7973,7 +7543,6 @@ class Ps5RepairView:
                              values=("", tr("No check could run on this package. The Log says why."), ""))
         self._refresh_buttons()
 
-    # ── tools ──
     def _look(self):
         p = (self.base_var.get() or "").strip()
         if p and Path(p).is_file():
@@ -7997,7 +7566,6 @@ class Ps5RepairView:
         self.app._add_jobs_async([p], make)
         self.app._show_view("queue")
 
-    # ── queue ──
     def add_to_queue(self):
         p = Path((self.base_var.get() or "").strip())
         out = (self.out_var.get() or "").strip()
@@ -8046,8 +7614,6 @@ class Ps5RepairView:
 
 
 class LookInsideView:
-    """Look inside as a view of the main window, laid out like Organize: open a .ffpfs, .ffpfsc or .pkg (fPKG), see what is inside, and extract single files or folders without unpacking the whole image."""
-
     def __init__(self, parent, app):
         self.app = app
         kit = app.kit
@@ -8081,7 +7647,7 @@ class LookInsideView:
         self.count_var = TextVar(value="")
         ctk.CTkLabel(srow, textvariable=self.count_var, text_color=MUTED).pack(side="right")
         self.filter_var = tk.StringVar()
-        # (a CTkEntry bound to a variable shows no placeholder: the label says what it is)
+        # a CTkEntry with a textvariable shows no placeholder, hence the label
         ctk.CTkEntry(srow, textvariable=self.filter_var, fg_color=CARD2, text_color=WHITE, width=220).pack(
             side="right", padx=(0, 10))
         ctk.CTkLabel(srow, text="Filter", text_color=MUTED).pack(side="right", padx=(16, 6))
@@ -8102,7 +7668,7 @@ class LookInsideView:
         vsb.pack(side="right", fill="y", pady=6)
         bottom = ctk.CTkFrame(v, fg_color="transparent")
         bottom.grid(row=5, column=0, sticky="ew", padx=18, pady=(0, 14))
-        # the whole image is a job: it goes through the queue and its space check
+        # unpack all goes through the queue, so it gets the space check
         self.extract_all_btn = ctk.CTkButton(bottom, text="Unpack all as a job…", width=160, fg_color=BTN,
                                              hover_color=BTN_HOVER, text_color=WHITE, border_width=1,
                                              border_color=BTN_BORDER, command=self._unpack_all,
@@ -8126,7 +7692,6 @@ class LookInsideView:
         return self._title
 
     def open(self, path) -> None:
-        """Show *path* (a .ffpfs, .ffpfsc or .pkg)."""
         self.src_var.set(str(path))
         self._load()
 
@@ -8242,7 +7807,7 @@ class LookInsideView:
             self.progress.set(min(1.0, int(m.group(1)) / 100.0))
             self.status_var.set(tr("Extracting… {pct} %", pct=m.group(1)))
         elif line.startswith("[ERROR]"):
-            self._ext_last_error = line[len("[ERROR]"):].strip()      # kept for the end of the run
+            self._ext_last_error = line[len("[ERROR]"):].strip()
             self.status_var.set(line)
 
     def _extract(self, extract_all):
@@ -8293,7 +7858,6 @@ class LookInsideView:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _unpack_all(self):
-        """The whole image into a folder, as a queue job (space check, progress, Retry)."""
         if not self.image_path:
             return
         dest = filedialog.askdirectory(parent=self.app.root, title="Unpack into folder")
@@ -8337,18 +7901,13 @@ class LookInsideView:
             self.status_var.set("Cancelled.")
 
 
-# ─── Main Application ──────────────────────────────────────────────────────────
-
 class App:
     def __init__(self, root):
         self.root = root
-        # Capture first-run BEFORE _setup() seeds settings.json - is_first_run() is a
-        # file-existence check, so once _setup writes the file it would always be False
-        # and the wizard would never appear for a genuinely new user.
+        # read first-run before _setup() writes settings.json, or it is always False
         self._is_first_run = is_first_run()
         self.queue = []
-        # Gate queue persistence until the saved queue is restored, so the initial
-        # empty render doesn't overwrite the saved queue before we load it.
+        # no queue saving until the saved queue is back, or the empty first render wipes it
         self._queue_restored = False
         self.current_process = None
         self.cancel_requested = False
@@ -8357,23 +7916,19 @@ class App:
         self.worker = None
         self._last_cmd_str = ""
         self._theme = "dark"
-        # Batch auto-advance tracking (Feature 4)
         self._batch_total   = 0
         self._batch_done    = 0
         self._batch_failed  = 0
         self._batch_running = False
-        self._details_item  = None   # GameItem currently shown in the details panel
+        self._details_item  = None
         self._settings_win  = None
         self._active_item   = None   # item handed to the current worker (cleanup fallback)
-        # Reclaim accounting: the batch must not re-check free space until all in-flight
-        # cleanup rmtrees finish, or it reads stale (still-full) space and false-skips.
+        # no free-space recheck until cleanup rmtrees finish, stale space false-skips
         self._cleanup_inflight = 0
-        self._restores_inflight = 0          # patch restores running (startup recovery, failed jobs)
+        self._restores_inflight = 0
         self._cleanup_lock     = threading.Lock()
         self._cleanup_wait_ticks = 0
-        # Async source-scan tracking: a folder add launches a background scan that
-        # leaves the queue briefly empty. Without this, pressing START in that window
-        # makes start() re-add the SAME source (queue is still empty) → a duplicate.
+        # a folder scan leaves the queue empty for a moment; START then would re-add it
         self._scan_in_flight = 0
         self._scan_lock      = threading.Lock()
 
@@ -8382,29 +7937,25 @@ class App:
         self.status_q   = queue.Queue()
         self.done_q     = queue.Queue()
         self.scan_q     = queue.Queue()
-        self._extract_q = queue.Queue()   # archive extraction completion
+        self._extract_q = queue.Queue()
         self.visible_log_lines = 0
         self.auto_scroll_logs = True
 
         self._setup()
         self._build()
-        self._restore_queue()   # rebuild the saved queue now that the listbox exists
+        self._restore_queue()  # needs the listbox from _build()
         self._poll()
-        self._start_keep_awake()   # keep external HDDs from sleeping (if enabled)
+        self._start_keep_awake()
 
         if self._is_first_run:
             self.root.after(200, self._show_first_run_wizard)
 
-        # After the UI is fully loaded, remind user to report any untested games
-        # Restore the user's saved section widths once the layout has settled.
         self.root.after(600, self._restore_sashes)
         if sys.platform == "win32":
             self.root.after(2000, self._stay_awake_tick)
-        # Offer to reclaim leftover scratch from a crashed/cancelled previous run.
         self.root.after(1500, self._offer_startup_sweep)
 
     def _center_on_work_area(self, w, h):
-        """First start on Windows: the window centered above the taskbar, smaller if the screen is."""
         try:
             import ctypes
             from ctypes import wintypes
@@ -8421,8 +7972,7 @@ class App:
             pass
 
     def _stay_awake_tick(self):
-        """Windows: no idle sleep while the queue runs. The request belongs to the calling
-        thread, so it lives on the Tk main thread and is renewed or dropped every 30 s."""
+        """The sleep request belongs to the calling thread, so it lives on the Tk thread."""
         ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
         try:
             import ctypes
@@ -8433,17 +7983,14 @@ class App:
         self.root.after(30000, self._stay_awake_tick)
 
     def _restore_window_geometry(self):
-        """Reapply the last saved window position/size, if valid. Vertically clamp so
-        the title bar can never restore above the screen (e.g. hidden under the macOS
-        menu bar) or absurdly off-screen. Horizontal position is left intact so an
-        external-monitor placement is respected."""
+        """Only y is clamped, so the title bar never hides under the macOS menu bar."""
         geo = (getattr(self, "_saved_window_geometry", "") or "").strip()
         m = re.fullmatch(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)", geo)
         if m:
             try:
                 w, h, x, y = (int(m.group(i)) for i in range(1, 5))
                 if abs(x) > 20000 or abs(y) > 20000:
-                    return  # corrupt coordinates - let the default geometry stand
+                    return  # corrupt coordinates, keep the default
                 sh = self.root.winfo_screenheight()
                 y = max(0, min(y, max(0, sh - 80)))   # keep the title bar grabbable
                 self.root.geometry(f"{w}x{h}+{x}+{y}")
@@ -8456,8 +8003,7 @@ class App:
                 pass
 
     def _on_window_configure(self, event):
-        """Debounced: persist the window geometry shortly after a move/resize so
-        the position survives any quit path (close button, Cmd-Q, …)."""
+        """Debounced, so the position survives any way of quitting."""
         if event.widget is not self.root:
             return
         if getattr(self, "_geo_save_after", None):
@@ -8475,9 +8021,7 @@ class App:
             pass
 
     def _save_sashes(self):
-        """Persist the job card's width (job_card_width). The card keeps that width when
-        the window is resized, so the width, not the divider position, is what to remember.
-        Called on every divider release."""
+        """The card keeps its width on resize, so save the width, not the divider spot."""
         card = getattr(self, "_card_pane", None)
         if card is not None:
             try:
@@ -8488,10 +8032,7 @@ class App:
                 pass
 
     def _restore_sashes(self):
-        """Give the job card its remembered width (first run: 560 px) once the window has
-        its final size. The window opens small and grows to the saved geometry a moment
-        later; placing the divider before that would leave the card squeezed, because the
-        list, not the card, takes the extra width."""
+        """Waits for the final window size, or the card ends up squeezed."""
         pw = getattr(self, "_paned_q", None)
         if not pw or not getattr(self, "_inspector_open", False):
             return
@@ -8519,8 +8060,7 @@ class App:
                 self._keepawake_stop.set()
         except Exception:
             pass
-        # If a job is running, confirm and stop it (kill the whole backend tree)
-        # before quitting - otherwise the backend + mkpfs Pool keep running headless.
+        # stop the backend tree before quitting, or backend and mkpfs pool run on headless
         try:
             proc_alive = bool(self.current_process and self.current_process.poll() is None)
             if proc_alive or self._job_active():
@@ -8545,24 +8085,20 @@ class App:
             pass
 
     def _persisted_bool(self, settings, key, default):
-        """A BooleanVar that loads from settings.json and auto-saves on every
-        change, so the option sticks regardless of which checkbox toggles it."""
         v = tk.BooleanVar(value=bool(settings.get(key, default)))
         v.trace_add("write", lambda *_: save_settings({key: v.get()}))
         return v
 
     def _set_window_icon(self) -> None:
-        """The app icon on the window and in the taskbar (the Dock when run from source)."""
         base = Path(getattr(sys, "_MEIPASS", "") or Path(__file__).resolve().parent) / "assets" / "icon"
         try:
             if sys.platform == "win32" and (base / "app-icon.ico").is_file():
-                # the default for every window; CTk then keeps its own logo off the main window,
-                # and its dialogs would set it 200 ms after they open: not any more
+                # default icon for all windows; the patch stops CTk dialogs swapping in its logo 200 ms late
                 self.root.iconbitmap(default=str(base / "app-icon.ico"))
                 ctk.CTkToplevel._windows_set_titlebar_icon = lambda _self: None
                 return
             if IS_MAC and getattr(sys, "frozen", False):
-                return                            # the bundle's .icns (with the macOS margin) is the Dock icon
+                return  # frozen app: the bundle's .icns is the Dock icon
             self._icon_images = [tk.PhotoImage(master=self.root, file=str(base / n))
                                  for n in ("app-icon-256.png", "app-icon-32.png") if (base / n).is_file()]
             if self._icon_images:
@@ -8572,8 +8108,8 @@ class App:
 
     def _setup(self):
         settings = load_settings()
-        # A profile that exists but cannot be read (locked by another program): wait a little,
-        # else run on defaults this session and never write them over the real settings.
+        # profile locked by another program: wait a bit, else run on defaults
+        # and never save those defaults over the real settings
         self._settings_locked = False
         for _ in range(4):                        # about 4 s in all (each read retries briefly)
             _data, _read = ultra_core._read_settings()
@@ -8603,27 +8139,19 @@ class App:
                 return int(v)
             except (TypeError, ValueError):
                 return default
-        # Coerce defensively: a hand-edited / corrupt non-numeric value here would make
-        # tk.IntVar(value=...) raise TclError and hard-crash the GUI at startup.
+        # hand-edited junk here makes tk.IntVar raise TclError at startup
         self._saved_compression_level = max(1, min(9, _safe_int(settings.get("compression_level", 7), 7)))
         self._saved_cpu_count = _safe_int(settings.get("cpu_count", 0), 0)
         self._saved_block_size = settings.get("block_size", "auto")
-        # Migrate console-incompatible block sizes: "auto-fit" (picks 4 KiB for many-file
-        # games) and explicit sub-64K values build images the PS5 misreads → crash. The
-        # native size is 64 KiB; normalise to "auto" (= 65536). The backend enforces this
-        # too, but fixing the saved value keeps the UI honest.
+        # auto-fit and sub-64K blocks build images the PS5 misreads; native is 64 KiB
         if self._saved_block_size in ("auto-fit", "4096", "8192", "16384", "32768"):
             self._saved_block_size = "auto"
             save_settings({"block_size": "auto"})
-        # Global, auto-tried archive password list - empty until the user adds entries
-        # (Settings → Archives). Saved lists from earlier versions are kept as they are.
         self._saved_passwords = settings.get("archive_passwords")
         if self._saved_passwords is None:
             self._saved_passwords = []
             save_settings({"archive_passwords": self._saved_passwords})
-        # Folder bundles: copy DLC/extra files next to the .ffpfsc (default on).
         self._saved_copy_siblings = settings.get("copy_bundle_siblings", True)
-        # Remember the window position/size across launches.
         self._saved_window_geometry = settings.get("window_geometry", "")
         self._geo_save_after = None
         if not self._saved_window_geometry and sys.platform == "win32":
@@ -8634,7 +8162,7 @@ class App:
 
     def _show_first_run_wizard(self):
         if getattr(self, "_browser_only", False):
-            return   # launched only to browse a .ffpfsc (double-click) - skip the wizard
+            return  # opened by double-clicking a .ffpfsc, no wizard
         wiz = FirstRunWizard(self.root)
         self.root.wait_window(wiz)
         if wiz.result.get("temp_folder"):
@@ -8648,7 +8176,6 @@ class App:
         return frame
 
     def _bind_dynamic_wrap(self, owner, labels, *, padding=28, min_width=180):
-        """Keep long labels from forcing a pane wider than the user wants."""
         def _update(event):
             wrap = max(min_width, event.width - padding)
             for label in labels:
@@ -8667,21 +8194,19 @@ class App:
         elif yellow:
             color, hover, txt = YELLOW, YELLOW, ("#ffffff", "#1b1300")
         else:
-            # A normal button looks like the main window's: a quiet fill, a hairline only in light mode
             color, hover, txt = BTN, BTN_HOVER, WHITE
         return ctk.CTkButton(parent, text=text, command=command, fg_color=color, hover_color=hover,
                               text_color=txt, border_width=0 if (green or red or yellow) else 1,
                               border_color=BTN_BORDER, **kw)
 
     def _build(self):
-        """The main window: sidebar (views + tools) | the active view | status bar."""
         if sys.platform == "win32":     # macOS scales the window itself
             ui_kit.set_scale(ctk.ScalingTracker.get_window_dpi_scaling(self.root))
         kit = self.kit = Kit(self.root, self._theme)
         self.root.configure(fg_color=ctk_pair("bg"))
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
-        # Kept for live stage writes (not shown; the stage sits in the job card).
+        # never shown, but live stage writes still go here
         self.header_status_var = tk.StringVar(value=f"v{APP_VERSION}  |  Backend: Ready")
         self._init_state_vars()
         self._init_display_vars()
@@ -8694,7 +8219,6 @@ class App:
         kit.rule(shell, horizontal=False).grid(row=0, column=1, sticky="ns")
         views = self._views_parent = kit.frame(shell)
         views.grid(row=0, column=2, sticky="nsew")
-        # Dialogs open as panels over this content area (see PanelHost).
         self._panels = PanelHost(self, views)
         EmbeddedDialog.host = self._panels
         views.grid_columnconfigure(0, weight=1)
@@ -8711,13 +8235,11 @@ class App:
         self._filter_root_configure()
         self.update_queue_box()
 
-        # ── Drag & drop registration ─────────────────────────────────────────
         if _HAS_DND:
             self.root.drop_target_register(DND_FILES)
             self.root.dnd_bind("<<Drop>>", self._on_drop)
 
     def _init_display_vars(self):
-        """Every StringVar the worker and poll code write, plus the job card's own."""
         S = TextVar
         self.overall_title_var = S(value="QUEUE")
         self.overall_pct_var = S(value="0%")
@@ -8755,7 +8277,6 @@ class App:
         self._space_result = None
         self._space_busy = False
         self._space_tick = 0
-        # The metric tiles show the values without the "Speed: " style prefix.
         self.m_speed_var, self.m_elapsed_var, self.m_eta_var = S(value=" - "), S(value=" - "), S(value=" - ")
 
         def _unprefix(src, dst):
@@ -8789,7 +8310,6 @@ class App:
             self._footer_plain_var.set(self.footer_var.get().lstrip("●").strip() or "Ready")
         self.footer_var.trace_add("write", _foot)
 
-    # ── Sidebar ──────────────────────────────────────────────────────────────
     def _build_sidebar(self, shell):
         kit = self.kit
         self._nav_all = []
@@ -8872,10 +8392,7 @@ class App:
                 pass
 
     def _filter_root_configure(self):
-        """The toplevel's <Configure> bindings (CustomTkinter's and _on_window_configure)
-        sit on the toplevel's bind tag, so Tk runs them for EVERY child widget's
-        Configure: ~180 Python round trips per resize step, ~20 ms. Both only care about
-        the window itself, so skip the rest in Tcl before Python is entered."""
+        """Tk fires the toplevel's Configure for every child; drop those in Tcl, saves ~20 ms."""
         try:
             w = self.root._w
             script = self.root.bind("<Configure>")
@@ -8886,11 +8403,9 @@ class App:
             pass
 
     def _bind_shortcuts(self):
-        # On macOS the menus' key equivalents answer these keys first; the bindings serve
-        # the other platforms. Neither acts behind an open panel.
+        # macOS: the menu key equivalents win, these bindings are for the others
         keys = {f"<{MOD}-n>": self.open_job_dialog, f"<{MOD}-r>": self.start,
                 f"<{MOD}-period>": self._stop_if_running, DETAILS_SEQ: self.toggle_inspector}
-        # going to a view works from anywhere, an open panel closes (like the sidebar)
         views = {f"<{MOD}-o>": self.open_pfs_browser, f"<{MOD}-comma>": self.open_settings,
                  f"<{MOD}-Key-1>": lambda: self._show_view("queue"),
                  f"<{MOD}-Key-2>": lambda: self._show_view("history"),
@@ -8906,9 +8421,7 @@ class App:
             except tk.TclError:
                 pass
 
-    # ── Shared pieces ────────────────────────────────────────────────────────
     def _column_header(self, parent, title, subtitle=None, subtitle_var=None, bg="surface"):
-        """A column's title (+ a line under it) on the left, a button row on the right."""
         kit = self.kit
         head = kit.frame(parent, bg=bg)
         head.grid_columnconfigure(0, weight=1)
@@ -8931,7 +8444,6 @@ class App:
                           padx=9, icon_size=13, font=self.kit.fonts.small, bg=bg, tooltip=tooltip)
 
     def _text_view(self, parent, fg="text", mirror=None):
-        """A text area with a scrollbar filling *parent* (row 1 of its grid)."""
         kit = self.kit
         box = kit.frame(parent)
         box.grid_columnconfigure(0, weight=1)
@@ -8946,9 +8458,7 @@ class App:
         t.configure(yscrollcommand=sb.set)
         return box, t
 
-    # ── Queue view ───────────────────────────────────────────────────────────
     def _build_queue_view(self, parent):
-        """Two flush columns, list | job card, split by a draggable hairline."""
         kit = self.kit
         pw = tk.PanedWindow(parent, orient="horizontal", sashwidth=6, sashrelief="flat", bd=0,
                             opaqueresize=True, showhandle=False, sashpad=0)
@@ -8977,8 +8487,7 @@ class App:
         self._add_btn = self._small(btns, "Add job", "plus", self.open_job_dialog, variant="secondary",
                                     tooltip=tr("Pick a source, what to change in it and what comes out  {add}", add=SHORTCUT['add']))
         self._add_btn.grid(row=0, column=2, padx=(0, 6))
-        # Start, Pause and Stop share one place of fixed size: Start while idle, Pause and Stop
-        # side by side while the queue runs. Nothing beside it moves when a run starts.
+        # one fixed-size slot for Start/Pause/Stop, so nothing jumps when a run starts
         self.transport = TransportControl(
             btns, kit, on_start=self.start, on_pause=self.toggle_pause, on_stop=self.request_stop,
             start_tip=tr("Run the jobs from the top  {start}", start=SHORTCUT['start']), pause_tip=self._PAUSE_TIPS[False],
@@ -8998,8 +8507,6 @@ class App:
             empty_body="Drop a game folder, archive, disk image, .ffpfs, .ffpfsc or .pkg into this window, "
                        "or use Add job.")
         self.queue_listbox.grid(row=2, column=0, sticky="nsew")
-        # While Add job builds its jobs (archive headers are read, one by one): a line and
-        # a bar between the header and the list, so the window says what it is doing.
         self._add_box = kit.frame(left)
         self._add_box.grid(row=1, column=0, sticky="ew", padx=(18, 14), pady=(0, 10))
         self._add_box.grid_columnconfigure(0, weight=1)
@@ -9009,9 +8516,6 @@ class App:
         self._add_bar = ProgressBar(self._add_box, kit, height=4)
         self._add_bar.grid(row=1, column=0, sticky="ew", pady=(4, 0))
         self._add_box.grid_remove()
-        # While the queue runs: the whole run at the foot of the list, as a summary of it - 
-        # its share left, the time left right, a thin neutral bar (blue stays the running
-        # job's colour), set off from the list by a hairline.
         self._all_box = kit.frame(left)
         self._all_box.grid(row=3, column=0, sticky="ew")
         self._all_box.grid_columnconfigure(0, weight=1)
@@ -9025,11 +8529,7 @@ class App:
         self._all_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=(18, 14), pady=(6, 12))
         self._all_box.grid_remove()
 
-        # The job card keeps its width when the window is resized (only the list grows),
-        # like an inspector. Re-laying out the whole card on every step of a window drag
-        # cost ~60 ms per step; the divider still sets its width, and that is remembered.
-        # The details pane is closed at first: a click on a job opens it, the header button,
-        # the View menu and its shortcut toggle it, and the list takes the width it frees.
+        # the card keeps its width on resize; relaying it out per drag step cost ~60 ms
         right = self._card_pane = kit.frame(pw, bg="inspector")
         self._inspector_open = False
         right.grid_columnconfigure(1, weight=1)
@@ -9073,8 +8573,6 @@ class App:
             m.grab_release()
 
     def _fit_queue_header(self, _e=None):
-        """A narrow queue column (details open, small window): Clear completed, then Add job
-        drop their words and keep their icon and tooltip, so the title and Start stay whole."""
         try:
             width = self._q_head.winfo_width()
             if width <= 1:
@@ -9104,11 +8602,10 @@ class App:
         except Exception:
             pass
 
-    # ── clearing finished jobs ────────────────────────────────────────────────
     _CLEAR_KINDS = {"done": ("Done",), "failed": ("Failed", "Skipped", "Cancelled")}
 
     def _clearable(self, which: str) -> list:
-        """The jobs *which* (done | failed | all) removes; never the running one."""
+        """Never includes the running job."""
         running = self._running_item()
         if which == "all":
             return [it for it in self.queue if it is not running]
@@ -9130,9 +8627,7 @@ class App:
         return "break"
 
     def clear_jobs(self, which: str) -> None:
-        """Remove the finished (done), the failed / skipped / cancelled (failed) or all
-        jobs from the queue. The running job stays. A failed job's kept extraction goes
-        with it, so clearing those asks first."""
+        """A failed job's kept extraction goes with it, hence the question first."""
         gone = self._clearable(which)
         if not gone:
             return
@@ -9160,7 +8655,6 @@ class App:
         self.update_queue_box()
 
     def _build_job_card(self, card):
-        """The inspector next to the list: the selected job, and the running job's progress."""
         kit, B = self.kit, "inspector"
         body = kit.frame(card, bg=B)
         body.grid(row=0, column=1, sticky="nsew", padx=20, pady=18)
@@ -9186,14 +8680,12 @@ class App:
 
         self._card_chips = Chips(body, kit, bg=B)
         self._card_chips.grid(row=1, column=0, sticky="ew", pady=(14, 0))
-        # Only shown when the selected job does not fit on its drives.
         self._space_warn = kit.label(body, bg=B, fg="warning", font=kit.fonts.small, textvariable=self.temp_space_var)
         self._space_warn.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         self._space_warn.grid_remove()
         self.temp_space_var.trace_add("write", lambda *_: (
             self._space_warn.grid() if "LOW" in self.temp_space_var.get() else self._space_warn.grid_remove()))
 
-        # Progress of the running job; hidden while nothing runs.
         prog = self._progress_box = kit.frame(body, bg=B)
         prog.grid(row=3, column=0, sticky="ew", pady=(20, 0))
         prog.grid_columnconfigure(0, weight=1)
@@ -9219,7 +8711,6 @@ class App:
             Tile(tiles, kit, cap, var, bg=B).grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 8, 0))
         prog.grid_remove()
 
-        # The job itself, whatever it is doing: status, source, changes, compression, space.
         info = kit.frame(body, bg=B)
         info.grid(row=4, column=0, sticky="ew", pady=(18, 0))
         info.grid_columnconfigure(1, weight=1)
@@ -9235,8 +8726,6 @@ class App:
         self._bind_dynamic_wrap(info, [v for _var, _k, v in self._card_info_rows.values()],
                                 padding=110, min_width=160)
 
-        # The log, as much of it as fits (the Log view has all of it): it takes the height
-        # the pane has left, so a tall window shows more lines; the actions sit below it.
         line = kit.fonts.mono_small.metrics("linespace")
         tail_box = RoundBox(body, kit, bg=B, pad=10, height=4 * line + 2 * 10 + 2)
         tail_box.grid(row=5, column=0, sticky="nsew", pady=(14, 0))
@@ -9300,8 +8789,6 @@ class App:
         self._bind_dynamic_wrap(self._cmd_frame, [self.command_label], padding=26, min_width=200)
 
     def _sync_run_ui(self):
-        """The run controls follow the batch; the progress block shows only while the job
-        in the details pane is the one running (checked on every poll tick)."""
         running = bool(getattr(self, "_batch_running", False))
         if running != getattr(self, "_run_ui_shown", None):
             self._run_ui_shown = running
@@ -9319,9 +8806,7 @@ class App:
         self._sync_progress_box()
 
     def _scratch_bases(self) -> list:
-        """Every folder the app may have made its work folders in: the temp folder, the
-        extra temp drives, the output folder, the jobs' own outputs and the outputs of the
-        last 100 jobs in the history (and their parents). Main thread (Tk variables)."""
+        """Main thread only, reads Tk variables."""
         out = [self.temp_var.get().strip(), self.output_var.get().strip()]
         try:
             # every configured extra temp drive, also one the router skips today
@@ -9346,9 +8831,7 @@ class App:
         return [b for b in dict.fromkeys(out) if b]
 
     def _prune_scratch_later(self, delay: float = 15.0) -> None:
-        """Once the queue stands still, remove the app's work folders that are left empty on
-        every drive (ultra_core.prune_empty_scratch). Waits *delay* seconds first, so the
-        clean-up of the last job is done; nothing is removed while a job runs."""
+        """Waits until the last job's cleanup is done; nothing goes while a job runs."""
         if getattr(self, "_prune_pending", False):
             return
         self._prune_pending = True
@@ -9371,8 +8854,7 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     def _follow_next_job(self, before, item):
-        """A job starts after *before*: whoever watched the running job keeps watching, so
-        the list and the details move on to *item*. A job you picked yourself stays picked."""
+        """A job you picked yourself stays picked."""
         shown = getattr(self, "_details_item", None)
         if shown is None or shown is before or shown is item or shown not in self.queue:
             self.update_queue_box(select_item=item)
@@ -9380,10 +8862,7 @@ class App:
                 self.update_game_details(item)
 
     def _sync_progress_box(self):
-        """The details pane belongs to the selected job: its progress block shows that
-        job's progress, so it is there only while the selected job runs (or while nothing
-        is selected). A waiting job's own line says it waits; the running job's bar stays
-        in its queue row."""
+        """Progress block only while the selected job runs, or nothing is selected."""
         shown = getattr(self, "_details_item", None)
         run = self._running_item() if getattr(self, "_batch_running", False) else None
         want = run is not None and (shown is None or shown is run)
@@ -9395,13 +8874,11 @@ class App:
         except Exception:
             pass
 
-    # ── pause after the running job ───────────────────────────────────────────
     _PAUSE_TIPS = {False: "Pause the queue once the running job is done; Start runs the rest",
                    True: "Keep running the queue after this job"}
 
     def toggle_pause(self):
-        """Pause after the running job, or take that back. The running job always finishes
-        (unpacking, building, what happens after it); the queue then stops before the next."""
+        """The running job always finishes; the queue stops before the next."""
         if not self._batch_running:
             return
         self._pause_requested = not getattr(self, "_pause_requested", False)
@@ -9427,8 +8904,7 @@ class App:
                 pass
 
     def _pause_queue(self) -> None:
-        """The running job is done and a pause was asked for: the queue stops here. It is not
-        the queue's end, so no sleep, no quit and no summary; the jobs left stay queued."""
+        """Not the queue's end: no sleep, no quit, no summary."""
         left = sum(1 for it in self.queue if getattr(it, "status", "") not in self._TERMINAL_STATUSES)
         jobs = f"{left} job{'' if left == 1 else 's'}"
         self._pause_requested = False
@@ -9443,8 +8919,7 @@ class App:
             _after_job_module().notify("PS5 UltraPack", tr("Queue paused: {jobs} left", jobs=jobs))
 
     def _sync_primary_action(self):
-        """One primary button: Add job while the queue is empty, Start once it has jobs.
-        While a batch runs, the run code owns the Start button's state."""
+        """While a batch runs, the run code owns Start's state."""
         try:
             empty = not self.queue
             # finished jobs alone leave nothing to start (failed ones run again on Start)
@@ -9479,7 +8954,6 @@ class App:
             self._card_empty.grid(row=0, column=1, sticky="nsew")
 
     def _fill_card_multi(self, items) -> None:
-        """The details pane for several selected jobs: how many, their size, their states."""
         n = len(items)
         size = sum(int(display_size(it) or 0) for it in items)
         states = {}
@@ -9498,9 +8972,7 @@ class App:
              else "Remove takes them out of the queue. ")
             + tr("{v}-click adds or drops a job, Shift-click a range, Escape keeps one.", v='⌘' if IS_MAC else 'Ctrl'))
 
-    # ── Details pane ─────────────────────────────────────────────────────────
     def _on_queue_clicked(self):
-        """A click on a job shows it, and opens the details pane if it is closed."""
         self._on_queue_select()
         if self.queue and self._queue_sel_idx() is not None:
             self._set_inspector(True)
@@ -9531,7 +9003,6 @@ class App:
             pass
 
     def _place_inspector(self, tries: int = 0):
-        """Give the opened pane its remembered width (first time: 560 px)."""
         pw = self._paned_q
         try:
             self.root.update_idletasks()
@@ -9556,8 +9027,6 @@ class App:
             self._cmd_frame.grid(row=7, column=0, sticky="ew", pady=(10, 0))
 
     def _job_recipe(self, item, detail: bool = False) -> list[str]:
-        """The job as chips: source kind → changes → output. With *detail* (the details
-        pane) the output names its compression too: ".ffpfsc, level 7", ".pkg, fast"."""
         parts = self._job_recipe_parts(item)
         if detail and parts:
             if parts[-1] == ".ffpfsc":
@@ -9612,7 +9081,6 @@ class App:
                 "copy": [src, {"move": "Move", "organize": "Organize"}.get(getattr(item, "copy_mode", None), "Copy")]
                 }.get(op, [src])
 
-    # ── History view ─────────────────────────────────────────────────────────
     def _build_history_view(self, parent):
         kit = self.kit
         v = kit.frame(parent)
@@ -9640,7 +9108,6 @@ class App:
         self.refresh_statistics()
         return v
 
-    # ── Log view ─────────────────────────────────────────────────────────────
     def _build_log_view(self, parent):
         kit = self.kit
         v = kit.frame(parent)
@@ -9658,7 +9125,6 @@ class App:
         box.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
         return v
 
-    # ── Status bar ───────────────────────────────────────────────────────────
     def _build_status_bar(self, shell):
         kit = self.kit
         bar = kit.frame(shell, bg="sidebar")
@@ -9670,8 +9136,7 @@ class App:
         kit.label(inner, bg="sidebar", fg="muted", font=f, textvariable=self._footer_plain_var).pack(side="left")
         self._batch_counter_lbl = kit.label(inner, bg="sidebar", fg="faint", font=f, textvariable=self.batch_counter_var)
         self._batch_counter_lbl.pack(side="left", padx=(12, 0))
-        # The queue's overall progress is not shown (the job row carries the job's own
-        # percentage); the bar object stays because the poll loop feeds it.
+        # not shown, but the poll loop still feeds this bar
         self._overall_box = kit.frame(inner, bg="sidebar")
         self.overall_bar = ProgressBar(self._overall_box, kit, height=4, bg="sidebar")
         self._ram_label = kit.label(inner, bg="sidebar", fg="faint", font=f, textvariable=self.ram_var)
@@ -9691,10 +9156,7 @@ class App:
         return bar
 
     def _tick_space_status(self):
-        """Free space on the temp and output drives for the status bar. The disk_usage
-        calls run on a worker thread (a sleeping HDD can take seconds to answer); only the
-        main thread touches Tk, so the paths are read here and the result is picked up on a
-        later poll tick."""
+        """disk_usage runs on a worker, a sleeping HDD can take seconds; Tk stays here."""
         res = self._space_result
         if res is not None:
             self._space_result = None
@@ -9723,12 +9185,8 @@ class App:
         self._space_busy = True
         threading.Thread(target=_work, daemon=True).start()
 
-    # ── Menus ────────────────────────────────────────────────────────────────
     def _build_menubar(self):
-        """File, Edit, View, Window and Help, with the same shortcuts as the buttons. On
-        macOS the application menu carries About, Settings… and Quit (Tk routes the last
-        two here); elsewhere Settings and Exit sit in File and About in Help. Entries that
-        would act behind an open panel do nothing until it is closed."""
+        """macOS: Tk routes Settings and Quit to the app menu; elsewhere they sit in File."""
         root = self.root
         guard = lambda fn: (lambda: None if self._panels.stack else fn())
         mod_key = (lambda k: f"Command-{k}") if IS_MAC else (lambda k: f"Ctrl+{k}")
@@ -9804,7 +9262,6 @@ class App:
             pass
 
     def _edit_event(self, event_name):
-        """Cut, Copy, Paste and Select All act on the text field that has the focus."""
         w = self.root.focus_get()
         if w is not None:
             try:
@@ -9817,8 +9274,7 @@ class App:
             self.request_stop()
 
     def _stop_question(self) -> str | None:
-        """What Stop or Quit costs right now, for the question before it; None when nothing
-        is worth asking about (no job, or one that started seconds ago)."""
+        """None when nothing is worth asking about: no job, or a fresh one."""
         item = self._running_item() or getattr(self, "_active_item", None)
         if item is None or not self._job_active():
             return None
@@ -9826,7 +9282,7 @@ class App:
         if getattr(item, "operation", "") == "ps4-keystone":
             return tr("A PS4 PKG Tools job is changing {name} in place. Stopped now, the package stays half "
                       "changed until you press Undo last change in PS4 PKG Tools.", name=name)
-        # since the job was picked (its unpack included); the worker only when it is this job's
+        # time since the job was picked, its unpack included
         since = getattr(self, "_active_since", (None, 0))
         t0 = since[1] if since[0] == id(item) else None
         w = getattr(self, "worker", None)
@@ -9839,7 +9295,6 @@ class App:
                   name=name, time=humanize_eta(int(ran)))
 
     def request_stop(self):
-        """Stop, asked first when hours of work or a half-changed package are at stake."""
         q = self._stop_question()
         if q is not None and not ask_confirm("Stop the job?", q, "Stop job", "Keep running", danger=True):
             return
@@ -9850,57 +9305,42 @@ class App:
         open_path(APP_DIR)
 
     def _init_state_vars(self):
-        """The Tk variables behind the settings and the job defaults (paths, formats,
-        tuning, drive behaviour), each persisted on change."""
-        # Remember the last input path across restarts (a browsed folder stays in the
-        # field). Only restore it if it still exists, so a moved/deleted path doesn't
-        # linger. Picking anything new overwrites it via the trace below.
+        # restore the last source only if it still exists
         _src0 = self._saved_source if (self._saved_source and Path(self._saved_source).exists()) else ""
         self.source_var = tk.StringVar(value=_src0)
         self.source_var.trace_add("write", lambda *_: save_settings({"source_path": self.source_var.get()}))
         self.output_var = tk.StringVar(value=self._saved_output)
         self.temp_var = tk.StringVar(value=self._saved_temp)
-        # Persist typed/browsed paths so they survive a restart (previously only
-        # browsed paths that happened to be saved elsewhere stuck).
         self.output_var.trace_add("write", lambda *_: save_settings({"output_folder": self.output_var.get()}))
         self.temp_var.trace_add("write", lambda *_: save_settings({"temp_folder": self.temp_var.get()}))
-        # Probe (in the background) whether the temp/output drives are SSD or HDD so the
-        # runtime placement labels can be honest WITHOUT blocking the UI thread on
-        # diskutil/PowerShell. Re-probes when the folders change; cached per device.
+        # probe SSD/HDD in the background, diskutil and PowerShell would block the UI
         self.temp_var.trace_add("write", lambda *_: self._warm_drive_types())
         self.output_var.trace_add("write", lambda *_: self._warm_drive_types())
         self.source_var.trace_add("write", lambda *_: self._warm_drive_types())
         self._warm_drive_types()
         self.password_var = tk.StringVar()
-        # Live copy of the global auto-tried password list (backs the settings editor).
         self.archive_passwords: list[str] = list(getattr(self, "_saved_passwords", []))
-        # Extra temp/scratch drives (a "pool" added to the primary temp field). When more
-        # than one fast drive is available the router can keep pass 1 SSD↔SSD for big
-        # archive games by extracting the source to one and building the image on another.
+        # extra temp drives let the router keep pass 1 SSD to SSD for big archives
         self.temp_pool: list[str] = [native_path(p) for p in (load_settings().get("temp_pool", []) or []) if str(p).strip()]
         self.copy_siblings_var = tk.BooleanVar(value=getattr(self, "_saved_copy_siblings", True))
-        settings = load_settings()   # _build() is a separate method from _setup()
+        settings = load_settings()
         self.keep_pfs_var        = self._persisted_bool(settings, "keep_pfs", False)
         self.open_output_var     = self._persisted_bool(settings, "open_output", False)
         self.summary_popup_var   = self._persisted_bool(settings, "summary_popup", True)
         self.sound_complete_var  = self._persisted_bool(settings, "sound_complete", True)
         self.sound_error_var     = self._persisted_bool(settings, "sound_error", True)
-        # a job whose game cannot be read before unpacking is named from the public title list
+        # names games that can't be read before unpacking from the public title list
         self.online_names_var    = self._persisted_bool(settings, "online_title_names", True)
-        # the speed each long step of a job showed on this Mac (bytes of the game per second)
+        # per-step speeds measured on this machine, bytes of the game per second
         self._stage_rates = {k: float(v) for k, v in (settings.get("stage_rates") or {}).items()
                              if k in LONG_STEPS and isinstance(v, (int, float)) and v > 0}
-        self.batch_var = tk.BooleanVar(value=False)        # session state - not persisted
-        self.unpack_mode_var = tk.BooleanVar(value=False)  # session state - not persisted
-        # Output format for the whole queue: compressed .ffpfsc (smaller) vs uncompressed
-        # .ffpfs (faster to build AND to mount - ShadowMountPlus decompresses .ffpfsc at only
-        # ~150-250 MB/s and streaming-heavy games can stutter). True = compressed (default).
+        self.batch_var = tk.BooleanVar(value=False)  # not persisted
+        self.unpack_mode_var = tk.BooleanVar(value=False)  # not persisted
+        # .ffpfs mounts faster: ShadowMountPlus reads .ffpfsc at only ~150-250 MB/s
         self.output_compressed_var = self._persisted_bool(settings, "output_compressed", True)
-        # AMPR/APR emu folder (PlayGo titles): holds libSceAmpr.sprx + libScePlayGo.sprx.
+        # AMPR/APR emu folder for PlayGo titles: libSceAmpr.sprx and libScePlayGo.sprx
         self.ampr_var = tk.StringVar(value=native_path(settings.get("ampr_folder", "")))
-        # Backport folders (both user-supplied, never bundled): the patched libraries the
-        # job dialog offers by default, and the original target-firmware libraries the
-        # compatibility check reads.
+        # both user-supplied, never bundled: patched libs and original firmware libs
         _raw_libs, _fw = native_path(settings.get("backport_libs_root", "")), native_path(settings.get("fw_libs_root", ""))
         _libs = _sane_patched_libs(_raw_libs, _fw)
         self._cleared_libs_setting = _raw_libs if _libs != _raw_libs else ""
@@ -9908,15 +9348,9 @@ class App:
             save_settings({"backport_libs_root": ""})
         self.backport_libs_var = tk.StringVar(value=_libs)
         self.fw_libs_var = tk.StringVar(value=_fw)
-        # Optional Sony Publishing Tools DLL for the fPKG 'publishingtools' Kraken backend.
-        # Never bundled - the user points at their own copy. Empty = built-in encoder only.
+        # Sony Publishing Tools DLL: never bundled, empty means built-in encoder only
         self.pubtools_dll_var = tk.StringVar(value=native_path(settings.get("pubtools_dll", "")))
-        # The Output FORMAT is chosen PER JOB in the Pack dialog - three values:
-        # 'ffpfsc' (compressed), 'ffpfs' (uncompressed) and 'pkg' (an installable fPKG).
-        # output_format_var remembers the last choice as the default the dialog pre-fills
-        # AND the format a dropped / browsed source is queued with (the queue snapshot in
-        # update_queue_box applies it to every fresh pack item). output_compressed_var is
-        # the legacy bool the pack pipeline still reads; it is kept in sync from here.
+        # per-job format default; output_compressed_var is the old bool, kept in sync
         _fmt0 = str(settings.get("output_format") or "").strip().lower()
         if _fmt0 not in ("ffpfsc", "ffpfs", "pkg"):
             _fmt0 = "ffpfsc" if self.output_compressed_var.get() else "ffpfs"
@@ -9929,45 +9363,35 @@ class App:
             except Exception:
                 pass
         self.output_format_var.trace_add("write", _sync_format)
-        # Remembered fPKG compression parameters (inner codec / Kraken backend / level) - 
-        # what the Pack dialog pre-fills for .pkg and what a dropped source gets when the
-        # remembered format is .pkg. Identity is never remembered: it is per game and read
-        # from sce_sys/param.json at build time.
+        # identity is never remembered, it comes from param.json per game at build time
         _fd = settings.get("fpkg_defaults") or {}
         try:
             _fl = int(_fd.get("level", 0) if _fd.get("level") is not None else 0)
         except Exception:
             _fl = 0
         if not _fd.get("v212"):
-            # 2.2.0: the two presets ("normal" = 7, "fast" = -4) became a level slider whose
-            # default is 0 - measured on a retail sample, 0 to 5 are 0.3 % larger than 7 and
-            # 4.5x faster, so the old presets are moved to the new default once.
+            # level 0 to 5 is 0.3 % larger than 7 but 4.5x faster; old presets move to 0 once
             _fl = 0
         _inner = _fd.get("inner") if _fd.get("inner") in ("none", "zlib", "kraken") else "kraken"
         if _inner == "none" and not _fd.get("v1112"):
-            # Pre-1.1.12 remembered default. "none" was never verified on a console;
-            # "kraken" is the layer every launching build used. Migrated once - a
-            # "none" chosen after this (the settings then carry v1112) is respected.
+            # 'none' was never tried on a console; move that old default to kraken once
             _inner = "kraken"
         self.fpkg_defaults: dict = {
             "inner":   _inner,
             "backend": _fd.get("backend") if _fd.get("backend") in ("builtin", "publishingtools") else "builtin",
-            "level":   max(-4, min(9, _fl)),      # Kraken -4..9; see _pkg_level_text for what the steps buy
+            "level":   max(-4, min(9, _fl)),  # Kraken -4..9
             "retail_normalize": bool(_fd.get("retail_normalize", True)),
-            "hdr_flag":         _hdr_mode(_fd.get("hdr_flag", "auto")),   # 1.1.12/13 bool → auto/off
+            "hdr_flag":         _hdr_mode(_fd.get("hdr_flag", "auto")),  # an old bool becomes auto/off
             "regen_playgo":     bool(_fd.get("regen_playgo", False)),
             "fake_sign":        bool(_fd.get("fake_sign", True)),
             "v1112":            True,
             "v212":             True,
         }
-        self._pending_fpkg_identity = None   # (source path, identity dict) handed from the dialog to the scan result
+        self._pending_fpkg_identity = None  # (source path, identity dict), dialog to scan
         self.verify_output_var   = self._persisted_bool(settings, "verify_output", False)
         self.auto_clear_temp_var = self._persisted_bool(settings, "auto_clear_temp", False)
-        # A finished job stays in the queue, marked Done, until it is cleared; with this on
-        # it leaves the queue as soon as it succeeds. Failed jobs always stay.
+        # failed jobs always stay in the queue
         self.auto_remove_done_var = self._persisted_bool(settings, "auto_remove_done", False)
-        # What happens once a job is done (the default Add job starts from) and once the
-        # queue is done. Strings persisted like output_exists.
         _aj = _after_job_module()
         def _choice(key, allowed, default):
             v = settings.get(key, default)
@@ -9980,51 +9404,30 @@ class App:
             {"after_move_dir": self.after_move_dir_var.get().strip()}))
         self.notify_var = _choice("notify", _aj.NOTIFY, "off")
         self.after_queue_var = _choice("after_queue", _aj.QUEUE_ACTIONS, "nothing")
-        # What a job does when its output is already in the output folder.
         _oe = settings.get("output_exists", "skip")
         self.output_exists_var = tk.StringVar(value=_oe if _oe in self.OUTPUT_EXISTS_CHOICES else "skip")
         self.output_exists_var.trace_add("write", lambda *_: save_settings({"output_exists": self.output_exists_var.get()}))
-        # Auto-patch: when a release folder holds a base game plus a clearly-smaller
-        # game-like sibling (a patch), overlay it onto the game before packing. Off
-        # by default - opt in knowingly, since it changes what lands in the .ffpfsc.
+        # off by default: it changes what lands in the .ffpfsc
         self.auto_integrate_patch_var = self._persisted_bool(settings, "auto_integrate_patch", False)
-        # Drive-usage mode: auto | temp | spread (where archives get extracted).
+        # auto, temp or spread: where archives get extracted
         self.drive_mode_var = tk.StringVar(value=settings.get("drive_mode", "auto"))
         self.drive_mode_var.trace_add("write", lambda *_: save_settings({"drive_mode": self.drive_mode_var.get()}))
-        # Show the drive-space pre-flight dialog before each pack (default on). The
-        # tunable safety factor and the low-space policy live in settings.json and are
-        # edited in Settings (see SettingsView).
         self.show_space_dialog_var = self._persisted_bool(settings, "show_space_dialog", True)
-        # Opt-in: build an exFAT intermediate and compress that (PSBrew's most-stable
-        # exfat->ffpfsc path) instead of the folder PFS builder. macOS only. Default off.
+        # exFAT intermediate like PSBrew's exfat->ffpfsc path; macOS only
         self.build_via_exfat_var = self._persisted_bool(settings, "build_via_exfat", False)
-        # Opt-in: fake-sign a game folder's executables in place before packing it.
         self.fake_sign_before_pack_var = self._persisted_bool(settings, "fake_sign_before_pack", False)
-        # Auto-organize (default on): every pack / fPKG job lands in '<Title> [TID] [vX.Y.Z]/'
-        # as '<Title> [TID] [vX.Y].ffpfsc|.pkg', named from the game's own param.json - 
-        # whatever the source was called. Per job (snapshotted like the format); this is the
-        # remembered default the Pack dialog pre-fills.
+        # '<Title> [TID] [vX.Y.Z]/' from param.json, whatever the source was called
         self.auto_organize_var = self._persisted_bool(settings, "auto_organize", True)
-        # Keep external drives awake DURING A RUN only: a fast tiny flushed write so
-        # bus-powered 2.5" USB HDDs (WD Elements) stay spun-up with heads LOADED across the
-        # short gaps between games in a batch - so each game doesn't pay a fresh spinup. The
-        # interval ('keep_awake_interval', default 8 s) is deliberately under WD IntelliPark's
-        # 8 s park timer: a SLOWER ping would just unpark→re-park every cycle and ADD load
-        # cycles. When no job runs we ping nothing and let the drive fully sleep (its lowest-
-        # wear state). Default off; toggle + interval live in Settings → Drive & Space.
+        # ping faster than WD IntelliPark's 8 s park timer; slower only adds load cycles
         self.keep_drives_awake_var = self._persisted_bool(settings, "keep_drives_awake", False)
-        # MkPFS tuning
         self.compression_level_var = tk.IntVar(value=self._saved_compression_level)
         self.cpu_count_var         = tk.IntVar(value=self._saved_cpu_count)
         self.verbose_var           = self._persisted_bool(settings, "verbose", False)
         self.block_size_var        = tk.StringVar(value=self._saved_block_size)
-        # Persist the main-window tuning controls on change (previously only the
-        # Settings window saved these, so edits made in the main window were lost).
         self.compression_level_var.trace_add("write", lambda *_: save_settings({"compression_level": self.compression_level_var.get()}))
         self.cpu_count_var.trace_add("write", lambda *_: save_settings({"cpu_count": self.cpu_count_var.get()}))
         self.block_size_var.trace_add("write", lambda *_: save_settings({"block_size": self.block_size_var.get()}))
 
-    # ── Theme toggle ─────────────────────────────────────────────────────────
     def _set_theme(self, mode):
         if mode in ("dark", "light") and mode != self._theme:
             self._toggle_theme()
@@ -10039,8 +9442,7 @@ class App:
             pass
         for w in [self.root] + [c for c in self.root.winfo_children() if isinstance(c, tk.Toplevel)]:
             set_window_appearance(w, self._theme)
-        # CTk widgets (the dialogs) follow their (light, dark) tuples on their own; the
-        # main window's Tk widgets are recoloured through the kit.
+        # CTk follows its (light, dark) tuples by itself; plain Tk needs the kit
         try:
             self.kit.set_mode(self._theme)
         except Exception:
@@ -10055,26 +9457,21 @@ class App:
 
 
     def _backend_cmd(self, *args) -> list:
-        """Build a backend invocation for arbitrary args (list/extract image, …),
-        matching how the queue worker calls the backend: frozen re-invokes this exe
-        with --backend-internal; dev runs backend/cli.py under the interpreter."""
+        """Frozen: re-invoke this exe with --backend-internal; dev: backend/cli.py."""
         pycmd = get_backend_python_command() or ["python"]
         if getattr(sys, "frozen", False):
             return pycmd + list(args)
         return pycmd + ["-u", str(backend_base_dir() / "cli.py")] + list(args)
 
     def open_pfs_browser(self, image_path=None):
-        """The Look inside view, with *image_path* opened when given."""
         self._show_view("look")
         if image_path:
             self._look_view.open(image_path)
 
     def open_job_dialog(self, init_src: str | None = None, init_sources: list | None = None):
-        """The one door for every job: source → change the content → output (JobDialog)."""
         JobDialog(self, init_src=init_src, init_sources=init_sources)
 
     def _pkg_level_default(self) -> int:
-        """The Kraken level a new .pkg job starts from (Settings › Compression), -4..9."""
         try:
             return max(-4, min(9, int(self.fpkg_defaults.get("level", 0))))
         except (TypeError, ValueError):
@@ -10082,7 +9479,7 @@ class App:
 
     @staticmethod
     def _pkg_level_text(level: int) -> str:
-        """What a Kraken level buys, from the 2.2.0 measurement on a retail sample."""
+        """Numbers measured on a retail sample."""
         level = int(level)
         if level < 0:
             return "fastest; about 2 % larger"
@@ -10095,7 +9492,6 @@ class App:
         return "no smaller than 7, slower still"
 
     def _ffpfsc_level(self, item) -> int:
-        """The zlib level of a .ffpfsc build: the job's own, else the default in Settings."""
         for value in (getattr(item, "compression_level", None), self.compression_level_var.get()):
             try:
                 if value is not None:
@@ -10105,9 +9501,7 @@ class App:
         return 7
 
     def _backport_args(self, item) -> list[str]:
-        """--backport-target, --backport-libs and --fw-libs-root for a job that backports.
-        The firmware libraries folder is global (Settings): with it the backend reads the
-        SDK values of non-public targets and checks the game's functions before building."""
+        """With the firmware libs folder the backend reads SDK values of non-public targets."""
         bt = getattr(item, "backport_target", None)
         if not is_backport_target(bt):
             return []
@@ -10121,10 +9515,7 @@ class App:
         return args
 
     def prepare_backport_libs(self, target: str) -> None:
-        """Prepare the patched-libraries folder for *target* from BestPig BackPork.
-        Runs in a background thread; per-library progress goes to the app log. The user
-        must have set the two Settings folders first - otherwise a clear line says which
-        one is missing and where to set it."""
+        """Runs in the background; progress per library goes to the log."""
         fw = (self.fw_libs_var.get() or "").strip()
         out = (self.backport_libs_var.get() or "").strip()
         if not fw or not Path(fw).is_dir():
@@ -10165,9 +9556,7 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     def fake_sign_folder(self):
-        """Fake Sign job: pick a decrypted PS5 dump folder and ADD it to the queue as a
-        fake-sign job (eboot.bin / .elf / .prx / .sprx are signed in place when it runs).
-        Press START to run - like every other job type."""
+        """Queues a job that signs eboot.bin, .elf, .prx and .sprx in place."""
         path = filedialog.askdirectory(
             title="Select a PS5 game folder (or a parent folder of dumps) to fake-sign")
         if not path:
@@ -10189,8 +9578,7 @@ class App:
                             "Ready", 0, 0, "00:00", " - ", " - ", side=True)
 
     def fpkg_extract_dialog(self):
-        """fPKG EXTRACT: pick a .pkg file and queue a job that pulls the /app0 tree out
-        of it. Ships the bundled ffpfsc-pkg-tool binary - no external DLL required."""
+        """Bundled ffpfsc-pkg-tool, no external DLL needed."""
         path = filedialog.askopenfilename(
             title="Select a PS5 fake package (.pkg) to extract",
             filetypes=[("PS5 package", "*.pkg"), ("All files", "*.*")])
@@ -10208,7 +9596,6 @@ class App:
         self.log("OK", f"fPKG extract queued: {pkg.name} -> {out}.  Press Start to run.")
 
 
-    # ── Drag & drop ───────────────────────────────────────────────────────────
     def _on_drop(self, event):
         try:
             paths = self.root.tk.splitlist(event.data)
@@ -10223,8 +9610,7 @@ class App:
                 self.log("WARN", f"Dropped path not found: {p}")
         if not found:
             return
-        # An open Add job takes the drop as its source; otherwise the dropped paths open one
-        # Add job, where the user says what to change and what comes out.
+        # an open Add job takes a single drop as its source
         top = self._panels.stack[-1] if self._panels.stack else None
         if isinstance(top, JobDialog) and top.edit_item is None and len(found) == 1:
             top.src_var.set(str(found[0]))
@@ -10236,9 +9622,7 @@ class App:
         else:
             self.open_job_dialog(init_sources=[str(p) for p in found])
 
-    # ── Folder browse ─────────────────────────────────────────────────────────
     def browse_source_folder(self):
-        """Folder picker - single game folder or parent folder containing multiple dumps."""
         path = filedialog.askdirectory(title="Select PS5 game folder or parent folder")
         if not path:
             return
@@ -10252,7 +9636,6 @@ class App:
         self.add_source_to_queue()
 
     def browse_source_archive(self):
-        """File picker - select an archive, disk image, or PFS image."""
         path = filedialog.askopenfilename(
             title="Select archive, disk image, or PFS image",
             filetypes=[
@@ -10279,7 +9662,6 @@ class App:
             self.update_queue_box(select_item=item)
             self.log("OK", f"PS4 package queued: {p.name} -> {out}.")
             return
-        # A picked .pkg becomes an fPKG-extract queue item straight away.
         if p.suffix.lower() == ".pkg":
             out = (self.output_var.get() or "").strip()
             if not out:
@@ -10290,7 +9672,7 @@ class App:
             self.log("OK", f"fPKG extract queued: {p.name} -> {out}.")
             return
         self.source_var.set(str(p))
-        if p.suffix.lower() == ".ffpfsc":   # .ffpfs is a PACK source now (re-pack), not unpack
+        if p.suffix.lower() == ".ffpfsc":  # .ffpfs is a re-pack source, not unpack
             self.unpack_mode_var.set(True)
         if not self.output_var.get():
             self.output_var.set(str(p.parent))
@@ -10344,7 +9726,6 @@ class App:
     ART_PX = 96          # the cover in the details pane
 
     def load_art(self, art):
-        # Cache: skip disk I/O if the file hasn't changed
         try:
             art_key = (str(art), Path(str(art)).stat().st_mtime_ns) if art else None
         except OSError:
@@ -10373,7 +9754,6 @@ class App:
         self.art_img = photo   # hold a reference; Tk drops unreferenced images
         self.art_label.set_photo(photo)
 
-    # ── Queue management ──────────────────────────────────────────────────────
     @staticmethod
     def _clean_path_str(raw: str) -> str:
         """Strip whitespace and surrounding quotes Windows sometimes adds."""
@@ -10383,7 +9763,6 @@ class App:
         return s
 
     def _classify_extracted_payload(self, extracted_root: Path, archive_name: str) -> tuple[str, list[Path]]:
-        """Return the supported payload type and paths found inside an extracted archive."""
         pfs_images = find_files_by_suffix(extracted_root, PFS_IMAGE_SUFFIXES)
         if pfs_images:
             self.log("INFO", f"Archive payload detected: {len(pfs_images)} PFS image(s) for extraction")
@@ -10414,8 +9793,7 @@ class App:
             self.log("INFO", f"Archive payload detected: {len(packages)} package(s) (.pkg)")
             return "pkg", packages
 
-        # Nested archive (archive inside the archive) - give a clear, actionable error
-        # instead of the misleading generic "no payload" message.
+        # nested archive: say so instead of a vague 'no payload'
         inner_archives = find_files_by_suffix(extracted_root, {".zip", ".rar", ".7z"})
         if inner_archives:
             names = ", ".join(sorted({a.name for a in inner_archives})[:5])
@@ -10436,7 +9814,7 @@ class App:
 
     @staticmethod
     def _payload_key(root, path) -> str:
-        """Where one game sits inside an unpacked archive, the same on every unpack."""
+        """The game's path relative to the archive root, stable across unpacks."""
         try:
             return Path(path).resolve().relative_to(Path(root).resolve()).as_posix()
         except (OSError, ValueError):
@@ -10454,9 +9832,7 @@ class App:
         return GameItem(path)
 
     def _split_backport_packages(self, root: Path, packages: list) -> tuple[list, list]:
-        """(games, backports) among the packages of an unpacked archive. A package whose name
-        or folder says backport ('backport (4.xx to 10.xx)/…-4xx.pkg') is no game of its own: it
-        goes next to the output with the rest of the release. Alone in the archive it is the job."""
+        """A backport package goes next to the output; alone in the archive it is the job."""
         ol = _organize_module()
         ports = [p for p in packages if ol.name_role(p, root) == "backport"]
         if not ports or len(ports) == len(packages):
@@ -10464,9 +9840,7 @@ class App:
         return [p for p in packages if p not in ports], ports
 
     def _release_extras(self, root: Path, game_paths) -> list:
-        """Everything of an unpacked release that is not one of its games, wherever it sits:
-        the topmost file or folder that holds no game. A folder that holds a game is opened
-        and its other contents taken. OS clutter stays behind; nothing else does."""
+        """Everything that holds no game; only OS clutter stays behind."""
         games = []
         for g in game_paths:
             try:
@@ -10498,8 +9872,7 @@ class App:
 
     @staticmethod
     def _download_extras(item) -> list:
-        """The extras planned from the job's download folder (bundle_release), without what
-        an earlier unpack of the archive added."""
+        """Minus what an earlier unpack of the archive added."""
         rel = getattr(item, "bundle_release", None)
         if not rel:
             return []
@@ -10508,10 +9881,7 @@ class App:
                 if os.path.realpath(x).startswith(root)]
 
     def _sibling_extras(self, parent: Path, game_paths) -> list:
-        """Extra items (DLC subfolders, loose non-junk files) sitting BESIDE the game in an
-        extracted archive tree, to copy next to the .ffpfsc. Excludes the detected game
-        folder(s) and any wrapper that contains one, OS/Finder junk, and side-car note files
-        (.txt/.nfo/images …). The source is never modified - these are copied, not moved."""
+        """Copied, never moved: the source is not touched."""
         ex = set()
         for g in game_paths:
             try:
@@ -10539,10 +9909,7 @@ class App:
         return out
 
     def _copy_item_payload(self, target: GameItem, source: GameItem) -> None:
-        # An fPKG job stays an fPKG job, and a job-editor chain stays a chain (its output
-        # format, sign, patch and backport), whatever the archive turned out to hold: a
-        # game folder, a disk image, a .ffpfsc; the backend unwraps images itself. Those
-        # fields live on the target and are untouched here.
+        # fPKG and chain jobs keep their recipe whatever the archive held
         keep_op = getattr(target, "operation", "pack") in ("fpkg-build", "chain")
         target.path         = source.path
         target.archive_path = source.archive_path
@@ -10557,22 +9924,17 @@ class App:
             if store_art(key, source.artwork):
                 target.art_key = key
         target.status       = source.status
-        # After extraction the source is a real folder on the build drive: it becomes
-        # 'inplace' (packed in place), so the post-extraction re-gate sizes only the
-        # remaining image+spool (~2.3x) rather than re-counting the already-written tree.
+        # now a real folder packed in place: the re-gate sizes only image+spool (~2.3x)
         target.source_kind    = getattr(source, "source_kind", "inplace")
         target.extracted_size = getattr(source, "extracted_size", source.size)
-        # Now that the archive is a real folder, detect whether it's a PlayGo/APR title.
-        # (Only acted on for pack jobs - the fPKG path never injects the emu.)
+        # only pack jobs act on this; the fPKG path never injects the emu
         try:
             target.ampr_emu = is_apr_game(target.path)
         except Exception:
             target.ampr_emu = False
 
     def _launch_scan(self, fn):
-        """Run a source-scan worker on a daemon thread while tracking that a scan is in
-        flight (so a START pressed during the scan doesn't re-add the same source). The
-        counter is decremented in the worker's finally - exactly once per launch - regardless of how the scan ends (ok/error/exception)."""
+        """Counts scans in flight so START can't re-add the source; decremented once in finally."""
         with self._scan_lock:
             self._scan_in_flight += 1
         def _runner():
@@ -10598,13 +9960,11 @@ class App:
             messagebox.showerror("Path not found",
                                   tr("This path does not exist:\n{src}", src=src))
             return
-        # One-shot "scan this folder for images to unpack" flag: whoever set it (the
-        # Converter batch action, an image browse) meant THIS add. Consume it here so it
-        # can never leak into the next folder the user drops.
+        # one-shot flag: consume it here so it never leaks into the next drop
         _unpack_folder = bool(self.unpack_mode_var.get())
         self.unpack_mode_var.set(False)
 
-        # ── PS4 packages (one, or a folder of them): sorted into the library ─────────
+        # PS4 packages: sorted into the library
         if not _unpack_folder and _is_ps4_source(src):
             out = (self.output_var.get() or "").strip()
             if not out:
@@ -10616,10 +9976,9 @@ class App:
             self.log("OK", f"PS4 packages queued: {src.name} -> {out}.  Press Start to run.")
             return
 
-        # ── Existing uncompressed .ffpfs - a PACK source (re-pack to .ffpfsc, or copy
-        #    when the format toggle is set to uncompressed). Read in place, no extraction. ─
+        # .ffpfs: a re-pack source, read in place, no extraction
         if src.is_file() and src.suffix.lower() == ".ffpfs":
-            item = GameItem.from_exfat(src)   # single-file image item, operation = "pack"
+            item = GameItem.from_exfat(src)
             self.queue.append(item)
             self.update_queue_box(select_item=item)
             self.log("OK", f".ffpfs image queued for (re)packing: {src.name}  [{format_size(item.size)}]")
@@ -10628,8 +9987,7 @@ class App:
                                 "Ready", 0, 0, "00:00", " - ", " - ", side=True)
             return
 
-        # ── Existing .ffpfsc image - unpack/convert via MkPFS, or, with '.pkg' as the
-        #    remembered format, straight into an fPKG build (the backend unwraps it). ──
+        # .ffpfsc: unpack via MkPFS, or straight to fPKG when .pkg is remembered
         if src.is_file() and src.suffix.lower() == ".ffpfsc":
             if self.output_format_var.get() == "pkg":
                 item = self._fpkg_item_for(src, dict(self.fpkg_defaults),
@@ -10644,7 +10002,7 @@ class App:
                 self.status_update("Ready", tr(".ffpfsc queued for fPKG build: {name}", name=src.name),
                                     "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                 return
-            item = GameItem.from_pfs_image(src)   # carries operation="unpack" itself
+            item = GameItem.from_pfs_image(src)
             self.queue.append(item)
             self.update_queue_box(select_item=item)
             self.log("OK", f".ffpfsc image queued for extraction: {src.name}  [{format_size(item.size)}]")
@@ -10653,7 +10011,7 @@ class App:
                                 "Ready", 0, 0, "00:00", " - ", " - ", side=True)
             return
 
-        # ── Direct .exfat / .ffpkg disk image - no extraction, passed straight to backend ─
+        # .exfat / .ffpkg go straight to the backend
         if src.is_file() and src.suffix.lower() in DISK_IMAGE_SUFFIXES:
             item = GameItem.from_exfat(src)
             self.queue.append(item)
@@ -10665,10 +10023,9 @@ class App:
                                 "Ready", 0, 0, "00:00", " - ", " - ", side=True)
             return
 
-        # ── Single archive file - queue as placeholder, extract on its turn ─────
+        # single archive: placeholder now, extracted on its turn
         if src.is_file() and src.suffix.lower() in (".zip", ".rar", ".7z"):
-            # Reading the headers of a many-volume set takes seconds on a slow drive: do it
-            # on the scan thread; the main loop queues the item ("archive" message below).
+            # many-volume headers take seconds on a slow drive, so read on the scan thread
             self.status_update("Scanning", tr("Reading archive headers: {name}…", name=src.name),
                                 "Scanning Files", 0, 0, "00:00", " - ", " - ", side=True)
 
@@ -10688,7 +10045,7 @@ class App:
             self._launch_scan(_read_archive)
             return
 
-        # ── Folder of existing PFS images to unpack ──────────────────────────
+        # folder of PFS images to unpack
         if src.is_dir() and _unpack_folder:
             self.status_update("Scanning", tr("Scanning {name} for PFS images…", name=src.name),
                                 "Scanning Files", 0, 0, "00:00", " - ", " - ", side=True)
@@ -10708,7 +10065,6 @@ class App:
             self._launch_scan(_scan_pfs_folder)
             return
 
-        # ── Direct PS5 game folder ────────────────────────────────────────────
         if is_game_folder(src):
             warns = validate_game_structure(src)
             if warns:
@@ -10731,8 +10087,7 @@ class App:
             self._launch_scan(_scan_single)
             return
 
-        # ── Parent / unknown folder ───────────────────────────────────────────
-        # Scan for extracted game folders AND loose archive files
+        # parent or unknown folder: game folders and loose archives
         self.status_update("Scanning", f"Scanning {src.name}…",
                             "Scanning Files", 0, 0, "00:00", " - ", " - ", side=True)
         self.log("INFO", f"Scanning folder: {src}")
@@ -10740,23 +10095,9 @@ class App:
 
         def _scan_folder(p=src, cand_pw=cand_pw, detect_patch=self.auto_integrate_patch_var.get()):
             try:
-                # 0. Bundle: one game (archive / game folder / disk image) plus
-                #    extra files (DLCs etc.). Pack the game into a recreated copy
-                #    of this folder and copy the extras next to it. Only triggers
-                #    when there ARE extras - a plain game still packs normally.
-                #    With auto-patch on, a clearly-smaller game-like sibling is
-                #    detected as a patch and overlaid, so a bundle can be just
-                #    base + patch with no other extras.
+                # bundle: one game plus extras, packed into a recreated copy of this folder
                 game, siblings, all_games, patch = detect_game_bundle(p, cand_pw, self.log, detect_patch)
-                # Bundle triggers when:
-                # - there's a game + extras (siblings/patch), OR
-                # - the folder holds exactly one game which is a single FILE (archive
-                #     or disk image) and nothing else - so the folder name itself acts
-                #     as the bundle identity at the destination (user request: "pick a
-                #     folder with one RAR in it → mirror the folder name to the output").
-                # A folder whose game is a SUBFOLDER (already a game folder) doesn't
-                # trigger this - it stays a plain game pack so the output isn't pointlessly
-                # nested in a duplicate folder layer.
+                # a lone file game bundles too (folder name to output); a game subfolder doesn't
                 naked_file_game = (game is not None
                                    and game.is_file()
                                    and not siblings and not patch)
@@ -10771,10 +10112,7 @@ class App:
                                    "the folder will be recreated at the destination.")
                     self.scan_q.put(("ok", GameItem.from_bundle(p, game, siblings, patch)))
                     return
-                # 0b. Library: each immediate subfolder holds its own game →
-                #     one bundle per subfolder (each recreated at the destination
-                #     with only the .ffpfsc plus extras inside). Covers "select
-                #     /…/PS5 Games and convert every game".
+                # library: one bundle per subfolder that holds a game
                 lib = scan_parent_for_bundles(p, cand_pw, self.log, detect_patch)
                 if lib:
                     self.log("OK", f"Library scan: {len(lib)} game folder(s) found - each will be "
@@ -10782,7 +10120,6 @@ class App:
                     self.scan_q.put(("bundles", lib))
                     return
 
-                # 1. Look for extracted game folders first
                 self.log("INFO", "Looking for PS5 game folders…")
                 games = find_game_folders(p)
                 if games:
@@ -10796,18 +10133,15 @@ class App:
                         self.scan_q.put(("multi_found", games))
                     return
 
-                # 2. No extracted games - look for .exfat/.ffpkg images and archive files (one level deep)
+                # no game folders: disk images and archives, one level deep
                 self.log("INFO", "No game folders found - scanning for disk images and archives…")
                 image_files = []   # .exfat and .ffpkg
-                archives_raw = []  # every .zip/.rar/.7z on disk, including every .partN.rar volume
+                archives_raw = []  # every volume, .partN.rar included
                 try:
                     for f in p.iterdir():
                         if not f.is_file():
                             continue
-                        # Skip macOS/Windows filesystem junk: a '._Game.rar' AppleDouble
-                        # sidecar (created when a .rar is copied to exFAT/FAT) carries the
-                        # real file's suffix, so without this it would queue as a bogus
-                        # 'archive'. Same for ._*.exfat, .DS_Store, Thumbs.db, …
+                        # exFAT AppleDouble sidecars like '._Game.rar' keep the real suffix. lovely
                         if is_fs_junk_name(f.name):
                             continue
                         suffix = f.suffix.lower()
@@ -10821,11 +10155,7 @@ class App:
                     self.log("WARN", f"Could not list folder contents: {e}")
 
                 image_files.sort(key=lambda f: f.name.lower())
-                # Dedup multi-part RAR sets: a set like name.part1.rar, name.part2.rar, …
-                # is ONE game, not N. Normalise every part to its first volume and unique
-                # the result so the queue gets ONE item per archive set (the from_archive
-                # builder already keys off the first volume for size + extraction). Log
-                # one line per SET, not per file on disk.
+                # a .partN.rar set is one game: key every part by its first volume
                 archives_raw.sort(key=lambda f: f.name.lower())
                 seen, archives = set(), []
                 for f in archives_raw:
@@ -10849,9 +10179,7 @@ class App:
                     self.scan_q.put(("archives_found", archives))
                     return
 
-                # 3a. Split .7z/.zip volumes (.7z.001 / .zip.001 / .z01) - not
-                #     recombined automatically. Recognise them so the user gets clear
-                #     guidance instead of a confusing "nothing found".
+                # split .7z/.zip volumes aren't recombined; tell the user instead of 'nothing found'
                 split_parts = []
                 try:
                     for f in p.iterdir():
@@ -10873,7 +10201,6 @@ class App:
                     ))
                     return
 
-                # 3b. Nothing useful found
                 self.log("WARN", f"No games, disk images, or archives found in {p}")
                 self.scan_q.put((
                     "error",
@@ -10887,8 +10214,7 @@ class App:
         self._launch_scan(_scan_folder)
 
     def _archive_set_size(self, archive: Path) -> int:
-        """Total on-disk size of the archive's volume set (third-party archives are usually
-        stored, so this ~= the extracted payload size). Used for the auto drive decision."""
+        """Archives are usually stored, so this is about the extracted size."""
         try:
             base = re.sub(
                 r'(\.part\d+\.rar|\.r\d{2,}|\.7z\.\d+|\.zip\.\d+|\.z\d+|\.\d{3}|\.rar|\.zip|\.7z)$',
@@ -10908,7 +10234,7 @@ class App:
                 return 0
 
     def _mark_no_spotlight(self, *dirs) -> None:
-        """macOS: drop a `.metadata_never_index` marker in each scratch dir so Spotlight skips it."""
+        """macOS: a .metadata_never_index marker keeps Spotlight out."""
         if sys.platform != "darwin":
             return
         for d in dirs:
@@ -10924,7 +10250,7 @@ class App:
                 pass
 
     def _warm_drive_types(self) -> None:
-        """Kick off background SSD/HDD probes for the source + temp + output drives so temp_drive_label()/drive_type_cached() have honest data at pack time without ever blocking the UI thread on diskutil/PowerShell."""
+        """Background SSD/HDD probes, so diskutil/PowerShell never blocks the UI."""
         probes = [self.output_var.get().strip(), self.source_var.get().strip()]
         probes += [str(d) for d in self._temp_pool_dirs()]   # primary temp + extra pool drives
         for p in probes:
@@ -10932,11 +10258,8 @@ class App:
                 continue
             threading.Thread(target=lambda pp=Path(p): get_drive_type(pp), daemon=True).start()
 
-    # ── Keep-awake pinger ──────────────────────────────────────────────────────
     def _start_keep_awake(self) -> None:
-        """One long-lived daemon that pings the configured drives so bus-powered
-        external HDDs don't sleep. It checks the toggle each cycle (so flipping the
-        Settings checkbox takes effect without restarting the thread)."""
+        """Checks the toggle each cycle, so a Settings change needs no restart."""
         self._keepawake_stop = threading.Event()
         self._keepawake_announced = False
         self._keepawake_thread = threading.Thread(target=self._keep_awake_loop, daemon=True)
@@ -10944,7 +10267,6 @@ class App:
 
     @staticmethod
     def _dev_of(path):
-        """st_dev for the volume holding *path* (its parent if it's a file), or None."""
         if not path:
             return None
         try:
@@ -10955,7 +10277,7 @@ class App:
             return None
 
     def _temp_pool_dirs(self):
-        """Ordered, device-deduped list of fast-temp candidate directories: the primary temp field first, then the extra pool dirs from Settings."""
+        """Primary temp first, then the extra pool dirs; one per device."""
         out, seen = [], set()
         primary = self.temp_var.get().strip()
         cands = ([primary] if primary else []) + [str(p).strip() for p in getattr(self, "temp_pool", [])]
@@ -10976,9 +10298,7 @@ class App:
         return out
 
     def _keepalive_dirs(self):
-        """(dir, st_dev) per physical drive the pinger may touch - source, output, and
-        every temp-pool drive. Skips drives we have CONFIRMED to be SSDs (no point), and
-        keeps HDD plus still-unknown drives (the WD Elements externals report 'Unknown')."""
+        """Skips confirmed SSDs; WD Elements externals report 'Unknown', so those stay."""
         seen, out = set(), []
         raws = []
         for v in (self.source_var, self.output_var):
@@ -11007,10 +10327,7 @@ class App:
         return out
 
     def _busy_devices(self):
-        """Best-effort set of device IDs the current job is actively reading/writing, by
-        worker phase, so the pinger can SKIP them - a flushed write there forces a pointless
-        seek away from the streaming I/O. Empty set ⇒ ping every configured drive (the safe
-        default when we can't tell, e.g. during pre-worker archive extraction or 'Starting')."""
+        """Drives the job is streaming on, the pinger skips them; empty means ping all."""
         w = getattr(self, "worker", None)
         if w is None or not getattr(w, "is_alive", lambda: False)():
             return set()
@@ -11028,9 +10345,7 @@ class App:
                 if dev is not None:
                     busy.add(dev)
         if phase in ("Scanning Files", "Reading Game", "Creating Temp PFS"):
-            # pass 1: read source, write inner image. An archive reads from its extracted
-            # dir (_build_root); a plain folder reads from its original path (_build_root is
-            # an unused extract dir for folders, so don't treat it as busy).
+            # pass 1; for a plain folder _build_root is an unused extract dir, not busy
             add((br or src) if arch else src, bt)
         elif phase in ("Compressing", "Writing Final Image"):
             add(bt, out)                 # pass 2: read inner image, write .ffpfsc
@@ -11041,9 +10356,7 @@ class App:
         return busy
 
     def _job_active(self) -> bool:
-        """True while the app is actively working the drives (a batch, a live pack worker,
-        a running backend process, or a pending extraction). Used to scope the keep-awake
-        pinger to runs only - outside a run we let external HDDs fully sleep."""
+        """Outside a run the external HDDs may sleep; the pinger asks this."""
         try:
             if getattr(self, "_batch_running", False):
                 return True
@@ -11067,15 +10380,12 @@ class App:
             except Exception:
                 pass
             if active:
-                # Fast ping (default 8 s, under WD IntelliPark's 8 s park timer) keeps heads
-                # LOADED across inter-game gaps instead of unpark→re-park churn.
+                # 8 s, under WD IntelliPark's park timer: heads stay loaded between games
                 try:
                     interval = max(3, min(15, int(load_settings().get("keep_awake_interval", 8))))
                 except Exception:
                     interval = 8
-                # Ping only the drives the job ISN'T currently hammering: a flushed write on
-                # an actively-streaming drive just forces a wasteful seek, and a busy drive
-                # can't sleep anyway. The idle-but-needed-soon drive is the one worth holding.
+                # skip drives the job is hammering, a flushed write there only forces a seek
                 busy = self._busy_devices()
                 pinged = 0
                 for d, dev in self._keepalive_dirs():
@@ -11089,23 +10399,20 @@ class App:
                     self._keepawake_announced = True
             else:
                 self._keepawake_announced = False
-            # Ping on the fast interval during a run; otherwise just poll the gate every 5 s.
             self._keepawake_stop.wait(interval if active else 5)
 
     def _same_drive_rw_allowed(self, path) -> bool:
-        """Whether reading the source and writing the image/output on the SAME drive is OK for *path* - costless on an SSD (no seek), painful on an HDD."""
+        """Free on an SSD, painful on an HDD."""
         mode = (load_settings().get("same_drive_rw", "auto") or "auto").lower()
         if mode == "always":
             return True
         if mode == "never":
             return False
         try:
-            # Use the warmed cache first; only block on a probe if it's not known yet
-            # (now self-healing - Unknown is never cached, so a transient miss re-probes).
+            # Unknown is never cached, so a miss probes again
             dt = drive_type_cached(Path(path))
             if dt == "Unknown":
                 dt = get_drive_type(Path(path))
-            # Log the detection ONCE per drive so it's visible why same-drive is on/off.
             try:
                 k = _drive_cache_key(Path(path))
                 if not hasattr(self, "_drive_type_logged"):
@@ -11121,10 +10428,7 @@ class App:
             return False
 
     def _archive_extract_pct(self, item) -> float:
-        """The share of the whole job an archive's unpack takes in the queue bar: a copy job
-        whose unpack lands on its output drive only renames afterwards (nearly all of it),
-        one that copies across drives moves the same bytes again (half); a build follows
-        with its own long stages (ARCHIVE_EXTRACT_OVERALL_PCT)."""
+        """A copy job unpacking onto its output drive only renames later; across drives it's half."""
         if getattr(item, "operation", "") != "copy":
             return ARCHIVE_EXTRACT_OVERALL_PCT
         root, out = getattr(item, "_build_root", None), self._job_output_dir(item)
@@ -11136,9 +10440,7 @@ class App:
         return ARCHIVE_EXTRACT_COPY_PCT
 
     def _planned(self, item):
-        """*item* as the router would place it now: the running job (or one already placed and
-        unpacked) as it is, any other job as a copy placed without a log line, so looking at a
-        job never moves it. Cached for 10 s per job (free space changes slowly)."""
+        """Other jobs are planned on a copy, so looking never moves one; cached 10 s."""
         if item is self._running_item() or getattr(item, "_from_archive", False):
             return item
         cache = self.__dict__.setdefault("_plan_cache", {})
@@ -11155,16 +10457,13 @@ class App:
         return probe
 
     def _resolve_extract_root(self, item, quiet: bool = False) -> Path:
-        """Place this run's artifacts across drives to maximise fast (SSD) temp use, and record the choice on the item: _build_root (where an archive extracts) and _build_temp (the backend --temp-dir = where the inner image goes)."""
+        """Sets _build_root (archive extract dir) and _build_temp (--temp-dir, inner image)."""
         archive = getattr(item, "archive_path", None)
-        # Record the output format so the space gate sizes the OUTPUT-drive reservation
-        # correctly (compressed .ffpfsc → realistic; uncompressed .ffpfs → full size).
-        # Honour the per-job format when set, else the remembered default.
+        # space gate: .ffpfsc reserves a realistic size, .ffpfs the full one
         try:
             _pj = getattr(item, "output_compressed", None)
             item._output_compressed = bool(self.output_compressed_var.get() if _pj is None else _pj)
-            # (An fPKG is compressed too - every file is Kraken-packed whatever the codec
-            # layer - so the compressed-output estimate applies to .pkg output as well.)
+            # an fPKG is Kraken-packed per file, so the compressed estimate fits .pkg too
         except Exception:
             item._output_compressed = True
         temp_base = self.temp_var.get().strip()
@@ -11182,9 +10481,7 @@ class App:
             item._extract_on_pool = False
         set_temp()   # default: whole scratch on the temp drive
 
-        # Placement is resolved several times per item (the space gate, the extraction
-        # step, and the post-extraction re-gate), so log a given decision only ONCE per
-        # item - re-log only if the decision actually changes - to keep the log clean.
+        # resolved several times per item, so log each decision once
         def _plog(level, msg):
             if quiet or getattr(item, "_last_placement_log", None) == msg:
                 return
@@ -11196,13 +10493,7 @@ class App:
         out_str = str(_jo) if _jo else ""
         size = _build_size_of(item)
         size_is_estimate = False
-        # Encrypted-header archives (rar -hp / 7z with encrypted file names) report
-        # extracted_size=0, so _build_size_of returns UNKNOWN and the SSD-aware routing
-        # options (1/2/3 - all gated on `size > 0`) would fall through to the safe path
-        # = the bigger output drive. But game .rar/.zip is already heavily compressed
-        # game data, so the on-disk volume size is a tight lower bound for the extracted
-        # payload (~1.0 - 1.05x). Estimate from on-disk size so the SSD routes can run;
-        # the space gate is the backstop if the estimate ever undershoots reality.
+        # encrypted headers report size 0; game archives barely shrink, so ~1.05x on-disk
         if size == 0 and getattr(item, "archive_path", None):
             on_disk = int(getattr(item, "size", 0) or 0)
             if on_disk > 0:
@@ -11228,25 +10519,17 @@ class App:
             probe_out, out_is_source = out_dir, False
 
         same_to = same_drive(temp_base_p, out_dir)
-        # Same-drive read+write: on an SSD (or when forced) it costs nothing, so DON'T
-        # pre-reserve the extra final-image padding for a single-drive build - that padding
-        # is what makes "everything on one drive" fail and pushes the source onto a slower
-        # output drive. Keeping it off lets the source stay on the fast temp drive. The
-        # backend's pre-pass-2 assert is the backstop if a title is unusually incompressible.
+        # same-drive rw is free on an SSD, so no padding; the pass-2 assert is the backstop
         same_rw_ok = self._same_drive_rw_allowed(temp_base_p)
         item._same_drive_ok = bool(same_rw_ok)
-        # A .pkg chain unpacks the package where it builds the image (its --temp-dir): no
-        # split between an image drive and a source drive exists for it, and pass 2 streams
-        # into the output with no spool check behind it, so a shared drive holds the image and
-        # the finished file together.
+        # .pkg chain: image and finished file share one drive, no spool check in pass 2
         pkg_chain = (getattr(item, "operation", "") == "chain" and chain_needs_unpack(item)
                      and chain_source_kind(item) == "pkg")
         same_pad = same_to and (pkg_chain or not same_rw_ok)
         full_need  = estimate_peak_space_needed(size, factor, same_pad)  # src+image+spool on temp
         image_need = estimate_image_space_needed(size)                   # just the inner image on temp
         out_full   = estimate_peak_space_needed(size, factor, True)      # everything on the output drive
-        # Output drive must hold, in the split: the source copy extracted there (archives
-        # only) + the final container (the spool only spills here if the SSD can't hold it).
+        # split: output holds the extracted source (archives) plus the final container
         comp_out = bool(getattr(item, "_output_compressed", True))
         known_out = int(getattr(item, "size", 0) or 0) if getattr(item, "source_kind", "") == "archive" else 0
         src_on_out = size if archive else 0
@@ -11256,12 +10539,10 @@ class App:
         szs = (format_size(size) + " est.") if size_is_estimate else (format_size(size) if size else "?")
         contention = " (output is the source drive: read+write contention, slower)" if out_is_source else ""
 
-        # ── Disk images (.exfat, .ffpkg): single-pass - mkpfs compresses the file
-        # directly to .ffpfsc without building a temp inner image.  Temp = irrelevant;
-        # only the output drive needs space for the final container. ──────────────────
+        # disk images are single-pass: no inner image, only the output needs space
         if _item_is_single_pass(item):
             output_need = estimate_output_space_needed(size, comp_out, 0)
-            set_spread()   # _build_temp on the output drive (backend still needs a temp dir)
+            set_spread()  # the backend still wants a temp dir
             if size == 0 or out_free >= output_need:
                 if size > 0:
                     _plog("INFO", f"Auto: {item.name} (~{szs}): disk image → single-pass "
@@ -11282,8 +10563,7 @@ class App:
             set_spread()
             _plog("INFO", f"Drive 'spread': building on the output drive {out_dir}{contention}.")
             return spread_root
-        # AUTO ---------------------------------------------------------------------
-        # Fast-temp candidates (primary temp + any extra pool drives), each with free space.
+        # auto: fast-temp candidates with their free space
         pool = []
         for d in self._temp_pool_dirs():
             try:
@@ -11301,16 +10581,12 @@ class App:
             item._extract_on_pool = on_pool
 
         def _scratch(d):
-            """App-owned scratch on pool drive *d*: the primary temp folder as configured;
-            an EXTRA pool entry gets its own '_ffpfsc_temp' subfolder, so cleanup, the
-            Spotlight marker and mkpfs scratch never land in the user's drive root."""
+            """Extra pool drives get a '_ffpfsc_temp' subfolder, never the drive root."""
             d = Path(d)
             return d if d == temp_base_p else d / "_ffpfsc_temp"
 
         def _is_ssd(d):
-            # Pure speed test for a pool drive (independent of the same-drive-rw policy):
-            # used to keep the inner image / SSD↔SSD legs on actual flash, never a slow HDD
-            # pool entry that merely happens to have the most free space.
+            # speed only: keep the image on real flash, not a roomy HDD pool entry
             try:
                 dt = drive_type_cached(Path(d))
                 if dt == "Unknown":
@@ -11319,15 +10595,7 @@ class App:
             except Exception:
                 return False
 
-        # 1) Everything on ONE fast drive (source + image + spool) - this is a same-drive
-        #    read+write, so only consider drives where that's allowed (an SSD under 'auto');
-        #    a big HDD pool entry must NOT win here just by having the most free space (that's
-        #    the slow same-spindle case we avoid). Prefer an SSD, then most free.
-        #    Skip this when the size is only an ESTIMATE (archive header unreadable): a
-        #    well-compressing game can be far bigger than the on-disk guess, and putting the
-        #    source on the SSD would then fill it so the inner image can't fit there and
-        #    falls back to the slow output drive. With an estimate we reserve the SSD for
-        #    the image and extract the source to the output drive (option 3) instead.
+        # 1) all on one fast drive where same-drive rw is OK; not on a size estimate
         fit_full = [(d, f) for d, f in pool if f >= full_need and self._same_drive_rw_allowed(d)]
         if size > 0 and fit_full and not size_is_estimate:
             ssd_full = [(d, f) for d, f in fit_full if _is_ssd(d)]
@@ -11336,10 +10604,7 @@ class App:
             if _drive_cache_key(best) != _drive_cache_key(temp_base_p):
                 _plog("INFO", f"Auto: {item.name} (~{szs}): whole scratch on pool drive {best}.")
             return item._build_root
-        # 2) TWO fast drives (archives only): inner image on one, extracted source on
-        #    ANOTHER - keeps pass 1 SSD↔SSD when no single fast drive holds image+source.
-        #    Also skipped on an estimate (same reason as option 1 - don't commit the
-        #    source to an SSD until the real size is known).
+        # 2) archives: image on one SSD, source on another; not on an estimate either
         if size > 0 and is_archive_pre and not size_is_estimate and not pkg_chain:
             img_fit = [(d, f) for d, f in pool if f >= image_need and _is_ssd(d)]
             if img_fit:
@@ -11353,9 +10618,7 @@ class App:
                     _plog("INFO", f"Auto: {item.name} (~{szs}): extract source → {ext_dir}; "
                                      f"inner image → {img_dir}; final → {out_dir}. Pass 1 stays SSD↔SSD.")
                     return item._build_root
-        # 3) SPLIT - inner image on a fast drive, source extracted to the OUTPUT drive; the
-        #    backend routes the spool adaptively. Reads source off one drive while writing
-        #    the image to the other, so neither HDD does a same-drive read+write.
+        # 3) split: image on a fast drive, source on the output drive, no same-drive rw
         img_fit = [(d, f) for d, f in pool if f >= image_need]
         if size > 0 and img_fit and out_free >= out_split_need and not pkg_chain:
             ssd_img = [(d, f) for d, f in img_fit if _is_ssd(d)]
@@ -11365,23 +10628,20 @@ class App:
                              f"({out_dir}); 2) build inner image → {temp_drive_label(img_dir)} "
                              f"({img_dir}); spool auto-routed. No same-drive read+write.")
             return spread_root
-        # 4) Everything on the output drive (mechanical, slower, but it completes).
+        # 4) all on the output drive: slower, but it completes
         if out_free >= out_full:
             set_spread()
             why = "too big for the temp drive(s)" if size > 0 else "unknown size - using the larger drive for safety"
             _plog("INFO", f"Auto: {item.name} (~{szs}) {why} → building on {out_dir}"
                              f"{contention or ' (mechanical drive, slower, but it completes)'}.")
             return spread_root
-        # 5) Nothing fits - leave temp; the space gate aborts/skips with real numbers.
+        # 5) nothing fits: stay on temp, the space gate skips it with real numbers
         _plog("WARN", f"Auto: {item.name} (~{szs}) fits neither the temp drive(s) (~{format_size(image_need)}) "
                           f"nor the output drive (~{format_size(out_full)}) - the space gate will skip/abort it.")
         return temp_root
 
     def _scratch_parent_roots(self, item=None) -> set:
-        """Resolved folders under which THIS app creates its '_extracted' /
-        '_ffpfsc_extract' scratch: the temp folder, every temp-pool entry (and its
-        '_ffpfsc_temp' subfolder), the output folder(s) and the item's recorded build
-        dirs. A folder the user happened to name '_extracted' anywhere else is not ours."""
+        """A folder the user named '_extracted' anywhere else is not ours."""
         cands = []
         try:
             cands.append(self.temp_var.get().strip())
@@ -11389,8 +10649,7 @@ class App:
         except Exception:
             pass
         try:
-            # Every configured pool entry, not only the device-deduplicated set the router
-            # uses: a folder that was scratch under an earlier configuration stays ours.
+            # every configured entry: scratch from an older setup stays ours
             pool = list(self._temp_pool_dirs()) + [str(x) for x in (getattr(self, "temp_pool", None) or [])]
             for d in pool:
                 cands.append(str(d))
@@ -11413,7 +10672,7 @@ class App:
         return roots
 
     def _extract_dir_for_item(self, item):
-        """The extract subdir THIS item was unpacked into (under a temp '_extracted' or an output-drive '_ffpfsc_extract' folder the app created), or None for a plain (non-extracted) source."""
+        """The item's unpack dir under an app-made '_extracted' or '_ffpfsc_extract', else None."""
         try:
             src = Path(getattr(item, "path", "") or "").resolve()
         except Exception:
@@ -11431,15 +10690,12 @@ class App:
 
     @staticmethod
     def _run_took_files(worker) -> bool:
-        """The run may have taken files out of its unpack: it said so, or it was allowed to (the
-        backend prints its notice after a file is gone, so a crash in between says nothing)."""
+        """The backend says so only after a file is gone, so a crash in between says nothing."""
         return bool(worker is not None and (getattr(worker, "consumed", False)
                                             or "--stage-in-place" in (getattr(worker, "cmd", None) or [])))
 
     def _mark_source_taken_in(self, item, cmd) -> None:
-        """Before a run that takes files out of the app's own unpack, record it in the saved
-        queue: should the app end mid-run, the restart unpacks the archive again instead of
-        building from a copy that lacks files."""
+        """Saved first, so a crash mid-run unpacks again instead of using a gutted copy."""
         taken = "--stage-in-place" in (cmd or [])
         if bool(getattr(item, "source_taken_in", False)) != taken:
             item.source_taken_in = taken          # per run: only this run's command counts
@@ -11451,7 +10707,7 @@ class App:
 
     @staticmethod
     def _queue_marks_taken_in(item) -> bool:
-        """The saved queue on disk carries the job's taken-in mark (read back, not assumed)."""
+        """Read back from disk, not assumed."""
         try:
             src = str(getattr(item, "path", "") or "")
             return any(d.get("source_taken_in") is True and str(d.get("path") or "") == src
@@ -11460,16 +10716,14 @@ class App:
             return False
 
     def _consumable_extract(self, item) -> bool:
-        """The job's source is the app's own unpack of an archive, and no other job of the
-        queue reads from that unpack: the backend may free its files as it takes them in."""
+        """The backend may free files only when no other job reads this unpack."""
         own = self._extract_dir_for_item(item)
         if own is None or not getattr(item, "origin_archive", None):
             return False
         return own not in self._open_extracts(exclude=item)
 
     def _open_jobs(self, exclude=None):
-        """Jobs that still read or hold their extracted copy: waiting or running, failed and kept
-        it, or done with extras that did not reach the output."""
+        """Waiting, running, failed with a kept copy, or done with extras still missing."""
         for j in self.queue:
             if j is exclude or getattr(j, "archive_path", None):
                 continue
@@ -11480,14 +10734,11 @@ class App:
             yield j
 
     def _open_extracts(self, exclude=None) -> set:
-        """Extracted copies (their top folders) a queued job still reads from. Several games of
-        one archive share one."""
+        """Several games of one archive share one copy."""
         return {r for r in (self._extract_dir_for_item(j) for j in self._open_jobs(exclude)) if r is not None}
 
     def _extract_cleanup_parts(self, item, keep_own_extras: bool = False) -> list:
-        """What cleaning up *item*'s extracted copy deletes: all of it, or, while other jobs
-        still read from the same copy, all of it but what they read. Mid-job (after pass 1)
-        the job's own extras stay too: they are copied next to the output only at the end."""
+        """Spares what other jobs still read; mid-job also the job's own extras."""
         root = self._extract_dir_for_item(item)
         if root is None:
             return []
@@ -11507,7 +10758,6 @@ class App:
         return removable_parts(root, keep) if keep else [root]
 
     def _reclaim_temp_base_inline(self, tp: str) -> None:
-        """Remove our throwaway patch-extract dirs and, when the app-managed _ffpfsc_temp folder is empty, the folder itself - so no empty temp folder lingers after a job."""
         tp = (tp or "").strip()
         if not tp:
             return
@@ -11523,8 +10773,7 @@ class App:
                 ex.rmdir()
         except Exception:
             pass
-        # Remove the app-managed temp base only when no more jobs are queued (the last
-        # job is done) - mid-batch it's reused, so don't churn-delete it every item.
+        # only after the last job; mid-batch the temp base gets reused
         try:
             if (not self.queue and base.name == "_ffpfsc_temp"
                     and base.is_dir() and not any(base.iterdir())):
@@ -11534,8 +10783,7 @@ class App:
             pass
 
     def _cleanup_item_extract(self, item) -> None:
-        """After an item finishes, remove its extracted copy (all but what other jobs still read),
-        then reclaim the temp base if it's now empty. Threaded (rmtree large)."""
+        """Spares what other jobs still read; the rmtree runs on a thread."""
         d = self._extract_dir_for_item(item)
         parts = self._extract_cleanup_parts(item)
         _tp = (self.temp_var.get() or "").strip()   # snapshot on the main thread
@@ -11552,18 +10800,17 @@ class App:
                         pass
             except Exception:
                 pass
-            # Always (even for folder/fake-sign jobs with no extracted dir): drop our
-            # throwaway patch dirs and the now-empty temp base.
+            # also for jobs with no extracted dir
             self._reclaim_temp_base_inline(tp)
         self._run_cleanup(_work)
 
     def _free_source_after_pass1(self, item) -> None:
-        """Mid-build hook (on the backend's [PASS1-DONE] marker): pass 1 has produced the inner image, so the extracted SOURCE is no longer needed (pass 2 reads only the inner image, and an OOM retry resumes from it)."""
+        """On [PASS1-DONE]: pass 2 and an OOM retry only need the inner image."""
         if item is None or getattr(item, "_source_freed", False):
             return
         own = self._extract_dir_for_item(item)
         if own is None:
-            return   # user's own folder - never delete
+            return  # user's own folder, never delete
         item._source_freed = True
         parts = self._extract_cleanup_parts(item, keep_own_extras=True)   # not what other jobs still read, nor its own extras
         def _work(d=own):
@@ -11583,7 +10830,7 @@ class App:
         self._run_cleanup(_work)
 
     def _cleanup_inner_image(self, item) -> None:
-        """Remove the persisted pass-1 inner image (kept on the build drive so an OOM retry can resume pass-2 from it without rebuilding)."""
+        """Kept until now so an OOM retry could resume pass 2."""
         if item is None:
             return
         inner = getattr(item, "_inner_image", None)
@@ -11615,7 +10862,7 @@ class App:
         self._run_cleanup(_work)
 
     def _candidate_passwords(self, item=None) -> list[str]:
-        """Ordered, de-duplicated password candidates for an extraction: 1) the explicit single-field password (left panel / settings), 2) a per-archive override on the queue item (if any), 3) every entry in the global auto-tried list."""
+        """Order: the explicit password, the job's own, then the global list; no dupes."""
         cands: list[str] = []
         explicit = self.password_var.get().strip()
         if explicit:
@@ -11636,17 +10883,14 @@ class App:
                 out.append(p)
         return out
 
-    # ── Extract archive when it reaches the front of the queue ───────────────
     def _extract_queued_item(self, item):
-        """Extract item.archive_path in a background thread, then call start() again."""
+        """Runs on a thread, then calls start() again."""
         archive = item.archive_path
         extract_root = self._resolve_extract_root(item)
-        # Keep Spotlight off the scratch: indexing the tens of thousands of files we're
-        # about to extract competes for the SAME (often mechanical) drive we then read
-        # them back from - a big throttle. Mark the extract + temp dirs no-index first.
+        # keep Spotlight off the scratch, it fights us for the same (often spinning) drive
         self._mark_no_spotlight(extract_root, getattr(item, "_build_temp", None))
 
-        self._active_item = item   # so terminal handlers can clean THIS item if the queue changed
+        self._active_item = item  # terminal handlers clean this one even if the queue changed
         item.status = "Extracting"
         self.cancel_requested = False
         self.extract_cancel_event.clear()
@@ -11662,15 +10906,12 @@ class App:
         _last_pct = [-1]
         _share = self._archive_extract_pct(item)
         _t0 = time.monotonic()
-        # what the unpack writes: the size read from the archive's headers, else (an
-        # encrypted header) the archive itself, which game data hardly shrinks
+        # header size, else the archive itself; game data hardly shrinks
         _unpacked = int(getattr(item, "extracted_size", 0) or 0) or int(archive_set_ondisk_size(archive) or 0)
 
         def _progress(pct, filename):
             if pct - _last_pct[0] >= 1 or pct >= 100:
                 _last_pct[0] = pct
-                # Step bar shows the FULL extraction %; the queue bar (overall) counts the
-                # unpack as its share of the whole job (see _archive_extract_pct).
                 secs = time.monotonic() - _t0
                 speed, eta = unpack_rate(pct, secs, _unpacked)
                 self.status_update("Extracting",
@@ -11678,7 +10919,7 @@ class App:
                                     "Extracting", pct, pct * _share / 100.0,
                                     format_duration(secs), speed, eta, job=item)
 
-        candidate_passwords = self._candidate_passwords(item)  # includes per-archive override
+        candidate_passwords = self._candidate_passwords(item)
 
         def worker():
             try:
@@ -11695,7 +10936,6 @@ class App:
                 if getattr(item, "auto_output", False):
                     self._auto_resolve_unpacked(item, kind, paths)
                 if getattr(item, "content_kind", "") == ORGANIZE_TARGET:
-                    # The whole extraction goes into the library, each item in its own format.
                     item.origin_archive = str(archive)
                     item.origin_extracted_size = int(getattr(item, "extracted_size", 0) or 0)
                     item.path, item.archive_path = Path(extracted_root), None
@@ -11710,8 +10950,6 @@ class App:
                 if kind == "ps4":
                     item.operation = "copy"           # sorted into the library, whatever the job said
                 if kind == "pkg" and getattr(item, "operation", "") != "chain":
-                    # A package is unpacked through the chain; an older pack job keeps its
-                    # format, an fPKG job builds a .pkg again.
                     item.chain_to = ("pkg" if getattr(item, "operation", "") == "fpkg-build" else
                                      "ffpfs" if getattr(item, "output_compressed", True) is False else "ffpfsc")
                     item.operation = "chain"
@@ -11752,19 +10990,11 @@ class App:
                         self._names_dirty = True
                 except Exception:
                     pass
-                # (Extra payload items of a multi-game archive queued as an fPKG job are
-                # converted in the _extract_q "ok" handler - on the main thread, since the
-                # conversion reads Tk variables.)
-                # Mark this as an extracted-archive item so the pack worker compresses its
-                # overall progress into the tail after the extraction slice (monotonic
-                # whole-game %). Underscore attr → not persisted in the saved queue.
+                # progress goes after the extract slice; underscore attrs aren't saved with the queue
                 item._from_archive = True
                 if len(payload_items) > 1 and not want:
                     self._group_games_of_archive(item, payload_items[1:])
-                # Carry extra subfolders/files that sit BESIDE the game in the archive
-                # (e.g. an '[ ALL DLC ]' wrapper) so they're copied next to the .ffpfsc.
-                # Skipped when the archive root IS the game (no wrapper → no siblings).
-                # what sits beside the archive in its download folder stays on the list
+                # extras beside the game in the archive (an '[ ALL DLC ]' wrapper) go along
                 planned = self._download_extras(item)
                 if kind == "pkg":
                     # a package release: backports, checksums and the rest all go along
@@ -11788,12 +11018,8 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ── Patch jobs: resolve archive game / .7z patch before the job runs ───────
     def _patch_needs_prepare(self, item) -> bool:
-        """True when a queued patch job still has an ARCHIVE game (.zip/.rar/.7z) or a
-        .7z patch that must be extracted to a folder before packing. After prepare the
-        game path is a folder, so this naturally returns False on re-entry. (.zip/.rar
-        patches are NOT pre-extracted - the backend --patch handles those itself.)"""
+        """.zip/.rar patches are left to the backend's --patch; only .7z gets unpacked here."""
         if getattr(item, "operation", "") != "patch":
             return False
         try:
@@ -11810,8 +11036,7 @@ class App:
     def _patch_prepare_failed(self, item, msg: str):
         self.log("ERROR", f"Patch prepare failed: {msg}")
         self.status_update("Failed", tr("Patch prepare failed: {msg}", msg=msg), "Failed", 0, 0, "00:00", " - ", " - ")
-        # Keep the failed item in the queue (marked Failed, moved to the end) - only
-        # successful items disappear.
+        # failed items stay, only successful ones leave
         self._retire_failed(item, "Failed")
         if self._batch_running:
             self._batch_failed += 1
@@ -11831,9 +11056,7 @@ class App:
             self.update_queue_box()
 
     def _prepare_patch_item(self, item):
-        """Extract a patch job's archive game and/or .7z patch to temp folders, update the
-        item to point at the extracted folders, then re-enter the launcher. Runs on a
-        background thread (extraction is slow); Tk touches are marshalled to the main loop."""
+        """Background thread; Tk calls go through the main loop."""
         self._active_item = item
         item.status = "Extracting"
         self.cancel_requested = False
@@ -11859,7 +11082,7 @@ class App:
                     gp = ArchiveExtractor.extract_with_passwords(
                         game, Path(temp_base) / "_patch_game", pw,
                         log_fn=self.log, cancel_event=self.extract_cancel_event)
-                    inplace = True   # extracted to a throwaway temp → overlay in place
+                    inplace = True  # throwaway temp copy, so overlay in place
                 pp = patch
                 if patch is not None and patch.suffix.lower() == ".7z":
                     self.log("INFO", f"Extracting .7z patch: {patch.name}")
@@ -11889,21 +11112,17 @@ class App:
                 self.root.after(0, lambda m=str(e): self._patch_prepare_failed(item, m))
         threading.Thread(target=work, daemon=True).start()
 
-    # ── Listbox keyboard reorder ──────────────────────────────────────────────
-    # ── Queue selection helper ─────────────────────────────────────────────────
     def _queue_sel_idx(self) -> int | None:
-        """Return the currently selected listbox index, or None."""
         sel = self.queue_listbox.curselection()
         return int(sel[0]) if sel else None
 
     def _on_queue_select(self, _event=None):
-        """When a row is clicked, update the game details panel."""
         idx = self._queue_sel_idx()
         if idx is not None and idx < len(self.queue):
             self.update_game_details(self.queue[idx])
 
     def _resolve_archive_password(self, item) -> None:
-        """Prompt for an archive item's password when no saved candidate unlocks its header (extracted_size is still 0 after from_archive's auto-probe)."""
+        """Only when no saved password opened the header (extracted_size still 0)."""
         if (getattr(item, "source_kind", "") != "archive"
                 or getattr(item, "extracted_size", 0) > 0
                 or not getattr(item, "archive_path", None)):
@@ -11914,8 +11133,7 @@ class App:
             self._log_archive_problem(item)
             return
         if not getattr(item, "header_locked", False):
-            # A saved password (or none) opened the header; only the size looked odd, so the
-            # drive routing estimates it. Asking for a password would be wrong here.
+            # the header opened, only the size looked odd: asking for a password would be wrong
             self.log("INFO", f"'{arc.name}': the archive opens, but its size could not be trusted; "
                              f"the drive routing estimates it.")
             return
@@ -11939,7 +11157,7 @@ class App:
                 return
             pw = (dlg.password or "").strip()
             if not pw:
-                return   # user skipped
+                return
             attempts += 1
             try:
                 state, sz, problem = ArchiveExtractor.probe_header_state(arc, [pw])
@@ -11978,12 +11196,8 @@ class App:
                          f"No password helps here; get the damaged or missing part again, or remove the job.")
 
     def _on_queue_double_click(self, event=None):
-        """Double-click a queue row → open the matching submenu dialog pre-filled with
-        this item's settings, so the user can change source / output / format etc. The
-        item that is currently RUNNING and any TERMINAL item
-        (Done/Failed/Skipped/Cancelled) are not edited - those just refresh details."""
-        # Resolve which row was clicked. event.y gives the precise row (nearest()) even
-        # if the listbox selection has not yet caught up to the click.
+        """The running job and finished ones aren't edited, they only refresh details."""
+        # nearest(event.y): the listbox selection may lag behind the click
         idx = None
         try:
             if event is not None:
@@ -11998,12 +11212,10 @@ class App:
         return "break"
 
     def _edit_job(self, item) -> None:
-        """Open the editor on *item*. Not the running job (its paths are in use) and not a
-        finished one; a failed or cancelled job points at a source that exists first."""
         if item not in self.queue:
             return
         idx = self.queue.index(item)
-        # Block edit on the running job - its paths are in use.
+        # never the running job, its paths are in use
         if item is self._running_item():
             self.log("WARN", "Cannot edit the currently running job.")
             return
@@ -12020,24 +11232,17 @@ class App:
             self._show_view("ps5repair")
             self._ps5_view.edit(item)
             return
-        # One editor for every kind of job: it shows the job as source → changes → output,
-        # and saving replaces the job at its place in the queue.
         try:
             JobDialog(self, item=item)
         except Exception as e:
             self.log("ERROR", f"Could not open the editor: {e}")
 
 
-    # ── fPKG jobs - the Pack dialog's '.pkg' format ─────────────────────────────
-    # A queued fPKG build is a GameItem with operation "fpkg-build" plus fpkg_* fields.
-    # Any classified pack item (folder, archive placeholder, disk image, .ffpfs/.ffpfsc)
-    # can be turned into one; the backend resolves the source (extract / unwrap) and reads
-    # the identity from sce_sys/param.json, so the fields here are fallbacks only.
+    # fPKG build: identity comes from param.json at build time, these are fallbacks
     FPKG_FILE_SOURCES = (".zip", ".rar", ".7z", ".exfat", ".ffpkg", ".ffpfs", ".ffpfsc")
     _TITLE_ID_RE = re.compile(r"^[A-Z]{4}[0-9]{5}$")
 
     def _fpkg_params_of(self, item) -> dict:
-        """The fPKG parameters carried by *item* (an fpkg-build job), as one dict."""
         lvl = getattr(item, "fpkg_level", None)
         try:
             lvl = int(lvl) if lvl is not None else int(self.compression_level_var.get())
@@ -12060,12 +11265,11 @@ class App:
             "backport_libs":    getattr(item, "backport_libs_root", None) or "",
         }
 
-    # a title id in a release name, also right before '_' ('…-PPSA99999_v01.020')
+    # title id in a release name, also right before '_' ('-PPSA99999_v01.020')
     _ARCHIVE_TID = re.compile(r"(?<![A-Za-z0-9])(PPSA\d{5}|CUSA\d{5})(?!\d)", re.I)
 
     def _group_games_of_archive(self, item, extras) -> None:
-        """The games of one archive: their place in it, and one output folder, the one of the
-        game the archive names (else the biggest)."""
+        """One output folder: the game the archive names, else the biggest."""
         games = [item] + list(extras)
         for k, g in enumerate(games, start=1):
             g.archive_games, g.archive_index = len(games), k
@@ -12084,8 +11288,7 @@ class App:
                 g.organize_folder = folder
 
     def _adopt_games_of_archive(self, item, extras) -> None:
-        """An archive unpacked again for one of its games (a retry): another game of it that
-        waits for the same archive runs from this copy. No game gets a second job."""
+        """Retry unpack: siblings waiting on the same archive run from this copy, no second jobs."""
         origin = getattr(item, "origin_archive", None)
         jobs = {getattr(j, "origin_payload", None): j for j in self.queue
                 if j is not item and origin and getattr(j, "origin_archive", None) == origin
@@ -12099,9 +11302,7 @@ class App:
                 self.log("INFO", f"{getattr(job, 'display_name', None) or job.name}: runs from the same unpack.")
 
     def _as_chain_job(self, extra, tpl) -> None:
-        """Give another game from a multi-game archive the job of the first one: output
-        format, folder, sign and backport. A patch belongs to one game and is not copied;
-        for a .pkg only the compression settings are, the identity comes from each game."""
+        """A patch belongs to one game and is not copied; for .pkg only the compression is."""
         extra.operation = "chain"
         extra.chain_to = getattr(tpl, "chain_to", None) or "ffpfsc"
         extra.archive_content = getattr(tpl, "archive_content", "") or getattr(extra, "archive_content", "")
@@ -12124,15 +11325,12 @@ class App:
             self._apply_fpkg_params(extra, self._fpkg_compression_of(tpl))
 
     def _fpkg_compression_of(self, item) -> dict:
-        """Only the build-option part of an fPKG job's parameters (inner / backend / level /
-        dll / retail switches) - what sibling jobs made from the same source share. Identity
-        is never shared: it is per game and read from each game's param.json at build time."""
+        """Identity is never shared, each game's param.json gives it at build time."""
         p = self._fpkg_params_of(item)
         return {k: p[k] for k in ("inner", "backend", "level", "dll",
                                   "retail_normalize", "hdr_flag", "regen_playgo", "fake_sign")}
 
     def _apply_fpkg_params(self, item, params: dict) -> None:
-        """Write a params dict (see _fpkg_params_of) onto *item*."""
         item.fpkg_content_id     = str(params.get("content_id", "") or "").strip().upper()
         item.fpkg_title_id       = str(params.get("title_id", "") or "").strip().upper()
         item.fpkg_title          = str(params.get("title", "") or "").strip()
@@ -12154,8 +11352,7 @@ class App:
         item.backport_libs_root = blr or None
         dll = str(params.get("dll", "") or "").strip()
         if item.fpkg_kraken_backend == "publishingtools" and sys.platform != "win32":
-            # Cannot work here (LibProsperoPkg: "requires 64-bit Windows", hard failure) - 
-            # a restored/old job asking for it is built with the encoder that does work.
+            # LibProsperoPkg hard-fails off 64-bit Windows; old jobs fall back to built-in
             try:
                 self.log("WARN", f"{getattr(item, 'display_name', None) or item.name}: the Publishing Tools backend "
                                  f"is Windows-only - building with the built-in Kraken encoder instead.")
@@ -12165,23 +11362,18 @@ class App:
         if item.fpkg_kraken_backend == "publishingtools" and not dll:
             dll = (self.pubtools_dll_var.get() or "").strip()
         item.fpkg_pubtools_dll = dll if item.fpkg_kraken_backend == "publishingtools" else ""
-        # Show a real title id in the queue row when the source name didn't reveal one.
         if item.fpkg_title_id and not self._TITLE_ID_RE.match(str(getattr(item, "title_id", "") or "")):
             item.title_id = item.fpkg_title_id
 
     def _as_fpkg_job(self, item, params: dict, identity: dict | None = None):
-        """Turn a freshly classified PACK item into an fPKG build job IN PLACE, keeping its
-        size / files / artwork / bundle tags. *identity* (content_id/title_id/title/version)
-        overrides the corresponding keys of *params* when given."""
+        """In place, keeps size, files, artwork and bundle tags; identity beats params."""
         p = dict(params)
         if identity:
             p.update({k: v for k, v in identity.items() if v})
         item.operation = "fpkg-build"
         item.output_compressed = True          # not meaningful for .pkg; marks the snapshot as taken
         self._apply_fpkg_params(item, p)
-        # The fPKG builder has no patch overlay: a patch the folder scan detected next to
-        # the game would be silently left out - say so, and drop it so the space gate
-        # doesn't size for a patch job either.
+        # the fPKG builder has no patch overlay, so warn and drop the patch
         ps = getattr(item, "patch_source", None)
         if ps:
             try:
@@ -12191,9 +11383,7 @@ class App:
             except Exception:
                 pass
             item.patch_source = None
-        # Space gate: a compressed .ffpfsc is unwrapped to its full tree before the build.
-        # Measured .ffpfsc/unpacked ratio averages ~0.59 (see COMPRESSED_OUTPUT_RATIO), so
-        # the tree is ~1.7x the image; reserve 2x to keep headroom.
+        # .ffpfsc unwraps to ~1.7x its size (ratio ~0.59); reserve 2x
         try:
             _p = Path(str(getattr(item, "path", "") or ""))
             if _p.is_file() and _p.suffix.lower() == ".ffpfsc":
@@ -12203,8 +11393,7 @@ class App:
         return item
 
     def _take_pending_fpkg_identity(self, item) -> dict | None:
-        """The identity the Pack dialog pre-filled for ONE game folder, handed to exactly
-        the queue item made from that folder (matched by resolved path), then dropped."""
+        """Goes to exactly the item made from that folder (by resolved path), then dropped."""
         pend = getattr(self, "_pending_fpkg_identity", None)
         if not pend:
             return None
@@ -12219,16 +11408,14 @@ class App:
         return ident
 
     def _fpkg_item_for(self, src: Path, params: dict, *, output_path=None, parent=None):
-        """A fresh fPKG build job for a single source path: a packed image (.ffpfsc / .ffpfs /
-        .exfat / .ffpkg - unwrapped by the backend), an archive (extracted on its turn) or a
-        folder. Returns None (after an error dialog) for anything else."""
+        """None, after an error dialog, for anything it can't build from."""
         src = Path(src)
         suf = src.suffix.lower() if src.is_file() else ""
         try:
             if src.is_file() and suf in (".zip", ".rar", ".7z"):
                 base = GameItem.from_archive(src)
             elif src.is_file() and suf in (".ffpfsc", ".ffpfs", ".exfat", ".ffpkg"):
-                base = GameItem.from_exfat(src)      # single-file image item; the backend unwraps it
+                base = GameItem.from_exfat(src)  # the backend unwraps it
             elif src.is_dir():
                 base = GameItem(src)
             else:
@@ -12249,7 +11436,7 @@ class App:
 
     def _copy_item_for(self, src, *, output_path=None, mode="organize",
                        auto_organize=None, parent=None):
-        """A fresh COPY job for a source whose format already matches the target format (`.ffpfsc` / `.ffpfs` / `.pkg`)."""
+        """The source already has the target format, so the job just copies."""
         src = Path(src)
         if not (src.is_file() and src.suffix.lower() in (".ffpfsc", ".ffpfs", ".pkg")):
             messagebox.showerror("Wrong type",
@@ -12257,7 +11444,7 @@ class App:
                                  parent=parent or self.root)
             return None
         try:
-            base = GameItem.from_exfat(src)   # single-file image; we override operation below
+            base = GameItem.from_exfat(src)
         except Exception as e:
             messagebox.showerror("Copy failed", tr("Could not classify the source:\n{e}", e=e),
                                  parent=parent or self.root)
@@ -12268,17 +11455,12 @@ class App:
         base.output_path = Path(output_path) if output_path else None
         if auto_organize is not None:
             base.auto_organize = bool(auto_organize)
-        # Show the file's stem in the queue row (from_exfat already does that, but keep
-        # explicit so a restored queue can't accidentally regress).
         base.name = src.stem
         return base
 
     @staticmethod
     def _ps4_copy_mode(item) -> str:
-        """How a PS4 job transports its packages: the app's own extraction of an archive is
-        moved (its archive gets the After-job rule); your own packages are copied and stay
-        where they are unless the job's After-job rule is Delete (then moved); Trash and
-        Move to folder act on them once the job is Done."""
+        """an archive's extraction is moved; own packages are copied unless After-job is Delete"""
         if getattr(item, "origin_archive", None) or getattr(item, "_from_archive", False):
             return "move"
         return "move" if (getattr(item, "after_source", None) or "keep") == "delete" else "keep"
@@ -12289,9 +11471,7 @@ class App:
         return p.is_file() and (p.suffix.lower() in (".zip", ".rar", ".7z") or bool(re.search(r"\.r\d{2,}$", n)))
 
     def _organize_item_for(self, src, *, output_path=None):
-        """A copy job that writes *src* (a game folder, an image, a package, an archive or a
-        folder of them) into the library in its own format: '<Title> [ID] [vX]/…' under the
-        output, see backend/organize_lib.organize_into. Tk-free."""
+        """copy job that sorts src into the library as '<Title> [ID] [vX]'. Tk-free"""
         item = GameItem.from_chain(Path(src), to="ffpfsc", output_path=output_path)
         item.operation = "copy"
         item.content_kind = ORGANIZE_TARGET
@@ -12300,19 +11480,18 @@ class App:
         return item
 
     def _pkg_role(self, path) -> str:
-        """'addon' for a package that is an update or additional content, 'game' for a game,
-        'unknown' when that cannot be told. Tk-free, reads only the package's headers."""
+        """'addon' (update or add-on), 'game' or 'unknown'. reads the headers only"""
         path = Path(path)
         _bd = str(backend_base_dir())
         if _bd not in sys.path:
             sys.path.insert(0, _bd)
         import organize_lib
-        # named an update, a patch or a backport, itself or by the folder it sits in
+        # its own name or its folder's says update, patch or backport
         if organize_lib._name_role(path.stem) or any(organize_lib._name_role(d.name) for d in path.parents[:2]):
             return "addon"
-        role = package_role(path)                         # the content type in its own header
+        role = package_role(path)
         if not role and _ps4pkg_module().is_ps4_package(path):
-            try:                                          # PS4 game data: game or update by its SFO
+            try:  # PS4: game or update by its SFO
                 kind = _ps4pkg_module().read_identity(path).kind
                 role = "game" if kind == "game" else "addon" if kind in ("update", "dlc") else ""
             except Exception:
@@ -12320,8 +11499,7 @@ class App:
         return role or "unknown"
 
     def _release_planner(self, root, passwords):
-        """plan(sources) for _add_jobs_async: one game per download folder takes the rest of
-        that folder along (see ultra_core.plan_releases). Runs on the add worker."""
+        """one game per download folder takes the rest of that folder along. add worker"""
         root = Path(root)
 
         def plan(sources):
@@ -12330,7 +11508,6 @@ class App:
 
     @staticmethod
     def _make_organize(item):
-        """Turn a job built by GameItem.from_chain into an Organize job (see _organize_item_for)."""
         item.operation = "copy"
         item.content_kind = ORGANIZE_TARGET
         item.chain_to = ORGANIZE_TARGET
@@ -12341,7 +11518,6 @@ class App:
 
     @staticmethod
     def _recent_outputs(platform: str) -> list[str]:
-        """The output folders last used for *platform* ('ps4', 'ps5'), newest first."""
         try:
             rec = load_settings().get("recent_outputs") or {}
             return [str(x) for x in rec.get(platform) or [] if x][:App.RECENT_OUTPUTS]
@@ -12361,10 +11537,7 @@ class App:
             pass
 
     def _ps4_route(self, src, output_path=None, passwords=None, to: str = "pkg"):
-        """The PS4 job for *src* of a folder of mixed sources when it is a PS4 package or an
-        archive of them, else None (the job the dialog set up applies): sorted into the library,
-        or with *to* 'folder' a package unpacked into a folder (an archive is always sorted).
-        Tk-free."""
+        """the PS4 job for src, or None when it is not PS4 (the dialog's job applies)"""
         src = Path(src)
         if self._is_archive_path(src):
             info = ArchiveExtractor.ps4_archive_info(src, passwords)
@@ -12377,10 +11550,7 @@ class App:
         return self._ps4_item_for(src, output_path=output_path)
 
     def _auto_item_for(self, src, table, build, *, output_path=None, passwords=None):
-        """A job with the output Automatic: the output Settings sets for the source's kind,
-        an archive's kind read from its member names. build(src, to) makes a chain job; an
-        Organize result is that job turned into a copy, so its changes stay for a later
-        switch. PS4 packages always go to the library. Tk-free (passwords come in)."""
+        """Automatic output: Settings picks it by source kind, PS4 packages always go to the library"""
         src = Path(src)
         content = ""
         if self._is_archive_path(src):
@@ -12406,15 +11576,12 @@ class App:
 
     @staticmethod
     def _content_of_payload(kind: str, paths) -> str:
-        """An unpacked archive's payload (see _classify_extracted_payload) as an
-        archive_content value: 'folder', 'pkg', 'exfat', 'ffpfsc', ...; '' for PS4 packages."""
         if kind == "ps4":
             return ""
         return {"game": "folder", "pkg": "pkg"}.get(kind) or (Path(paths[0]).suffix.lower().lstrip(".") if paths else "")
 
     def _auto_resolve_unpacked(self, item, kind: str, paths) -> None:
-        """An Automatic archive job after the unpack: what came out decides the output
-        (the names read at add time can be missing or wrong). Runs on the extract worker."""
+        """what came out of the archive wins, names read at add time can lie. extract worker"""
         content = self._content_of_payload(kind, paths)
         if not content:
             return
@@ -12445,8 +11612,6 @@ class App:
             item.compression_level = None
 
     def _ps4_archive_item(self, archive, info: dict, *, output_path=None):
-        """A sorting job for an archive of PS4 packages (see _ps4_item_for), named from the
-        first package's param.sfo when the archive allows reading it. Tk-free."""
         item = GameItem.from_archive(Path(archive))
         item.operation = "copy"
         item.content_kind = "ps4"
@@ -12462,8 +11627,7 @@ class App:
 
     @staticmethod
     def _ps4_keystone_state(path) -> dict | None:
-        """{'fingerprint', 'default', 'valid'} of the PS4 game package *path*'s keystone; None
-        for anything without a keystone or that cannot be read. Tk-free, about 0.1 s."""
+        """{'fingerprint', 'default', 'valid'} or None when unreadable. about 0.1 s"""
         try:
             _bd = str(backend_base_dir())
             if _bd not in sys.path:
@@ -12475,27 +11639,19 @@ class App:
 
     @staticmethod
     def _ps4_default_keystone(path) -> bool | None:
-        """True when the PS4 game package *path* carries the default keystone (the one a builder
-        makes from the all-zero passcode) or a damaged one: saves of the retail game then show
-        as corrupted. None for anything without a keystone or that cannot be read."""
+        """default keystone (all-zero passcode) or a damaged one: retail saves show as corrupted"""
         got = App._ps4_keystone_state(path)
         return None if got is None else bool(got["default"] or not got.get("valid", True))
 
     @staticmethod
     def _ps4_version_problem(path) -> dict | None:
-        """{'app_ver', 'version', 'named'} when the PS4 game package *path* looks like a full game
-        with an update merged in whose app version stayed the game's (the console then offers the
-        official update); None otherwise or when it cannot be read. Tk-free."""
+        """update merged in but the app version stayed the game's: the console offers the update"""
         try:
             return _ps4pkg_module().version_problem(Path(path))
         except Exception:
             return None
 
     def _ps4_item_for(self, src, *, output_path=None, info=None):
-        """A copy job that sorts PS4 packages into the library: one .pkg, or a folder of
-        them (an archive's extraction, a download folder), or an archive of them. The
-        backend names and places each package ('<Title> [CUSA…] [vX]/…'); see
-        backend/ps4_sort.py."""
         src = Path(src)
         if self._is_archive_path(src):
             info = info or ArchiveExtractor.ps4_archive_info(src, self._candidate_passwords()) or {"packages": []}
@@ -12525,27 +11681,25 @@ class App:
             item.ps4_version_problem = bool(vp and vp["named"])
         return item
 
-    # ── Auto-organize: where a job lands and what it is called ───────────────
+    # auto-organize
     def _auto_organize_on(self, item) -> bool:
         v = getattr(item, "auto_organize", None)
         return bool(self.auto_organize_var.get()) if v is None else bool(v)
 
     def _game_identity(self, item) -> dict | None:
-        """Title / title id / version of the GAME behind *item*, read from the source itself: a folder's sce_sys/param.json, or the param.json inside a .ffpfs/.ffpfsc/.exfat/ .ffpkg image (MkPFS's game_metadata reads just that file - no unpacking)."""
+        """title, title id and version from the source's param.json, nothing gets unpacked"""
         cached = getattr(item, "_identity", None)
         if cached:
             return cached
         if getattr(item, "archive_path", None) and not getattr(item, "path", None):
             if int(getattr(item, "archive_games", 0) or 0) > 1:
-                return None     # one game of several: known once the archive is unpacked again
+                return None  # one game of several: known after the unpack
             return self._archive_identity(item)
         p = getattr(item, "path", None)
         if not p:
             return None
         p = Path(str(p))
-        # A source without readable metadata stays that way until it changes: remember the
-        # miss (keyed by path + mtime) instead of re-reading - for an image that means one
-        # backend process per preview refresh on the UI thread.
+        # remember the miss by path+mtime, else every preview refresh spawns a backend on the UI thread
         try:
             _miss_key = (str(p), p.stat().st_mtime_ns)
         except OSError:
@@ -12571,7 +11725,6 @@ class App:
         if ident and "fw" not in ident:
             ident["fw"] = self._source_fw(p)
         if ident:
-            # Fill gaps from the source name (a '[PPSA…]' / version in a release name).
             if not ident.get("title_id"):
                 _t = parse_title_id(p)
                 ident["title_id"] = "" if _t in ("Unknown", "") else _t
@@ -12590,7 +11743,7 @@ class App:
         return ident
 
     def _archive_identity(self, item, passwords=None) -> dict | None:
-        """The game behind an archive job before it is extracted, from the param.json read out of the archive alone (ZIP, RAR and 7z that are not solid)."""
+        """param.json read out of the archive alone (ZIP, RAR, 7z that is not solid)"""
         if getattr(item, "archive_title", "") or getattr(item, "archive_title_id", ""):
             return {"title": item.archive_title, "title_id": item.archive_title_id,
                     "version": getattr(item, "archive_version", ""), "fw": ""}
@@ -12617,7 +11770,6 @@ class App:
         return dict(ident, fw="")
 
     def _name_jobs_from_games(self) -> None:
-        """Name every job after its game as soon as the game can be read: a folder's or an image's param.json, a .pkg's, or the one inside a ZIP / RAR / 7z that is not solid."""
         todo = [it for it in self.queue if not getattr(it, "_name_probed", False)]
         if not todo:
             return
@@ -12655,9 +11807,6 @@ class App:
 
     @staticmethod
     def _listed_title(item, enabled: bool) -> dict | None:
-        """{'title', 'title_id'} from the public title list for the title id in the archive's
-        name or its folder's, or None (switched off in Settings, no id, not listed, no list
-        and no connection)."""
         arc = Path(str(getattr(item, "archive_path", "") or ""))
         if not enabled or not str(getattr(item, "archive_path", "") or "").strip():
             return None
@@ -12670,8 +11819,7 @@ class App:
         return {"title": name, "title_id": tid} if name else None
 
     def _job_art(self, item):
-        """The cover to show for *item*: its cached copy, else the icon in its folder (cached
-        on the way, so it stays when the folder goes)."""
+        """cached copy first, else the folder's icon, cached so it outlives the folder"""
         f = art_cache_file(getattr(item, "art_key", "") or "") or art_cache_file(art_source_key(item))
         if f is not None:
             return f
@@ -12685,9 +11833,7 @@ class App:
         return None
 
     def _fetch_art(self, item, passwords=None) -> bool:
-        """Read *item*'s icon0.png from its source and cache it: a folder, an archive read
-        alone (ZIP, RAR and 7z that are not solid), a .ffpfs/.ffpfsc or a .pkg (only that
-        one entry is decoded). Runs off the main thread. True when a cover was added."""
+        """off the main thread. decodes only icon0.png, never the whole source"""
         key = art_source_key(item)
         if not key or art_cache_file(getattr(item, "art_key", "") or "") or art_cache_file(key):
             if art_cache_file(key) and not getattr(item, "art_key", ""):
@@ -12712,7 +11858,6 @@ class App:
         return False
 
     def _icon_of_container(self, p: Path):
-        """sce_sys/icon0.png out of a .ffpfs/.ffpfsc or a PS5/PS4 .pkg, or None."""
         suf = p.suffix.lower()
         if suf == ".pkg" and _is_ps4_source(p):
             return _ps4pkg_module().read_icon(p)
@@ -12742,7 +11887,6 @@ class App:
 
     @staticmethod
     def _ps4_icon_from_archive(archive: Path, member: str, passwords):
-        """A PS4 package's icon0.png read from the start of the package inside *archive*."""
         m = _ps4pkg_module()
         try:
             head = ArchiveExtractor.read_member_prefix(archive, member, 0x1000, passwords) or b""
@@ -12763,8 +11907,7 @@ class App:
 
     @staticmethod
     def _take_game_name(item, ident) -> bool:
-        """The job's label becomes the game's title (without ™ ®) and its title id:
-        'Example Quest [PPSA01234]'. True when it changed."""
+        """label becomes 'Title [PPSA01234]', trademark signs dropped. True when it changed"""
         title = canonical_game_title((ident or {}).get("title") or "") if ident else ""
         tid = str((ident or {}).get("title_id") or "").strip().upper() if ident else ""
         if not title:
@@ -12777,14 +11920,12 @@ class App:
 
     @staticmethod
     def _ident_from_param_json(pj: Path) -> dict | None:
-        """{'title','title_id','version'} from a sce_sys/param.json (Sony layout)."""
         try:
             return ident_from_param_bytes(Path(pj).read_bytes())
         except OSError:
             return None
 
     def _extract_image_member(self, image: Path, member: str, dest: Path) -> Path | None:
-        """One file of a .ffpfsc/.ffpfs image pulled into *dest*, through the backend (Tk-free)."""
         mfile = Path(dest) / "members.txt"
         mfile.write_text(member + "\n", encoding="utf-8")
         out = Path(dest) / "out"
@@ -12794,7 +11935,6 @@ class App:
         return got if got.is_file() else None
 
     def _read_image_metadata(self, p: Path) -> dict | None:
-        """param.json-derived identity of a packed image, without unpacking it."""
         suf = p.suffix.lower()
         if suf in (".ffpfs", ".ffpfsc"):
             tmp = Path(tempfile.mkdtemp(prefix="ffpfsc_ident_"))
@@ -12816,7 +11956,7 @@ class App:
                 mfile = tmp / "members.txt"
                 mfile.write_text("sce_sys/param.json\n", encoding="utf-8")
                 dest = tmp / "out"
-                # Route through the backend's fpkg module so a frozen build finds the tool.
+                # through the backend's fpkg so a frozen build finds the tool
                 backend = backend_base_dir()
                 if str(backend) not in sys.path:
                     sys.path.insert(0, str(backend))
@@ -12845,7 +11985,6 @@ class App:
         return {"title": title, "title_id": tid.upper(), "version": ver}
 
     def _ps4_identity(self, path):
-        """{title, title_id, version} of a PS4 package, or None."""
         try:
             i = _ps4pkg_module().read_identity(path)
             return {"title": i.title, "title_id": i.title_id, "version": i.version}
@@ -12853,9 +11992,7 @@ class App:
             return None
 
     def _source_fw(self, p: Path) -> str:
-        """The firmware the game in *p* needs, from its eboot.bin's SDK version: read in
-        place for a folder, through the backend for a .ffpfs/.ffpfsc/.pkg (headers only).
-        '' when unreadable (an encrypted eboot, a disk image)."""
+        """firmware from eboot.bin's SDK version, '' when unreadable (encrypted eboot, disk image)"""
         try:
             if _is_ps4_source(p):
                 return ""                       # PS5 firmware tags do not apply to PS4 content
@@ -12875,7 +12012,6 @@ class App:
 
     @staticmethod
     def _param_bytes_of(path: Path, passwords) -> bytes | None:
-        """The game's param.json from a folder (the shallowest one) or a ZIP / RAR read alone."""
         try:
             if path.is_dir():
                 hits = sorted(path.rglob("sce_sys/param.json"), key=lambda q: len(q.parts))
@@ -12887,10 +12023,7 @@ class App:
         return None
 
     def _patch_fit(self, source: Path, patch: Path) -> tuple[str, str]:
-        """("refuse" | "warn" | "ok", why) for integrating *patch* into the game at *source*:
-        another title id is refused; a backport (a lower SDK than the game's) made for
-        another version is a warning. "ok" when either param.json cannot be read cheaply;
-        the backend checks again when the job runs."""
+        """other title id: refuse. backport built for another version: warn. backend checks again"""
         pw = [p.strip() for p in (load_settings().get("archive_passwords") or []) if str(p).strip()]
         try:
             g = json.loads(self._param_bytes_of(source, pw) or b"{}")
@@ -12915,8 +12048,7 @@ class App:
         return "ok", ""
 
     def _patch_fw(self, patch: Path) -> str | None:
-        """The firmware a patch's own eboot.bin needs. None when the patch carries no
-        eboot.bin (the game keeps its own), '' when it has one this cannot read."""
+        """None: no eboot.bin in the patch (game keeps its own). '': one we can't read"""
         bp = _backport_module()
         try:
             if patch.is_dir():
@@ -12956,9 +12088,7 @@ class App:
         return ""                              # .7z: not read before the build
 
     def _job_fw(self, item, source_fw: str) -> str:
-        """The firmware the job's OUTPUT needs: the source's, unless an integrated patch
-        brings its own eboot.bin, lowered to the target by a backport. '' (no tag) when
-        it cannot be known - never a guess."""
+        """firmware the OUTPUT needs, '' when unknown. never a guess"""
         bp = _backport_module()
         fw = source_fw or ""
         patch = getattr(item, "patch_source", None)
@@ -12977,8 +12107,6 @@ class App:
         return fw
 
     def _organized_layout(self, item, out: Path, ext: str):
-        """(base_dir, file_name) for the auto-organize layout under *out*, or (None, None)
-        when no identity is readable - the caller then keeps today's naming (logged once)."""
         ident = self._game_identity(item)
         if not ident:
             if not getattr(item, "_organize_warned", False):
@@ -12994,20 +12122,15 @@ class App:
         return out / (getattr(item, "organize_folder", None) or folder), fname
 
     _FW_TAG = re.compile(r"\s*\[fw[\d.x]+\]$", re.I)
-    # Settings › General: skip (default, no question) | ask | overwrite | keep (both)
     OUTPUT_EXISTS_CHOICES = ("skip", "ask", "overwrite", "keep")
     OUTPUT_EXISTS_LABELS = {"skip": "Skip", "ask": "Ask", "overwrite": "Overwrite", "keep": "Keep both"}
 
     def _predicted_output(self, item) -> Path | None:
-        """The file this job will write, named the way build_command names it, or None when
-        that cannot be known before the job runs: an archive whose game cannot be read yet
-        (its name then comes from the extracted game), a .pkg without auto-organize (the
-        package tool names it), a folder output, a PS4 set (the backend names every package)."""
+        """where the job will write, or None when we can't know yet"""
         if getattr(item, "content_kind", "") in ("ps4", ORGANIZE_TARGET):
             return None
         op = getattr(item, "operation", "pack")
         if op == "fpkg-extract":
-            # its folder counts as there when an earlier extract left files in it
             _od = self._job_output_dir(item)
             if not _od:
                 return None
@@ -13016,7 +12139,6 @@ class App:
         if op == "chain":
             to = getattr(item, "chain_to", None) or "ffpfsc"
             if to == "folder":
-                # a container unpacked to '<name> [extracted]': there when an earlier one left files
                 src = Path(str(getattr(item, "path", "") or ""))
                 _od = self._job_output_dir(item)
                 if _od and src.is_dir() and (getattr(item, "chain_lz4", False) or getattr(item, "chain_lz4_unpack", False)):
@@ -13046,7 +12168,7 @@ class App:
         if out is None:
             return None
         if out.suffix.lower() in (".ffpfs", ".ffpfsc", ".pkg", ".exfat"):
-            return out                                   # an explicit file
+            return out
         ext = "." + to
         unread_archive = bool(getattr(item, "archive_path", None)) and not getattr(item, "path", None)
         sub = getattr(item, "bundle_subfolder", None)
@@ -13063,7 +12185,6 @@ class App:
             return None
 
     def _backport_ceiling(self, item) -> str | None:
-        """The firmware a backport job lowers to ("7.61", …), else None."""
         bt = getattr(item, "backport_target", None) if item is not None else None
         if not is_backport_target(bt):
             return None
@@ -13075,8 +12196,7 @@ class App:
 
     @staticmethod
     def _fpkg_extract_folder(item, out: Path) -> Path:
-        """Where an fPKG extract writes: its own '<package> [extracted]' folder, never straight
-        into a library folder."""
+        """always its own '<package> [extracted]' folder, never straight into a library folder"""
         out = Path(out)
         if not out.name.endswith(" [extracted]"):
             out = out / f"{sanitize_filename(Path(item.path).stem)} [extracted]"
@@ -13084,7 +12204,6 @@ class App:
 
     @staticmethod
     def _folder_taken(path: Path) -> bool:
-        """The folder holds something besides OS clutter (the backend ignores that too)."""
         try:
             return Path(path).is_dir() and any(not is_fs_junk_name(q.name) for q in Path(path).iterdir())
         except OSError:
@@ -13092,7 +12211,6 @@ class App:
 
     @staticmethod
     def _is_own_source(item, path) -> bool:
-        """*path* is the file this job reads (its package, image or archive)."""
         for src in (getattr(item, "path", None), getattr(item, "archive_path", None)):
             try:
                 if src and path and Path(str(src)).is_file() and os.path.samefile(str(src), str(path)):
@@ -13102,9 +12220,7 @@ class App:
         return False
 
     def _existing_output(self, target: Path, item=None) -> Path | None:
-        """The file in the output folder that is this job's output already: same title, version and format.
-        A PS5 PKG Tools rebuild whose library name is its own source is not a conflict: the repaired
-        package goes beside it."""
+        """a PS5 PKG Tools rebuild next to its own source is no conflict"""
         try:
             if item is not None and getattr(item, "ps5_repair", False) and self._is_own_source(item, target):
                 return None
@@ -13137,7 +12253,6 @@ class App:
         return None
 
     def _output_rule(self) -> str:
-        """Settings › General › When the output is already there: skip | ask | overwrite | keep."""
         try:
             v = self.output_exists_var.get()
         except Exception:
@@ -13145,10 +12260,7 @@ class App:
         return v if v in self.OUTPUT_EXISTS_CHOICES else "skip"
 
     def _check_existing_outputs(self) -> bool:
-        """Before a fresh start. Each job checks its own output when it is due (before its
-        archive is unpacked when the game is readable, else right after). With Ask, one
-        window here lists the outputs already known to be there, and its answer is the rule
-        for this run. False on Cancel."""
+        """with Ask, one window lists the known conflicts and its answer rules this run. False on Cancel"""
         self._output_policy = None if self._output_rule() == "ask" else self._output_rule()
         conflicts = []
         for it in self.queue:
@@ -13176,7 +12288,6 @@ class App:
         return True
 
     def _ask_existing_outputs(self, conflicts) -> str:
-        """overwrite | skip | cancel, asked in a window of its own."""
         dlg = OutputExistsDialog(self.root, [(getattr(it, "display_name", None) or it.name, hit)
                                              for it, hit in conflicts])
         try:
@@ -13198,9 +12309,7 @@ class App:
 
 
     def _late_output_check(self, item) -> str:
-        """Right before a job's backend starts (an archive has been unpacked by now): its
-        output, if the start could not know it. proceed | skip | cancel; the choice made at
-        the start applies, else the user is asked for this job."""
+        """last look once the archive is unpacked: proceed, skip or cancel"""
         if (getattr(item, "_output_checked", False) or getattr(item, "_replace_output", False)
                 or getattr(item, "_keep_both", False)):
             return "proceed"
@@ -13209,7 +12318,7 @@ class App:
         except Exception:
             target = None
         if target is None:
-            return "proceed"                     # known once the archive is unpacked: asked again then
+            return "proceed"  # asked again once the archive is unpacked
         item._output_checked = True
         hit = self._existing_output(target, item)
         if hit is None:
@@ -13228,9 +12337,7 @@ class App:
 
     @staticmethod
     def _free_output_name(path: Path) -> Path:
-        """*path* with ' (2)', ' (3)', … after the title, the first one that is free and
-        still within the ShadowMount name limit (the title is shortened when needed):
-        'Title (2) [PPSA01234] [v01.000] [fw10.00].ffpfsc'."""
+        """first free ' (2)', ' (3)' that still fits the ShadowMount name limit, title shortened if needed"""
         stem, ext = path.stem, path.suffix
         i = stem.find(" [")
         title, tags = (stem[:i], stem[i:]) if i > 0 else (stem, "")
@@ -13246,7 +12353,6 @@ class App:
         return path
 
     def _keep_both_name(self, item, out: Path) -> Path:
-        """Keep both: the new build of a job set to Keep both goes beside the old file."""
         if getattr(item, "_keep_both", False) and out.suffix.lower() in (".ffpfs", ".ffpfsc") and out.exists():
             new = self._free_output_name(out)
             self.log("INFO", f"Keep both: {out.name} is already there, the new build is {new.name}.")
@@ -13254,8 +12360,7 @@ class App:
         return out
 
     def _skip_late(self, item, hit_note: str = "") -> None:
-        """A running batch skips *item* after its archive was unpacked: it leaves this run
-        (not counted as a failure), the scratch it wrote is reclaimed, the batch goes on."""
+        """not counted as a failure, its scratch is reclaimed and the batch goes on"""
         self._cleanup_after_failure(item)
         hit, exact = None, False
         try:
@@ -13291,9 +12396,7 @@ class App:
             self.update_queue_box()
 
     def _mirror_base(self, item, out: Path, sub: str) -> Path:
-        """A bundle mirrors its source folder name at the destination - unless that would be
-        the source folder ITSELF (output folder == the source's parent), which would drop
-        the result next to the archive it came from. Then the output folder is used as is."""
+        """mirror the source folder name, unless that IS the source folder (output == its parent)"""
         target = out / sanitize_filename(sub)
         try:
             src_dir = getattr(item, "bundle_dir", None)
@@ -13308,8 +12411,7 @@ class App:
         return target
 
     def _finalize_pkg_name(self, item, pkg_path: Path) -> Path:
-        """Auto-organize for fPKG: the tool names its output '<content-id>-A…-V….pkg'; give it
-        the library name decided in build_command. Returns the final path."""
+        """the tool names it after the content id, give it the library name from build_command"""
         want = getattr(item, "_organized_pkg_name", None)
         pkg_path = Path(pkg_path)
         if not want or pkg_path.name == want:
@@ -13317,13 +12419,11 @@ class App:
         target = pkg_path.with_name(want)
         try:
             if target.exists() and getattr(item, "_replace_output", False):
-                # the user chose Overwrite at the start: the new build takes its place
                 os.replace(pkg_path, target)
                 self.log("INFO", f"Auto-organize: {want} replaced with the new build.")
                 return target
             if target.exists():
-                # Never replace a file that is already there (a second build of the same
-                # title with other settings is the common case) - keep both.
+                # never replace a file that is already there, keep both
                 stem, ext = os.path.splitext(want)
                 n = 2
                 while target.exists():
@@ -13338,7 +12438,7 @@ class App:
             self.log("WARN", f"Auto-organize: could not rename {pkg_path.name} → {want}: {e}")
             return pkg_path
 
-    # ── Queue management ──────────────────────────────────────────────────────
+    # queue management
     def queue_move_up(self):
         idx = self._queue_sel_idx()
         if idx is None or idx == 0:
@@ -13352,9 +12452,7 @@ class App:
         self.move_job(idx, idx + 2)
 
     def move_job(self, src: int, dst: int) -> None:
-        """Move the job at *src* so it stands before the job now at *dst* (len = to the end):
-        drag and drop, Move up / down, Run next. The list order is the order the jobs that
-        have not run yet are worked through; the running job may move too."""
+        """src goes before the job now at dst (len = the end). the running job may move too"""
         if not (0 <= src < len(self.queue)):
             return
         dst = max(0, min(len(self.queue), dst))
@@ -13365,7 +12463,6 @@ class App:
         self.update_queue_box(select_item=item)
 
     def run_job_next(self, item) -> None:
-        """Run next: the job moves above the first job that is still waiting."""
         if item not in self.queue or getattr(item, "status", "") in self._TERMINAL_STATUSES:
             return
         running = self._running_item()
@@ -13377,7 +12474,6 @@ class App:
             self.log("INFO", f"{getattr(item, 'display_name', None) or item.name} runs next.")
 
     def _marked_items(self) -> list:
-        """The selected jobs, top to bottom (the one in focus alone when nothing else is)."""
         try:
             rows = self.queue_listbox.marked_rows()
         except Exception:
@@ -13385,13 +12481,12 @@ class App:
         return [self.queue[i] for i in rows if 0 <= i < len(self.queue)]
 
     def queue_remove_selected(self):
-        """Remove every selected job. The running job stays (cancel it first); removing a job
-        deletes the copy it kept from its archive, so several of those are asked about."""
+        """the running job stays. removing a job deletes the copy it kept from its archive"""
         if self._panels.stack:
-            return  # Backspace in an open editor never removes the job behind it
+            return  # Backspace in an open editor must not remove the job
         rows = [i for i in self.queue_listbox.marked_rows() if 0 <= i < len(self.queue)]
         if not rows or not self.queue:
-            return  # nothing selectable (e.g. the "Queue is empty" placeholder row)
+            return
         items = [self.queue[i] for i in rows]
         running = self._running_item()
         if running is not None and running in items:
@@ -13414,7 +12509,6 @@ class App:
             if not ask_confirm("Remove jobs" if len(items) > 1 else "Remove the job?", text,
                                "Remove", danger=True):
                 return
-        # What to show afterwards: the first job below the removed ones, else the one above.
         after = [it for it in self.queue[rows[-1] + 1:] if it not in items]
         before = [it for it in self.queue[:rows[0]] if it not in items]
         next_item = after[0] if after else (before[-1] if before else None)
@@ -13426,14 +12520,12 @@ class App:
         self.update_queue_box(select_item=next_item)
 
     def remove_first(self):
-        """Legacy helper - removes the first (non-running) queue entry."""
         if self.queue and not self._batch_running:
             self.queue.pop(0)
         self.update_queue_box()
 
     def clear_queue(self):
-        """Every job but the running one (the same as Clear all, without the kept-copy question
-        for callers that already asked)."""
+        """like Clear all, minus the kept-copy question for callers that already asked"""
         if self._batch_running:
             ok = ask_confirm("Clear the queue?",
                              tr("A job is running. Remove the waiting jobs? The running job finishes normally."),
@@ -13444,7 +12536,7 @@ class App:
             for it in self.queue:
                 if it is not run:
                     self._drop_kept_extract(it)
-            self.queue[:] = [run] if run is not None else []   # keep the running job, clear the rest
+            self.queue[:] = [run] if run is not None else []
         else:
             for it in self.queue:
                 self._drop_kept_extract(it)
@@ -13453,7 +12545,7 @@ class App:
         self._refresh_parked()
         self.update_queue_box()
 
-    # GameItem fields that hold a Path (everything else is str/int/None and JSON-safe).
+    # GameItem fields holding a Path, everything else is JSON-safe
     _QUEUE_PATH_FIELDS = ("path", "archive_path", "bundle_dir", "patch_source", "output_path")
 
     @staticmethod
@@ -13462,13 +12554,10 @@ class App:
 
     @staticmethod
     def _parked_back(d: dict) -> bool:
-        """Something the job can start from is reachable again: its archive, its folder, or
-        the archive a consumed unpack came from (_restore_queue rearms it from there)."""
         return any(x and Path(str(x)).exists() for x in (d.get("archive_path"), d.get("path"), d.get("origin_archive")))
 
     def _recheck_parked(self):
-        """Every 20 s: a parked job whose drive is back joins the queue again. The look runs
-        off the main thread: a share that does not answer must not freeze the window."""
+        """every 20 s, off the main thread: a share that doesn't answer must not freeze the window"""
         parked = list(getattr(self, "_queue_missing_saved", None) or [])
 
         def look():
@@ -13530,10 +12619,7 @@ class App:
             self.log("INFO", f"Forgot {len(parked)} parked job(s).")
 
     def _save_queue(self):
-        """Persist the current queue (paths + metadata, minus the PIL artwork and the
-        transient _-prefixed placement state) so it survives a restart/crash. Gated until
-        _restore_queue runs so the initial empty render can't clobber the saved queue.
-        Best-effort - never breaks the UI rebuild."""
+        """gated until _restore_queue ran, so the first empty render can't clobber the saved queue"""
         if not getattr(self, "_queue_restored", False):
             return False
         try:
@@ -13549,7 +12635,6 @@ class App:
                         d[k] = [str(s) for s in (v or [])]
                     elif v is None or isinstance(v, (str, int, float, bool)):
                         d[k] = v
-                    # anything else (unexpected) is dropped rather than risk a crash
                 items.append(d)
             items += list(getattr(self, "_queue_missing_saved", None) or [])
             return save_settings({"queue": items})
@@ -13557,11 +12642,7 @@ class App:
             return False
 
     def _restore_queue(self, saved=None, quiet: bool = False):
-        """Rebuild the saved queue on startup. Items whose source path no longer exists
-        are skipped; a mid-run status is reset to pending. Best-effort. Enables saving
-        afterwards (sets _queue_restored). With *saved*, the parked jobs whose drive came
-        back are added (see _recheck_parked)."""
-        missing = []   # saved entries whose source is not reachable right now
+        missing = []  # source not reachable right now
         if saved is None:
             try:
                 saved = load_settings().get("queue") or []
@@ -13581,15 +12662,12 @@ class App:
                         setattr(obj, k, [Path(s) for s in (v or [])])
                     else:
                         setattr(obj, k, v)
-                # An archive job whose extracted copy was cleaned up restarts at its archive.
                 _src = getattr(obj, "path", None)
                 _org = getattr(obj, "origin_archive", None)
-                # A done job that kept its unpack for extras that did not come along keeps
-                # pointing at it, so the cleanups after a restart leave those extras alone.
+                # a done job that kept its unpack keeps pointing at it, so restart cleanups spare the extras
                 _holds = getattr(obj, "status", "") == "Done" and getattr(obj, "kept_extract", False)
-                # A run that took files out of its unpack and did not finish: the copy lacks them,
-                # so the job starts at its archive again. Without the archive it waits, parked like
-                # a job whose drive is away, and never runs from the incomplete copy.
+                # files were taken out of the unpack: start at the archive again.
+                # no archive: park it, never run from the incomplete copy
                 _taken = (getattr(obj, "source_taken_in", False) and getattr(obj, "status", "") != "Done"
                           and not getattr(obj, "archive_path", None))
                 _rearm = bool(_taken and _org and Path(_org).exists())
@@ -13609,26 +12687,21 @@ class App:
                         pass
                     if getattr(obj, "status", "") in ("Failed", "Cancelled", "Skipped"):
                         obj.status = "Pending Extract"
-                # The source must still be on disk to be packable/unpackable.
                 probe = getattr(obj, "archive_path", None) or getattr(obj, "path", None)
                 # A finished job is a record: it stays listed when its source is gone.
                 if getattr(obj, "status", "") != "Done" and (not probe or not Path(probe).exists()):
-                    # Unreachable right now (drive unplugged, share down): keep the saved
-                    # entry so it is not lost when the queue is next persisted.
+                    # drive unplugged or share down: keep the entry so the next save doesn't lose it
                     skipped += 1
                     missing.append(d)
                     continue
-                # Emu files injected into the user's own folder by a run that never
-                # finished (crash, force-quit): restore the folder now.
+                # a crashed run left emu files in the user's own folder: restore it now
                 if getattr(obj, "ampr_injected", None) or getattr(obj, "ampr_index_path", None):
                     try:
                         self._ampr_cleanup(obj)
                     except Exception:
                         pass
                 obj.artwork = None   # the cover comes back from the art cache (art_key)
-                # A queue saved before per-job formats existed has no format snapshot; it
-                # was a compressed .ffpfsc job then. Without this, the snapshot step below
-                # would turn it into whatever format is remembered today (e.g. .pkg).
+                # old queues have no format snapshot, they were .ffpfsc jobs, not today's default
                 if getattr(obj, "operation", "pack") == "pack" and getattr(obj, "output_compressed", None) is None:
                     obj.output_compressed = True
                 if getattr(obj, "status", "") in ("Running", "Extracting", "Patching"):
@@ -13657,7 +12730,7 @@ class App:
             else:
                 self._refresh_parked()
             return
-        # Covers no job uses any more go after a while (the parked jobs keep theirs).
+        # prune covers no job uses, parked jobs keep theirs
         _keep = {getattr(o, "art_key", "") for o in self.queue} | {str(d.get("art_key") or "") for d in missing}
         threading.Thread(target=prune_art_cache, args=(_keep,), daemon=True).start()
         if self.queue:
@@ -13685,8 +12758,7 @@ class App:
             self.log("WARN", f"Saved queue: {skipped} item(s) skipped (source path missing/invalid).")
 
     def _probe_archive_contents(self) -> None:
-        """Read, in the background, what each queued archive holds (its member names only)
-        so the queue's source says '.pkg' or 'Folder' instead of '.rar'. Each archive once."""
+        """member names only, so the source says '.pkg' or 'Folder' instead of '.rar'"""
         if getattr(self, "_content_probe_busy", False):
             return
         todo = [it for it in self.queue if getattr(it, "archive_path", None)
@@ -13728,11 +12800,7 @@ class App:
         self.root.after(200, poll)
 
     def update_queue_box(self, select_item=None):
-        """Rebuild the listbox."""
-        # Per-job output: snapshot the current global Output onto any pack/convert item
-        # that doesn't already carry one, so each queued job keeps the output it was added
-        # with (patch/sign set their own; fake-sign has none). Runs right after an item is
-        # appended (update_queue_box is called then), capturing the output at add time.
+        # snapshot the global Output onto each job at add time, so it keeps its own
         _gout = (self.output_var.get() or "").strip()
         try:
             _fmt = self.output_format_var.get()
@@ -13742,25 +12810,17 @@ class App:
             _op = getattr(_it, "operation", "pack")
             if _gout and getattr(_it, "output_path", None) is None and _op in ("pack", "unpack", "chain"):
                 _it.output_path = Path(_gout)
-            # Format is per-job: snapshot the remembered default onto a fresh pack item once.
-            # With '.pkg' remembered the fresh pack item becomes an fPKG build job - this is
-            # how every source the classifier knows (game folder, folder scan with N games,
-            # library bundle, archive, disk image, .ffpfs) turns into a .pkg without a second
-            # code path. Identity is read from each game's param.json at build time; the one
-            # the dialog may have pre-filled for a single game folder rides along.
+            # format is per job. with .pkg remembered, a fresh pack job becomes an fPKG build
             if _op == "pack" and getattr(_it, "output_compressed", None) is None:
                 if _fmt == "pkg":
                     self._as_fpkg_job(_it, dict(self.fpkg_defaults),
                                       identity=self._take_pending_fpkg_identity(_it))
                 _it.output_compressed = (_fmt != "ffpfs")
-            # Auto-organize is per job too: snapshot the remembered default once.
             if _op in ("pack", "fpkg-build", "chain") and getattr(_it, "auto_organize", None) is None:
                 _it.auto_organize = bool(self.auto_organize_var.get())
-        self._save_queue()   # persist the (just-mutated) queue across restarts
+        self._save_queue()
         self._probe_archive_contents()
-        # Decide which item to keep selected. A plain refresh keeps the job in focus (found by
-        # its key, so a reorder or a removal above it does not move the focus to another job)
-        # and every other marked job; an explicit select_item replaces the selection.
+        # a plain refresh keeps the focus by job key, so a reorder doesn't jump to another job
         keep_marked = select_item is None
         if select_item is None:
             _fk = self.queue_listbox.focus_key()
@@ -13791,11 +12851,7 @@ class App:
         rows = []
         _run_item = self._running_item()
         for i, item in enumerate(self.queue):
-            # Capture a STABLE display name the first time we render this item - at add
-            # time item.name is the friendly name (a bundle's folder, the archive's name).
-            # After extraction _copy_item_payload rewrites item.name to the extracted
-            # stem (e.g. "PPSA00001"), which still drives the output filename; this keeps
-            # the queue row showing what the user added.
+            # remember the name as added, after the unpack item.name becomes the extracted stem
             if not getattr(item, "display_name", None):
                 item.display_name = (getattr(item, "bundle_subfolder", None)
                                      or getattr(item, "name", "") or item.title_id)
@@ -13809,8 +12865,6 @@ class App:
                      "copy":         "COPY   ",
                      "chain":        ("→ " + CHAIN_TARGET_LABEL.get(getattr(item, "chain_to", ""), "?")).ljust(7)
                      }.get(opn, "PACK   ")
-            # Per-job detail: jobs that don't have a meaningful source size show their
-            # target/mode instead of "0 B".
             if opn == "chain":
                 _ch = ", ".join(chain_changes(item)) or "no changes"
                 _sz = (f"~{format_size(display_size(item))}" if shows_extracted_size(item)
@@ -13831,8 +12885,7 @@ class App:
                     getattr(item, "copy_mode", None), "copy, the source stays")
                 detail = f"{format_size(getattr(item, 'size', 0) or 0)}  ·  {_mode}"
             else:
-                # Archives store the COMPRESSED set size in .size; show the EXTRACTED size
-                # (what space/placement actually use), tagged with ~ as a header estimate.
+                # archives store the packed size, show the unpacked one with ~ as an estimate
                 detail = (f"~{format_size(display_size(item))} unpacked"
                           if shows_extracted_size(item) else format_size(item.size))
             disp = getattr(item, "display_name", None) or item.name
@@ -13875,7 +12928,6 @@ class App:
         except Exception:
             pass
 
-        # Find the target item's new index; fall back to row 0
         try:
             sel = self.queue.index(select_item) if select_item in self.queue else 0
         except (ValueError, TypeError):
@@ -13883,14 +12935,12 @@ class App:
         self.queue_listbox.set_rows(rows, selected=sel, keep_marked=keep_marked)
         self.queue_listbox.see(sel)
 
-        # Only refresh the details panel when the selected item actually changed.
-        # Using `is` (reference equality) is safe here: we hold _details_item as a
-        # real reference so Python cannot reuse the address while it lives in the queue.
+        # 'is' is safe here: _details_item holds a real reference, so no id reuse
         sel_item = self.queue[sel]
         if sel_item is not self._details_item:
             self.update_game_details(sel_item)
         elif len(self.queue_listbox.marked_rows()) > 1:
-            self._card_show(True)                # the summary of several selected jobs, refreshed
+            self._card_show(True)
 
     def update_game_details(self, item):
         self._details_item = item   # record before any call that might raise
@@ -13916,7 +12966,6 @@ class App:
         self._fill_job_card(item)
 
     def _fill_job_card(self, item):
-        """The job card's header lines and recipe chips for *item*."""
         try:
             self._card_show(True)
             disp = getattr(item, "display_name", None) or item.name
@@ -13966,7 +13015,6 @@ class App:
                 k.grid_remove(); v.grid_remove()
 
     def _card_info_text(self, item) -> dict:
-        """The details pane's facts about *item*, one short text per row."""
         info = {}
         status = str(getattr(item, "status", "") or "Queued")
         if getattr(self, "_batch_running", False) and item is getattr(self, "_active_item", None):
@@ -14036,7 +13084,7 @@ class App:
             info["Drives"] = (tr("unpacks and writes on {v} ({out_dir})", v=_drive_name(out_dir), out_dir=out_dir) if arc
                               else tr("writes to {v} ({out_dir})", v=_drive_name(out_dir), out_dir=out_dir))
         elif out_dir and getattr(item, "operation", "") in ("chain", "pack", "fpkg-build", "patch"):
-            # where the router will put this job (or has put it), not the temp setting
+            # the router's pick, not the temp setting
             plan = self._planned(item)
             bits = []
             root = getattr(plan, "_build_root", None)
@@ -14067,7 +13115,7 @@ class App:
         return info
 
     def _probe_pkg_content(self, item) -> int:
-        """Read the size of the game in a chain job's .pkg source from the package's own directory (the tool's list-inner reads it, nothing is decoded)."""
+        """game size from the package's own directory, nothing is decoded"""
         if getattr(item, "operation", "") != "chain" or chain_source_kind(item) != "pkg":
             return 0
         if getattr(item, "pkg_content_size", 0):
@@ -14093,7 +13141,6 @@ class App:
         return content
 
     def _refresh_space_for_item(self, item=None):
-        """Recalculate free-space vs what this game needs and update the stats label."""
         if item is None:
             item = self._shown_or_next()
         if item is None or getattr(item, "size", 0) == 0:
@@ -14127,8 +13174,7 @@ class App:
             return
         out_dir = self._job_output_dir(item)
         if out_dir is not None and getattr(item, "operation", "pack") in ("chain", "pack", "fpkg-build", "patch"):
-            # the same numbers the space gate checks when the job starts, on the drives the
-            # router picks for it
+            # same numbers the space gate checks at start, on the drives the router picks
             try:
                 plan = self._planned(item)
                 img = Path(str(getattr(plan, "_build_temp", None) or self.temp_var.get().strip() or out_dir))
@@ -14140,7 +13186,7 @@ class App:
                              "Temp drive (whole scratch)": "Unpack and image",
                              "Output drive (archive unpacked)": "Output",
                              "Output drive (copy on the same drive)": "Copy"}
-                    # needs that share a drive come as one row, their labels joined by " + "
+                    # needs on the same drive share one row, labels joined by +
                     _lab = lambda label: " + ".join(dict.fromkeys(tr(short.get(x, x)) for x in label.split(" + ")))
                     self.temp_space_var.set(
                         "  |  ".join(tr("{label} on {drive} ~{need}, {free} free", label=_lab(label),
@@ -14169,8 +13215,7 @@ class App:
                 image_need = estimate_peak_space_needed(size, factor, False)
                 need_label = "Temp peak"
             out_full   = estimate_peak_space_needed(size, factor, True)
-            # It completes if the SSD can hold the image (split - the spool auto-routes to
-            # the big output drive) OR the output drive can hold the whole build.
+            # fits if the SSD holds the image (the spool goes to the output drive) or the output holds it all
             ok = (size > 0 and free >= image_need) or (out_dir is not None and out_free >= out_full)
             flag = tr("fits" if ok else "LOW, may not fit")
             self.temp_space_var.set(tr("{label}: ~{need}  |  Temp Free: {free}  |  Out Free: {out_free}  |  {flag}",
@@ -14188,8 +13233,6 @@ class App:
             pass
 
     def _on_format_toggle(self):
-        """Output format changed - applies to the WHOLE queue. Refresh the hint and the
-        command/queue preview so output names/extensions reflect the chosen format."""
         self._update_format_label()
         for fn in ("update_queue_box", "update_command_preview"):
             try:
@@ -14201,7 +13244,6 @@ class App:
                     else "uncompressed .ffpfs (faster to build and mount; full size)."))
 
     def _shown_or_next(self):
-        """The job the details pane shows, else the running or next job, else the first."""
         it = getattr(self, "_details_item", None)
         if it is not None and it in self.queue:
             return it
@@ -14209,7 +13251,6 @@ class App:
 
     def update_command_preview(self):
         item = self._shown_or_next()
-        # Archive placeholders have no path yet - show a friendly message instead
         if item and getattr(item, "archive_path", None):
             self.command_label.configure(
                 text=tr("{name} - archive will be extracted before compression starts.", name=item.name))
@@ -14238,21 +13279,11 @@ class App:
         self.command_label.configure(text=" ".join(f'"{x}"' if " " in x else x for x in cmd))
 
     def build_command(self, item):
-        # Per-job output: each queued job can carry its own output target (snapshotted
-        # when it was added); fall back to the current global Output folder otherwise.
         _job_out = getattr(item, "output_path", None)
         out = Path(str(_job_out)) if _job_out else Path(self.output_var.get().strip())
-        # Give every pack job a findable, descriptive, collision-resistant output name
-        # "<Game> [v<ver>] [<TITLEID>].ffpfsc" when the user picked an output FOLDER.
-        # The backend honours an explicit .ffpfsc path (it only auto-names by title id
-        # when handed a directory) - so naming by title id alone would let two queued
-        # games with the same title id overwrite each other in a batch. An explicit
-        # .ffpfsc the user typed is respected as-is.
+        # full library name, not just the title id: two jobs with one title id would overwrite each other
         op = getattr(item, "operation", "pack")
-        # Output format (whole-queue toggle): uncompressed .ffpfs ONLY for the PFS family - 
-        # a game folder or a .ffpfs source. .exfat/.ffpkg disk images are always compressed
-        # to .ffpfsc (the backend ignores --no-compress for them). .ffpfs is faster to build
-        # (no pass 2) and to mount (no decompression), at full size.
+        # .ffpfs only for folders and .ffpfs sources, disk images always end up compressed
         try:
             _ip = Path(getattr(item, "path", "") or "")
             src_pfs_family = _ip.is_dir() or _ip.suffix.lower() == ".ffpfs"
@@ -14266,12 +13297,7 @@ class App:
         explicit_file = out.suffix.lower() in (".ffpfsc", ".ffpfs")
         sub = getattr(item, "bundle_subfolder", None)
         if op == "pack" and not explicit_file:
-            # Where and as what the .ffpfsc lands:
-            #  • auto-organize: '<out>/<Title> [TID] [vX.Y.Z]/<Title> [TID] [vX.Y].ffpfsc' from
-            #    the game's param.json (falls back to the rules below when unreadable);
-            #  • bundle: recreate the source folder under the output dir - never INTO the
-            #    source folder itself (see _mirror_base);
-            #  • else: straight into the output folder.
+            # auto-organize, else a bundle mirrors its folder (never INTO the source), else straight in
             base = out
             organized_name = None
             if self._auto_organize_on(item):
@@ -14291,7 +13317,7 @@ class App:
                     self.log("INFO", f"Dropped edition suffix to fit the {SHADOWMOUNT_NAME_LIMIT}-"
                                      f"byte ShadowMount limit: {out.name}")
             except Exception:
-                out = base   # keep the subfolder; backend names <title_id><ext> inside
+                out = base  # backend names <title_id><ext> inside
         temp = Path(self.temp_var.get().strip())
         backend = backend_base_dir()
         cli_py = backend / "cli.py"
@@ -14299,11 +13325,7 @@ class App:
         if not pycmd:
             raise RuntimeError("Python was not found. Install Python, or run the app from source.")
 
-        # ── CHAIN job: source → [patch → backport → sign] → folder/.ffpfs/.ffpfsc/.pkg ──
-        # The one shape the job dialog produces. The backend's --to does the work; this
-        # only names the output the way the matching legacy job would (so a library
-        # built by chains and by old jobs looks the same) and passes the tuning that
-        # applies to the chosen output.
+        # chain job: named like the old jobs did, so the library looks the same
         if op == "chain":
             to = getattr(item, "chain_to", None) or "ffpfsc"
             src = Path(item.path)
@@ -14359,8 +13381,7 @@ class App:
             except Exception:
                 pass
 
-            # A retry after pass 1 (out of memory in pass 2) compresses the image pass 1 left:
-            # the changes are in it already and the unpacked copy is gone by then.
+            # OOM retry after pass 1: compress what pass 1 left, the unpacked copy is gone by then
             _resume = getattr(item, "_resume_inner", None)
             _resuming = to == "ffpfsc" and bool(_resume) and Path(str(_resume)).is_file()
             if _resuming:
@@ -14368,8 +13389,7 @@ class App:
             head = (pycmd + [str(src), str(out)] if getattr(sys, "frozen", False)
                     else pycmd + ["-u", str(cli_py), str(src), str(out)])
             cmd = head + ["--to", to]
-            # Should the job end as a plain copy (same format, nothing to change), the source
-            # stays unless the job deletes it afterwards anyway: then a move is the fast way.
+            # a plain copy keeps the source, unless the job deletes it anyway: then just move
             cmd += ["--copy-mode", "move" if getattr(item, "after_source", None) == "delete" else "keep"]
             if to in ("pkg", "ffpfsc") and not _resuming and self._consumable_extract(item):
                 cmd.append("--stage-in-place")      # our own unpacked copy: taken in as it goes
@@ -14402,8 +13422,7 @@ class App:
             if tstr:
                 cmd += ["--temp-dir", tstr]
             if to in ("ffpfs", "ffpfsc", "pkg") or getattr(item, "chain_lz4", False):
-                # the CPU cores setting: mkpfs workers for an image, Kraken workers for a .pkg,
-                # LZ4 workers for the packs
+                # CPU cores: mkpfs workers for images, Kraken for .pkg, LZ4 for the packs
                 _cpu = getattr(item, "_cpu_retry_override", None)
                 if _cpu is None:
                     _cpu = self.cpu_count_var.get()
@@ -14448,7 +13467,7 @@ class App:
                 cmd.append("--overwrite")
             return cmd, backend, run_dir, temp
 
-        # ── PS4 KEYSTONE job: the game package and its updates, changed in place ──
+        # PS4 keystone: packages are changed in place
         if op == "ps4-keystone":
             head = pycmd if getattr(sys, "frozen", False) else pycmd + ["-u", str(cli_py)]
             cmd = head + ["--ps4-keystone-set", str(item.path)]
@@ -14461,22 +13480,13 @@ class App:
                     cmd += ["--ps4-rebind", u.strip()]
             return cmd, backend, Path(item.path).parent, temp
 
-        # ── FAKE-SIGN job ────────────────────────────────────────────────────
         if op == "fake-sign":
             head = pycmd if getattr(sys, "frozen", False) else pycmd + ["-u", str(cli_py)]
             cmd = head + ["--fake-sign", str(item.path)]
             return cmd, backend, Path(item.path), temp
 
-        # ── COPY job (same format in/out - no re-encode) ─────────────────────
-        # The source is a packed image (.ffpfsc / .ffpfs / .pkg). The output
-        # folder mirrors the auto-organize layout used for a fresh build: a
-        # per-title folder + library filename derived from param.json. When the
-        # source and target land on the same drive the backend performs an
-        # atomic os.rename; otherwise it does a chunked copy and (unless the
-        # user unchecked the option) deletes the source afterwards.
+        # copy job, no re-encode. same drive: rename, else a chunked copy
         if op == "copy" and getattr(item, "content_kind", "") == ORGANIZE_TARGET:
-            # the backend writes the source into '<Title> [ID] [vX]/…' under the output, in its
-            # own format, joining a title folder that is already there
             try:
                 out.mkdir(parents=True, exist_ok=True)
             except Exception:
@@ -14490,7 +13500,6 @@ class App:
                           "--if-exists", self.output_exists_var.get() or "skip"]
             return cmd, backend, out, temp
         if op == "copy" and getattr(item, "content_kind", "") == "ps4":
-            # the backend sorts the package(s) into '<Title> [CUSA…] [vX]/…' under the output
             try:
                 out.mkdir(parents=True, exist_ok=True)
             except Exception:
@@ -14521,7 +13530,6 @@ class App:
                     base = self._mirror_base(item, out, sub)
                 out = base
             else:
-                # Explicit output path - split the filename off so --copy-name carries it.
                 copy_name = out.name
                 out = out.parent
             try:
@@ -14536,14 +13544,10 @@ class App:
             cmd += ["--copy-mode", getattr(item, "copy_mode", None) or "keep"]
             return cmd, backend, out, temp
 
-        # ── fPKG EXTRACT job (built package -> /app0 folder) ─────────────────
         if op == "fpkg-extract":
-            # Never dump /app0 straight into a library folder: the extract gets its own
-            # "<package> [extracted]" subfolder (the dialog pre-names it that way when
-            # the global Output is empty).
+            # never dump /app0 straight into a library folder, it gets its own [extracted] folder
             out = self._fpkg_extract_folder(item, out)
-            # an earlier extract there: the start's "already exists" decision applies (the
-            # backend replaces it only with --overwrite, and only once the new one is complete)
+            # the backend replaces an earlier extract only with --overwrite, and only once the new one is complete
             _taken = self._folder_taken(out)
             if _taken and getattr(item, "_keep_both", False):
                 n = 2
@@ -14561,11 +13565,8 @@ class App:
                 pass
             return cmd, backend, out, temp
 
-        # ── fPKG BUILD job (/app0 folder or packed image -> built .pkg) ──────
         if op == "fpkg-build":
-            # Same placement rules as a pack: auto-organize into the game's own folder (the
-            # tool names the .pkg by content id; the worker renames it afterwards - see
-            # _finalize_pkg_name), else a bundle mirrors its folder, never into the source.
+            # like a pack: the tool names the .pkg by content id, _finalize_pkg_name renames it later
             item._organized_pkg_name = None
             if out.suffix.lower() != ".pkg":
                 if self._auto_organize_on(item):
@@ -14585,9 +13586,8 @@ class App:
                 "--fpkg-kraken-backend", str(getattr(item, "fpkg_kraken_backend", "builtin") or "builtin"),
             ]
             if self._consumable_extract(item):
-                cmd.append("--stage-in-place")      # our own unpacked copy: built in place, taken in as it goes
-            # Retail switches (CHANGELOG 1.1.12). Only the non-default positions are passed;
-            # the backend's defaults are the console-verified configuration.
+                cmd.append("--stage-in-place")  # our own unpacked copy, taken in as it goes
+            # only non-default retail switches go out, the backend defaults are the known-good set
             if not getattr(item, "fpkg_retail_normalize", True):
                 cmd += ["--fpkg-no-retail-normalize"]
             _hdr = _hdr_mode(getattr(item, "fpkg_hdr_flag", "auto"))
@@ -14599,13 +13599,9 @@ class App:
                 cmd += ["--fpkg-keystone", str(item.fpkg_keystone)]
             if not getattr(item, "fpkg_fake_sign", True):
                 cmd += ["--fpkg-no-fake-sign"]
-            # Backport: --backport-target lowers eboot/prx/sprx SDK words to the
-            # target's public values BEFORE the C# tool spiegels+signs+packs. Runs
-            # in-place on a folder source, same as --fake-sign-first.
+            # backport lowers SDK words before the C# tool signs and packs, in place on a folder
             cmd += self._backport_args(item)
-            # Identity fields are FALLBACKS: the backend reads sce_sys/param.json of the
-            # resolved source first (folder, unwrapped image, extracted archive alike) and
-            # only uses these for what it lacks. Empty fields are simply not passed.
+            # identity fields are fallbacks, the backend reads param.json first
             for flag, attr in (("--content-id", "fpkg_content_id"), ("--title-id", "fpkg_title_id"),
                                ("--fpkg-title", "fpkg_title"), ("--fpkg-version", "fpkg_version")):
                 _v = str(getattr(item, attr, "") or "").strip()
@@ -14614,14 +13610,11 @@ class App:
             _dll = getattr(item, "fpkg_pubtools_dll", "") or ""
             if _dll:
                 cmd += ["--fpkg-pubtools-dll", str(_dll)]
-            # Staging drive for the inner image / CNT / outer image (and the unwrap of an
-            # image source): the placement-chosen build temp, else the app temp.
             bt = getattr(item, "_build_temp", None)
             tstr = str(Path(bt)) if bt else str(temp)
             if tstr:
                 cmd += ["--temp-dir", tstr]
-            # Per-job Kraken speed: 7 = normal, -4 = fast preset (the tool's 0..9 are
-            # identical). Never the tuning-bar level - it means nothing to this encoder.
+            # Kraken: 7 normal, -4 fast (0..9 are all the same). never the tuning-bar level
             _lvl = getattr(item, "fpkg_level", None)
             if _lvl is None:
                 _lvl = self._pkg_level_default()
@@ -14632,14 +13625,13 @@ class App:
                 pass
             return cmd, backend, out, temp
 
-        # ── PATCH job (manual Integrate Patch as a queue item) ───────────────
         if op == "patch":
             game = Path(item.path)
             patch_src = getattr(item, "patch_source", None)
             if not patch_src:
                 raise RuntimeError("Patch job has no patch source.")
             if getattr(item, "patch_overwrite", False) and game.suffix.lower() == ".ffpfsc":
-                pout = game                                  # patch the .ffpfsc in place
+                pout = game
             else:
                 stem = game.stem if game.suffix.lower() == ".ffpfsc" else game.name
                 stem = re.sub(r"\s*\[patched\]\s*$", "", stem, flags=re.I)
@@ -14672,18 +13664,13 @@ class App:
                 cmd += ["--block-size", _bs]
             if self.verify_output_var.get():
                 cmd.append("--verify")
-            # Same spill target as a pack job: a big patched image can park its pass-2
-            # spool on the output drive instead of failing on a tight temp drive.
+            # a big patched image may spill its pass-2 spool onto the output drive
             cmd += ["--spool-fallback-dir", str(pout.parent)]
             if self.verbose_var.get():
                 cmd.append("--verbose")
             return cmd, backend, pout.parent, temp
 
-        # OOM-resume: a retry compresses the already-built inner image (pass 1 is skipped;
-        # the extracted source was freed after pass 1). Source the command from that image
-        # so it takes the backend's single-pass .ffpfs -> .ffpfsc route. The output NAME
-        # still comes from the item's metadata (descriptive_ffpfsc_name), so it matches the
-        # original run exactly even though the source folder is gone.
+        # OOM resume: compress the built inner image, the name still comes from the item
         _resume = getattr(item, "_resume_inner", None)
         _resume_ok = bool(_resume) and Path(str(_resume)).is_file()
         _src = str(_resume) if _resume_ok else str(item.path)
@@ -14699,8 +13686,7 @@ class App:
                 else:
                     cmd = pycmd + ["-u", str(cli_py), str(item.path), str(out)]
             cmd += ["--unpack", "--overwrite"]
-            # Converter "decompress one level" (.ffpfsc → inner .ffpfs): stop unwrapping at
-            # the first nested image instead of recursing all the way to a folder.
+            # decompress one level: stop at the first nested image
             if getattr(item, "unwrap", True) is False:
                 cmd.append("--no-unwrap")
             return cmd, backend, out, temp
@@ -14714,10 +13700,9 @@ class App:
             cmd.append("--verify")
         # MkPFS tuning
         comp_level = self._ffpfsc_level(item)
-        if comp_level != 7:  # only pass if non-default
+        if comp_level != 7:
             cmd += ["--compression-level", str(comp_level)]
-        # An OOM auto-retry pins an explicit (lower) core count on the item - honour it
-        # over the global setting so the retry actually uses fewer mkpfs workers.
+        # an OOM retry pins a lower core count, it beats the setting
         cpu = getattr(item, "_cpu_retry_override", None)
         if cpu is None:
             cpu = self.cpu_count_var.get()
@@ -14728,18 +13713,14 @@ class App:
             cmd += ["--block-size", block_size]
         if self.verbose_var.get():
             cmd.append("--verbose")
-        # Route the backend scratch (inner image + pass-2 spool) to the SAME drive this
-        # run was placed on (item._build_temp), so ALL artifacts follow one drive. Folder
-        # and folder+patch jobs are never extracted, so resolve their placement here (the
-        # PATCH factor applies for auto-patch jobs); archives carry _build_temp from
-        # extraction / the post-extraction re-gate. Falls back to the user temp folder.
+        # scratch (inner image + spool) goes on the drive this run was placed on
         patch_src = getattr(item, "patch_source", None)
         is_patch_job = (bool(patch_src) and self.auto_integrate_patch_var.get()
                         and bool(getattr(item, "path", None)) and item.path.is_dir()
                         and not _resume_ok)   # a resume only re-compresses the inner image
         if getattr(item, "_build_temp", None) is None:
             try:
-                self._resolve_extract_root(item)   # sets item._build_temp via the right factor
+                self._resolve_extract_root(item)
             except Exception:
                 pass
         build_temp = getattr(item, "_build_temp", None)
@@ -14748,38 +13729,22 @@ class App:
         temp_str = str(temp) if str(temp) else ""
         if temp_str:
             cmd += ["--temp-dir", temp_str]
-        # Spill target for the pass-2 spool when --temp-dir can't hold image+spool: the
-        # OUTPUT ROOT (a big drive). The backend writes the spool under <root>/_ffpfsc_temp,
-        # which the startup sweep and failure cleanup already reclaim. Lets a big game keep
-        # its inner image on the fast SSD instead of falling entirely onto the HDD.
+        # the spool may spill to the output root, the inner image stays on the fast SSD
         out_root = str(_job_out) if _job_out else self.output_var.get().strip()
         if out_root:
             cmd += ["--spool-fallback-dir", out_root]
-        # Auto-patch: overlay a detected patch sibling onto the game before packing,
-        # via the backend's PATCH MODE (now routed to the chosen --temp-dir above).
         if is_patch_job:
             cmd += ["--patch", str(patch_src)]
-        # Opt-in exFAT workflow: only for a plain folder pack (not patch jobs, not a
-        # disk-image source). The backend builds an exFAT image of the folder and
-        # compresses that instead of running the folder PFS builder.
         if (self.build_via_exfat_var.get() and not is_patch_job and not _resume_ok
                 and getattr(item, "operation", "pack") == "pack"
                 and getattr(item, "path", None) and Path(item.path).is_dir()):
             cmd.append("--via-exfat")
-        # Opt-in: fake-sign the source folder's executables in place before packing.
-        # The backend applies this per folder-item (and warns-and-skips non-folder
-        # sources), so it is safe to pass for any pack job that isn't a patch job.
-        # AMPR items are EXCLUDED here: their fake-signing is done GUI-side inside
-        # _prepare_ampr BEFORE the ampr_emu.index is built, so the index records the
-        # final (signed) file sizes/mtimes. Letting the backend re-sign afterwards
-        # would invalidate that index.
+        # not for AMPR: those are signed before ampr_emu.index is built, re-signing breaks it
         if (self.fake_sign_before_pack_var.get() and not is_patch_job and not _resume_ok
                 and getattr(item, "operation", "pack") == "pack"
                 and not getattr(item, "ampr_emu", False)):
             cmd.append("--fake-sign-first")
-        # Backport for a pack (mkpfs) job: same semantics as for fpkg - lowers
-        # SDK words in place on the folder source before the pack, and pipes
-        # the user's fakelib folder into sce_sys/../fakelib/.
+        # backport lowers SDK words in place on the folder source and adds the fakelib folder
         if (not is_patch_job and not _resume_ok
                 and getattr(item, "operation", "pack") == "pack"
                 and getattr(item, "path", None) and Path(item.path).is_dir()):
@@ -14788,9 +13753,7 @@ class App:
         return cmd, backend, out if out.suffix.lower() not in (".ffpfsc", ".ffpfs") else out.parent, temp
 
     def _run_cleanup(self, work) -> None:
-        """Run a cleanup function in a daemon thread, counted so the batch can wait for
-        all in-flight reclaims to finish before re-reading free space (a boolean cannot
-        represent N concurrent rmtrees)."""
+        """a counter, not a flag: the batch waits for every running rmtree before reading free space"""
         with self._cleanup_lock:
             self._cleanup_inflight += 1
         def _wrapped():
@@ -14801,9 +13764,8 @@ class App:
                     self._cleanup_inflight = max(0, self._cleanup_inflight - 1)
         threading.Thread(target=_wrapped, daemon=True).start()
 
-    # ── AMPR / APR (PlayGo) support ───────────────────────────────────────────
+    # AMPR / APR (PlayGo)
     def _ampr_folder(self):
-        """The configured folder holding the two emu .sprx files, or None."""
         try:
             p = self.ampr_var.get().strip()
         except Exception:
@@ -14811,7 +13773,6 @@ class App:
         return Path(p) if p and Path(p).is_dir() else None
 
     def _ensure_ampr_folder(self) -> bool:
-        """Ensure the AMPR emu folder is set; prompt once if not. True when ready."""
         if self._ampr_folder():
             return True
         result = [False]
@@ -14859,8 +13820,7 @@ class App:
         return result[0]
 
     def _inject_ampr_files(self, item) -> None:
-        """Copy the two emu .sprx into <game>/fakelib/. Tracks injected paths on the item
-        so a DIRECT (non-archive) source folder can be cleaned up after packing."""
+        """remembers what it injected so a user's own folder can be cleaned up afterwards"""
         ampr_dir = self._ampr_folder()
         if not ampr_dir or not item.path or not getattr(item, "ampr_emu", False):
             return
@@ -14885,9 +13845,7 @@ class App:
                 self.log("WARN", f"AMPR: failed to inject {fname}: {exc}")
 
     def _build_ampr_index(self, item) -> None:
-        """Build ampr_emu.index (AMPRIDX3) in the game folder. Ported byte-exact from the
-        reference tool: header <8sIIQQQII>, records <IIQq>, FNV-1a-64 open-addressed slots
-        <QII>, /app0/-prefixed lowercased POSIX paths, atomic temp-rename write."""
+        """AMPRIDX3, byte-exact: header <8sIIQQQII>, records <IIQq>, FNV-1a-64 slots <QII>"""
         if not getattr(item, "ampr_emu", False) or not item.path or not Path(item.path).is_dir():
             return
         import struct as _struct
@@ -14896,9 +13854,7 @@ class App:
         output_tmp = output.with_suffix(output.suffix + ".tmp")
 
         def _key(p):
-            # The emulator runtime's key (drakmor's reference builder): UTF-8 bytes with
-            # "\\" -> "/" and only ASCII A-Z folded. Unicode .lower() would change the hash
-            # and the sort order of non-ASCII paths.
+            # runtime key: UTF-8, backslash to slash, only ASCII A-Z folded. str.lower() breaks the hash
             raw = p.replace("\\", "/").encode("utf-8")
             return bytes((b + 0x20) if 0x41 <= b <= 0x5A else b for b in raw)
 
@@ -14955,8 +13911,7 @@ class App:
         out_r, tmp_r = output.resolve(), output_tmp.resolve()
         _SKIP = {_key("/app0/ampr_emu.index"), _key("/app0/ampr_emu.index.tmp"),
                  _key("/app0/ampr_commands.bin"), _key("/app0/apr_emu.log")}   # emulator trace/log
-        # OS junk (.DS_Store, ._*, __MACOSX, Thumbs.db, …) is stripped by the backend
-        # before packing, so it must not be indexed either - same rule as MkPFS.
+        # OS junk is stripped before packing, so it stays out of the index too (same rule as MkPFS)
         try:
             _bk = backend_base_dir()
             if str(_bk) not in sys.path:
@@ -14996,10 +13951,7 @@ class App:
             self.log("WARN", f"AMPR: index build failed: {exc}")
 
     def _fake_sign_folder_inproc(self, folder: Path) -> None:
-        """Run the recursive fake-signer over *folder* in this (main) thread, used
-        by the AMPR path so signing completes BEFORE the ampr_emu.index is built.
-        The backend's fake_sign module is pure-Python; import it directly rather
-        than spawning a subprocess so the index build can follow synchronously."""
+        """in-process on purpose: signing must finish before the index is built"""
         backend = backend_base_dir()
         if str(backend) not in sys.path:
             sys.path.insert(0, str(backend))
@@ -15012,14 +13964,11 @@ class App:
         _fs.fake_sign_tree(str(folder), log=lambda m: self.log("INFO", m))
 
     def _prepare_ampr(self, item) -> None:
-        """Right before packing an APR/PlayGo folder: ensure the emu folder, inject the
-        .sprx into fakelib/, and build the index. No-op for non-APR games / disk images."""
         if not getattr(item, "ampr_emu", False) or not getattr(item, "path", None):
             return
         game = Path(item.path)
         self.log("INFO", f"AMPR: {item.name} is a PlayGo/APR title - preparing emu files.")
-        # Releases often SHIP the emu already - fakelib/libSceAmpr.sprx + libScePlayGo.sprx
-        # and usually an ampr_emu.index. Then there is nothing to ask for or to inject.
+        # releases often ship the emu already, then there is nothing to inject
         shipped = [f for f in AMPR_SPRX_FILES if (game / "fakelib" / f).is_file()]
         shipped_index = (game / "ampr_emu.index").is_file()
         if len(shipped) == len(AMPR_SPRX_FILES):
@@ -15027,8 +13976,7 @@ class App:
                              + (" and ampr_emu.index" if shipped_index else "") + " - no emu folder needed.")
             want_sign = bool(self.fake_sign_before_pack_var.get()) and game.is_dir()
             if want_sign and shipped_index and not getattr(item, "_from_archive", False):
-                # Signing changes file sizes, so the shipped index would go stale - and this
-                # is the user's own library folder, whose files we never rewrite.
+                # signing would stale the shipped index, and the user's own folder is never rewritten
                 self.log("WARN", "AMPR: fake-sign-before-pack skipped for this game - it ships an "
                                  "ampr_emu.index that must match its files, and the source is your own folder.")
                 want_sign = False
@@ -15049,18 +13997,14 @@ class App:
             self.log("WARN", "AMPR: no emu folder set - packing WITHOUT AMPR support; this "
                              "APR title may not boot until you set the folder in Settings.")
             return
-        # If fake-signing is enabled, sign the game's executables FIRST so the index
-        # below records their final (signed) sizes/mtimes. The injected .sprx shims
-        # are added after this and are themselves already signed, so they're skipped.
+        # sign first so the index records the final sizes. the shims come signed already
         if self.fake_sign_before_pack_var.get() and Path(item.path).is_dir():
             self._fake_sign_folder_inproc(Path(item.path))
         self._inject_ampr_files(item)
         self._build_ampr_index(item)
 
     def _ampr_cleanup(self, item) -> None:
-        """Remove emu files we injected into a DIRECT (non-archive) source folder - that's
-        the user's own library, so restore it after packing. Archive-extracted sources sit
-        in temp and are removed wholesale by the normal teardown, so they're left alone."""
+        """restores a user's own folder. archive unpacks live in temp and go with the teardown"""
         if item is None or getattr(item, "_from_archive", False):
             return
         injected = getattr(item, "_ampr_injected", None) or getattr(item, "ampr_injected", None)
@@ -15090,14 +14034,12 @@ class App:
         self.log("INFO", f"AMPR: cleaned injected emu files from {Path(item.path).name}.")
 
     def _oom_retry(self, item) -> bool:
-        """Requeue *item* with one fewer mkpfs worker after an out-of-memory kill."""
+        """requeue with one fewer mkpfs worker"""
         MAX_RETRIES = 2
         tries = getattr(item, "_oom_retries", 0)
         prev = getattr(item, "_cpu_retry_override", None)
         base = self.cpu_count_var.get()
-        # The core count the failed run actually used: an earlier retry's override, else
-        # the configured count (AUTO = 0 is unknown here; the backend capped it, so 1 is
-        # the only guaranteed reduction).
+        # AUTO (0) is unknown here and the backend capped it, so 1 is the only safe step down
         current = prev if prev is not None else (base if (base and base > 0) else None)
         new_cpu = max(1, (current - 1) if current is not None else 1)
         if tries >= MAX_RETRIES or (current is not None and new_cpu >= current):
@@ -15106,10 +14048,7 @@ class App:
             return False
         item._cpu_retry_override = new_cpu
         item._oom_retries = tries + 1
-        # If pass 1 already built the inner image (the usual case - OOM strikes in pass-2
-        # compression), resume from it: the retry compresses that image with fewer cores,
-        # skipping pass 1 entirely. (No inner image yet = a rare pass-1 OOM → rebuild from
-        # the source, which keep_source below preserves.)
+        # OOM usually hits pass 2: resume from the inner image and skip pass 1
         inner = getattr(item, "_inner_image", None)
         if not (inner and Path(str(inner)).is_file()) and self._run_took_files(self.worker):
             # pass 1 had already taken files out of the unpack: a rebuild from it would miss them
@@ -15121,9 +14060,7 @@ class App:
             self.log("INFO", "Resuming from the already-built inner image - pass 1 is skipped "
                              "on this retry (compression only).")
         item.status = "Pending"
-        # Reclaim the failed run's partial scratch (pass-2 spool, mkpfs tmp dirs) but KEEP the
-        # extracted source: a pass-1 retry rebuilds from it, a pass-2 resume already freed it
-        # (the keep is then a no-op). The inner image (_ffpfsc_inner) is preserved for resume.
+        # reclaim the partial scratch but KEEP the extracted source and the inner image for the retry
         self._cleanup_after_failure(item, keep_source=True)
         if item not in self.queue:
             self.queue.append(item)
@@ -15139,14 +14076,13 @@ class App:
         return True
 
     def _cleanup_after_failure(self, item, keep_source: bool = False) -> None:
-        """Reclaim a failed/skipped/cancelled run's scratch: the mkpfs tmp* working dirs (orphaned inner image + pass-2 spool) AND this item's own extracted-source subdir - scoped to the drive the run actually built on (item._build_temp), the user temp folder, AND the output drive's _ffpfsc_temp (where a SPLIT run may have spilled its pass-2 spool, ffpfsc_spool_*)."""
-        self._ampr_cleanup(item)   # restore a direct source folder we injected emu files into
+        """mkpfs tmp* dirs and this job's unpack, on the build drive, the temp folder and the output spool"""
+        self._ampr_cleanup(item)  # restore a user's folder we put emu files in
         roots, seen = [], set()
         _jo = self._job_output_dir(item)
         out_str = str(_jo) if _jo else ""
         out_spool = (str(Path(out_str) / "_ffpfsc_temp") if out_str else None)
-        # A build cancelled or killed mid-pass-2 leaves the backend's swap file
-        # "<name>.ffpfsc.partial" (and its .tmp) in the output folder: reclaim those too.
+        # a build killed in pass 2 leaves <name>.ffpfsc.partial (and .tmp) in the output
         _w = getattr(self, "worker", None)
         _partial_dir = Path(str(getattr(_w, "output_dir", "") or "")) if _w is not None else None
         _partial_since = float(getattr(_w, "start_time", 0) or 0) - 2.0
@@ -15205,8 +14141,7 @@ class App:
                             freed += sz
                 except Exception:
                     pass
-            # the output folder's _ffpfsc_temp (a package build's own folder) goes when only
-            # OS markers are left in it; the temp folder itself stays
+            # the output's _ffpfsc_temp goes once only OS markers are left, the temp folder itself stays
             try:
                 if out_spool and Path(out_spool).is_dir() and str(Path(out_spool).resolve()) not in _temp_roots:
                     junk = list(Path(out_spool).iterdir())
@@ -15216,9 +14151,7 @@ class App:
                         os.rmdir(out_spool)          # fails when a new job put its folder in meanwhile
             except OSError:
                 pass
-            # The fPKG tool stages a hard-link mirror of a folder source next to it
-            # ("<parent>/.ffpfsc-stage-<id>"); a killed build can leave it behind. Removing
-            # it only unlinks the mirror's links - the source files keep their own.
+            # fPKG tool's hard-link mirror (.ffpfsc-stage-<id>): rmtree only drops links, sources stay
             if _stage_parent is not None and _stage_parent.is_dir():
                 try:
                     for p in _stage_parent.iterdir():
@@ -15227,8 +14160,7 @@ class App:
                             shutil.rmtree(str(p), ignore_errors=True)
                 except Exception:
                     pass
-            # an extract or folder output cut short: its hidden work folder beside the target
-            # ('.<name>.partial-XXXXXXXX' / '.<name>.new-XXXXXXXX')
+            # hidden work folder of a cut-short extract: .<name>.partial-XXXXXXXX or .new-XXXXXXXX
             if _partial_dir is not None:
                 for d in {_partial_dir, _partial_dir.parent}:
                     try:
@@ -15242,8 +14174,7 @@ class App:
                     except OSError:
                         pass
             if _partial_dir is not None and _partial_dir.is_dir():
-                # a copy this run cut short leaves a hidden temp ('.<name>.copy-<hex>.copy-tmp')
-                # beside its target: in the output folder or a title folder (and its DLC Pack)
+                # a cut-short copy leaves .<name>.copy-<hex>.copy-tmp beside its target, maybe in a title folder
                 try:
                     _lvl = [_partial_dir]
                     for _depth in range(3):
@@ -15288,16 +14219,14 @@ class App:
                     pass
             if freed:
                 self.log("INFO", f"Cleaned {format_size(freed)} of scratch from the failed/skipped run.")
-            # Drop throwaway patch dirs + the now-empty temp base, like the success path.
             self._reclaim_temp_base_inline(tp)
 
         self._run_cleanup(_work)
 
-    # ── Feature 5: Auto-clear temp ────────────────────────────────────────────
+    # auto-clear temp
     @staticmethod
     def _backup_is_users(d: Path) -> bool:
-        """A patch backup that holds a user's originals (its record names a folder outside the
-        app's scratch, present or on a drive that is away); one of the app's own copy is not."""
+        """holds a user's originals: its record names a folder outside our scratch, even one on an absent drive"""
         try:
             pb = _patch_backup_module()
             for rec in d.glob("*/restore.jsonl"):
@@ -15309,14 +14238,13 @@ class App:
             return True                           # unsure: keep it
 
     def _restore_count(self, step: int) -> None:
-        """Patch restores in flight, changed from the main thread and cleanup threads alike."""
+        """touched by the main thread and cleanup threads alike, hence the lock"""
         with self._cleanup_lock:
             self._restores_inflight = max(0, self._restores_inflight + step)
 
     @staticmethod
     def _patch_backup_dirs(bases) -> set:
-        """Every staged patch backup under these bases (<base>/_ffpfsc_temp/patch-backup-*), resolved:
-        they hold a user's original game files, so no sweep or Clear Temp ever deletes them."""
+        """patch backups hold a user's original game files: no sweep or Clear Temp may delete them"""
         out: set = set()
         for base in bases:
             if not base:
@@ -15332,9 +14260,7 @@ class App:
         return out
 
     def _recover_patch_backups(self, bases) -> set:
-        """Patch backups a crashed run left in <base>/_ffpfsc_temp/patch-backup-*: each one that
-        belongs to a folder outside the app's scratch is restored into it and then removed.
-        Returns the backups that stay (could not be restored), resolved. Thread-safe: no Tk."""
+        """puts a crashed run's backups back into the user's folders, keeps what fails. no Tk"""
         held: set = set()
         try:
             pb = _patch_backup_module()
@@ -15355,7 +14281,7 @@ class App:
                         game = None
                     if not game or not Path(game).is_dir() or "_ffpfsc_temp" in Path(game).parts \
                             or "_extracted" in Path(game).parts:
-                        continue          # the app's own copy, or the folder is gone: nothing to put back
+                        continue  # our own copy, or the folder is gone
                     try:
                         n = pb.restore_originals(d, Path(game))
                         self.log("INFO", f"An interrupted patch job: its patch was taken back out of {game} "
@@ -15371,9 +14297,8 @@ class App:
         return held
 
     def _offer_startup_sweep(self):
-        """On launch, look for orphaned scratch from a crashed/cancelled run - tmp* and _extracted on the temp drive, plus _ffpfsc_temp / _ffpfsc_extract on the output drive - and offer to reclaim it."""
         if getattr(self, "_browser_only", False):
-            return   # browser-only launch (double-clicked a .ffpfsc) - don't prompt on the hidden window
+            return  # browser-only launch: no prompt on the hidden window
         NAMES = ("_extracted", "_ffpfsc_extract", "_ffpfsc_temp", "_ffpfsc_inner")
         keep = self._open_extracts()          # copies queued jobs still read
         # Tk variables are read on the main thread only; the scan thread gets a snapshot.
@@ -15386,15 +14311,14 @@ class App:
         def _scan():
             targets, seen = [], set()
             bases = list(bases0)
-            # A crash during a patch job on the user's own folder: put the originals back first,
-            # and never offer to delete a backup that could not be restored.
+            # crashed patch on a user's folder: originals go back first,
+            # never offer to delete a backup that could not be restored
             try:
                 self._recover_patch_backups(bases0)
             finally:
                 self._restore_count(-1)   # raised before the thread
             keep.update(self._patch_backup_dirs(bases0))   # whatever could not be restored stays
-            # Drives from the history: each recorded output path is a folder we WROTE to,
-            # so its parent may still hold our _ffpfsc_temp from a run that never cleaned up.
+            # every output in the history is a folder we wrote to, its parent may hold an old _ffpfsc_temp
             try:
                 hist = load_history() or []
                 hist_bases: set[str] = set()
@@ -15403,8 +14327,7 @@ class App:
                     if not out:
                         continue
                     op = Path(out)
-                    # Try the output path itself and its parent - the temp dir might sit
-                    # next to the .ffpfsc file OR one level up (per-title organize folder).
+                    # temp may sit next to the .ffpfsc or one level up (per-title folder)
                     for cand in (op, op.parent):
                         try:
                             s = str(cand.resolve())
@@ -15448,7 +14371,7 @@ class App:
                     total += get_folder_size(p)
                 except Exception:
                     pass
-            if targets and total >= 64 * 1024**2 and not self._job_active():   # 64 MiB threshold
+            if targets and total >= 64 * 1024**2 and not self._job_active():
                 self.root.after(0, lambda: self._prompt_startup_sweep(targets, total))
 
         self._restore_count(+1)          # the scan restores interrupted patches first: Start waits
@@ -15485,8 +14408,7 @@ class App:
             pass
 
     def _auto_clear_temp(self, done_item=None):
-        """Silently clear temp folder contents after a successful compression, but not what a
-        queued job still reads."""
+        """after a successful build, spares what a queued job still reads"""
         tp = self.temp_var.get().strip()
         if not tp:
             return
@@ -15497,9 +14419,7 @@ class App:
         errors = 0
         keep = self._open_extracts(exclude=done_item)
         for p in [q for c in list(temp_dir.iterdir()) for q in removable_parts(c, keep)]:
-            # Only remove THIS app's working data (mkpfs tmp* dirs, the _extracted tree,
-            # and the patch-prepare extract dirs); never wipe unrelated files a user may
-            # keep in their temp folder.
+            # only our own working data, never anything else a user keeps in the temp folder
             if not (is_app_tmp_dir_in(p)
                     or p.name in ("_extracted", "_patch_game", "_patch_files", "_ffpfsc_inner")):
                 continue
@@ -15517,7 +14437,7 @@ class App:
             msg += tr(" ({errors} item(s) could not be removed)", errors=errors)
         self.log("OK", msg)
 
-    # ── Feature 4: Batch auto-advance ─────────────────────────────────────────
+    # batch auto-advance
     def _update_batch_counter(self):
         if not self._batch_running:
             self.batch_counter_var.set("")
@@ -15534,10 +14454,7 @@ class App:
             self.batch_counter_var.set(line)
 
     def _job_output_dir(self, item) -> Path | None:
-        """The folder this job writes to: its own output_path when set (the per-job
-        snapshot taken when it was queued), else the global Output field. The space
-        gate and the drive placement must look at THIS drive, not at whatever the
-        Output field says today."""
+        """the job's own output snapshot first: space and placement must check THIS drive"""
         op = getattr(item, "output_path", None)
         if op:
             try:
@@ -15548,7 +14465,6 @@ class App:
         return Path(g) if g else None
 
     def _note_space_skip(self, item, short) -> None:
-        """Say which drive is full: in the log, the job's details and the run's skip window."""
         name = getattr(item, "display_name", None) or item.name
         if short is None:
             item._skip_reason = "not enough free space"
@@ -15574,14 +14490,12 @@ class App:
             pass
 
     def _space_gate(self, item, out_dir):
-        """Place the run on a drive sized for its REAL footprint (sets item._build_root / _build_temp via _resolve_extract_root), then decide go/skip/cancel against THAT drive."""
+        """place the run by its REAL footprint, then go/skip/cancel against that drive"""
         op = getattr(item, "operation", "pack")
-        # Unpack and fPKG extract write to the output drive only; fake-sign rewrites in
-        # place (no temp, no new output). None of them needs the pack space gate.
+        # unpack, fPKG extract and fake-sign build no image, no space gate needed
         if op in ("unpack", "fake-sign", "fpkg-extract", "ps4-keystone"):
             return "proceed"
-        # A chain that only changes a folder in place, or unpacks to a folder, writes no
-        # inner image - same as the three above.
+        # a chain to a folder writes no inner image either
         if op == "chain" and getattr(item, "chain_to", None) == "folder":
             return "proceed"
         out_dir = Path(out_dir)
@@ -15616,25 +14530,19 @@ class App:
         if policy == "skip":
             self._note_space_skip(item, space_shortfall(item, temp_dir, out_dir))
             return "skip"
-        return _ask()   # 'ask' - show the dialog and let the user decide
+        return _ask()
 
-    # Statuses that mean an item has finished its run and must NOT be processed again.
     _TERMINAL_STATUSES = ("Done", "Failed", "Skipped", "Cancelled")
 
     def _has_pending(self) -> bool:
-        """True if any queued item still needs to run (not in a terminal status)."""
         return any(getattr(it, "status", "") not in self._TERMINAL_STATUSES for it in self.queue)
 
     def _running_item(self):
-        """The job the batch works on right now (extracting or running). It keeps its place
-        in the list: the queue is shown and kept in the order the jobs were added."""
         it = getattr(self, "_active_item", None)
         return it if (self._batch_running and it is not None and it in self.queue) else None
 
     def _next_pending(self):
-        """The job to run next, without moving anything: the one the batch is already on (a
-        re-entry after its archive was unpacked), else the one Retry asked for, else the
-        first job from the top that has not run yet. Reorder the list to change it."""
+        """the current job (re-entry after its unpack), else Retry's pick, else the first one waiting"""
         act = getattr(self, "_active_item", None)
         if (self._batch_running and act is not None and act in self.queue
                 and getattr(act, "status", "") not in self._TERMINAL_STATUSES):
@@ -15645,7 +14553,6 @@ class App:
         return next((it for it in self.queue if getattr(it, "status", "") not in self._TERMINAL_STATUSES), None)
 
     def _pick_next(self):
-        """_next_pending, made the active job."""
         item = self._next_pending()
         if item is not None:
             self._active_item = item
@@ -15657,9 +14564,7 @@ class App:
         return item
 
     def _extract_is_complete(self, item) -> bool:
-        """True when *item* runs from a copy it extracted from an archive, and that copy is
-        whole: the payload already replaced the archive fields, so extraction finished. A job
-        cancelled while its archive is still extracting has only half a copy."""
+        """a job cancelled mid-extract has only half a copy"""
         own = self._extract_dir_for_item(item)
         if own is None or not own.exists() or getattr(item, "archive_path", None):
             return False
@@ -15669,8 +14574,7 @@ class App:
     _RETRYABLE = ("Failed", "Cancelled", "Skipped")
 
     def _retry_failed(self):
-        """Run the failed jobs of the queue again (the queue report's button); skipped and
-        stopped jobs stay as they are."""
+        """skipped and stopped jobs stay as they are"""
         if self._batch_running:
             return
         n = 0
@@ -15692,9 +14596,7 @@ class App:
             self._retry_job(item)
 
     def _retry_job(self, item) -> None:
-        """Run one failed, cancelled or skipped job again: from the copy it kept, else from
-        its archive. While the queue runs it joins the jobs still waiting; otherwise it
-        starts now, and the other failed jobs stay as they are."""
+        """from the kept copy, else from the archive. joins the waiting jobs while the queue runs"""
         if item not in self.queue or getattr(item, "status", "") not in self._RETRYABLE:
             return
         self._rearm_from_archive(item)
@@ -15716,8 +14618,7 @@ class App:
 
     @staticmethod
     def _source_key(path) -> str:
-        """One key for 'is this the same source': a RAR volume's first part, else the
-        resolved path. Case-insensitive so a case-only rename counts as the same file."""
+        """a RAR set's first part, else the resolved path. case-insensitive on purpose"""
         if not path:
             return ""
         try:
@@ -15732,9 +14633,7 @@ class App:
 
     @classmethod
     def _title_id_from_path(cls, path) -> str:
-        """The PPSA/CUSA id from a path's name, upper-case; '' when there is none. Reads
-        the file name, every parent folder name, and (if present) a title id already
-        stored on the GameItem; so an item built from an unpacked folder still carries it."""
+        """PPSA/CUSA id from the name or any parent folder, upper-case, '' if none"""
         for part in reversed(Path(str(path) if path else "").parts):
             m = cls._TITLE_ID_IN_NAME.search(part or "")
             if m:
@@ -15747,7 +14646,7 @@ class App:
         return tid if tid.startswith(("PPSA", "CUSA")) else ""
 
     def _known_signatures(self, include_history: bool = True) -> tuple[set[str], set[str]]:
-        """What Rescan matches a new source against: (resolved source paths, title ids)."""
+        """what Rescan matches against: (resolved paths, title ids)"""
         paths: set[str] = set()
         tids: set[str] = set()
         for it in self.queue:
@@ -15759,8 +14658,7 @@ class App:
                 tid = self._title_id_from_path(cand)
                 if tid:
                     tids.add(tid)
-            # the display name / stem may still carry it after extraction (archive_path and path
-            # both go to None once the extracted copy is cleaned up on a done run)
+            # path and archive_path are None after a done run's cleanup, the labels still carry the id
             for label in (getattr(it, "display_name", None), getattr(it, "name", None),
                           getattr(it, "archive_title", None)):
                 tid = self._title_id_from_path(label)
@@ -15787,10 +14685,7 @@ class App:
 
     @staticmethod
     def _output_already_has(out_root, tid: str) -> bool:
-        """True when a file or a folder for *tid* is already under *out_root* (the
-        auto-organized "<Title> [TID] [v…]" folder, or any .ffpfsc/.ffpfs/.pkg carrying it
-        in its name). The scan is cheap: one iterdir at the root and, when the entry is a
-        plain folder with no suffix, its direct children only."""
+        """cheap: one iterdir at the root, plus the children of plain folders"""
         if not (out_root and tid):
             return False
         try:
@@ -15813,10 +14708,7 @@ class App:
         return False
 
     def rescan_last_source(self) -> None:
-        """Scan the folder of the last Add job for new sources and queue the ones that are
-        not already here or in the history. The settings of the last Add job are reused;
-        no editor is opened. Nothing is added when nothing is new. Runs on a worker (the
-        folder walk and the archive header reads can take a moment)."""
+        """reuses the last Add job's settings, no editor. runs on a worker"""
         settings = load_settings()
         last_dir = native_path((settings.get("last_source_dir") or "").strip())
         last = (settings.get("last_source") or "").strip()
@@ -15824,8 +14716,7 @@ class App:
             messagebox.showinfo("Rescan", "No source to rescan yet. Add a job once, then Rescan "
                                            "finds new downloads in that folder.")
             return
-        # last_source_dir is set by _add() to the parent of a file source or to the folder
-        # itself; a folder as source means a single game, so the parent is what Rescan uses.
+        # a folder source is a single game, so Rescan looks at its parent
         folder = Path(last_dir) if last_dir else (Path(last).parent if Path(last).is_file() else Path(last).parent)
         if not folder.is_dir():
             messagebox.showerror("Rescan", tr("The last source folder is gone:\n{folder}", folder=folder))
@@ -15837,9 +14728,7 @@ class App:
             return
 
         cleanup = tpl.get("after_source") in ("trash", "move", "delete")
-        # With a clean-up chosen, a game already in the output folder or the history is
-        # queued anyway: when its turn comes its source is moved (or trashed, deleted) and
-        # the job is Done. Only what is in the queue already is left out.
+        # with a clean-up chosen, known games are queued anyway so their sources get cleaned up
         known_paths, known_tids = self._known_signatures(include_history=not cleanup)
         out_root = None if cleanup else ((tpl.get("output") or "").strip() or None)
         self.log("INFO", f"Rescan: looking for new sources in {folder}…")
@@ -15854,8 +14743,7 @@ class App:
             except Exception as e:
                 self.scan_q.put(("rescan-error", str(e)))
                 return
-            # add-ons of a game go along with it: planned on everything found, so an add-on
-            # never turns up as new on its own once its game is queued or done
+            # plan on everything found, so an add-on never shows up as new once its game is in
             try:
                 pairs, _addons = plan_releases(folder, found, passwords=passwords, pkg_role=self._pkg_role)
             except Exception:
@@ -15878,8 +14766,7 @@ class App:
         self._launch_scan(work)
 
     def _rescan_make(self, tpl: dict):
-        """A `make(source)` callable like JobDialog._add uses, built from *tpl* (the saved
-        Add job settings): produces a chain job + fPKG params + compression + organize."""
+        """a make(source) like JobDialog._add, built from the saved Add job settings"""
         to = str(tpl.get("to") or "ffpfsc")
         out = str(tpl.get("output") or "")
         sign = bool(tpl.get("sign"))
@@ -15918,7 +14805,7 @@ class App:
         return make
 
     def _add_jobs_async(self, sources, make, plan=None) -> None:
-        """Build the jobs for *sources* on a worker thread and hand them to the main loop one at a time (_drain_add_q): each appears in the queue as soon as it is ready, a line and a bar above the list count them, and Start waits until the last one is in."""
+        """built on a worker, handed to the main loop one by one. Start waits for the last"""
         if not sources:
             return
         st = self.__dict__.setdefault("_add_state", {"total": 0, "done": 0, "made": [], "errors": 0})
@@ -15981,7 +14868,6 @@ class App:
         return max(0.0, rest * pace)
 
     def _job_phases(self, item) -> list:
-        """The long steps *item* runs, in order (see ultra_core.LONG_STEPS)."""
         op = getattr(item, "operation", "pack")
         arc = bool(getattr(item, "archive_path", None) or getattr(item, "origin_archive", None))
         if op == "copy":
@@ -15998,10 +14884,7 @@ class App:
     _STEP_WIDTHS = {"Extracting": 28, "Creating Temp PFS": 24, "Compressing": 34, "Writing Final Image": 97}
 
     def _job_time_left(self, item, stage, stage_pct, eta, size) -> float | None:
-        """Seconds the running *item* still needs (ultra_core.job_time_left): the running
-        step's own time left (the backend's ETA, else its pace so far), the later steps at
-        the speed they showed before. Learns that speed when a long step ends (30 s at
-        least), kept in the settings."""
+        """running step's ETA plus later steps at their learned speed (learned on steps of 30 s or more)"""
         now = time.time()
         clock = getattr(self, "_stage_clock", None)
         if clock is None or clock[0] is not item or clock[1] != stage:
@@ -16025,7 +14908,7 @@ class App:
 
     @staticmethod
     def _fmt_left(secs: float) -> str:
-        """'about 2 h 10 min left', rounded so the number does not twitch on every update."""
+        """rounded so the number doesn't twitch on every update"""
         if secs < 90:
             return "about a minute left"
         mins = int(round(secs / 60.0))
@@ -16044,8 +14927,6 @@ class App:
         return tr("All jobs  {v} %   ·   {left}", v=int(frac * 100), left=left)
 
     def _show_all_progress(self) -> None:
-        """The foot of the queue list while the queue runs: the share of the whole run that
-        is done (left), the time it still needs (right), and a neutral bar."""
         try:
             frac = getattr(self, "_all_frac", None)
             if not self._batch_running or frac is None:
@@ -16066,8 +14947,6 @@ class App:
             pass
 
     def _show_add_progress(self) -> None:
-        """The line under the queue header while Add job builds jobs; the run's summary at
-        the foot of the list (_show_all_progress) is refreshed with it."""
         self._show_all_progress()
         st = getattr(self, "_add_state", None)
         try:
@@ -16084,11 +14963,11 @@ class App:
             pass
 
     def _drain_add_q(self) -> None:
-        """Main loop: take the jobs the add worker has built so far into the queue."""
+        """main thread: takes in what the add worker has built so far"""
         q = getattr(self, "_add_q", None)
         st = getattr(self, "_add_state", None)
         if q is None or st is None:
-            self._show_add_progress()          # the all-jobs line while the queue runs
+            self._show_add_progress()
             return
         added = False
         while True:
@@ -16130,7 +15009,7 @@ class App:
                                     n=len(src), names=names))
             elif kind == "note":
                 self.log("WARN", err)
-            else:                                   # one worker finished
+            else:
                 with self._scan_lock:
                     self._scan_in_flight = max(0, self._scan_in_flight - 1)
                 if st["done"] >= st["total"]:
@@ -16149,10 +15028,7 @@ class App:
         self._show_add_progress()
 
     def _release_failed_copies(self, item) -> bool:
-        """Before the next job of a batch: when it does not fit, delete the extracted copies
-        that failed jobs kept for a retry, so a failure never costs the jobs after it their
-        space. A copy kept after a cancel is the user's and stays. True when a reclaim
-        started (the caller waits for it and checks the space again)."""
+        """next job doesn't fit: drop copies failed jobs kept. a copy kept after a cancel is the user's"""
         kept = [it for it in self.queue
                 if it is not item and getattr(it, "status", "") == "Failed" and getattr(it, "kept_extract", False)]
         if not kept or getattr(item, "operation", "pack") in ("unpack", "fake-sign", "fpkg-extract", "ps4-keystone"):
@@ -16177,16 +15053,12 @@ class App:
         return True
 
     def _drop_kept_extract(self, item) -> None:
-        """A job leaves the queue: the extracted copy it kept after a cancel goes too."""
         if getattr(item, "kept_extract", False):
             item.kept_extract = False
             self._cleanup_item_extract(item)
 
     def _due_checks(self, item) -> bool:
-        """Right before a job runs, on both start paths (start() for the first job of a run,
-        _batch_auto_start() for the rest): read its archive set again, then settle an output
-        that is already there, before an archive is unpacked when the game can be read
-        (otherwise once it is unpacked). False when the job does not run now."""
+        """both start paths come through here: start() and _batch_auto_start()"""
         if not self._refresh_archive_set(item):
             return False
         due = self._late_output_check(item)
@@ -16204,7 +15076,7 @@ class App:
         return True
 
     def _refresh_archive_set(self, item) -> bool:
-        """Right before an archive job runs: the parts of its set, their size on disk, and the unpacked size from the headers, read again when the set changed since the job was added or that size is still unknown."""
+        """re-read when the set changed since add or the unpacked size is still unknown"""
         arc = getattr(item, "archive_path", None)
         if not arc or getattr(item, "kept_extract", False):
             return True
@@ -16264,8 +15136,7 @@ class App:
         return True                              # unknown: the extraction step reports what it finds
 
     def _copy_lacks_files(self, item) -> bool:
-        """A failed run took files out of the unpacked copy, and the archive is not there to
-        unpack it again: the job stays Failed rather than build an incomplete game."""
+        """files were taken out and the archive is gone: stay Failed rather than build half a game"""
         if not getattr(item, "source_taken_in", False) or getattr(item, "archive_path", None):
             return False
         item.status = "Failed"
@@ -16275,17 +15146,14 @@ class App:
         return True
 
     def _rearm_from_archive(self, item) -> bool:
-        """A job whose source was extracted from an archive, when that extracted copy is gone
-        (a failed or cancelled run cleans it up): point it back at the archive, so the next
-        run extracts it again instead of failing on a missing source. True when it did."""
+        """the unpacked copy is gone: point back at the archive so the next run unpacks again"""
         origin = getattr(item, "origin_archive", None)
         if not origin or getattr(item, "archive_path", None):
             return False
         src = getattr(item, "path", None)
         try:
-            # A copy kept after a cancel is used again. Any other extracted copy in the app's
-            # scratch is removed after a failed run (maybe right now), so never run from it; a
-            # source outside the scratch that still exists is used as it is.
+            # never run from a scratch copy, a failed run may be deleting it right now.
+            # only a copy kept after a cancel or a source outside the scratch is reused
             if src and Path(str(src)).exists() and (self._extract_dir_for_item(item) is None
                                                      or getattr(item, "kept_extract", False)):
                 return False
@@ -16311,10 +15179,7 @@ class App:
         return True
 
     def _retire_failed(self, item, status: str = "Failed", reason: str = "") -> None:
-        """Keep a failed/skipped item in the queue (marked, moved to the END) instead of
-        discarding it - only SUCCESSFUL items leave the queue. Works whether the item is
-        still in the queue (move it) or was already popped (re-add it). *reason* is shown
-        in the details pane."""
+        """failed jobs stay in the queue, only successful ones leave"""
         try:
             item.status = status
             item.status_note = " ".join(str(reason or "").split())[:300]
@@ -16324,9 +15189,8 @@ class App:
             pass
 
     def _batch_auto_start(self):
-        """Start the next game in the queue - rechecks disk space before each game."""
-        # Honor a cancel requested during the 600 ms advance gap (cancel_requested is
-        # reset below, so a dropped cancel would otherwise silently keep the batch going).
+        """rechecks disk space before each game"""
+        # a cancel in the 600 ms advance gap: cancel_requested is reset below, don't drop it
         if self.cancel_requested or self.extract_cancel_event.is_set():
             self._batch_running = False
             self.cancel_requested = False
@@ -16337,15 +15201,13 @@ class App:
             self.status_update("Ready", "Queue stopped.", "Ready", 0, 0, "00:00", " - ", " - ")
             self.log("WARN", "Queue stopped by the user.")
             return
-        # Wait for any in-flight scratch reclaim to finish before re-reading free space - 
-        # otherwise the gate sees a still-full drive and false-skips the next game. Cap the
-        # wait generously (~10 min) for a slow exFAT rmtree of a 150-260 GB tree.
+        # wait for reclaims or the gate sees a full drive. cap 10 min, exFAT rmtree takes its sweet time
         if getattr(self, "_restores_inflight", 0):
             self.root.after(500, self._batch_auto_start)      # a patch restore has no time limit
             return
         if getattr(self, "_cleanup_inflight", 0) > 0:
             self._cleanup_wait_ticks += 1
-            if self._cleanup_wait_ticks <= 1200:   # 1200 * 500 ms ≈ 10 min
+            if self._cleanup_wait_ticks <= 1200:  # 1200 * 500 ms = 10 min
                 if self._cleanup_wait_ticks == 1:
                     self.status_update("Cleaning up", "Reclaiming temp space before the next game…",
                                         "Cleaning", 0, 0, " - ", " - ", " - ")
@@ -16353,14 +15215,11 @@ class App:
                 return
             self.log("WARN", "Cleanup still running past the wait cap - continuing; the space gate decides.")
         self._cleanup_wait_ticks = 0
-        # Pause asked for: stop before the next job. The job in progress coming back here
-        # (after its archive was unpacked, an out-of-memory retry) is not the next job.
+        # the running job coming back here (after its unpack or an OOM retry) is not the next job
         if (getattr(self, "_pause_requested", False) and self._next_pending() is not None
                 and self._next_pending() is not getattr(self, "_active_item", None)):
             self._pause_queue()
             return
-        # The next job that has not run, in list order (finished jobs keep their places).
-        # When none remain, the batch is complete - failed/skipped items stay in the queue.
         if self._next_pending() is None:
             self._batch_running = False
             self.start_btn.configure(state="normal")
@@ -16380,9 +15239,7 @@ class App:
             self.root.after(500, self._batch_auto_start)   # waits for the reclaim, then gates again
             return
 
-        # ── Space pre-flight gate - places the run on a drive sized for its real
-        #    footprint, then go/skip/cancel. Skip cleans any partial scratch and keeps
-        #    the batch moving; a big game that fits the HDD is routed there, not skipped.
+        # space gate: a big game that fits the HDD goes there instead of being skipped
         try:
             od = self._job_output_dir(item)
             op = str(od) if od else ""
@@ -16406,7 +15263,7 @@ class App:
                     self._update_batch_counter()
                     return
                 if gate == "skip":
-                    self._cleanup_after_failure(item)   # reclaim any partial scratch
+                    self._cleanup_after_failure(item)
                     self._retire_failed(item, "Skipped", getattr(item, "_skip_reason", ""))
                     self._batch_failed += 1
                     self._update_batch_counter()
@@ -16416,15 +15273,13 @@ class App:
         except Exception as e:
             self.log("WARN", f"Space pre-check skipped: {e}")
 
-        # Patch job with an archive game / .7z patch - resolve to folders first, re-enter.
+        # archive game or .7z patch: resolve to folders first, then re-enter
         if self._patch_needs_prepare(item):
             self._prepare_patch_item(item)
             return
-        # Archive placeholder - extract first
         if getattr(item, "archive_path", None):
             self._extract_queued_item(item)
             return
-        # The output of an unpacked archive is known now: is it there already?
         _late = self._late_output_check(item)
         if _late == "cancel":
             self._cleanup_after_failure(item)
@@ -16436,12 +15291,9 @@ class App:
         if _late == "skip":
             self._skip_late(item)
             return
-        # Folder pack: keep Spotlight off the temp/image dir (the source folder is the
-        # user's own - left indexable). Archives were marked in _extract_queued_item.
+        # keep Spotlight off our temp, the user's source folder stays indexable
         self._mark_no_spotlight(getattr(item, "_build_temp", None))
-        # AMPR/APR: inject the emu .sprx + build ampr_emu.index on the resolved game folder
-        # (post-extraction for archives) before packing, so they ride into the .ffpfsc.
-        # PACK ONLY (see start()).
+        # AMPR emu files and index go into the game folder before packing. pack only
         if getattr(item, "ampr_emu", False) and getattr(item, "operation", "pack") == "pack":
             self._prepare_ampr(item)
         try:
@@ -16481,7 +15333,7 @@ class App:
         self.worker = CLIWorker(self, item, cmd, cwd, out_dir, temp_dir)
         self.worker.start()
 
-    # ── After a job is done, after the queue is done ──────────────────────────
+    # after-job actions
     _ARCHIVE_NAME_RE = re.compile(r"\.(part\d+\.rar|rar|zip|7z|r\d{2,}|z\d{2}|7z\.\d{3}|zip\.\d{3}|\d{3})$", re.I)
 
     @staticmethod
@@ -16495,8 +15347,7 @@ class App:
         return uniq
 
     def _after_game_sources(self, item) -> list:
-        """The game a job started from: its archive with every part, or its container file
-        or game folder. Never the app's extracted copy."""
+        """the game the job started from, every archive part. never our extracted copy"""
         arch = getattr(item, "archive_path", None) or getattr(item, "origin_archive", None)
         if arch:
             return self._uniq_paths(archive_set_parts(Path(arch)))
@@ -16513,12 +15364,10 @@ class App:
                                 else [pp])
 
     def _after_sources(self, item) -> list:
-        """What a job's after-action works on: the game it started from plus a patch it integrated."""
         return self._uniq_paths(self._after_game_sources(item) + self._after_patch_sources(item))
 
     def _after_protected(self, item, dest=None) -> list:
-        """Folders an after-action never moves or removes as a whole: where the job was added
-        from, the output and destination folders, and the app's own."""
+        """never moved or removed as a whole: the add folder, output, destination and our own"""
         out = [str(ultra_core.APP_DIR), getattr(item, "source_root", None), dest]
         try:
             out += [self.temp_var.get().strip(), self.output_var.get().strip(),
@@ -16529,8 +15378,7 @@ class App:
         return [x for x in out if x]
 
     def _app_folders(self) -> list:
-        """Folders that are the app's own: its profile, and the scratch it makes under the
-        temp folder, the temp pool and the output folder. A source never overlaps them."""
+        """our profile plus the scratch under temp, temp pool and output. a source never overlaps them"""
         roots = []
         try:
             roots += [self.temp_var.get().strip(), self.output_var.get().strip()]
@@ -16547,7 +15395,7 @@ class App:
         return out
 
     def _after_job_plan(self, item, worker):
-        """(action, sources, destination, reason to leave them) for *item*, which is Done."""
+        """(action, sources, destination, reason to leave them) for a Done job"""
         aj = _after_job_module()
         act = getattr(item, "after_source", None) or aj.KEEP
         if act not in aj.ACTIONS or act == aj.KEEP:
@@ -16602,9 +15450,7 @@ class App:
                                               others=others)
 
     def _bundle_release(self, item, game, keep_dirs):
-        """The download folder of a game whose add-ons went along with it (see
-        ultra_core.plan_releases): every part of the game sits directly in it, and it is
-        none of the app's or the job's own folders. None otherwise."""
+        """only when every game part sits directly in it and it is none of our or the job's folders"""
         rel = getattr(item, "bundle_release", None)
         if not rel or not game:
             return None
@@ -16634,9 +15480,7 @@ class App:
         return folder
 
     def _run_after_job(self, item, worker, then) -> None:
-        """Keep, trash, move or delete *item*'s source as the job says, then call *then*
-        (which moves the queue on). A move across drives runs on a worker thread; the
-        queue waits for it, so the copy and the next job do not share the drive."""
+        """a move across drives runs on a worker, the queue waits so they don't share the drive"""
         aj = _after_job_module()
         try:
             act, srcs, dest, why = self._after_job_plan(item, worker)
@@ -16685,8 +15529,7 @@ class App:
                     msg = tr("Deleted the source of {name} ({size} freed): {names}.", name=name, size=format_size(size), names=names)
                     item._after_result = ("done", "the source was deleted.")
                 results.put(("SUCCESS", msg))
-                # Nothing empty left behind: a Delete takes the release folder too when only
-                # notes, checksums or pictures are left in it; emptied folders above go.
+                # a Delete also takes the release folder when only notes, checksums or pictures are left
                 keep_dirs = info.get("keep_dirs") or []
                 left = {Path(t).parent for t in srcs}
                 rel = info.get("release")
@@ -16719,10 +15562,7 @@ class App:
         self.root.after(200, poll)
 
     def _settle_existing(self, item, hit, hit_note: str = "", then=None, exact: bool = True) -> None:
-        """*item*'s output is already there (*hit*). With Move/Trash/Delete chosen, the source
-        gets that now and the job is Done, as if it had run; with Keep, or when the action
-        cannot run, it is Skipped. A hit that only matches title and version (another
-        firmware, say) never costs the source. then(done) moves the queue on."""
+        """Move/Trash/Delete run now and it is Done, Keep skips. a title+version hit never costs the source"""
         then = then or (lambda done: None)
         name = getattr(item, "display_name", None) or item.name
         item._output_there = True
@@ -16756,15 +15596,13 @@ class App:
         self._run_after_job(item, _t.SimpleNamespace(output_path=str(hit), _is_copy=False, validate_failed=False), after)
 
     def _publish_patch_backup(self, item, worker, then) -> None:
-        """A patched job is done: move the folder of original files the patch replaced (with
-        its README) from the temp drive to beside the output, then call *then*. Runs on a
-        worker thread; the queue waits for it like for the after-job action."""
+        """moves the originals the patch replaced beside the output, on a worker. the queue waits"""
         staged = self._staged_patch_backup(worker)
         out = (getattr(worker, "output_path", "") or "").strip('"') if worker is not None else ""
         if staged is None or not out:
             then(); return
         out_p = Path(out)
-        dest_dir = out_p.parent                  # beside the file (or the output folder)
+        dest_dir = out_p.parent
         dest = dest_dir / staged.name
         n = 2
         while dest.exists():
@@ -16774,8 +15612,7 @@ class App:
 
         def work():
             try:
-                # only an internal record and a README, no original file (a patch that only
-                # added files): nothing to keep beside the output
+                # a patch that only added files: no originals to keep
                 if not any(q.is_file() for q in (staged / "app0").rglob("*")):
                     shutil.rmtree(staged.parent if staged.parent.name.startswith("patch-backup-") else staged,
                                   ignore_errors=True)
@@ -16805,10 +15642,7 @@ class App:
 
     @staticmethod
     def _staged_patch_backup(worker) -> Path | None:
-        """The folder the backend staged a patch's originals in, only when it is exactly
-        that: an absolute path to an existing folder inside a 'patch-backup-…' folder under
-        the app's _ffpfsc_temp scratch. Anything else (an empty line read as '.', a
-        stray path) is never moved or removed."""
+        """only an absolute folder in patch-backup-* under our _ffpfsc_temp, anything else stays untouched"""
         raw = str(getattr(worker, "patch_backup", "") or "").strip() if worker is not None else ""
         if not raw:
             return None
@@ -16819,8 +15653,7 @@ class App:
         return p
 
     def _return_extras_aside(self, worker) -> None:
-        """A run that ended without its own cleanup (a hard kill on Windows): the extras it set
-        aside next to the user's game folder go back in; a name that is there again gets "(2)"."""
+        """a hard kill (Windows) skipped the cleanup: put the set-aside extras back, (2) on a clash"""
         raw = str(getattr(worker, "extras_aside", "") or "") if worker is not None else ""
         if " -> " not in raw:
             return
@@ -16847,9 +15680,7 @@ class App:
             pass
 
     def _restore_then_drop_patch_backup(self, item, worker) -> None:
-        """A failed or cancelled job: put a patch back out of the user's own folder (in the
-        background; a big patch copies gigabytes back), then drop the staged backup. What to
-        restore is decided here, on the main thread."""
+        """what to restore is decided here on the main thread, the copying runs in the background"""
         p = self._staged_patch_backup(worker)
         if p is None:
             return
@@ -16881,8 +15712,6 @@ class App:
         self._run_cleanup(_work)
 
     def _patch_restore_root(self, item, p: Path):
-        """The user's own folder a staged patch backup belongs to, or None (the app's own copy
-        was patched, no record, or the record names another folder)."""
         if item is None or not (p / "restore.jsonl").is_file() or self._extract_dir_for_item(item) is not None:
             return None
         try:
@@ -16901,7 +15730,7 @@ class App:
         _after_job_module().notify(name, "Done" if ok else f"Failed: {detail}"[:180])
 
     def _queue_finished(self) -> None:
-        """The run ended on its own, not by Stop: the queue banner, then Sleep or Quit."""
+        """the run ended on its own, not by Stop"""
         aj = _after_job_module()
         total, done, fail = self._batch_total, self._batch_done, self._batch_failed
         if self.notify_var.get() == "queue" or (self.notify_var.get() == "job" and total > 1):
@@ -16950,7 +15779,7 @@ class App:
             QueueReportWindow(self.root, done, total, left, retry=self._retry_failed)
 
     def _ensure_batch_started(self):
-        """Establish batch state for a FRESH queue run (idempotent via the _batch_running guard)."""
+        """only for a fresh run, safe to call twice"""
         if not self._batch_running:
             cd = getattr(self, "_countdown", None)
             if cd is not None:               # a new run: no sleep or quit after the last one
@@ -16965,29 +15794,24 @@ class App:
             self._batch_done    = 0
             self._batch_failed  = 0
             self._batch_running = self._batch_total > 0
-            # Size-weighted total progress: a 187 GB game advances the queue bar far more
-            # than a 35 GB one (games finish in queue order; done-bytes = sum of first _done).
+            # weighted by size: a 187 GB game moves the bar more than a 35 GB one
             try:
                 self._batch_sizes = [max(0, int(display_size(it) or 0)) for it in todo]
             except Exception:
                 self._batch_sizes = []
             self._batch_items = list(todo)   # by job, not by place: the list can be reordered
-            # For the estimate over all jobs: when the run began, and what the jobs that
-            # finished took (seconds and bytes) - their pace is the best guess for the rest.
+            # the finished jobs' pace is the best guess for the rest
             self._batch_t0 = time.time()
             self._batch_fin_secs, self._batch_fin_bytes = 0.0, 0
             self._job_t0 = {}
             self._all_frac, self._all_eta = None, None
         self._update_batch_counter()
 
-    # ── Start / Cancel ────────────────────────────────────────────────────────
+    # start / cancel
     def start(self, rearm_failed: bool = True):
-        """Run the queue. A fresh Start also re-runs failed, skipped and cancelled jobs;
-        Retry passes rearm_failed=False to run only the job it re-armed."""
+        """a fresh Start also re-runs failed, skipped and cancelled jobs. Retry passes False"""
         if getattr(self, "_restores_inflight", 0) and not self._batch_running:
-            # a patch is still being taken back out of a source folder: a run now would read
-            # a folder half way between patched and original. One waiting start, however often
-            # Start is pressed.
+            # a patch is still being undone in a source folder: wait, or the run reads a half-patched folder
             if not getattr(self, "_start_waiting", False):
                 self._start_waiting = True
                 self.status_update("Restoring", "Putting a patched source folder back first…", "Cleaning",
@@ -17001,7 +15825,6 @@ class App:
         if getattr(self, "_start_waiting", False):
             return                                # the waiting start runs it
         if not self._batch_running and (getattr(self, "_add_state", None) or {}).get("total"):
-            # Add job is still building jobs: start once the last one is in the queue.
             self.pending_start = True
             self.status_update("Adding", "Adding the jobs, then starting…", "Scanning Files",
                                0, 0, "00:00", " - ", " - ", side=True)
@@ -17013,25 +15836,18 @@ class App:
         if not self.temp_var.get().strip():
             self.temp_var.set(str(Path(self.output_var.get()) / "_ffpfsc_temp"))
         if not self.queue:
-            # A source-scan from a just-pressed Add may still be running (queue is briefly
-            # empty during an async folder scan). Re-adding here would scan the SAME source
-            # again → a duplicate queue item. Just arm pending_start; the in-flight scan's
-            # result handler will honor it once the item lands.
+            # an async scan from Add may still be running, re-adding would queue a duplicate
             if getattr(self, "_scan_in_flight", 0) > 0:
                 self.pending_start = True
                 self.status_update("Scanning", "Finishing the source scan, then starting…",
                                     "Scanning Files", 0, 0, "00:00", " - ", " - ")
                 return
-            # Nothing queued: do not fall back to the last-used source path (it is not
-            # shown anywhere) - just say so.
+            # don't fall back to the last source, it isn't shown anywhere
             self.log("INFO", "Nothing to start - add a game folder, archive or image first.")
             self.status_update("Idle", "Queue is empty.", "", 0, 0, "00:00", " - ", " - ")
             return
 
-        # A FRESH Start re-arms previously failed/skipped/cancelled jobs so they're retried
-        # (within a run they stay skipped to avoid an endless loop; pressing Start again
-        # retries them). The user deletes any they don't want. NOT on the internal re-entry
-        # after an archive extraction - that's mid-batch (_batch_running is True then).
+        # a fresh Start re-arms failed jobs. within a run they stay skipped or we'd loop forever
         if not self._batch_running and rearm_failed is not False:
             requeued = 0
             for it in self.queue:
@@ -17054,8 +15870,6 @@ class App:
             self.cancel_btn.configure(state="disabled")
             return
 
-        # Run the first NOT-yet-run item from the top; finished, failed and skipped jobs keep
-        # their places. If everything left is terminal, there's nothing to start.
         if self._next_pending() is None:
             self.log("INFO", "Nothing to start - every job in the queue has run. Clear completed removes "
                              "the finished ones; Retry runs a failed one again." if self.queue
@@ -17065,29 +15879,22 @@ class App:
             return
         item = self._pick_next()
 
-        # An archive's set may have changed since the job was added (a download that was
-        # still running): read it again, so placement and the space gate use real numbers.
+        # the archive set may have grown since add (download still running), read it again
         if not self._due_checks(item):
             return
 
-        # ── Pre-flight space gate FIRST - place the run on a drive sized for its real
-        #    footprint and decide go/skip/cancel BEFORE any extraction or packing, so a
-        #    too-big archive is judged on its true extracted size (from headers) rather
-        #    than extracted onto a full SSD and only then failing. ─────────────────────
+        # space gate first: judge an archive by its header size, not after it filled the SSD
         gate = self._space_gate(item, self._job_output_dir(item) or Path(self.output_var.get().strip()))
         if gate == "cancel":
             if self._batch_running:
                 self._batch_running = False
-            # Always return to idle - start() may run after extraction (buttons left
-            # in the running state), so a single-game cancel here must reset them too.
+            # start() may run after extraction with the buttons still busy, reset them
             self.start_btn.configure(state="normal")
             self.cancel_btn.configure(state="disabled")
             self._update_batch_counter()
             self.status_update("Ready", "Drive check cancelled.", "Ready", 0, 0, "00:00", " - ", " - ")
             return
         if gate == "skip":
-            # Reclaim any scratch this item already wrote (e.g. an archive extracted
-            # before the post-extraction re-gate), then skip.
             self._cleanup_after_failure(item)
             if self._batch_running:
                 self._retire_failed(item, "Skipped", getattr(item, "_skip_reason", ""))
@@ -17096,8 +15903,7 @@ class App:
                 self.update_queue_box()
                 self.root.after(600, self._batch_auto_start)
             else:
-                # Single run: reset to idle (Start was disabled / Cancel enabled by the
-                # extraction step) and mark the item, so the UI isn't left frozen.
+                # single run: reset the buttons the extract step set, or the UI looks frozen
                 item.status = "Skipped"
                 item.status_note = getattr(item, "_skip_reason", "")
                 self.start_btn.configure(state="normal")
@@ -17107,18 +15913,15 @@ class App:
                                    0, 0, "00:00", " - ", " - ")
             return
 
-        # ── Patch job with an archive game / .7z patch - resolve to folders first ────
         if self._patch_needs_prepare(item):
             self._ensure_batch_started()   # mark the batch running BEFORE the early return
             self._prepare_patch_item(item)
             return
-        # ── Archive placeholder - extract first, then compress (re-gates after) ──────
         if getattr(item, "archive_path", None):
-            self._ensure_batch_started()   # so a first-item extraction failure advances,
-            self._extract_queued_item(item)  # not aborts, the rest of the queue
+            self._ensure_batch_started()  # a first-job unpack failure moves on instead of aborting
+            self._extract_queued_item(item)
             return
 
-        # The output of an unpacked archive is known now: is it there already?
         _late = self._late_output_check(item)
         if _late == "cancel":
             self._cleanup_after_failure(item)
@@ -17131,13 +15934,9 @@ class App:
         if _late == "skip":
             self._skip_late(item)
             return
-        # Folder pack: keep Spotlight off the temp/image dir (the source folder is the
-        # user's own - left indexable). Archives were marked in _extract_queued_item.
+        # keep Spotlight off our temp, the user's source folder stays indexable
         self._mark_no_spotlight(getattr(item, "_build_temp", None))
-        # AMPR/APR: inject the emu .sprx + build ampr_emu.index on the resolved game folder
-        # (post-extraction for archives) before packing, so they ride into the .ffpfsc.
-        # PACK ONLY: an fPKG is installed natively, the ShadowMount PlayGo emu has no
-        # business inside the package.
+        # AMPR emu goes into packs only, an fPKG installs natively and has no use for it
         if getattr(item, "ampr_emu", False) and getattr(item, "operation", "pack") == "pack":
             self._prepare_ampr(item)
         try:
@@ -17149,9 +15948,7 @@ class App:
         # Stale temp data warning
         try:
             if getattr(item, "operation", "pack") != "unpack" and temp_dir.exists():
-                # Count ALL leftover temp data - mkpfs tmp* working dirs AND old
-                # _extracted game trees - but never the CURRENT item's own source,
-                # which legitimately lives under <temp>/_extracted right now.
+                # count all leftovers, but never the current job's source under <temp>/_extracted
                 cur_src = None
                 try:
                     ex_root = (temp_dir / "_extracted").resolve()
@@ -17181,8 +15978,6 @@ class App:
         except Exception:
             pass
 
-        # Establish batch state for a fresh start (idempotent; archive/patch items already
-        # did this before their early return, and a re-entry after extraction is a no-op).
         self._ensure_batch_started()
 
         self._last_cmd_str = " ".join(cmd)
@@ -17208,9 +16003,7 @@ class App:
     def cancel(self):
         self.cancel_requested = True
         self.extract_cancel_event.set()
-        # Immediate, main-thread visual feedback - don't wait for the ~100 ms poll tick,
-        # and repaint the big status + footer + button NOW so it isn't masked by the
-        # worker's still-queued progress updates (the "Cancel does nothing" symptom).
+        # repaint now, or the queued worker updates mask it and Cancel looks dead
         try:
             self.cancel_btn.configure(state="disabled")
             self.stop_btn.configure(state="disabled")
@@ -17227,16 +16020,12 @@ class App:
 
     def status_update(self, title, detail, stage, stage_pct, overall_pct, elapsed, speed, eta,
                       job=None, side=False):
-        """Queue a status for the panel. *job* is the queue item the progress belongs to:
-        its queue bar then never moves backward. A *side* message (a source scan, "3 games
-        added") shows only in the footer while a job runs, so it cannot reset that job's
-        bars to 0 %."""
+        """job: its bar never moves backward. side: footer only while a job runs, never resets its bars"""
         if stage == "Creating Temp PFS" and stage_pct >= 100:
             stage_pct = 99
         self.status_q.put((title, detail, stage, stage_pct, overall_pct, elapsed, speed, eta, job, side))
 
     def _begin_job_progress(self, item, floor: float = 0.0):
-        """A job (re)starts: its queue bar starts again from *floor*."""
         self._job_peak_item, self._job_peak = item, float(floor)
 
     def log(self, tag, msg):
@@ -17268,10 +16057,9 @@ class App:
         self.refresh_history()
         self.refresh_statistics()
 
-    # ── Tools ─────────────────────────────────────────────────────────────────
+    # tools
     def clear_temp_files(self):
-        """Clean temp: this app's working data on the temp folder, the extra temp drives and
-        the build folder a package job leaves in the output folder; nothing else."""
+        """only our own working data: temp, extra temp drives and a package job's build folder in the output"""
         tp = self.temp_var.get().strip()
         if not tp:
             messagebox.showerror("Clean temp", "No temp folder is set.")
@@ -17282,8 +16070,7 @@ class App:
         except Exception:
             pass
         out = (self.output_var.get() or "").strip()
-        # Only this app's own scratch folders - never everything inside a folder the
-        # user may have pointed at a drive root or a shared directory.
+        # only our own scratch folders, temp might point at a drive root or a shared folder
         def _ours(p: Path) -> bool:
             return p.is_dir() and (p.name in ("_extracted", "_ffpfsc_extract", "_ffpfsc_inner",
                                               "_patch_game", "_patch_files", "_ffpfsc_temp")
@@ -17339,7 +16126,7 @@ class App:
         else:
             messagebox.showerror("Error", "Failed to create diagnostic ZIP.")
 
-    # ── History & Statistics ──────────────────────────────────────────────────
+    # history and statistics
     def refresh_history(self):
         self.history_box.configure(state="normal")
         self.history_box.delete("1.0", "end")
@@ -17393,7 +16180,7 @@ class App:
             self.stats_box.insert("end", line + "\n")
         self.stats_box.configure(state="disabled")
 
-    # ── Sound + Summary ───────────────────────────────────────────────────────
+    # sound and summary
     def play_complete_sound(self, success=True):
         try:
             want = (success and self.sound_complete_var.get()) or \
@@ -17438,8 +16225,7 @@ class App:
         open_path(RAW_LOG_FILE)
 
     def open_output_folder(self):
-        # Prefer the actual result location - a bundle lands in its own subfolder, not
-        # directly in the chosen output dir - then fall back to the output folder.
+        # a bundle lands in its own subfolder, so prefer the real result path
         try:
             out = getattr(self.worker, "output_path", "") if getattr(self, "worker", None) else ""
             if out and Path(out).exists():
@@ -17456,16 +16242,11 @@ class App:
         self.log_box.delete("1.0", "end")
         self.visible_log_lines = 0
 
-    # ── Stage display ─────────────────────────────────────────────────────────
     def update_stages_display(self, current_stage, pct):
         full_names   = [s[0] for s in _STAGE_DEFS]
         current_idx  = full_names.index(current_stage) if current_stage in full_names else -1
-        # Only tick a prior stage done if it was ACTUALLY entered: pack and unpack use
-        # disjoint subsets of _STAGE_DEFS, so a raw index check would mark e.g.
-        # "Compress" done during an unpack or "Extract" done during a pack.
+        # pack and unpack use disjoint stages, so only tick what was actually entered
         sp = getattr(self.worker, "stage_progress", {}) if getattr(self, "worker", None) else {}
-        # Only the stations this job goes through: the ones it has entered, the current one,
-        # and what is still ahead (Extract only happens first; Verify only when switched on).
         steps = []
         verify_on = bool(getattr(self, "verify_output_var", None) and self.verify_output_var.get())
         if current_idx >= 0:
@@ -17485,16 +16266,15 @@ class App:
         except Exception:
             pass
 
-    # ── Poll loop ─────────────────────────────────────────────────────────────
+    # poll loop
     def _tick_elapsed(self):
-        """Called every poll cycle while a worker is live - keeps elapsed ticking
-        regardless of whether the backend is printing anything."""
+        """keeps elapsed ticking even when the backend prints nothing"""
         w = getattr(self, "worker", None)
         if w and w.is_alive() and w.start_time:
             self.elapsed_var.set(f"Elapsed: {format_duration(time.time() - w.start_time)}")
 
     def _update_ram_meter(self):
-        """Refresh the RAM readout in the status bar (plain <70 %, amber <85 %, red above)."""
+        """plain under 70 %, amber under 85 %, red above"""
         try:
             import psutil
             mem = psutil.virtual_memory()
@@ -17509,7 +16289,7 @@ class App:
             except Exception:
                 pass
         except Exception:
-            # psutil missing or unavailable - hide the meter rather than error.
+            # no psutil: hide the meter
             try:
                 self.ram_var.set("")
             except Exception:
@@ -17519,7 +16299,7 @@ class App:
         try:
             self._poll_inner()
         except Exception as e:
-            # Last-resort catch - log and keep the loop alive no matter what.
+            # last resort, the poll loop must never die
             try:
                 self.log("ERROR", f"[_poll crash - loop kept alive] {e}")
             except Exception:
@@ -17528,7 +16308,7 @@ class App:
 
     def _poll_inner(self):
         self._tick_elapsed()
-        # Refresh the RAM meter ~every 2 s (poll runs every 200 ms → every 10th tick).
+        # RAM meter every 10th tick, about 2 s
         self._ram_tick = getattr(self, "_ram_tick", 0) + 1
         if self._ram_tick >= 10:
             self._ram_tick = 0
@@ -17593,8 +16373,7 @@ class App:
                     self.status_update("Ready",
                                         tr("Archive queued - will extract when compression starts: {name}", name=item.archive_path.name),
                                         "Ready", 0, 0, "00:00", " - ", " - ", side=True)
-                    # If the header is encrypted and no saved password worked, ask now - so
-                    # the auto routing knows the real extracted size and can use the SSD.
+                    # encrypted header: ask for the password now so routing knows the real size
                     self._resolve_archive_password(item)
                     self.update_queue_box(select_item=item)
                     if self.pending_start:
@@ -17603,7 +16382,7 @@ class App:
                 elif status == "ok":
                     item = payload
                     self.queue.append(item)
-                    self.update_queue_box(select_item=item)   # applies the remembered format (may make it an fPKG job)
+                    self.update_queue_box(select_item=item)  # applies the remembered format, may turn it into fPKG
                     self.status_update("Ready", tr("{title_id} added to queue.", title_id=item.title_id),
                                         "Ready", 0, 0, "00:00", " - ", " - ", side=True)
                     _as = "  → fPKG (.pkg)" if getattr(item, "operation", "pack") == "fpkg-build" else ""
@@ -17613,7 +16392,6 @@ class App:
                         self.start()
 
                 elif status == "bundles":
-                    # Library scan: one bundle per game subfolder, each mirrored.
                     items: list = payload
                     count = len(items)
                     preview = "\n".join(f"  • {getattr(it, 'bundle_subfolder', it.name)}" for it in items[:12])
@@ -17639,7 +16417,6 @@ class App:
                         self.pending_start = False
 
                 elif status == "multi_found":
-                    # Multiple extracted game folders discovered
                     games: list = payload
                     count = len(games)
                     preview = "\n".join(f"  • {g.name}" for g in games[:10])
@@ -17665,7 +16442,6 @@ class App:
                         self.pending_start = False
 
                 elif status == "exfat_found":
-                    # Multiple .exfat / .ffpkg disk images found - no extraction needed, queue directly
                     image_list: list = payload
                     count = len(image_list)
                     preview = "\n".join(f"  • {f.name}" for f in image_list[:10])
@@ -17693,7 +16469,6 @@ class App:
                         self.pending_start = False
 
                 elif status == "archives_found":
-                    # Archive files found inside a scanned folder - queue as placeholders
                     archives: list = payload
                     count = len(archives)
                     preview = "\n".join(f"  • {a.name}" for a in archives[:10])
@@ -17712,9 +16487,7 @@ class App:
                             added.append(item)
                             self.log("OK", f"Archive queued: {arc.name}")
                         self.update_queue_box()
-                        # For each just-added archive whose header could not be read,
-                        # ask the user for its password - so the routing decision sees
-                        # the real extracted size up front.
+                        # unreadable headers: ask for passwords now so routing sees the real unpacked size
                         for it in added:
                             self._resolve_archive_password(it)
                         self.update_queue_box()
@@ -17767,10 +16540,7 @@ class App:
         except queue.Empty:
             pass
 
-        # Capture whether the log is scrolled to the bottom BEFORE inserting - yview()
-        # read AFTER an insert always reports < 1.0 (the content grew but the view hasn't
-        # moved yet), so checking it post-insert would never re-follow during active
-        # logging. Empty/short logs read (0.0, 1.0) → treated as "at bottom" → follow.
+        # read yview BEFORE inserting, afterwards Tk always reports < 1.0 and we never follow again
         try:
             was_at_bottom = self.log_box._textbox.yview()[1] >= 0.98
         except Exception:
@@ -17806,8 +16576,7 @@ class App:
                     self.log_box.delete("1.0", "300.0")
                 self.visible_log_lines -= 300
 
-            # Auto-scroll to the newest line - but only when the user was already at the
-            # bottom (captured above), so scrolling up to read older output isn't yanked back.
+            # follow only if the user was at the bottom, don't yank them away from older lines
             if was_at_bottom:
                 try:
                     self.log_box._textbox.see("end")
@@ -17833,9 +16602,7 @@ class App:
                     overall_pct = self._job_peak
                 self.big_status_var.set(title)
                 self.big_detail_var.set(detail)
-                # Lower bar = CURRENT STEP: the progress of the operation running right now
-                # (extract / read / temp-PFS / compress / write …) = stage_pct. The game name
-                # sits above as context; whole-game progress feeds the QUEUE bar below.
+                # lower bar is the current step (stage_pct), whole-game progress feeds the queue bar
                 _ri = self._running_item()
                 _gname = ((getattr(_ri, "display_name", None) or _ri.name) if _ri is not None else "") or ""
                 self.cur_game_var.set(f"CURRENT STEP  ·  {_gname}" if _gname else "CURRENT STEP")
@@ -17843,14 +16610,10 @@ class App:
                 self.stage_detail_var.set(detail)
                 self.stage_pct_var.set(f"{int(stage_pct)}%")
                 self.stage_bar.set(max(0, min(1, stage_pct / 100)))
-                # Upper bar = QUEUE: TOTAL progress over the whole batch - finished games plus
-                # the current game's fraction. SIZE-weighted when we have the size snapshot
-                # (so a 187 GB game moves the bar far more than a 35 GB one and it does NOT
-                # just mirror the current game); falls back to equal-weight game count.
+                # queue bar is size-weighted, falls back to counting games
                 _total = max(1, getattr(self, "_batch_total", 1))
                 _done  = getattr(self, "_batch_done", 0) + getattr(self, "_batch_failed", 0)
-                # By job, not by place in the list (it can be reordered): the jobs of this
-                # batch that have finished, plus the running one's share.
+                # by job, not by list position (the list can be reordered)
                 _items = getattr(self, "_batch_items", None) or []
                 def _sz(it):
                     try:
@@ -17900,7 +16663,6 @@ class App:
         except queue.Empty:
             pass
 
-        # ── Archive extraction completion ─────────────────────────────────────
         try:
             status, payload = self._extract_q.get_nowait()
             if status == "ok":
@@ -17915,17 +16677,14 @@ class App:
                     for extra in extra_items:
                         self._as_chain_job(extra, item)
                 elif extra_items and getattr(item, "operation", "pack") == "fpkg-build":
-                    # A multi-game archive queued as an fPKG job: every extra game becomes an
-                    # fPKG job with the same COMPRESSION settings only - identity is per game
-                    # and comes from each game's param.json at build time. Main thread here.
+                    # extra games of an fPKG archive share only the compression settings, identity is per game
                     _tpl = self._fpkg_compression_of(item)
                     for extra in extra_items:
                         self._as_fpkg_job(extra, _tpl)
                         extra.output_path = getattr(item, "output_path", None)
                 if extra_items:
                     for extra in extra_items:
-                        # one archive: every game knows it, so its After-job rule waits for the
-                        # last of them and a retry can unpack the archive again
+                        # every game knows the archive: After-job waits for the last one, a retry can unpack again
                         extra.origin_archive = getattr(item, "origin_archive", None)
                         extra.origin_extracted_size = getattr(item, "origin_extracted_size", 0)
                         for attr in ("after_source", "after_move_to", "source_root"):
@@ -17942,16 +16701,13 @@ class App:
                             self._batch_total += 1
                     self._update_batch_counter()
                     self.log("OK", f"Queued {len(extra_items)} additional payload item(s) from the archive")
-                # Item was updated in-place - clear cache so details panel refreshes fully
+                # changed in place, clear the cache so the details refresh fully
                 self._details_item   = None
                 self._loaded_art_key = None
                 self.update_queue_box(select_item=item)
                 self.log("OK", f"Extraction complete: {item.name}  [{format_size(item.size)}]")
-                # Continue into compression now that the item has a real path
                 self.start()
             elif status == "cancelled":
-                # Cancel = STOP the batch (don't advance). Clean the partial extract of
-                # the item being unpacked (it stays in the queue, marked Cancelled).
                 _ci = self._active_item
                 if _ci is not None and _ci in self.queue:
                     self._cleanup_after_failure(_ci)
@@ -17964,9 +16720,6 @@ class App:
                 self.status_update("Ready", str(payload), "Ready", 0, 0, "00:00", " - ", " - ")
                 self.log("WARN", str(payload))
             else:
-                # Extraction failed - clean the partial tree, KEEP the item in the queue
-                # (marked Failed, moved to the end) so only successful items disappear, then
-                # continue or end the batch like a pack failure.
                 failed_item = self._active_item
                 if failed_item is not None:
                     self._cleanup_after_failure(failed_item)
@@ -17995,9 +16748,6 @@ class App:
             success, msg, last_cmd = self.done_q.get_nowait()
             self._last_cmd_str = last_cmd
 
-            # Mark current game done/failed and pop from queue. When the queue is already
-            # empty (single-game / last-in-batch) fall back to the tracked active item so
-            # a failure still cleans its scratch (otherwise a single-game failure strands).
             completed_item = self._active_item
             if completed_item is not None and completed_item in self.queue:
                 completed_item.status = "Done" if success else "Failed"
@@ -18021,10 +16771,9 @@ class App:
 
                 _final_sz = getattr(self.worker, "final_size", 0) if self.worker else 0
                 completed_operation = getattr(completed_item, "operation", "pack") if completed_item else "pack"
-                # History applies only to jobs that PRODUCE a .ffpfsc (pack, patch).
-                # Unpack and fake-sign create no packed game → skip them.
+                # history only for jobs that write a packed image
                 if completed_operation not in ("unpack", "fake-sign", "fpkg-extract", "copy", "ps4-keystone"):
-                    # Record history HERE (main thread) - add_history mutates Tk widgets.
+                    # main thread only: add_history touches Tk widgets
                     try:
                         _w = self.worker
                         self.add_history(
@@ -18038,7 +16787,7 @@ class App:
 
                 _done_worker = self.worker
                 self._return_extras_aside(_done_worker)    # whatever the backend could not move back itself
-                # extras that did not reach the output keep the unpack: nothing of a release is lost
+                # extras that missed the output keep the unpack, nothing of a release gets lost
                 _left = list(getattr(_done_worker, "extras_left", None) or [])
                 _not_all_out = bool(_left)          # the after-job rule then leaves the source alone
                 if _left and completed_item is not None and self._extract_dir_for_item(completed_item):
@@ -18048,26 +16797,22 @@ class App:
                                      "queue deletes it.")
                 else:
                     _left = []
-                # Feature 5: auto-clear temp after success
                 if self.auto_clear_temp_var.get() and not _left:
                     self._auto_clear_temp(completed_item)
-                # Always reclaim THIS item's extracted source - covers the spread-mode
-                # extract on the OUTPUT drive, which _auto_clear_temp (temp only) misses.
+                # also catches the spread-mode unpack on the output drive, _auto_clear_temp only sees temp
                 if completed_item is not None:
                     if not _left:
                         self._cleanup_item_extract(completed_item)
-                    self._cleanup_inner_image(completed_item)   # drop the pass-1 inner cache
+                    self._cleanup_inner_image(completed_item)
                     self._ampr_cleanup(completed_item)   # restore a direct source folder
                     self._notify_job(completed_item, True)
-                    if self.auto_remove_done_var.get() and not _left:     # one that kept its unpack stays
+                    if self.auto_remove_done_var.get() and not _left:
                         if completed_item in self.queue:
                             self.queue.remove(completed_item)
                     else:
-                        self._retire_failed(completed_item, "Done")   # stays in its place, marked Done
+                        self._retire_failed(completed_item, "Done")
 
                 def _advance():
-                    # Feature 4: batch auto-advance (the next PENDING item; kept failed/skipped
-                    # items don't count as work left to do).
                     if self._batch_running and self._has_pending():
                         self.update_queue_box()
                         self.root.after(600, self._batch_auto_start)
@@ -18087,11 +16832,8 @@ class App:
                             if self.summary_popup_var.get() and not quitting:
                                 self.show_summary_popup()
 
-                # The originals a patch replaced go beside the output, then what the job says
-                # happens to its source (keep, Trash, move, delete), then on.
                 def _after_backup():
                     if completed_item is not None and _not_all_out:
-                        # something did not reach its place: the source stays as it is
                         self.log("WARN", f"{completed_item.name}: the after-job rule is not applied, "
                                          "because not everything reached the output.")
                         _advance()
@@ -18102,10 +16844,7 @@ class App:
                 self._publish_patch_backup(completed_item, _done_worker, _after_backup)
 
             elif self.cancel_requested or self.extract_cancel_event.is_set():
-                # A user cancel surfaces here as a failed result - treat it as a cancel,
-                # not a failure: stop the batch, KEEP the item in the queue (marked
-                # Cancelled, moved to the end) so only successful items disappear, don't
-                # inflate the failed count. _retire_failed re-adds the popped item.
+                # a user cancel arrives as a failed result; count it as cancelled, not failed
                 self._batch_running = False
                 self.cancel_requested = False
                 self.extract_cancel_event.clear()
@@ -18128,13 +16867,10 @@ class App:
                 self.status_update("Ready", "Cancelled by user.", "Ready", 0, 0, "00:00", " - ", " - ")
                 self.log("WARN", "Cancelled by user.")
             else:
-                # OOM auto-retry: if the backend was out-of-memory-killed and we can still
-                # drop a core, requeue the SAME game with fewer workers instead of failing.
+                # OOM killed: retry the same game with one core less instead of failing
                 if (self.worker is not None and getattr(self.worker, "oom_killed", False)
                         and completed_item is not None and self._oom_retry(completed_item)):
-                    # the killed run's extras go back and its patch comes out of the user's folder
-                    # (the retry waits for that: a resume compresses the patched image it left, a
-                    # rebuild patches the original folder again)
+                    # the retry waits for this: a resume needs the patched image, a rebuild the clean folder
                     self._return_extras_aside(self.worker)
                     self._restore_then_drop_patch_backup(completed_item, self.worker)
                     return
@@ -18146,14 +16882,10 @@ class App:
                 self._restore_then_drop_patch_backup(completed_item, self.worker)
                 self._notify_job(completed_item, False, msg)
                 if completed_item is not None:
-                    # A finished extraction stays, as after a cancel: Edit and Retry run the
-                    # job from it again instead of unpacking the archive a second time. A
-                    # later job that needs the space frees it (_release_failed_copies).
+                    # keep a finished unpack so Retry skips the archive; _release_failed_copies frees it if needed
                     keep = self._extract_is_complete(completed_item) and not self._run_took_files(self.worker)
                     self._cleanup_after_failure(completed_item, keep_source=keep)
-                    self._cleanup_inner_image(completed_item)   # terminal failure / gave up - no resume
-                    # Keep the failed item in the queue (marked Failed, moved to the end) - 
-                    # only successful items disappear.
+                    self._cleanup_inner_image(completed_item)
                     self._retire_failed(completed_item, "Failed", msg)
                     completed_item.kept_extract = keep
                     if keep:
@@ -18161,7 +16893,6 @@ class App:
                         self.log("INFO", f"Kept the extracted copy in {own} on {_drive_colon(own)} Edit or Retry "
                                          f"runs the job from it again, and removing the job deletes it.")
                 self.update_queue_box()
-                # Batch resilience: one failure must not abort the rest of the queue.
                 if self._batch_running and self._has_pending():
                     self.log("WARN", "Continuing batch with the next item after failure.")
                     self.root.after(600, self._batch_auto_start)
@@ -18172,7 +16903,6 @@ class App:
                     self._update_batch_counter()
                     self._queue_finished()
                     if self._batch_total > 1:
-                        # Aggregate (done/failed) is reported here; no modal per failure.
                         self._show_batch_complete()
                     else:
                         log_lines = get_last_log_lines(50)
@@ -18195,10 +16925,7 @@ else:
 
 
 def _wire_open_document(root, app):
-    """A .ffpfsc / .ffpfs / .pkg that was double-clicked (or 'Open With') opens in Look
-    inside, as a panel of the main window. macOS sends it as an OpenDocument AppleEvent
-    (argv_emulation stays off in the spec so the event reaches Tk instead of being swallowed
-    into argv); Windows passes it on the command line."""
+    """double-clicked .ffpfsc/.ffpfs/.pkg opens in Look inside; macOS needs argv_emulation off for it"""
     def _on_open(*paths):
         files = [p for p in paths if str(p).lower().endswith((".ffpfsc", ".ffpfs", ".pkg"))]
         if not files:

@@ -43,7 +43,6 @@ def _sanitize_name_component(name: str) -> str:
 
 
 def ui_sanitize_basename(name: str) -> str:
-    """Sanitize a name for UI-generated output basenames."""
     if not name:
         return ""
     # Replace problematic characters with a space.

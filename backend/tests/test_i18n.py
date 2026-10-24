@@ -1,5 +1,3 @@
-"""The interface language: the German table covers every text the code translates, and no
-translation asks for a value the English text does not pass."""
 import ast
 import string
 import sys
@@ -18,7 +16,6 @@ def _fields(text):
 
 
 def _translated_literals():
-    """Every string literal passed to tr()/t()/plural() in the app's own modules."""
     out = {}
     for name in ("PS5_UltraPack.py", "ultra_core.py", "ui_kit.py"):
         tree = ast.parse((REPO / name).read_text(encoding="utf-8"))

@@ -1,7 +1,4 @@
-"""The interface language. Texts are written in English in the code; i18n_de.py holds the
-German ones. t() looks a text up; install() also translates every static text the moment it
-reaches Tk (labels, buttons, menus, canvas text, window titles, message boxes), so English
-words the program also uses as values (job states, choices) keep working as values."""
+"""English in the code, German in i18n_de.py; install() translates texts as they reach Tk"""
 from __future__ import annotations
 
 LANGUAGES = [("en", "English"), ("de", "Deutsch")]
@@ -34,8 +31,7 @@ def t(text: str, **values) -> str:
 
 
 def plural(count: int, one: str, many: str, **values) -> str:
-    """*one* or *many* by *count*; {n} is the count unless *values* brings its own n (a
-    formatted number, say)."""
+    """{n} is the count unless values bring their own n"""
     return t(one if count == 1 else many, **{"n": count, **values})
 
 
@@ -63,7 +59,7 @@ _KEYS = ("text", "label")
 
 
 def install() -> None:
-    """Translate static texts where they reach Tk. Only when a table is in use."""
+    """translates static texts as they reach Tk, only with a table loaded"""
     global _installed
     if _installed or not _table:
         return

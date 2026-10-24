@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Fetch drakmor's ampr_emu runtime that reads LZ4 asset packs into backend/native/ampr/:
-# libSceAmpr.sprx (the pack-capable build of release 0.4.2.1) with its GPL-3 license, and keep
-# the matching source archive in build/ (it goes next to each release, GPL-3 section 6).
-# The packer that writes the packs is vendored in backend/ampr_pack/ from the same commit.
+# fetch ampr_emu's pack-capable libSceAmpr.sprx into backend/native/ampr
+# GPL-3: the matching source archive in build/ ships next to each release
 set -euo pipefail
 cd "$(dirname "$0")"
 

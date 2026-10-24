@@ -1,5 +1,3 @@
-"""MkPFS --consume-source: pass 1 frees each larger file of the caller's own copy once the
-image holds it. What stays: sce_sys, small files, links. The image is the same either way."""
 import os, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
@@ -21,7 +19,7 @@ class Consume(unittest.TestCase):
         if self.links:
             (self.d / "game" / "data" / "link.bin").unlink()
         need = mcli.consuming_space_need(self.d / "game", block_size=65536)
-        # kept files in whole blocks (sce_sys and the small eboot), the largest freed file
+        # sce_sys and eboot in whole blocks, plus the largest freed file
         kept = (3 << 20) + 65536 + 65536
         largest = max(2 << 20, len(b"pattern" * (500 << 10)))
         self.assertGreaterEqual(need, kept + largest)
@@ -76,7 +74,7 @@ class Consume(unittest.TestCase):
         r = pack(self.d / "game", self.d / "img.ffpfs", "--consume-source", "--no-verify-structure")
         self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
         if self.links:
-            # a link may point at a file freed earlier: with one in the tree nothing goes
+            # a link in the tree stops all freeing
             self.assertNotIn("[consume] freed", r.stdout)
             self.assertEqual(self.files(self.d / "game"), self.files(self.ref))
             self.assertTrue((self.d / "outside.bin").exists())
@@ -86,7 +84,7 @@ class Consume(unittest.TestCase):
             (self.d / "img2.ffpfs").rename(self.d / "img.ffpfs")
         self.assertIn("[consume] freed", r.stdout)
         self.assertEqual(self.files(self.d / "game"), ["eboot.bin", "sce_sys/big.dat", "sce_sys/param.json"])
-        # the image holds every file byte for byte (a full check against the untouched copy)
+        # full verify against the untouched copy
         v = subprocess.run([PY, "-m", "mkpfs", "verify", "--source-dir", str(self.ref), str(self.d / "img.ffpfs")],
                            cwd=BACKEND, capture_output=True, text=True)
         self.assertIn("Errors:                0", v.stdout, v.stdout[-2000:])

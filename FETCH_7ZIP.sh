@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Fetch the 7-Zip console tools the app bundles into backend/native/: 7zz for macOS
-# (arm64) and 7za.exe for Windows x64 (from 7-Zip Extra), each with its license text.
-# Downloads the pinned 7-Zip release from 7-zip.org once and checks it against the hashes below.
+# fetch pinned, hash-checked 7zz (mac arm64) and 7za.exe (win x64) into backend/native
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -23,7 +21,7 @@ fetch "7z${VER}-extra.7z" "${EXTRA_SHA}"
 rm -rf "${DL}/mac" "${DL}/extra"
 mkdir -p "${DL}/mac" "${DL}/extra"
 tar -xJf "${DL}/7z${VER}-mac.tar.xz" -C "${DL}/mac" 7zz License.txt
-# 7zz runs only on a Mac; on another system the Windows tool comes from an installed 7-Zip
+# 7zz is Mac only, elsewhere an installed 7z unpacks the Windows tool
 if [[ "$(uname)" == "Darwin" ]]; then
     "${DL}/mac/7zz" x -y -bso0 -bsp0 "-o${DL}/extra" "${DL}/7z${VER}-extra.7z" x64/7za.exe License.txt
 else

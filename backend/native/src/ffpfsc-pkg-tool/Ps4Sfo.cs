@@ -7,12 +7,7 @@ using Orbis = LibOrbisPkg;
 
 namespace PkgTool;
 
-/// <summary>
-/// An in-place edit of a PS4 package's CNT header region: every write is kept (in the undo file
-/// when one is given, and in memory to roll back a failed run), and Reseal() recomputes what hangs
-/// on the changed entries: their entry digests, the four header hashes, the header digest at 0xFE0
-/// and the fake header signature. A digest that did not match before the edit is left as it was.
-/// </summary>
+// undoable in-place CNT header edit; Reseal() redoes digests, hashes and fake sig
 internal sealed class CntEdit : IDisposable
 {
     public readonly FileStream F;
@@ -86,7 +81,7 @@ internal sealed class CntEdit : IDisposable
         Put(0x1000, Orbis.Util.Crypto.RSA2048EncryptKey(Orbis.Util.Keys.PkgSignKey, Orbis.Util.Crypto.Sha256(F, 0, 0x1000)));
     }
 
-    /// <summary>Put back everything this edit wrote, newest first.</summary>
+    // put back everything this edit wrote, newest first
     public void RollBack()
     {
         for (int i = saved.Count - 1; i >= 0; i--) { F.Position = saved[i].off; F.Write(saved[i].data); }
@@ -97,12 +92,7 @@ internal sealed class CntEdit : IDisposable
     public void Dispose() { undo?.Dispose(); F.Dispose(); }
 }
 
-/// <summary>
-/// ps4-sfo: changes values of a PS4 package's param.sfo (the CNT entry) in place and reseals the
-/// package. Only strings that fit the field and integers; never the five values the major param
-/// digest covers (ATTRIBUTE, ATTRIBUTE2, CATEGORY, FORMAT, PUBTOOLVER), whose formula is unknown.
-/// A package that also carries a param.sfo inside its content image is refused.
-/// </summary>
+// ps4-sfo: edit + reseal in place. major digest keys stay, formula unknown
 internal static partial class Program
 {
     static readonly string[] MajorParamKeys = { "ATTRIBUTE", "ATTRIBUTE2", "CATEGORY", "FORMAT", "PUBTOOLVER" };
@@ -140,7 +130,7 @@ internal static partial class Program
                 return 1;
             }
 
-        // the new param.sfo is worked out first: nothing is written (no undo file either) when a value is refused
+        // work out the new sfo first: a refused value writes nothing, not even the undo file
         Orbis.PKG.Pkg pkg;
         using (var fs = File.OpenRead(pkgPath)) pkg = new Orbis.PKG.PkgReader(fs).ReadPkg();
         var meta = pkg.Metas.Metas.First(m => m.id == Orbis.PKG.EntryId.PARAM_SFO);

@@ -1,4 +1,3 @@
-"""The pre-flight space gate and the Drive Space Diagnostics dialog must agree."""
 from __future__ import annotations
 
 import os

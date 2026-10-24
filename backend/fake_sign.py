@@ -7,9 +7,7 @@ import struct
 import sys
 import tempfile
 
-# Make the sibling vendored signer importable whether we're run as a script,
-# imported as ``backend.fake_sign``, or loaded from the frozen bundle's backend
-# data dir (cli.py puts this directory on sys.path, but be self-sufficient).
+# vendored signer must import as script, as package and from the frozen bundle
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
@@ -17,18 +15,16 @@ if _HERE not in sys.path:
 import make_fself  # noqa: E402  (vendored, see module docstring)
 
 ELF_MAGIC = b"\x7fELF"
-# Extensions worth probing, mirroring ps5mfr (eboot.bin is a .bin SELF).
+# same list as ps5mfr; eboot.bin is a .bin SELF
 SIGN_SUFFIXES = (".bin", ".elf", ".prx", ".sprx")
-# Temp files we write next to each source during the atomic replace.
 _TMP_PREFIX = ".fself-"
 
 
 class NotSignable(Exception):
-    """Raised when a candidate file is not something we can/should fake-sign: not an ELF at all, an already-signed SELF, or an ELF the signer can't parse (wrong class/arch/type). A truncated ELF is a failure, not a skip."""
+    """not an ELF, already a SELF, or unparseable; a truncated ELF is a failure, not a skip"""
 
 
 def is_elf(path: str) -> bool:
-    """True if *path* begins with the ELF magic (i.e. an unsigned executable)."""
     try:
         with open(path, "rb") as f:
             return f.read(4) == ELF_MAGIC
@@ -37,21 +33,11 @@ def is_elf(path: str) -> bool:
 
 
 def fake_sign_file(path: str) -> None:
-    """Fake-sign one file **in place**.
-
-    Returns normally when the file was signed. Raises :class:`NotSignable` when
-    the file should be skipped (not an ELF, already-signed SELF, or an ELF the
-    signer can't parse - wrong arch/class/type). Raises OSError for a truncated
-    ELF and any other exception on a genuine I/O failure; the original is left
-    untouched in both cases (we only ``os.replace`` after a fully successful save).
-    """
+    """in place; the original is only replaced after a complete save"""
     if not is_elf(path):
         raise NotSignable("not an ELF")
 
-    # load() reads the whole file into memory (ehdr + phdrs + segment bytes),
-    # so once it returns we can safely overwrite the source path. The vendored
-    # signer prints internal progress ("meta block …", "processing segment …")
-    # to stdout - silence it so our own per-file log lines stay clean.
+    # load() pulls the whole file into RAM, so we may overwrite it; mute the chatty signer
     with contextlib.redirect_stdout(io.StringIO()):
         try:
             with open(path, "rb") as f:
@@ -68,11 +54,10 @@ def fake_sign_file(path: str) -> None:
         fd, tmp = tempfile.mkstemp(prefix=".fself-", dir=directory)
         try:
             with os.fdopen(fd, "wb") as out:
-                # All defaults => a "fake" program type with the standard fake
-                # PAID, exactly what ps5mfr / make_fself.py produce with no flags.
+                # defaults give the standard fake PAID, same as ps5mfr / make_fself.py without flags
                 signed = make_fself.SignedElfFile(elf)
                 signed.save(out)
-            try:  # carry over the original mode bits (executables stay executable)
+            try:  # executables stay executable
                 os.chmod(tmp, os.stat(path).st_mode)
             except OSError:
                 pass
@@ -88,7 +73,7 @@ def fake_sign_file(path: str) -> None:
 
 
 def find_targets(root: str):
-    """Return (sorted list of candidate file paths, found_eboot_bin)."""
+    """(sorted candidate paths, found_eboot_bin)"""
     targets = []
     found_eboot = False
     for dirpath, _dirnames, filenames in os.walk(root):   # followlinks=False: never escape the tree
@@ -96,7 +81,7 @@ def find_targets(root: str):
             if name.lower() == "eboot.bin":
                 found_eboot = True
             if name.startswith(_TMP_PREFIX):
-                continue   # our own leftover temp (see _sweep_stale_temps) - never a target
+                continue  # our own leftover temp, never a target
             if name.lower().endswith(SIGN_SUFFIXES):
                 targets.append(os.path.join(dirpath, name))
     targets.sort()
@@ -104,9 +89,7 @@ def find_targets(root: str):
 
 
 def _sweep_stale_temps(root: str, log) -> None:
-    """Remove leftover ``.fself-*`` temp files from a previous run that was hard-
-    killed (SIGKILL) mid-sign. The atomic os.replace means the originals are
-    always intact; only the temp can linger. Self-heals on the next run."""
+    """leftover .fself-* temps of a SIGKILLed run; os.replace kept the originals intact"""
     removed = 0
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
@@ -121,11 +104,6 @@ def _sweep_stale_temps(root: str, log) -> None:
 
 
 def fake_sign_tree(root: str, log=print) -> dict:
-    """Recursively fake-sign every eligible file under *root*, in place.
-
-    *log* is called with a single string per message (defaults to ``print``).
-    Returns a counts dict: ``signed``, ``skipped``, ``failed``, ``by_ext``.
-    """
     root = os.path.abspath(root)
     counts = {"signed": 0, "skipped": 0, "failed": 0, "by_ext": {}}
 
@@ -171,5 +149,5 @@ if __name__ == "__main__":
         print("usage: fake_sign.py <decrypted-ps5-dump-folder>", file=sys.stderr)
         sys.exit(2)
     result = fake_sign_tree(sys.argv[1])
-    # Non-zero only on hard failures, so callers can detect a broken run.
+    # non-zero only on hard failures
     sys.exit(1 if result["failed"] else 0)

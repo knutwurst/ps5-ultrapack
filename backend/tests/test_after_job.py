@@ -1,6 +1,3 @@
-"""Unit tests for backend/after_job.py: which sources may be touched after a job, and the
-keep / Trash / move / delete actions, on scratch folders only."""
-
 from __future__ import annotations
 
 import os
@@ -61,7 +58,7 @@ class RefusalTests(Base):
         out = lib.parent / "Game.pkg"
         out.write_bytes(b"P")
         self.assertIn("next to its output", aj.refusal([lib], output=out))
-        # one level down (a download folder inside the output folder) is not next to it
+        # a download folder one level down is not next to it
         dl = self.file("lib/Downloads/Other.ffpfsc")
         self.assertIsNone(aj.refusal([dl], output=self.tmp / "lib" / "Other.pkg"))
 

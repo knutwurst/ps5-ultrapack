@@ -1,5 +1,3 @@
-"""Game names by title id from the public title lists (cached, refreshed weekly). The tests
-never touch the network: title_db.FETCH is replaced."""
 import os, shutil, sys, tempfile, time, unittest
 from pathlib import Path
 

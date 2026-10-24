@@ -1,12 +1,4 @@
-"""Check a PS5 package and say which rebuild repairs it.
-
-The checks read the package in place: the tool's validate checklist, the param.json and the
-file list of the image. A repair is an ordinary queue job that unpacks the package and builds
-it again with the fixes, so the source stays as it is. What a rebuild fixes by itself comes
-from the builder's staging: images and their DDS, the debug licence (retail normalize), PlayGo
-tables that do not describe the image, the param.json layout and the fake signature of the
-executables.
-"""
+"""checks a PS5 package in place; a repair is a rebuild job, the source stays untouched"""
 from __future__ import annotations
 
 import hashlib
@@ -20,30 +12,22 @@ import fpkg
 
 FIX_REBUILD, FIX_PLAYGO, FIX_FIRMWARE, FIX_KEYSTONE = "rebuild", "playgo", "firmware", "keystone"
 FIX_STANDALONE, FIX_TROPHY = "standalone", "trophy"
-# What a base package can keep from its update: the URL the game asks for updates at start, the
-# markers of a patch applied over a base, the id that shares add-ons with another title.
-# Other fPKG builders clear them for a standalone package; LibProsperoPkg drops the patch markers
-# on every build by itself.
+# patch markers left over from an update; LibProsperoPkg drops them on every build anyway
 PATCH_MARKERS = ("originContentVersion", "targetContentVersion")
 LEVELS = ("fail", "warn", "info", "pass")
-# The fingerprint (bytes 0x20..0x40) of the keystone LibProsperoPkg makes for the all-zero
-# passcode when the source has none. Measured: the same for every content id, another for
-# another passcode. A package with it shows saves of the retail game as corrupted.
+# LibProsperoPkg's all-zero passcode keystone, bytes 0x20..0x40; breaks retail saves
 DEFAULT_KEYSTONE_FINGERPRINT = "9320F0D8DF5B1D9539508DA1CE060D9D37E0F4AFA9957689F65DA2C23575AC7C"
 
 _FW = re.compile(r"^(?:0x)?([0-9a-fA-F]{2})([0-9a-fA-F]{2})[0-9a-fA-F]{12}$")
 
 
-# Trophy and activity (UCP) archives: a 0x60-byte header (big-endian magic, version 1, file size,
-# entry count, record size 0x40, a SHA-1 at 0x1C over the whole file with that field zero), then
-# the entry table and the blobs. The console checks the SHA-1; the bundled LibProsperoPkg packs a
-# stale one as it is (measured), so the repair writes it.
+# UCP: SHA-1 at 0x1C over the file (field zeroed); console checks it, LibProsperoPkg leaves it stale
 UCP_MAGIC = 0xB228C60A
 UCP_DIRS = ("sce_sys/trophy2/", "sce_sys/uds/")
 
 
 def ucp_problem(data: bytes) -> str:
-    """Why *data* is no well-formed UCP archive ('' when it is one; the digest is not checked)."""
+    """why data is no UCP archive, empty when it is one; the digest is not checked"""
     if len(data) < 0x60 or struct.unpack_from(">I", data, 0)[0] != UCP_MAGIC:
         return "not a UCP archive"
     version, total = struct.unpack_from(">IQ", data, 4)
@@ -87,15 +71,14 @@ def ampr_index_rows(data: bytes) -> dict:
     return out
 
 
-# files the index writer leaves out besides sce_sys: the index itself and the emulator's own files
+# the index skips these besides sce_sys: itself and the emulator's own files
 AMPR_UNINDEXED = ("ampr_emu.index", "ampr_commands.bin", "apr_emu.log")
 
 
 def ampr_mismatch(index: dict, sizes: dict) -> list[str]:
-    """Game files (outside sce_sys) the index records with another size or not at all, and indexed
-    files the package does not have. *sizes*: {'path' lowercased: size} of the package's files."""
+    """game files the index sizes wrong or misses, plus indexed files that are gone"""
     try:
-        from ultra_core import is_fs_junk_name       # the app's list, when the app is around
+        from ultra_core import is_fs_junk_name
     except ImportError:                             # the backend on its own
         def is_fs_junk_name(name: str) -> bool:
             return name.startswith("._") or name.lower() in (".ds_store", "thumbs.db", "desktop.ini")
@@ -134,7 +117,6 @@ def _group(check: str) -> str:
 
 
 def fix_for(check: str, level: str, message: str) -> str | None:
-    """The repair that clears a validate finding, or None when a rebuild does not."""
     if level == "pass":
         return None
     if check.startswith("cnt.playgo"):
@@ -149,8 +131,7 @@ def fix_for(check: str, level: str, message: str) -> str | None:
 
 
 def keystone_problem(data: bytes) -> str:
-    """Why *data* is no PS5 keystone ('' when it looks like one). A PS5 keystone is format 3;
-    its checksum cannot be checked here (the keys are not public)."""
+    """PS5 keystones are format 3; the checksum needs keys that aren't public"""
     if len(data) != 96:
         return "not a keystone: a keystone file has exactly 96 bytes"
     if data[:8] != b"keystone":
@@ -179,9 +160,7 @@ def _pkg_member(pkg: Path, member_lower: str, entries, td: Path) -> bytes | None
 
 
 def keystone_from(source: str, scratch=None, image_member=None) -> tuple[bytes | None, str]:
-    """(keystone, '') from a keystone file, its 192 hex digits, a game folder, a PS5 package or
-    an .ffpfsc/.ffpfs image (through *image_member(image, member, dest_dir)*, which extracts
-    one file), else (None, why)."""
+    """takes a keystone file, its 192 hex digits, a game folder, a PS5 package or an image"""
     raw = str(source or "").strip()
     if re.fullmatch(r"[0-9A-Fa-f]{192}", raw):
         data = bytes.fromhex(raw)
@@ -217,7 +196,6 @@ def keystone_from(source: str, scratch=None, image_member=None) -> tuple[bytes |
 
 
 def standalone_changes(param: dict) -> list[str]:
-    """The param.json fields the standalone repair changes in *param*."""
     out = [k for k in PATCH_MARKERS if k in param]
     if str(param.get("versionFileUri") or "").strip():
         out.append("versionFileUri")
@@ -228,7 +206,7 @@ def standalone_changes(param: dict) -> list[str]:
 
 
 def make_standalone(param: dict) -> list[str]:
-    """Clear the update URL, the patch markers and the sharing id in *param* (in place)."""
+    """clears update URL, patch markers and sharing id, in place"""
     done = standalone_changes(param)
     for k in PATCH_MARKERS:
         param.pop(k, None)
@@ -241,8 +219,7 @@ def make_standalone(param: dict) -> list[str]:
 
 
 def repair_folder(root, log=print, standalone: bool = True, trophies: bool = False) -> list[str]:
-    """The repairs that change files, on an unpacked game folder *root* (the app's own copy):
-    param.json made standalone, the SHA-1 of trophy and activity archives written."""
+    """only on the app's own unpacked copy: standalone param.json, trophy SHA-1s"""
     root = Path(root)
     done = []
     pj = root / "sce_sys" / "param.json"
@@ -271,7 +248,6 @@ def repair_folder(root, log=print, standalone: bool = True, trophies: bool = Fal
 
 
 def is_update(info: dict) -> bool:
-    """A PS5 update (delta) package rather than a full game."""
     ident = info.get("ident") or {}
     if any(w in str(ident.get("package_type", "")).lower() for w in ("delta", "patch")):
         return True
@@ -284,8 +260,7 @@ def _version(v) -> tuple:
 
 
 def peek(pkg, scratch=None, title_id: str = "") -> dict | None:
-    """What the update checks need of a neighbouring PS5 package: title id, version, origin, kind.
-    None when *title_id* is given and the package is of another title (read from its header only)."""
+    """None when title_id is given and the header says another title"""
     pkg = Path(pkg)
     ident = fpkg.inspect_json(pkg)
     if title_id and str(ident.get("title_id") or "") != title_id:
@@ -305,8 +280,7 @@ def peek(pkg, scratch=None, title_id: str = "") -> dict | None:
 
 
 def related(pkg, title_id: str, scratch=None, limit: int = 30, max_read: int = 150) -> list[dict]:
-    """Up to *limit* other PS5 packages of *title_id* in *pkg*'s folder and two levels below. Paths
-    that carry the title id are read first; at most *max_read* packages are read in all."""
+    """same-title PS5 packages next to pkg, two levels deep; paths with the title id first"""
     import os
     pkg = Path(pkg)
     out = []
@@ -315,7 +289,7 @@ def related(pkg, title_id: str, scratch=None, limit: int = 30, max_read: int = 1
     near = []
     for d, dirs, files in os.walk(pkg.parent):
         if len(Path(d).relative_to(pkg.parent).parts) >= 2:
-            dirs[:] = []                    # the folder and two levels below, no deeper
+            dirs[:] = []
         near += [Path(d) / f for f in files if f.lower().endswith(".pkg") and not f.startswith("._")]
     tid = title_id.lower()
     near = sorted((p for p in near if p != pkg), key=lambda p: (tid not in str(p).lower(), str(p)))
@@ -334,10 +308,7 @@ def related(pkg, title_id: str, scratch=None, limit: int = 30, max_read: int = 1
 
 
 def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
-    """Everything the checks read from the PS5 package *pkg*, in place: {'ident', 'results',
-    'param', 'files', 'keystone', 'keystone_fp', 'sfo', 'ucp', 'ampr', 'related', 'error'}.
-    *scratch* holds the few small files lifted out; *neighbours* also reads the other packages
-    of the title next to it (for the update checks)."""
+    """reads the package in place; scratch only gets a few small files"""
     pkg = Path(pkg)
     out = {"ident": {}, "results": [], "param": None, "files": 0, "keystone": None, "keystone_fp": "",
            "sfo": False, "error": ""}
@@ -392,8 +363,7 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
 
 
 def findings(info: dict, console_fw: str | None = None) -> list[dict]:
-    """The rows the repair view lists, problems first: {'check', 'group', 'level', 'text', 'fix'}.
-    *console_fw* ("7.61", "10.xx") is the firmware the package should start on."""
+    """rows for the view, problems first; console_fw like 7.61 or 10.xx"""
     rows = []
     for r in info.get("results") or []:
         check, level, msg = str(r.get("Check", "")), str(r.get("Level", "")), str(r.get("Message", ""))
@@ -402,7 +372,7 @@ def findings(info: dict, console_fw: str | None = None) -> list[dict]:
     param = info.get("param") or {}
 
     def own(check, group, level, fix, tmpl, **args):
-        # own rows carry their English template, so the interface can show them translated
+        # own rows keep their English template so the UI can translate them
         rows.append({"check": check, "group": group, "level": level, "fix": fix,
                      "tmpl": tmpl, "args": args, "text": tmpl.format(**args)})
     need = fw_text(param.get("requiredSystemSoftwareVersion"))

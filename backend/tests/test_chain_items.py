@@ -1,8 +1,4 @@
-"""Chain job items (Tk-free): GameItem.from_chain and the derived summary sentence the
-job dialog shows and the queue row carries.
-
-    python3 -m unittest backend.tests.test_chain_items
-"""
+"""python3 -m unittest backend.tests.test_chain_items"""
 from __future__ import annotations
 
 import json
@@ -14,8 +10,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-# Never touch the real profile: the app dir is computed (and an old one migrated) at
-# import time, so point it at a scratch folder first.
+# never touch the real profile: the app dir is set (and migrated) at import time
 os.environ.setdefault("PS5_FFPFSC_APP_DIR", tempfile.mkdtemp(prefix="ultrapack-test-profile-"))
 import ultra_core as uc  # noqa: E402
 
@@ -71,8 +66,7 @@ class FromChain(unittest.TestCase):
         self.assertTrue(uc.chain_needs_unpack(it))
 
     def test_pkg_space_uses_the_game_size(self):
-        # a .pkg holds compressed data: until its directory is read, the file size is only a
-        # floor and the conservative factor applies; with the real size, the measured one
+        # pkg size is only a floor until its directory is read: conservative factor till then
         pkg = self.root / "UP0000-PPSA00004_00-EXAMPLE000000000-A0100-V0100.pkg"
         pkg.write_bytes(b"\0" * 1000)
         it = uc.GameItem.from_chain(pkg, to="ffpfsc")
@@ -116,10 +110,6 @@ class FromChain(unittest.TestCase):
 
 
 def make_source_tree(root: Path) -> Path:
-    """A parent folder like a real download folder: a multi-part RAR set in a subfolder, a
-    loose .pkg, a .7z next to a checksum file, an old-style .rar/.r00 set, a game folder
-    (with a .pkg inside that must not count), and the traps: AppleDouble twins, a hidden
-    file and the app's own scratch folder."""
     conv = root / "Convert"
     rars = conv / "Set A"
     rars.mkdir(parents=True)

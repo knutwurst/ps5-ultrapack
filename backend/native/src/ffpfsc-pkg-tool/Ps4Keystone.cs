@@ -8,23 +8,13 @@ using Orbis = LibOrbisPkg;
 
 namespace PkgTool;
 
-/// <summary>
-/// ps4-keystone: writes another sce_sys/keystone into a PS4 fake package, in place.
-///
-/// A save holds the keystone of the game that wrote it; a package built with another keystone
-/// (a builder's default from the all-zero passcode) shows retail saves as corrupted. The keystone
-/// lives in the inner PFSC image. Only its sector changes: the stored bytes keep their length
-/// (a compressed sector is re-encoded to the same size), the outer blocks around it are re-signed
-/// and re-encrypted, and playgo-chunk.sha, the PFS digests, the general and entry digests, the
-/// header hashes and the fake header signature are recomputed. Every byte range is saved before
-/// it is written: to --undo FILE when given, and in memory to roll back a failed run.
-/// </summary>
+// swaps sce_sys/keystone in place; a foreign keystone makes retail saves look corrupted
 internal static partial class Program
 {
     const int KsSize = 0x60;
     const int PfsSigEntry = 36;
     const int SignedDinodeSize = 0x2C8;
-    // undo file: this magic, the package's content id (36 bytes), its size, then the ranges
+    // undo file: magic, content id (36 bytes), pkg size, then the saved ranges
     static readonly byte[] UndoMagic = "PS4KSUNDO1"u8.ToArray();
 
     static int CmdPs4Keystone(string[] args)
@@ -63,7 +53,7 @@ internal static partial class Program
         return 0;
     }
 
-    /// <summary>Null when <paramref name="ks"/> is a well-formed keystone (v2 header, valid MAC).</summary>
+    // null when ks is a well-formed keystone (v2 header, valid MAC)
     internal static string? KeystoneProblem(byte[] ks)
     {
         if (ks.Length != KsSize) return $"a keystone is {KsSize} bytes, this file has {ks.Length}";
@@ -76,8 +66,7 @@ internal static partial class Program
 
     static bool IsZeroPasscodeKeystone(byte[] ks) => ks.SequenceEqual(Orbis.Util.Crypto.CreateKeystone(new string('0', 32)));
 
-    /// <summary>Where the keystone sits: the PFSC sector holding it and the outer blocks that
-    /// carry that sector, with the signature slot of every block on the way to the header.</summary>
+    // the PFSC sector with the keystone, its outer blocks and their signature slots
     sealed class KsSite
     {
         public byte[] OldKs = [];
@@ -93,7 +82,7 @@ internal static partial class Program
         public Dictionary<long, (long block, int off)> Parent = [];
         public long DinodeBlock;
         public int HeaderSlot;
-        public bool HeaderHashOk;                  // the superblock hash at 0x380 matches (Sony-built images carry one)
+        public bool HeaderHashOk;  // hash at 0x380 matches; Sony-built images carry one
     }
 
     static byte[] KsReadPlain(FileStream f, KsSite s, long block)
@@ -283,7 +272,7 @@ internal static partial class Program
         using (var fs = File.OpenRead(pkgPath)) pkg = new Orbis.PKG.PkgReader(fs).ReadPkg();
         var saved = new List<(long off, byte[] data)>();
         using var f = new FileStream(pkgPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
-        var undo = undoPath == null ? null : new BinaryWriter(File.Create(undoPath));   // once the package opens
+        var undo = undoPath == null ? null : new BinaryWriter(File.Create(undoPath));
         if (undo != null)
         {
             undo.Write(UndoMagic);
@@ -295,8 +284,7 @@ internal static partial class Program
         // what was right before stays right after; what was wrong stays as it was
         byte[] Read(long off, int len) { var b = new byte[len]; f.Position = off; f.ReadExactly(b); return b; }
         byte[] HeaderDigest() => Orbis.Util.Crypto.Sha256(Read(0, 64).Concat(Read(0x400, 128)).ToArray());
-        // content id padded to 48 bytes, drm type, content type, PFS image digest and the stored major
-        // param digest (LibOrbisPkg builds the major param string differently, so its own result never matches)
+        // id padded to 48, drm+content type, PFS digest, stored major param digest; LibOrbisPkg's differs
         byte[] ContentDigest(Orbis.PKG.Pkg p) => Orbis.Util.Crypto.Sha256(
             Read(0x40, 36).Concat(new byte[12]).Concat(Read(0x70, 8)).Concat(p.Header.pfs_image_digest)
                 .Concat(p.GeneralDigests.Digests[Orbis.PKG.GeneralDigest.MajorParamDigest]).ToArray());
@@ -308,10 +296,10 @@ internal static partial class Program
         bool contentOk = gd.set_digests.HasFlag(Orbis.PKG.GeneralDigest.ContentDigest)
                          && gd.Digests[Orbis.PKG.GeneralDigest.ContentDigest].SequenceEqual(ContentDigest(pkg));
         var metas = pkg.Metas.Metas;
-        // a second chunk hash table whose layout is unknown here: leave such a package alone
+        // app/playgo-chunk.sha layout unknown: leave such a package alone
         if (metas.Any(m => (uint)m.id == 0x1009))
             throw new InvalidDataException("the package has app/playgo-chunk.sha, which this tool does not update yet");
-        // SHA-256 over the SHA-256 of every PlayGo entry (playgo-chunk.dat/.sha, playgo-manifest.xml, app/…)
+        // SHA-256 over the SHA-256 of every PlayGo entry
         byte[] PlaygoDigest() => Orbis.Util.Crypto.Sha256(metas
             .Where(m => (uint)m.id is (>= 0x1001 and <= 0x1003) or (>= 0x1008 and <= 0x100A))
             .OrderBy(m => (uint)m.id).SelectMany(m => Orbis.Util.Crypto.Sha256(f, m.DataOffset, m.DataSize)).ToArray());
@@ -480,12 +468,7 @@ internal static partial class Program
     }
 }
 
-/// <summary>
-/// A raw deflate stream of an exact length. zlib cannot be told a target size, and a sector in a
-/// PFSC image cannot grow or shrink in place. The data is coded as two blocks (the head with the
-/// literals, then the long run), each fixed or dynamic, runs as distance-1 matches; zeros coded
-/// as literals add bits until the length is reached.
-/// </summary>
+// raw deflate of an exact length: a PFSC sector can't grow or shrink in place
 internal static class DeflateFit
 {
     static readonly int[] LenBase = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
@@ -494,9 +477,7 @@ internal static class DeflateFit
 
     public static byte[]? Encode(byte[] data, int target) => Encode(data, target, TimeSpan.FromSeconds(30));
 
-    /// <summary>Null when no encoding of exactly <paramref name="target"/> bytes turns up within
-    /// <paramref name="limit"/>: the search space is large, and a sector that cannot take the
-    /// keystone must say so instead of running for hours.</summary>
+    // null when no exact-size encoding turns up within limit, better than searching for hours
     public static byte[]? Encode(byte[] data, int target, TimeSpan limit)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -577,7 +558,7 @@ internal static class DeflateFit
         throw new ArgumentOutOfRangeException(nameof(n));
     }
 
-    /// <summary>Huffman code lengths limited to <paramref name="limit"/> bits (package-merge).</summary>
+    // Huffman code lengths capped at limit bits (package-merge)
     static int[] Lengths(long[] freq, int limit)
     {
         var res = new int[freq.Length];

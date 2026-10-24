@@ -1,5 +1,3 @@
-"""End-to-end tests for fPKG build/extract and its interaction with the existing .ffpfsc pipeline."""
-
 from __future__ import annotations
 
 import argparse
@@ -21,13 +19,11 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# ── paths ────────────────────────────────────────────────────────────────────
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 BACKEND = REPO / "backend"
 CLI = BACKEND / "cli.py"
-# FFPFSC_PKG_TOOL lets the whole harness run against a candidate build of the tool
-# (backend/fpkg.py honours the same variable, so the CLI subprocesses follow suit).
+# FFPFSC_PKG_TOOL points the harness, and fpkg.py, at a candidate build
 TOOL = (Path(os.environ["FFPFSC_PKG_TOOL"]) if os.environ.get("FFPFSC_PKG_TOOL")
         else BACKEND / "native" / ("ffpfsc-pkg-tool.exe" if os.name == "nt" else "ffpfsc-pkg-tool"))
 MAGICK = "Magick.Native-Q8-x64.dll" if os.name == "nt" else "Magick.Native-Q8-arm64.dll.dylib"
@@ -35,7 +31,7 @@ MAGICK = "Magick.Native-Q8-x64.dll" if os.name == "nt" else "Magick.Native-Q8-ar
 # Backend cli.py wants to import fpkg / mkpfs as if run from backend/
 sys.path.insert(0, str(BACKEND))
 
-# The HomebrewTest sample (SvenGDK/LibProsperoPKG @ commit c28be59, 1 MB total).
+# HomebrewTest sample from SvenGDK/LibProsperoPKG at c28be59, about 1 MB
 HBT_URLS = {
     "README.md":           "https://raw.githubusercontent.com/SvenGDK/LibProsperoPKG/c28be59/src/HomebrewTest/README.md",
     "eboot.bin":           "https://raw.githubusercontent.com/SvenGDK/LibProsperoPKG/c28be59/src/HomebrewTest/eboot.bin",
@@ -44,7 +40,6 @@ HBT_URLS = {
 }
 
 
-# ── infrastructure ──────────────────────────────────────────────────────────
 @dataclass
 class TestResult:
     name: str
@@ -75,7 +70,6 @@ class Runner:
             self.results.append(TestResult(name, False, f"exception: {e}"))
             print(f"  ✗ {name}: exception {e}")
 
-    # ── shell helpers ───────────────────────────────────────────────────────
     def run_cli(self, args: list[str], label: str = "") -> tuple[int, str]:
         argv = [sys.executable, "-u", str(CLI), *args]
         try:
@@ -106,9 +100,7 @@ class Runner:
         return 0 if not fails else 1
 
 
-# ── fixtures ────────────────────────────────────────────────────────────────
 def fetch_hbt(dst: Path) -> Path:
-    """Fetch the HomebrewTest source folder into dst; return the folder path."""
     dst.mkdir(parents=True, exist_ok=True)
     for rel, url in HBT_URLS.items():
         out = dst / rel
@@ -121,10 +113,7 @@ def fetch_hbt(dst: Path) -> Path:
 
 
 def make_png_1x1_rgb() -> bytes:
-    """A well-formed 1x1 RGB PNG: IHDR/IDAT/IEND with real CRCs and a valid zlib stream.
-    The tool converts icon0.png to DDS while staging the source, so the fixture must
-    decode (a hand-typed sample used here before had a truncated IDAT chunk, the
-    conversion threw, and every synthesized build silently fell back to the raw source)."""
+    """must really decode: a PNG the DDS step chokes on drops the build back to the raw source"""
     def chunk(tag: bytes, data: bytes) -> bytes:
         return (struct.pack(">I", len(data)) + tag + data
                 + struct.pack(">I", binascii.crc32(tag + data) & 0xFFFFFFFF))
@@ -138,7 +127,6 @@ def make_synth_folder(dst: Path, *,
                      with_param: bool = True,
                      with_eboot: bool = True,
                      data_files: list[tuple[str, bytes]] | None = None) -> Path:
-    """Build a minimal PS5 /app0 folder for negative/positive smoke tests."""
     dst.mkdir(parents=True, exist_ok=True)
     if with_param:
         (dst / "sce_sys").mkdir(exist_ok=True)
@@ -154,7 +142,6 @@ def make_synth_folder(dst: Path, *,
         (dst / "sce_sys").mkdir(exist_ok=True)
         (dst / "sce_sys" / "icon0.png").write_bytes(make_png_1x1_rgb())
     if with_eboot:
-        # Minimal ELF stub - 4 bytes of ELF magic + padding
         (dst / "eboot.bin").write_bytes(b"\x7FELF" + b"\x00" * 60)
     for rel, blob in (data_files or []):
         p = dst / rel; p.parent.mkdir(parents=True, exist_ok=True)
@@ -170,7 +157,6 @@ def sha(p: Path) -> str:
     return h.hexdigest()
 
 
-# ── individual tests ────────────────────────────────────────────────────────
 def test_environment(r: Runner):
     r.check("tool.present", TOOL.exists(), f"{TOOL}", f"missing: {TOOL} (build it: ./BUILD_PKG_TOOL.sh)")
     magick = TOOL.parent / MAGICK
@@ -182,14 +168,12 @@ def test_environment(r: Runner):
 
 
 def test_chain1_folder_pkg_folder(r: Runner):
-    """folder → fPKG → folder - round-trip via the CLI end-to-end."""
     hbt = fetch_hbt(r.work / "hbt")
     out_pkg = r.work / "c1_pkg"; out_ext = r.work / "c1_ext"
     for d in (out_pkg, out_ext):
         if d.exists(): shutil.rmtree(d)
         d.mkdir(parents=True)
 
-    # build
     rc, log = r.run_cli([str(hbt), str(out_pkg),
                          "--fpkg-build", str(hbt),
                          "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
@@ -205,25 +189,21 @@ def test_chain1_folder_pkg_folder(r: Runner):
     if not pkgs: return
     pkg = pkgs[0]
 
-    # validate
     rc, log = r.run_tool(["validate", str(pkg)])
     r.check("chain1.validate", rc == 0, "17/17 checks pass" if "0 failed" in log else "",
             log[-400:])
 
-    # extract
     rc, log = r.run_cli(["placeholder", str(out_ext), "--fpkg-extract", str(pkg)])
     r.check("chain1.extract.rc", rc == 0, f"exit {rc}", log[-400:])
     got = {p.relative_to(out_ext).as_posix(): sha(p) for p in out_ext.rglob("*") if p.is_file()}
 
-    # verify every source file survived (byte-identical except eboot/param.json)
     src = {p.relative_to(hbt).as_posix(): sha(p) for p in hbt.rglob("*") if p.is_file()}
     missing = [k for k in src if k not in got]
     r.check("chain1.roundtrip.no-missing", not missing,
             "all source files present in extract",
             f"missing: {missing}")
 
-    # icon0.png must be an 8-bit RGB PNG; the upstream sample ships RGBA, so the builder
-    # flattens it (the only presentation-media change allowed here).
+    # icon0 must be 8-bit RGB; the upstream sample is RGBA, so the builder flattens it
     icon = "sce_sys/icon0.png"
     src_icon_ok = png_colour(hbt / icon) == 2
     got_icon = png_colour(out_ext / icon) if (out_ext / icon).is_file() else None
@@ -237,7 +217,6 @@ def test_chain1_folder_pkg_folder(r: Runner):
             "README/other files byte-identical",
             f"unexpected diffs: {[k for k in src if k not in identical and not k.endswith(allowed)]}")
 
-    # eboot must have been fake-signed
     if "eboot.bin" in src:
         r.check("chain1.eboot.transformed",
                 got.get("eboot.bin") != src["eboot.bin"],
@@ -246,7 +225,7 @@ def test_chain1_folder_pkg_folder(r: Runner):
 
 
 def png_colour(p: Path) -> int | None:
-    """PNG colour type of an 8-bit PNG (2 RGB, 6 RGBA), else None."""
+    """2 RGB, 6 RGBA; None unless an 8-bit PNG"""
     h = p.read_bytes()[:26]
     if len(h) == 26 and h[:8] == b"\x89PNG\r\n\x1a\n" and h[12:16] == b"IHDR" and h[24] == 8:
         return h[25]
@@ -254,7 +233,6 @@ def png_colour(p: Path) -> int | None:
 
 
 def test_chain2_folder_ffpfsc_folder_pkg(r: Runner):
-    """folder → .ffpfsc → folder → fPKG - the mkpfs-then-fpkg chain."""
     hbt = fetch_hbt(r.work / "hbt")
     ff = r.work / "c2_ffpfsc"; up = r.work / "c2_unpack"; pkgd = r.work / "c2_pkg"
     for d in (ff, up, pkgd):
@@ -269,7 +247,7 @@ def test_chain2_folder_ffpfsc_folder_pkg(r: Runner):
 
     rc, log = r.run_cli([str(ffpath), str(up), "--unpack", "--overwrite"])
     r.check("chain2.unpack.rc", rc == 0, "mkpfs unpack ok", log[-400:])
-    # Find the unpacked /app0 folder - mkpfs writes to a subdir
+    # mkpfs unpacks into a subdir
     candidates = [p for p in up.rglob("sce_sys") if p.is_dir()]
     if not r.check("chain2.unpack.app0", candidates, "sce_sys/ present", "no sce_sys/ found"):
         return
@@ -292,14 +270,13 @@ def test_chain2_folder_ffpfsc_folder_pkg(r: Runner):
 
 
 def test_chain3_pkg_folder_ffpfsc(r: Runner):
-    """fPKG → folder → .ffpfsc - mkpfs must accept our extracted /app0 tree."""
     hbt = fetch_hbt(r.work / "hbt")
     seed_pkg = r.work / "c3_seed"; ext = r.work / "c3_ext"; ff = r.work / "c3_ffpfsc"
     for d in (seed_pkg, ext, ff):
         if d.exists(): shutil.rmtree(d)
         d.mkdir(parents=True)
 
-    # Seed: build an fPKG from HBT (we don't ship one in-tree).
+    # no .pkg in the repo, so build a seed first
     rc, log = r.run_cli([str(hbt), str(seed_pkg),
                          "--fpkg-build", str(hbt),
                          "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
@@ -328,7 +305,6 @@ def test_chain3_pkg_folder_ffpfsc(r: Runner):
 
 
 def test_negative_missing_param_json(r: Runner):
-    """No sce_sys/param.json but --content-id/--title-id given: the tool generates a minimal param.json from the supplied identity (LibProsperoPkg's GenerateParamJsonIfMissing default) and the build succeeds with a green auto-validate."""
     hbt = fetch_hbt(r.work / "hbt")
     src = make_synth_folder(r.work / "neg_no_param", with_param=False, with_eboot=False)
     shutil.copy2(hbt / "eboot.bin", src / "eboot.bin")
@@ -354,9 +330,6 @@ def test_negative_missing_param_json(r: Runner):
 
 
 def test_negative_missing_eboot(r: Runner):
-    """No eboot.bin: the builder does not refuse. The package is written, and the CLI's
-    auto-validate flags it as its single failure ('[FAIL] inner.eboot'): the job fails with
-    exit code 3 and the package is kept for a look."""
     src = make_synth_folder(r.work / "neg_no_eboot", with_eboot=False)
     out = r.work / "neg_no_eboot_out"; out.mkdir(exist_ok=True)
     rc, log = r.run_cli([str(src), str(out),
@@ -374,8 +347,6 @@ def test_negative_missing_eboot(r: Runner):
             and re.search(r"summary: \d+ passed, \d+ warned, 1 failed", log) is not None,
             "auto-validate reported the missing eboot as its single failure",
             "auto-validate did not flag it: " + "\n".join(x for x in log.splitlines() if "[FAIL]" in x or "summary:" in x))
-    # The synthesized fixture (generated icon0.png) must pass the tool's staging step:
-    # a PNG the DDS converter cannot decode makes the tool fall back to the raw source.
     r.check("synth.auto-stage.ok",
             "[stage] mirrored source into" in log and "[warn] source auto-stage failed" not in log,
             "source staged (icon0.png converted to DDS, no auto-stage fallback)",
@@ -384,7 +355,6 @@ def test_negative_missing_eboot(r: Runner):
 
 
 def test_negative_bad_content_id(r: Runner):
-    """A malformed content id should be rejected up front."""
     src = make_synth_folder(r.work / "neg_bad_cid")
     out = r.work / "neg_bad_cid_out"; out.mkdir(exist_ok=True)
     rc, log = r.run_cli([str(src), str(out),
@@ -399,10 +369,8 @@ def test_negative_bad_content_id(r: Runner):
 
 
 def test_identity_from_param_json(r: Runner):
-    """sce_sys/param.json is the identity's source of truth."""
     hbt = fetch_hbt(r.work / "hbt")
 
-    # 1) disagreeing arguments → param.json wins, the log says so, validate is green
     out = r.work / "ident_mismatch"
     if out.exists(): shutil.rmtree(out)
     out.mkdir(parents=True)
@@ -425,7 +393,6 @@ def test_identity_from_param_json(r: Runner):
         r.check("identity.mismatch.validate", rc == 0 and "0 failed" in vlog,
                 "validate green (header == param.json)", vlog[-400:])
 
-    # 2) no ids passed at all → still builds from param.json
     out2 = r.work / "ident_omitted"
     if out2.exists(): shutil.rmtree(out2)
     out2.mkdir(parents=True)
@@ -435,7 +402,6 @@ def test_identity_from_param_json(r: Runner):
             rc == 0 and pkg2 is not None and "UP9000-PPSA99099_00-PROSPERO00000000" in pkg2.name,
             pkg2.name if pkg2 else "", f"rc={rc}; {log[-300:]}")
 
-    # 3) no param.json AND no ids → a clear refusal, never a crash
     src = make_synth_folder(r.work / "ident_noparam", with_param=False)
     out3 = r.work / "ident_noparam_out"; out3.mkdir(exist_ok=True)
     rc, log = r.run_cli([str(src), str(out3), "--fpkg-build", str(src)])
@@ -445,8 +411,6 @@ def test_identity_from_param_json(r: Runner):
 
 
 def test_kraken_fast_preset(r: Runner):
-    """The GUI's 'Kraken speed: fast' is --compression-level -4. It must reach the tool
-    (the tool logs its configuration) and still yield a package that validates."""
     hbt = fetch_hbt(r.work / "hbt")
     out = r.work / "fast_preset"
     if out.exists(): shutil.rmtree(out)
@@ -462,7 +426,6 @@ def test_kraken_fast_preset(r: Runner):
 
 
 def test_validate_catches_untouched_ffpfsc(r: Runner):
-    """A .ffpfsc isn't an fPKG. Validator must fail loudly (not crash)."""
     hbt = fetch_hbt(r.work / "hbt")
     ff = r.work / "v_ff"; ff.mkdir(exist_ok=True)
     rc, log = r.run_cli([str(hbt), str(ff), "--pack", "--overwrite"])
@@ -481,7 +444,6 @@ def test_validate_catches_untouched_ffpfsc(r: Runner):
 
 
 def test_inner_modes(r: Runner):
-    """Build with each inner-codec mode - all must produce a valid, self-extracting pkg."""
     hbt = fetch_hbt(r.work / "hbt")
     for mode in ("none", "zlib", "kraken"):
         out = r.work / f"mode_{mode}"
@@ -506,7 +468,6 @@ def test_inner_modes(r: Runner):
                 rc == 0,
                 "validator green",
                 "\n".join(x for x in log.splitlines() if "[FAIL]" in x))
-        # extract-inner still produces a valid /app0 for zlib/kraken modes
         ext = out / "_ext"; ext.mkdir(exist_ok=True)
         rc, log = r.run_cli(["placeholder", str(ext), "--fpkg-extract", str(pkg)])
         r.check(f"mode.{mode}.extract",
@@ -516,7 +477,6 @@ def test_inner_modes(r: Runner):
 
 
 def test_no_eboot_caught_by_validate(r: Runner):
-    """A pkg built from a folder that lacked eboot.bin must fail the validator."""
     src = make_synth_folder(r.work / "vne_src", with_eboot=False)
     out = r.work / "vne_out"; out.mkdir(exist_ok=True)
     rc, log = r.run_cli([str(src), str(out),
@@ -526,11 +486,9 @@ def test_no_eboot_caught_by_validate(r: Runner):
                          "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
     pkg = next(out.glob("*.pkg"), None)
     if pkg is None:
-        # builder correctly rejected - perfect
         r.check("no-eboot.builder-rejected", rc != 0, "builder refused the folder",
                 f"rc={rc}; log: {log[-300:]}")
         return
-    # builder accepted; validator MUST catch it
     rc, log = r.run_tool(["validate", str(pkg)])
     r.check("no-eboot.validate-fails",
             rc != 0 and "eboot" in log.lower(),
@@ -539,7 +497,6 @@ def test_no_eboot_caught_by_validate(r: Runner):
 
 
 def test_tool_path_resolution(r: Runner):
-    """backend/fpkg.py resolves the binary as: FFPFSC_PKG_TOOL override first, then backend/native/, then the PyInstaller _MEIPASS copies (first existing executable wins)."""
     import importlib
     fpkg = importlib.import_module("fpkg")
     native = BACKEND / "native" / fpkg._TOOL_NAME
@@ -547,10 +504,9 @@ def test_tool_path_resolution(r: Runner):
             fpkg.is_available() and TOOL.samefile(fpkg.tool_path()),
             f"{fpkg.tool_path()}",
             "backend/fpkg.py couldn't locate the native tool")
-    prev = os.environ.get("FFPFSC_PKG_TOOL")     # restore afterwards - a variant run relies on it
+    prev = os.environ.get("FFPFSC_PKG_TOOL")  # restored below, variant runs rely on it
     bogus = str(r.work / "does-not-exist" / fpkg._TOOL_NAME)
     try:
-        # 1) an override that does not exist is skipped; backend/native/ resolves the tool
         os.environ["FFPFSC_PKG_TOOL"] = bogus
         try:
             resolved, err = fpkg.tool_path(), ""
@@ -560,13 +516,11 @@ def test_tool_path_resolution(r: Runner):
                 resolved is not None and resolved.samefile(native),
                 f"missing override ignored, resolved {resolved}",
                 f"expected {native}, got {resolved if resolved is not None else err[:200]!r}")
-        # 2) an override that exists wins over backend/native/
         os.environ["FFPFSC_PKG_TOOL"] = sys.executable
         r.check("path.env-override-wins",
                 fpkg.tool_path().samefile(Path(sys.executable)),
                 "existing override returned first",
                 f"got {fpkg.tool_path()}")
-        # 3) nothing found anywhere: FileNotFoundError naming FFPFSC_PKG_TOOL, is_available() False
         os.environ["FFPFSC_PKG_TOOL"] = bogus
         real_name = fpkg._TOOL_NAME
         fpkg._TOOL_NAME = "ffpfsc-pkg-tool-that-does-not-exist"
@@ -589,8 +543,6 @@ def test_tool_path_resolution(r: Runner):
 
 
 def test_chain4_image_to_fpkg_oneclick(r: Runner):
-    """--fpkg-build <image.ffpfsc>: the one-click image → fPKG conversion (unwrap on
-    --temp-dir, build, validate, extract back)."""
     hbt = fetch_hbt(r.work / "hbt")
     ff = r.work / "c4_ffpfsc"; pkgd = r.work / "c4_pkg"; tmp = r.work / "c4_tmp"; ext = r.work / "c4_ext"
     for d in (ff, pkgd, tmp, ext):
@@ -615,7 +567,7 @@ def test_chain4_image_to_fpkg_oneclick(r: Runner):
             "\n".join(x for x in log.splitlines() if "Unpacking" in x or "Unwrapping" in x or "[stage]" in x))
     r.check("chain4.level-passthrough", "level=5" in log, "--compression-level reached the builder (level=5)",
             "level not visible in builder banner")
-    # the backend hands the builder the resolved path (Windows: the long name of a PARALL~1 short one)
+    # the builder sees the resolved path (Windows: the long name, not PARALL~1)
     r.check("chain4.temp-passthrough", str(tmp) in log or str(tmp.resolve()) in log, "--temp-dir reached the builder",
             "temp dir not in banner")
     r.check("chain4.scratch-cleaned", not any(tmp.iterdir()), "unwrap scratch removed after build",
@@ -636,7 +588,6 @@ def test_chain4_image_to_fpkg_oneclick(r: Runner):
 
 
 def test_gui_progress_translation(r: Runner):
-    """A folder build must emit the [PHASE] markers and progress bars the GUI parser reads."""
     hbt = fetch_hbt(r.work / "hbt")
     out = r.work / "gui_prog"; out.mkdir(exist_ok=True)
     rc, log = r.run_cli([str(hbt), str(out),
@@ -653,9 +604,6 @@ def test_gui_progress_translation(r: Runner):
 
 
 def test_ps5_repair_rebuild(r: Runner):
-    """PS5 PKG Tools: the checks find the default keystone and the update URL; the rebuild (--to pkg
-    --rebuild) clears the URL and puts the given keystone in. The builder itself drops patch markers
-    and a param.sfo of the source."""
     sys.path.insert(0, str(BACKEND))
     import ps5_repair
     src = r.work / "p5_src"; built = r.work / "p5_built"; fixed = r.work / "p5_fixed"; tmp = r.work / "p5_tmp"
@@ -702,8 +650,6 @@ def test_ps5_repair_rebuild(r: Runner):
 
 
 def test_ps5_repair_trophies_and_ampr(r: Runner):
-    """PS5 PKG Tools: a trophy archive with a wrong checksum and a missing AMPR index are found; the
-    rebuild (--ps5-trophies) writes the checksum and the builder writes the index."""
     sys.path.insert(0, str(BACKEND)); sys.path.insert(0, str(HERE))
     import ps5_repair
     from test_ps5_repair import _ucp
@@ -737,9 +683,6 @@ def test_ps5_repair_trophies_and_ampr(r: Runner):
 
 
 def test_build_temp_is_contained(r: Runner):
-    """The package tool's intermediates (libprospero-publisher-*.pfs_image.dat and friends)
-    must live in a run-owned tmpXXXXXXXX subfolder of --temp-dir, never loose in the temp
-    root, and nothing may be left behind after the build."""
     hbt = fetch_hbt(r.work / "hbt")
     temp = r.work / "tmpcheck_temp"; out = r.work / "tmpcheck_out"
     for d in (temp, out):
@@ -780,8 +723,6 @@ def test_build_temp_is_contained(r: Runner):
 
 
 def test_deterministic_build(r: Runner):
-    """Two --deterministic builds must produce byte-identical fPKGs, and so must a build on
-    four workers (the CPU cores setting reaches the package tool as --parallelism)."""
     hbt = fetch_hbt(r.work / "hbt")
     a = r.work / "det_a"; b = r.work / "det_b"; c = r.work / "det_par4"
     for d in (a, b, c):
@@ -815,9 +756,6 @@ def test_deterministic_build(r: Runner):
 
 
 def test_stage_in_place_matches_copy(r: Runner):
-    """--stage-in-place (the folder is the caller's own working copy) must give the same
-    deterministic package as the copy-mode build, leave the copy-mode source untouched, and
-    say so in the log."""
     hbt = fetch_hbt(r.work / "hbt")
     src_a, src_b = r.work / "sip_src_a", r.work / "sip_src_b"
     out_a, out_b = r.work / "sip_out_a", r.work / "sip_out_b"
@@ -845,9 +783,6 @@ def test_stage_in_place_matches_copy(r: Runner):
 
 
 def test_ampr_index_rebuilt(r: Runner):
-    """A source shipping the AMPR emulator gets an ampr_emu.index that describes the packed
-    files (fake-signing changes sizes; a stale or missing index must not ship), and the
-    source's own index is never touched (the staging mirror is made of hard links)."""
     hbt = fetch_hbt(r.work / "hbt")
     src = r.work / "ampr_src"; out = r.work / "ampr_out"; ext = r.work / "ampr_ext"
     for d in (src, out, ext):
@@ -877,11 +812,9 @@ def test_ampr_index_rebuilt(r: Runner):
 
 
 def test_list_and_selective_extract(r: Runner):
-    """list-inner + extract-inner --members: the PFS-browser contract for fPKGs."""
     hbt = fetch_hbt(r.work / "hbt")
 
-    # Fixture 2: a synthetic /app0 with a few 20-40 MB files. HomebrewTest's real eboot.bin
-    # and sce_sys are copied in - the synth ELF stub is not fake-signable, the build refuses it.
+    # real eboot.bin from HomebrewTest: the synth ELF stub can't be fake-signed
     synth = make_synth_folder(r.work / "lsx_src", with_param=False, with_icon=False, with_eboot=False,
                               data_files=[("data/blob1.bin", os.urandom(30_000_000)),
                                           ("data/sub/blob2.bin", os.urandom(20_000_000)),
@@ -906,13 +839,12 @@ def test_list_and_selective_extract(r: Runner):
         if not r.check(f"lsx.{tag}.build", rc == 0 and pkg is not None, f"inner={mode}", log[-300:]):
             continue
 
-        # Ground truth: the full extraction (inner PFS + CNT merge).
         rc, log = r.run_tool(["extract-inner", str(pkg), str(full)])
         if not r.check(f"lsx.{tag}.full-extract", rc == 0, "extract-inner ok", log[-300:]):
             continue
         full_files = {p.relative_to(full).as_posix(): p for p in full.rglob("*") if p.is_file()}
 
-        # list-inner: one JSON object on stdout (run_tool merges stderr, so pick the JSON line).
+        # run_tool merges stderr in, so pick the JSON line
         rc, log = r.run_tool(["list-inner", str(pkg)])
         jline = next((ln for ln in log.splitlines() if ln.startswith("{")), "")
         try:
@@ -948,7 +880,6 @@ def test_list_and_selective_extract(r: Runner):
             r.check("lsx.synth.list.empty-dir", "data/empty_dir" in dirs, "empty directory listed",
                     f"dirs={sorted(dirs)}")
 
-        # Selective extraction: two files + one directory subtree.
         mf = r.work / f"lsx_{tag}_members.txt"
         mf.write_text("\n".join(members) + "\n", encoding="utf-8")
         rc, log = r.run_tool(["extract-inner", str(pkg), str(sel), "--members", str(mf)])
@@ -965,8 +896,7 @@ def test_list_and_selective_extract(r: Runner):
         r.check(f"lsx.{tag}.sel.progress", bool(pcts) and pcts[-1] == 100 and pcts == sorted(pcts),
                 f"{len(pcts)} progress lines, monotone, ends at 100%", f"pcts={pcts[:10]}")
         if tag == "hbt":
-            # The pre-existing --json documents must be parseable too. Trimming had switched
-            # reflection-based System.Text.Json off and all three crashed on the shipped binary.
+            # a trimmed build loses reflection-based System.Text.Json, so check that --json parses
             jd = r.work / "lsx_hbt_json_ext"; jd.mkdir(exist_ok=True)
             verdicts = []
             for label, argv, keys in (
@@ -985,8 +915,7 @@ def test_list_and_selective_extract(r: Runner):
                     "; ".join(f"{l}: rc={rc} {o!r}" for l, g, rc, o in verdicts if not g))
 
         if tag == "hbt":
-            # A backport check reads the executables alone out of a package, before a job
-            # unpacks the whole game: eboot.bin byte-identical to the full extract, no data.
+            # the backport check pulls just the executables before a job unpacks the whole game
             import cli as _cli
             exd = r.work / "lsx_hbt_exec"
             if exd.exists(): shutil.rmtree(exd)
@@ -1002,14 +931,13 @@ def test_list_and_selective_extract(r: Runner):
                     f"{len(got)} executable(s) pulled, eboot.bin identical", f"{err} {got[:6]}")
 
         if tag == "synth":
-            # A directory member with nothing inside is still recreated (structure parity with mkpfs).
+            # empty dir members are recreated too, same as mkpfs
             sel2 = r.work / "lsx_synth_sel2"; sel2.mkdir(exist_ok=True)
             mf2 = r.work / "lsx_synth_members2.txt"; mf2.write_text("data/empty_dir\n")
             rc, log = r.run_tool(["extract-inner", str(pkg), str(sel2), "--members", str(mf2)])
             ed = sel2 / "data" / "empty_dir"
             r.check("lsx.synth.sel.empty-dir", rc == 0 and ed.is_dir() and not any(ed.iterdir()),
                     "an empty directory member is recreated", f"rc={rc}; {log[-200:]}")
-            # An unknown member alone is a clean refusal, not a crash.
             sel3 = r.work / "lsx_synth_sel3"; sel3.mkdir(exist_ok=True)
             mf3 = r.work / "lsx_synth_members3.txt"; mf3.write_text("does/not/exist\n")
             rc, log = r.run_tool(["extract-inner", str(pkg), str(sel3), "--members", str(mf3)])
@@ -1017,10 +945,8 @@ def test_list_and_selective_extract(r: Runner):
                     "refused with rc=1", f"rc={rc}; {log[-200:]}")
 
 
-# ── main ─────────────────────────────────────────────────────────────────────
 def make_png_1x1(colour: int, interlace: int = 0) -> bytes:
-    """1x1 PNG, 8-bit, colour type 2 (RGB) or 6 (RGBA). For one pixel the Adam7 data is
-    the same as the plain data, so interlace=1 still yields a valid interlaced PNG."""
+    """colour 2 RGB or 6 RGBA; for one pixel Adam7 data equals the plain data"""
     def chunk(tag: bytes, data: bytes) -> bytes:
         return (struct.pack(">I", len(data)) + tag + data
                 + struct.pack(">I", binascii.crc32(tag + data) & 0xFFFFFFFF))
@@ -1030,7 +956,7 @@ def make_png_1x1(colour: int, interlace: int = 0) -> bytes:
 
 
 def make_bc7_dds(width: int, height: int) -> bytes:
-    """A DX10/BC7 DDS header for width x height plus zeroed block data (one mip)."""
+    """DX10/BC7 header plus zeroed blocks, one mip"""
     head = bytearray(148)
     head[0:4] = b"DDS "
     struct.pack_into("<IIII", head, 4, 124, 0x1007, height, width)
@@ -1042,9 +968,6 @@ def make_bc7_dds(width: int, height: int) -> bytes:
 
 
 def test_publishing_rules(r: Runner):
-    """Rules from the publishing tools' requirements that the builder enforces while staging
-    (never in the source): presentation-image form and icon0 size, DDS/PNG agreement, PlayGo
-    set vs. the packed tree, and refusals for a non-JSON param.json and an empty eboot."""
     hbt = fetch_hbt(r.work / "hbt")
     cid, tid = "UP9000-PPSA99099_00-PROSPERO00000000", "PPSA99099"
 
@@ -1062,7 +985,6 @@ def test_publishing_rules(r: Runner):
                              "--title-id", tid, "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
         return rc, log, next(out.glob("*.pkg"), None)
 
-    # 1. icon0.png interlaced 1x1 RGBA + a stale 256x256 icon0.dds
     src = base("rules_icon")
     bad_png = make_png_1x1(6, interlace=1)
     (src / "sce_sys" / "icon0.png").write_bytes(bad_png)
@@ -1095,8 +1017,6 @@ def test_publishing_rules(r: Runner):
             "package: icon0.png 512x512 8-bit RGB non-interlaced, icon0.dds 512x512 BC7",
             f"icon0.png IHDR {ic[16:29].hex()} icon0.dds {dd[12:20].hex()}")
 
-    # 2. PlayGo: the set the builder made for this tree is kept on a rebuild of the unpacked
-    #    folder; after a file is added it no longer matches and is regenerated.
     rc, log, _ = build(x, "rules_pg_same")
     r.check("rules.playgo.matching-set-kept", rc == 0 and "[playgo] prepared set matches the packed files" in log,
             "a set that describes the packed files is kept",
@@ -1108,14 +1028,13 @@ def test_publishing_rules(r: Runner):
             "a set made for another tree is regenerated",
             "\n".join(l for l in log.splitlines() if "[playgo]" in l) or log[-300:])
 
-    # 3. A param.json that is not JSON is refused (a generic one would lose the settings).
+    # a non-JSON param.json is refused: a generic one would lose the settings
     src = base("rules_badparam")
     (src / "sce_sys" / "param.json").write_bytes(b"\x89PNG\r\n\x1a\n not json")
     rc, log, pkg = build(src, "rules_badparam_out")
     r.check("rules.param-not-json.refused", rc != 0 and pkg is None and "param.json is not valid JSON" in log,
             "build refused with a clear message", f"rc={rc} pkg={pkg}: " + log[-300:])
 
-    # 4. An empty eboot.bin is refused.
     src = base("rules_empty_eboot")
     (src / "eboot.bin").write_bytes(b"")
     rc, log, pkg = build(src, "rules_empty_eboot_out")
@@ -1124,8 +1043,6 @@ def test_publishing_rules(r: Runner):
 
 
 def test_ps4_archive_to_library(r: Runner):
-    """A zip of PS4 packages (game, update, five DLCs) ends as the library tree, and a
-    lone DLC joins the title folder that is already there."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from ps4_fixture import make_pkg
     src = r.work / "ps4_src"; out = r.work / "ps4_out"; zp = r.work / "ps4_set.zip"; ext = r.work / "ps4_ext"
@@ -1159,9 +1076,6 @@ def test_ps4_archive_to_library(r: Runner):
 
 
 def test_organize_real(r: Runner):
-    """Organize with the real readers: a .ffpfsc, a .pkg, an unpacked folder and a zip of the
-    same title scattered over release folders (with OS clutter) end in one title folder; undo
-    restores the tree; --organize-into writes an image into an empty library."""
     hbt = fetch_hbt(r.work / "hbt")
     lib = r.work / "org_lib"; shutil.rmtree(lib, ignore_errors=True); lib.mkdir()
     (lib / "Rel.A").mkdir(); (lib / "Rel.B").mkdir()

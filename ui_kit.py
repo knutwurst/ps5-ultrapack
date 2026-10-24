@@ -1,4 +1,3 @@
-"""Lightweight Tk widgets for the PS5 UltraPack main window."""
 from __future__ import annotations
 
 import math
@@ -11,9 +10,7 @@ from collections import OrderedDict
 from types import SimpleNamespace
 from i18n import t as _t  # canvas texts are measured in the interface language
 
-# ── Palette ──────────────────────────────────────────────────────────────────────────
-# A PlayStation-like blue carries the one primary action and the selection. Green means
-# success only, amber a warning, red an error, orange a pause (the queue holds, nothing is lost).
+# blue: primary action and selection. green ok, amber warning, red error, orange pause
 PALETTE = {
     "dark": {
         "bg": "#0b0d12", "sidebar": "#0f1218", "surface": "#12161e", "surface2": "#1a1f2a",
@@ -51,14 +48,12 @@ PALETTE = {
 
 
 def ctk_pair(token: str) -> tuple[str, str]:
-    """(light, dark) tuple for CustomTkinter widgets that should follow the palette."""
+    """(light, dark) for CTk widgets"""
     return PALETTE["light"][token], PALETTE["dark"][token]
 
 
 def apply_ctk_theme(ctk, body_px: int | None = None) -> None:
-    """Point CustomTkinter's default widget colours (used by the dialogs) at the palette,
-    so a CTk checkbox, switch, entry or segmented button looks like the main window.
-    Call after set_default_color_theme() and before any CTk widget is created."""
+    """call after set_default_color_theme() and before the first CTk widget"""
     P = ctk_pair
     patch = {
         "CTk": {"fg_color": P("surface")},
@@ -95,21 +90,19 @@ def apply_ctk_theme(ctk, body_px: int | None = None) -> None:
     }
     theme = ctk.ThemeManager.theme
     if body_px and "CTkFont" in theme:
-        theme["CTkFont"]["size"] = body_px       # the default text of every CTk widget
+        theme["CTkFont"]["size"] = body_px
     for widget, colors in patch.items():
         if widget in theme:
             for key, value in colors.items():
                 if key in theme[widget]:
                     theme[widget][key] = list(value)
-    # An 18 px checkbox (set per widget) with a 2 px ring reads like a macOS one; CTk's
-    # 3 px ring was drawn for its 24 px default.
+    # 2 px ring for the 18 px box; CTk's 3 px is meant for its 24 px default
     if "CTkCheckBox" in theme:
         theme["CTkCheckBox"]["border_width"] = 2
         theme["CTkCheckBox"]["corner_radius"] = 5
 
 
-# Logical pixels to device pixels. macOS scales a window itself, so 1 there; on Windows the
-# process is DPI-aware and draws at the display's resolution, so the display's factor.
+# logical to device px: 1 on macOS (it scales itself), the display factor on Windows
 SCALE = 1.0
 
 
@@ -135,7 +128,7 @@ def _scaled_pads(kw: dict) -> dict:
 
 
 def _scale_paddings() -> None:
-    """Pack and grid paddings of Tk widgets in logical pixels; CustomTkinter scales its own."""
+    """Tk paddings only, CTk scales its own"""
     if getattr(tk.Pack, "_ps5u_scaled", False):
         return
     from customtkinter.windows.widgets.core_widget_classes import CTkBaseClass
@@ -154,10 +147,10 @@ def _scale_paddings() -> None:
 
 
 class _Font(tkfont.Font):
-    """A font sized in device pixels that measures in logical ones, like the canvases."""
+    """sized in device px, measures in logical px like the canvases"""
 
     def measure(self, text, displayof=None):
-        w = super().measure(_t(text) if isinstance(text, str) else text, displayof)   # as Tk will show it
+        w = super().measure(_t(text) if isinstance(text, str) else text, displayof)  # measure the translated text
         return w if SCALE == 1 else round(w / SCALE)
 
     def metrics(self, *options, **kw):
@@ -182,7 +175,7 @@ def _scaled_opts(kw: dict) -> dict:
 
 
 class Canvas(tk.Canvas):
-    """A canvas sized, drawn and clicked in logical pixels; Tk gets device pixels (SCALE)."""
+    """logical px everywhere, Tk gets device px (SCALE)"""
 
     def __init__(self, master=None, cnf=None, **kw):
         super().__init__(master, cnf or {}, **_scaled_opts(kw))
@@ -277,12 +270,11 @@ class Canvas(tk.Canvas):
 
 
 class Fonts:
-    """The type scale, in logical pixels like every macOS app (Tk's POINTS are 1.33 px here, so positive Tk sizes would render a third larger than native text)."""
+    """pixel sizes: Tk points are 1.33 px here, so point sizes come out a third too big"""
 
     def __init__(self, root):
         base = tkfont.nametofont("TkDefaultFont").actual().get("family", "Helvetica")
-        # Menlo ships with every macOS, so it is looked up first: listing all families costs
-        # ~350 ms, and so does asking for one that is missing (Tk searches for a fallback).
+        # try Menlo first: listing families or asking for a missing one costs ~350 ms
         mono = next((fam for fam in (("Consolas", "Courier New") if sys.platform == "win32"
                                      else ("Menlo", "Monaco", "Courier New"))
                      if tkfont.Font(root=root, family=fam, size=-11).actual("family") == fam), "Courier")
@@ -301,10 +293,7 @@ class Fonts:
         self.mono = f(11, fam=mono)
         self.mono_small = f(10, fam=mono)
 
-# ── Icons ────────────────────────────────────────────────────────────────────────────
-# Ops on a 24x24 grid: l = polyline, p = closed outline, c = circle, cf = filled circle,
-# ck = knob (circle filled with the background), r = rounded rect, pie = filled pie slice,
-# pf = filled polygon, rf = filled rounded rect.
+# 24x24 ops: l line, p outline, c/cf circle, ck knob, r/rf round rect, pie, pf polygon
 ICONS: dict[str, list[tuple]] = {
     "queue": [("l", 4, 6.5, 5.5, 8, 8, 5), ("l", 4, 12.5, 5.5, 14, 8, 11), ("l", 4, 18.5, 5.5, 20, 8, 17),
               ("l", 11, 6.5, 20, 6.5), ("l", 11, 12.5, 20, 12.5), ("l", 11, 18.5, 20, 18.5)],
@@ -351,11 +340,10 @@ ICONS: dict[str, list[tuple]] = {
 
 
 def _retry_icon():
-    """A circular arrow: an open arc, clockwise, with its head at the top right."""
     cx, cy, r = 12, 12, 7.5
     arc = []
     for k in range(15):
-        a = math.radians(30 + k * 20)            # 30° … 310°, clockwise on screen
+        a = math.radians(30 + k * 20)  # 30 to 310 deg, clockwise on screen
         arc += [round(cx + r * math.cos(a), 2), round(cy + r * math.sin(a), 2)]
     ex, ey = arc[-2], arc[-1]
     a = math.radians(310)
@@ -370,7 +358,6 @@ ICONS["retry"] = _retry_icon()
 
 
 def _refresh_icon():
-    """Two arcs chasing each other, each ending in an arrow head: the sync symbol."""
     cx, cy, r = 12, 12, 7
     def arc(start, extent, head_dir):
         pts = []
@@ -394,8 +381,7 @@ ICONS["refresh"] = _refresh_icon()
 
 
 def unpack_touchpad_delta(d) -> tuple[int, int]:
-    """(dx, dy) in pixels from a <TouchpadScroll> %D (Tk 9, TIP 684): dx in the high 16
-    bits, dy in the low 16, both signed. The same arithmetic as tk::PreciseScrollDeltas."""
+    """Tk 9 TIP 684: dx in the high 16 bits, dy in the low 16, both signed"""
     d = int(d or 0)
     dx = d >> 16
     low = d & 0xFFFF
@@ -404,7 +390,7 @@ def unpack_touchpad_delta(d) -> tuple[int, int]:
 
 
 def attach_wheel_scroll(widget, *, pixel_unit: int = 1, notch_px: int = 40) -> None:
-    """Scroll *widget* (a Canvas, or anything with yview/xview) with the mouse wheel and with a trackpad swipe, on Tk 8.6 and Tk 9."""
+    """wheel and trackpad for anything with yview/xview, Tk 8.6 and 9"""
     rem = {"x": 0.0, "y": 0.0}
 
     def _span_ok(axis: str) -> bool:
@@ -415,9 +401,7 @@ def attach_wheel_scroll(widget, *, pixel_unit: int = 1, notch_px: int = 40) -> N
             return False
 
     def scroll_px(axis: str, px: float) -> bool:
-        """Move the view by *px* pixels (positive: the view goes down / right). True when
-        it moved. The remainder below one unit is carried to the next call, so a slow
-        swipe still adds up, and a tick never rounds away to nothing."""
+        """sub-unit remainders carry over, so a slow swipe still adds up"""
         if not px or not _span_ok(axis):
             return False
         if isinstance(widget, Canvas):
@@ -472,10 +456,7 @@ def _hand_cursor(w) -> str:
 
 
 def _solid_round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, color, kw):
-    """A filled rounded rectangle with antialiased corners. Tk on macOS fills polygons
-    without antialiasing (the corners come out as pixel steps) but antialiases strokes, so
-    the shape is the inner rectangle drawn with a stroke of twice the radius and round
-    joins, the trick CustomTkinter uses. Tk rounds stroke widths to whole points."""
+    """Tk on macOS fills polygons without AA but strokes with it: fat stroke, round joins"""
     d = min(round(2 * r), int(min(x2 - x1, y2 - y1)))
     if d < 2:
         return cv.create_rectangle(x1, y1, x2, y2, fill=color, outline="", **kw)
@@ -484,8 +465,7 @@ def _solid_round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, color, kw):
                              fill=color, outline=color, width=d, joinstyle="round", **kw)
 
 
-# Tk on Windows draws canvas shapes through GDI without antialiasing, so rounded corners
-# and icons come out jagged. There they are painted with Pillow at 4x and scaled down.
+# Tk on Windows draws canvas shapes via GDI without AA, very 1998. Pillow paints them at 4x instead
 _AA = sys.platform == "win32"
 _SS = 4
 _aa_cache: OrderedDict = OrderedDict()
@@ -497,7 +477,7 @@ def _rgba(color: str, cv) -> tuple:
 
 
 def _aa_photo(cv, key, w: int, h: int, paint):
-    """A w x h device-pixel image, painted by paint(draw, k) on a canvas k times as big."""
+    """w x h device px; paint(draw, k) draws at k times the size"""
     photo = _aa_cache.get(key)
     if photo is None:
         from PIL import Image, ImageDraw, ImageTk
@@ -513,7 +493,7 @@ def _aa_photo(cv, key, w: int, h: int, paint):
 
 
 def _aa_place(cv, X: int, Y: int, photo, kw) -> int:
-    """Put a device-pixel image at device (X, Y); the canvas keeps it while the item lives."""
+    """the canvas keeps a ref to the photo while the item lives"""
     iid = cv.create_image(X / SCALE, Y / SCALE, image=photo, anchor="nw", **kw)
     if not hasattr(cv, "_aa_refs"):
         cv._aa_refs = {}
@@ -522,7 +502,7 @@ def _aa_place(cv, X: int, Y: int, photo, kw) -> int:
 
 
 class _Shifted:
-    """An ImageDraw that moves every rounded rectangle by (dx, dy): one corner of a shape."""
+    """ImageDraw proxy shifting rounded rects by (dx, dy), for one corner"""
 
     def __init__(self, d, dx, dy):
         self.d, self.dx, self.dy = d, dx, dy
@@ -550,8 +530,7 @@ def _aa_rrect_paint(w, h, R, fill, outline, bw):
 
 
 def _aa_round_rect(cv, x1, y1, x2, y2, r, fill, outline, bw, kw) -> int:
-    """round_rect on Windows: a small shape is one image; a large one gets image corners
-    and plain rectangles in between, which need no smoothing."""
+    """Windows: small shapes as one image, big ones as image corners plus plain rects"""
     S = SCALE
     X1, Y1, X2, Y2 = round(x1 * S), round(y1 * S), round(x2 * S), round(y2 * S)
     w, h = X2 - X1, Y2 - Y1
@@ -574,8 +553,8 @@ def _aa_round_rect(cv, x1, y1, x2, y2, r, fill, outline, bw, kw) -> int:
     rect = lambda a, b, c_, d_, col: tk.Canvas.create_rectangle(cv, a, b, c_, d_, fill=col, outline="", **kw)
     hexf, hexo = (fill if f else None), (outline if o else None)
     edge, inner = (hexo, hexf) if B else (hexf, hexf)
-    rect(X1 + c, Y1, X2 - c, Y2, edge)                 # middle column, full height
-    rect(X1, Y1 + c, X2, Y2 - c, edge)                 # middle row, full width
+    rect(X1 + c, Y1, X2 - c, Y2, edge)
+    rect(X1, Y1 + c, X2, Y2 - c, edge)
     if B:
         rect(X1 + c, Y1 + B, X2 - c, Y2 - B, inner)
         rect(X1 + B, Y1 + c, X2 - B, Y2 - c, inner)
@@ -583,9 +562,7 @@ def _aa_round_rect(cv, x1, y1, x2, y2, r, fill, outline, bw, kw) -> int:
 
 
 def round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, fill="", outline="", width=None, **kw):
-    """A rounded rectangle; returns the id of its top shape. A border is drawn as the
-    same shape in the border colour with the fill inset on top, so both edges stay
-    antialiased. An outline without fill (icons) is a stroked polygon with sampled corners."""
+    """id of the top shape; a border is the shape in border colour with the fill inset on top"""
     r = max(0.0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
     bw = (1 if width is None else width) if outline else 0
     if _AA and (fill or bw):
@@ -610,7 +587,7 @@ def round_rect(cv: tk.Canvas, x1, y1, x2, y2, r, fill="", outline="", width=None
 
 def draw_icon(cv: tk.Canvas, name: str, x: float, y: float, size: float, color: str,
               bg: str = "", width: float | None = None, tags=()):
-    """Draw icon *name* with its top-left corner at (x, y), *size* points square."""
+    """(x, y) is the top-left corner, size in points"""
     s = size / 24.0
     w = width if width is not None else max(1.2, 1.9 * s)
     if _AA:
@@ -624,7 +601,7 @@ def draw_icon(cv: tk.Canvas, name: str, x: float, y: float, size: float, color: 
                 cv.create_line(*pts, fill=color, width=w, capstyle="round", joinstyle="round", **common)
             elif kind == "p":
                 cv.create_polygon(*pts, outline=color, fill="", width=w, joinstyle="round", **common)
-            else:   # filled: the stroke gives the edge its antialiasing and round corners
+            else:  # filled: the stroke adds AA and round corners
                 cv.create_polygon(*pts, outline=color, fill=color, width=2, joinstyle="round", **common)
         elif kind in ("c", "cf", "ck"):
             cx, cy, r = x + args[0] * s, y + args[1] * s, args[2] * s
@@ -648,7 +625,7 @@ def draw_icon(cv: tk.Canvas, name: str, x: float, y: float, size: float, color: 
 
 
 def _aa_icon(cv, name, x, y, size, color, bg, w, tags):
-    """draw_icon on Windows: the whole icon as one image, strokes centred like Tk's."""
+    """Windows: the whole icon as one image, strokes centred like Tk's"""
     S = SCALE
     pad = math.ceil(w * S / 2) + 1
     X, Y = round(x * S) - pad, round(y * S) - pad
@@ -711,7 +688,6 @@ def _aa_icon(cv, name, x, y, size, color, bg, w, tags):
 
 
 def truncate(font: tkfont.Font, text: str, max_w: int) -> str:
-    """*text* shortened with an ellipsis so it fits into *max_w* points."""
     if max_w <= 0:
         return ""
     text = _t(text)
@@ -729,10 +705,7 @@ def truncate(font: tkfont.Font, text: str, max_w: int) -> str:
 
 
 def on_resize(widget, fn, settle_ms=0):
-    """Call fn() when *widget* changes SIZE. <Configure> also fires when a widget only
-    moves (e.g. right-aligned buttons while the window is resized); redrawing then is
-    wasted work that Tk has to paint again. With settle_ms, a burst of size changes (a
-    window being dragged) runs fn() once, after the size has been still that long."""
+    """fires on real size changes only, not moves; settle_ms turns a drag into one call"""
     last = [None]
     pending = [None]
 
@@ -754,9 +727,8 @@ def on_resize(widget, fn, settle_ms=0):
         pending[0] = widget.after(settle_ms, fire)
     widget.bind("<Configure>", handler, add="+")
 
-# ── Theme registry ───────────────────────────────────────────────────────────────────
 class Kit:
-    """Palette + fonts + the registry of widgets to recolour on a mode switch."""
+    """palette, fonts and the widgets to recolour on a mode switch"""
 
     def __init__(self, root, mode: str = "dark"):
         self.root = root
@@ -770,7 +742,7 @@ class Kit:
         return self.pal[token]
 
     def style(self, widget, **opts):
-        """Register *widget* and set each option to its palette token, e.g. bg="surface"."""
+        """options are palette tokens, e.g. bg='surface'"""
         self._styled.append((widget, opts))
         widget.configure(**{k: self.pal[v] for k, v in opts.items()})
         return widget
@@ -780,8 +752,7 @@ class Kit:
         return widget
 
     def restyle(self, widget, **opts):
-        """Change palette tokens of a widget registered with style(), e.g. a label whose
-        text colour follows a state; the next mode switch keeps the new tokens."""
+        """new tokens for a styled widget; the next mode switch keeps them"""
         for i, (w, old) in enumerate(self._styled):
             if w is widget:
                 self._styled[i] = (w, {**old, **opts})
@@ -793,7 +764,7 @@ class Kit:
     _reduce_motion = None
 
     def reduce_motion(self) -> bool:
-        """macOS Reduce motion (System Settings > Accessibility > Display): no animations then."""
+        """macOS Reduce motion setting: no animations then"""
         if Kit._reduce_motion is None:
             Kit._reduce_motion = False
             if sys.platform == "darwin":
@@ -815,7 +786,6 @@ class Kit:
         return self.style(lb, bg=bg, fg=fg)
 
     def fit_width(self, frame, min_w, *widths) -> None:
-        """A fixed-width column as wide as its widest entry (logical pixels), never below min_w."""
         frame.configure(width=round(max(min_w, *widths) * SCALE))
 
     def rule(self, parent, bg_token="border", horizontal=True) -> tk.Frame:
@@ -843,9 +813,7 @@ class Kit:
             try:
                 w.configure(**vals)
             except tk.TclError:
-                # CustomTkinter replaces a tk master's configure() with one that forwards bg
-                # to its CTk child first; once that child is destroyed the forward fails and
-                # the master is never recoloured. Apply the colours to the widget itself.
+                # CTk's configure() forwards bg to a child that may be dead; call the plain one
                 try:
                     type(w).configure(w, **vals)
                 except tk.TclError:
@@ -863,10 +831,7 @@ class Kit:
         self._custom = keep
 
 
-# ── Widgets ──────────────────────────────────────────────────────────────────────────
 class IconButton(Canvas):
-    """A button drawn on one canvas: optional icon + text, four variants."""
-
     def __init__(self, parent, kit: Kit, text="", icon=None, command=None, variant="secondary",
                  height=30, width=None, bg="surface", font=None, padx=12, icon_size=16, badge=None,
                  tooltip=None, tooltip_side=None):
@@ -891,7 +856,7 @@ class IconButton(Canvas):
         self._resize()
         self._draw()
 
-    # - API compatible with the CTkButton calls the app makes - 
+    # CTkButton-compatible API, as far as the app uses it
     def configure(self, cnf=None, **kw):
         mine = {k: kw.pop(k) for k in ("state", "text", "icon", "command", "selected", "badge", "variant")
                 if k in kw}
@@ -946,14 +911,11 @@ class IconButton(Canvas):
         super().configure(bg=self.kit.c(self._bg_token))
         self._draw()
 
-    # - drawing - 
     def _font_obj(self):
-        # Regular weight like a macOS push button; the fill carries the emphasis, and the
-        # 1 pt icon strokes match regular text better than bold.
+        # regular weight like a macOS push button; 1 pt icon strokes look off next to bold
         return self._font or self.kit.fonts.body
 
     def natural_width(self) -> int:
-        """Width the icon and text need, padding included."""
         w = 2 * self._padx
         if self._icon:
             w += self._icon_size + ((8 if self.variant == "nav" else 6) if self._text else 0)
@@ -1035,7 +997,7 @@ class IconButton(Canvas):
 
 
 def blend(a: str, b: str, t: float) -> str:
-    """The colour t of the way from hex *a* to hex *b* (Tk canvases have no alpha)."""
+    """Tk canvases have no alpha, so mix the colours by hand"""
     t = max(0.0, min(1.0, t))
     ca = [int(a.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
     cb = [int(b.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
@@ -1043,8 +1005,7 @@ def blend(a: str, b: str, t: float) -> str:
 
 
 class _Segment:
-    """One part of a TransportControl, with the button API the app talks to: configure() /
-    cget() / invoke(), state, command, variant, text and a tooltip text."""
+    """one part of a TransportControl that quacks like a button for the app"""
 
     def __init__(self, owner, text, icon, command, variant, tooltip):
         self._owner, self._text, self._icon, self._command = owner, text, icon, command
@@ -1075,7 +1036,7 @@ class _Segment:
 
 
 class TransportControl(Canvas):
-    """Start, Pause and Stop in one place of fixed size."""
+    """Start, Pause and Stop sharing one fixed-size spot"""
 
     DURATION = 180
     GAP = 2
@@ -1106,7 +1067,6 @@ class TransportControl(Canvas):
         self._resize()
         self._draw()
 
-    # - state - 
     def set_running(self, on: bool):
         on = bool(on)
         if on == self.running:
@@ -1152,7 +1112,6 @@ class TransportControl(Canvas):
         else:
             self._ticking = False
 
-    # - geometry - 
     def _content_w(self, part):
         w = 2 * self._padx + (self._icon_size if part._icon else 0)
         if part._text:
@@ -1171,7 +1130,6 @@ class TransportControl(Canvas):
             return "start"
         return "pause" if x < self._width() / 2 else "stop"
 
-    # - pointer - 
     def _on_motion(self, e):
         name = self._part_at(e.x)
         part = self._parts[name]
@@ -1204,7 +1162,6 @@ class TransportControl(Canvas):
         super().configure(bg=self.kit.c(self._bg_token))
         self._draw()
 
-    # - drawing - 
     def _draw(self):
         self.delete("all")
         c, W = self.kit.c, self._width()
@@ -1254,7 +1211,7 @@ class TransportControl(Canvas):
 
 
 class ProgressBar(Canvas):
-    """A thin rounded progress bar; set(fraction) like CTkProgressBar."""
+    """set(fraction) like CTkProgressBar"""
 
     def __init__(self, parent, kit: Kit, height=6, bg="surface", fill="accent_fill"):
         super().__init__(parent, height=height, highlightthickness=0, bd=0, bg=kit.c(bg))
@@ -1293,8 +1250,6 @@ class ProgressBar(Canvas):
 
 
 class Tooltip:
-    """A small delayed tooltip for a widget."""
-
     def __init__(self, widget, kit: Kit, text: str, delay=550, side="below"):
         self.w, self.kit, self.text, self.delay, self.side = widget, kit, text, delay, side
         self._after = None
@@ -1339,8 +1294,6 @@ class Tooltip:
 
 
 class FlowCanvas(Canvas):
-    """A canvas that lays out a row of items, wraps them, and sets its own height."""
-
     def __init__(self, parent, kit: Kit, bg="surface", min_height=22):
         super().__init__(parent, height=min_height, highlightthickness=0, bd=0, bg=kit.c(bg))
         self.kit, self._bg, self._min_h = kit, bg, min_height
@@ -1356,12 +1309,12 @@ class FlowCanvas(Canvas):
         if int(self.winfo_fpixels(self.cget("height"))) != h:
             self.configure(height=h)
 
-    def _draw(self):   # overridden
+    def _draw(self):
         pass
 
 
 class Chips(FlowCanvas):
-    """The job recipe as chips: Folder → Sign → .pkg."""
+    """the job recipe as chips, e.g. Folder -> Sign -> .pkg"""
 
     def __init__(self, parent, kit, bg="surface"):
         self._parts: list[str] = []
@@ -1394,7 +1347,7 @@ class Chips(FlowCanvas):
 
 
 class StepStrip(FlowCanvas):
-    """The job's stages: done ✓, the current one with its percentage, pending ones."""
+    """job stages: done, the current one with its percentage, pending"""
 
     def __init__(self, parent, kit, bg="surface"):
         self._steps: list[tuple[str, str, int]] = []   # (label, state, pct)
@@ -1433,8 +1386,6 @@ class StepStrip(FlowCanvas):
 
 
 class QueueList(tk.Frame):
-    """The job list, drawn on one canvas."""
-
     ROW_H = 50
 
     DRAG_START = 6     # points the pointer moves before a press turns into a drag
@@ -1487,8 +1438,7 @@ class QueueList(tk.Frame):
         cv.bind("<Motion>", self._motion)
         cv.bind("<Leave>", lambda e: self._set_hover(None))
         attach_wheel_scroll(cv, pixel_unit=1, notch_px=40)   # wheel, Linux buttons, Tk 9 trackpad
-        # The arrow keys move the selection, as in a Finder list; Shift extends it. A job is
-        # moved by drag and drop or the context menu, never by an arrow key.
+        # arrows move the selection like in Finder; a job moves by drag or menu, never by key
         cv.bind("<Up>", lambda e: self._step(-1))
         cv.bind("<Down>", lambda e: self._step(1))
         cv.bind("<Shift-Up>", lambda e: self._step(-1, extend=True))
@@ -1496,7 +1446,7 @@ class QueueList(tk.Frame):
         cv.bind("<BackSpace>", lambda e: self._key(self.on_delete))
         cv.bind("<Delete>", lambda e: self._key(self.on_delete))
 
-    # - Listbox-compatible API - 
+    # Listbox-compatible API
     def curselection(self):
         return (self.sel,) if self.sel is not None and 0 <= self.sel < len(self.rows) else ()
 
@@ -1516,14 +1466,13 @@ class QueueList(tk.Frame):
         self._schedule()
 
     def marked_rows(self) -> list:
-        """Every selected row, top to bottom (the one in focus alone when nothing else is)."""
+        """selected rows top to bottom; just the focus row if nothing else is"""
         rows = {i for i in self.marked if 0 <= i < len(self.rows)}
         if self.sel is not None and 0 <= self.sel < len(self.rows):
             rows.add(self.sel)
         return sorted(rows)
 
     def focus_key(self):
-        """The key of the row in focus, or None."""
         if self.sel is not None and 0 <= self.sel < len(self.rows):
             return self.rows[self.sel].get("key")
         return None
@@ -1544,7 +1493,7 @@ class QueueList(tk.Frame):
         if not self.rows or i is None:
             return
         if self._redraw_pending:
-            # The scroll region is set by the pending redraw; scroll after it ran.
+            # the pending redraw sets the scroll region, so wait for it
             self.after_idle(lambda: self._see_now(i))
             return
         self._see_now(i)
@@ -1561,10 +1510,8 @@ class QueueList(tk.Frame):
         elif bot > y0 + H:
             self.cv.yview_moveto(max(0.0, (bot + 6 - H) / total))
 
-    # - data - 
     def set_rows(self, rows, selected=None, keep_marked=False):
-        """New rows. *selected* is the row in focus; with *keep_marked* the other marked rows
-        stay marked when their key is still in the list, otherwise only *selected* is."""
+        """keep_marked keeps other marked rows whose key survives, else only selected"""
         keys = {self.rows[i].get("key") for i in self.marked if 0 <= i < len(self.rows)} if keep_marked else set()
         keys.discard(None)
         self.rows = list(rows)
@@ -1577,7 +1524,6 @@ class QueueList(tk.Frame):
         self._schedule()
 
     def update_row(self, i, **fields):
-        """Change one row's fields (e.g. progress/chip of the running job) and redraw."""
         if 0 <= i < len(self.rows):
             row = self.rows[i]
             if any(row.get(k) != v for k, v in fields.items()):
@@ -1589,7 +1535,6 @@ class QueueList(tk.Frame):
         self.cv.configure(bg=self.kit.c(self._bg))
         self._draw()
 
-    # - events - 
     def _index_at(self, y):
         if not self.rows:
             return None
@@ -1609,7 +1554,7 @@ class QueueList(tk.Frame):
             self.on_select(i)
 
     def _toggle_click(self, e):
-        """Command-click (Ctrl on Windows and Linux): add the row to the selection or drop it."""
+        """Command-click (Ctrl elsewhere) toggles the row in the selection"""
         self.cv.focus_set()
         i = self._index_at(e.y)
         self._press, self._drop = None, None
@@ -1630,7 +1575,7 @@ class QueueList(tk.Frame):
         return "break"
 
     def _range_click(self, e):
-        """Shift-click: every row from the last plain or Command-click to this one."""
+        """Shift-click: from the last plain or Command-click to here"""
         self.cv.focus_set()
         i = self._index_at(e.y)
         self._press, self._drop = None, None
@@ -1665,8 +1610,7 @@ class QueueList(tk.Frame):
         return "break"
 
     def _drag(self, e):
-        """Drag a row to another place: a line shows where it lands. Near the top or the
-        bottom edge the list scrolls along."""
+        """a line shows where the row lands; the list scrolls near the edges"""
         if self._press is None or self.on_move is None or len(self.rows) < 2:
             return
         if self._drop is None and abs(e.y - self._press[1]) < self.DRAG_START:
@@ -1723,8 +1667,7 @@ class QueueList(tk.Frame):
             self._schedule()                      # one redraw per frame, however fast the pointer moves
 
     def _step(self, delta: int, extend: bool = False):
-        """Select the row above (-1) or below (+1) the focus row; *extend* keeps the rows
-        from the anchor on (Shift). Stops at the first and the last row."""
+        """extend (Shift) selects from the anchor on; stops at both ends"""
         if not self.rows:
             return "break"
         if self.sel is not None and 0 <= self.sel < len(self.rows):
@@ -1750,7 +1693,6 @@ class QueueList(tk.Frame):
         return "break"
 
     def _visible_rows(self, margin: int = 4):
-        """The rows inside the view, plus *margin* rows above and below."""
         y0 = self.cv.canvasy(0)
         H = max(self.cv.winfo_height(), 60)
         first = max(0, int((y0 - 6) // self.ROW_H) - margin)
@@ -1758,8 +1700,7 @@ class QueueList(tk.Frame):
         return first, last
 
     def _fill_view(self):
-        """Only the rows in view are drawn: when the view moves past them, draw the new ones
-        before Tk paints it."""
+        """only rows in view are drawn; draw the newcomers before Tk paints"""
         drawn = getattr(self, "_drawn", None)
         if drawn is not None and not getattr(self, "_in_draw", False) and self.rows:
             first, last = self._visible_rows(margin=0)
@@ -1789,15 +1730,13 @@ class QueueList(tk.Frame):
                 self.sb.grid_remove()
         self.sb.set(lo, hi)
 
-    # - drawing - 
     def _schedule(self):
         if not self._redraw_pending:
             self._redraw_pending = True
             self.after_idle(self._draw)
 
     def _set_region(self, region):
-        """Setting a canvas scrollregion makes Tk lay out and paint the whole window again,
-        even when the value is the same: about 60 ms on a Retina display. Set it on change only."""
+        """setting scrollregion repaints the whole window even when unchanged (~60 ms on Retina)"""
         if region != getattr(self, "_region", None):
             self._region = region
             self.cv.configure(scrollregion=region)
@@ -1826,8 +1765,7 @@ class QueueList(tk.Frame):
             return
         f_t, f_s, f_c = k.fonts.body, k.fonts.small, k.fonts.caption
         chosen = set(self.marked_rows())
-        # Tk paints every item on a canvas, also the ones scrolled out of view: draw only
-        # the rows in view and a few around them; _on_yscroll draws more when they come in.
+        # Tk paints every canvas item, off-screen ones too, so draw only rows near the view
         total = 12 + len(self.rows) * self.ROW_H
         self._set_region((0, 0, W, max(total, H)))
         first, last = self._visible_rows()
@@ -1847,7 +1785,6 @@ class QueueList(tk.Frame):
                 "waiting": ("clock", k.c("warning")),
             }.get(state, ("clock", k.c("faint")))
             draw_icon(cv, icon, x0 + 10, y0 + 9, 16, icol, bg=bg)
-            # chip on the right
             chip = r.get("chip") or ""
             cw = 0
             if chip:
@@ -1872,7 +1809,7 @@ class QueueList(tk.Frame):
                                fill=k.c("accent_fill"), outline="")
             if i not in chosen and i + 1 not in chosen and i < len(self.rows) - 1:
                 cv.create_line(tx, y0 + self.ROW_H, x1 - 8, y0 + self.ROW_H, fill=k.c("border"))
-        # the games of one archive: a bracket on the left over each run of their rows
+        # bracket on the left over the games of one archive
         i = 0
         while i < len(self.rows):
             g = self.rows[i].get("group")
@@ -1884,16 +1821,13 @@ class QueueList(tk.Frame):
                                width=3, capstyle="round", tags=("group",))
             i = j + 1
         if self._drop is not None and self._press is not None:
-            # where the dragged row lands: an accent line between two rows
             ly = 6 + self._drop * self.ROW_H
             cv.create_line(16, ly, W - 16, ly, fill=k.c("accent"), width=2, capstyle="round")
             cv.create_oval(10, ly - 4, 18, ly + 4, outline=k.c("accent"), width=2, fill=bg)
 
 
 class LogText(tk.Text):
-    """The log widget. `_textbox` returns the widget itself (the app code was written for
-    CTkTextbox), and every line inserted at the end is mirrored into an optional tail
-    widget (the last lines shown in the job card)."""
+    """_textbox returns self since the app talks CTkTextbox; lines mirror into the job card tail"""
 
     def __init__(self, parent, kit: Kit, mirror: tk.Text | None = None, mirror_lines=8, **kw):
         super().__init__(parent, bd=0, highlightthickness=0, relief="flat", wrap="none",
@@ -1928,7 +1862,7 @@ class LogText(tk.Text):
                 m.configure(state="normal")
                 m.insert("end", chars, *args)
                 text_lines = self._mirror_line_count()
-                if text_lines > self.mirror_lines:           # a bounded history
+                if text_lines > self.mirror_lines:
                     m.delete("1.0", f"{text_lines - self.mirror_lines + 1}.0")
                     text_lines = self.mirror_lines
                 self._show_mirror_tail(text_lines)
@@ -1942,14 +1876,12 @@ class LogText(tk.Text):
         return last - 1 if m.get(f"{last}.0", "end-1c") == "" else last
 
     def _show_mirror_tail(self, text_lines: int | None = None):
-        """Show the newest mirror_visible lines, the oldest of them at the top: a view
-        scrolled to the end would show the empty line after the last newline and a
-        sliver of the line above."""
+        """pin the oldest line to the top: scrolled to the end Tk shows a blank line and a sliver"""
         n = self._mirror_line_count() if text_lines is None else text_lines
         self.mirror.yview(f"{max(1, n - self.mirror_visible + 1)}.0")
 
     def set_mirror_visible(self, lines: int):
-        """The tail widget changed its height: show as many lines as fit now."""
+        """call when the tail widget changes height"""
         self.mirror_visible = max(1, int(lines))
         if self.mirror is not None:
             try:
@@ -1970,8 +1902,6 @@ class LogText(tk.Text):
 
 
 class IconView(Canvas):
-    """One icon on its own small canvas, in a palette colour."""
-
     def __init__(self, parent, kit: Kit, icon: str, size=16, color="muted", bg="surface"):
         super().__init__(parent, width=size, height=size, highlightthickness=0, bd=0, bg=kit.c(bg))
         self.kit, self.icon, self.size_, self.color, self._bg = kit, icon, size, color, bg
@@ -1990,8 +1920,6 @@ class IconView(Canvas):
 
 
 class ArtView(Canvas):
-    """The cover art square: a photo when there is one, else a placeholder icon."""
-
     def __init__(self, parent, kit: Kit, size=72, bg="surface"):
         super().__init__(parent, width=size, height=size, highlightthickness=0, bd=0, bg=kit.c(bg))
         self.kit, self.size_, self._bg, self._photo = kit, size, bg, None
@@ -2014,8 +1942,6 @@ class ArtView(Canvas):
 
 
 class Tile(Canvas):
-    """A rounded metric tile: a caption over a value (both follow StringVars)."""
-
     def __init__(self, parent, kit: Kit, caption: str, var: tk.StringVar, bg="surface", fill="surface2", height=46):
         super().__init__(parent, height=height, highlightthickness=0, bd=0, bg=kit.c(bg))
         self.kit, self._bg, self._fill, self.caption, self.var = kit, bg, fill, caption, var
@@ -2045,8 +1971,7 @@ class Tile(Canvas):
 
 
 class RoundBox(tk.Frame):
-    """A rounded background behind one child widget (e.g. a tk.Text), drawn on a canvas.
-    Create the child with `box.inner` as its parent and call box.set_child(child)."""
+    """parent the child on box.inner, then call box.set_child(child)"""
 
     def __init__(self, parent, kit: Kit, bg="surface", fill="surface2", radius=9, pad=8, height=100):
         super().__init__(parent, bd=0, highlightthickness=0, bg=kit.c(bg))

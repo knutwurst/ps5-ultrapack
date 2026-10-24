@@ -1,9 +1,4 @@
-"""SDK-lowering unit tests. The ELF fixtures are hand-crafted so every byte we
-depend on is under test - the SDK constants at +0x10/+0x14, the two accepted
-magics, and that everything outside the param struct comes through untouched.
-
-    python3 -m unittest backend.tests.test_backport
-"""
+"""python3 -m unittest backend.tests.test_backport"""
 from __future__ import annotations
 
 import struct
@@ -16,10 +11,7 @@ from backend import backport as bp
 
 
 def _elf_with_param(param_type: int, magic: int, sdk_ps4: int, sdk_ps5: int) -> bytes:
-    """A minimal 64-bit LE ELF64 with one PHDR pointing at a 40-byte param
-    struct laid out like Sony's - enough for the downgrader to recognise. The
-    ELF header itself is otherwise zero, so a change outside the param struct
-    is easy to spot."""
+    """zeroed header around a Sony-style 40-byte param struct, so stray writes show up"""
     ehdr = bytearray(64)
     ehdr[0:4] = b"\x7fELF"
     ehdr[4] = 2                       # ELFCLASS64
@@ -50,26 +42,21 @@ class LowerSdkVersion(unittest.TestCase):
     def test_lowers_both_fields_when_source_is_newer(self):
         elf = _elf_with_param(bp.PT_SCE_PROCPARAM, 0x4942524F, 0x11090001, 0x08000041)
         out, changes = bp.lower_sdk_version(elf, "7.61")
-        # PS4 field went 11.09 → 7.59, PS5 went 8.00 → 7.00 (both from idlesauce's table)
+        # PS4 11.09 to 7.59, PS5 8.00 to 7.00, per idlesauce's table
         self.assertEqual(struct.unpack_from("<I", out, 64 + 56 + 0x10)[0], 0x10590001)
         self.assertEqual(struct.unpack_from("<I", out, 64 + 56 + 0x14)[0], 0x07000038)
         self.assertEqual([(c.field, c.before, c.after) for c in changes],
                          [("ps4", 0x11090001, 0x10590001),
                           ("ps5", 0x08000041, 0x07000038)])
-        # Bytes past the SDK words are unchanged.
         self.assertEqual(struct.unpack_from("<I", out, 64 + 56 + 0x18)[0], 0xdeadbeef)
 
     def test_leaves_lower_source_alone(self):
-        """A 6.00 module targeted at 7.61 stays 6.00 - never raises the SDK."""
         elf = _elf_with_param(bp.PT_SCE_MODULE_PARAM, 0x3C13F4BF, 0x10090001, 0x06000038)
         out, changes = bp.lower_sdk_version(elf, "7.61")
         self.assertEqual(out, elf)
         self.assertTrue(all(c.unchanged() for c in changes))
 
     def test_returns_no_change_for_elf_without_param(self):
-        """An ELF with a PT_LOAD but no SCE param segment is a valid ELF that
-        happens to carry no SDK metadata (some helper prx). The function must
-        return the input untouched and no change list."""
         ehdr = bytearray(64)
         ehdr[0:4] = b"\x7fELF"
         ehdr[4] = 2; ehdr[5] = 1
@@ -84,8 +71,6 @@ class LowerSdkVersion(unittest.TestCase):
         self.assertEqual(changes, [])
 
     def test_ignores_param_with_wrong_magic(self):
-        """A dump where the segment type says PROC_PARAM but the magic is not
-        ORBI/0x3C13F4BF is treated as no param segment - silently untouched."""
         elf = _elf_with_param(bp.PT_SCE_PROCPARAM, 0xDEADBEEF, 0x11090001, 0x08000041)
         out, changes = bp.lower_sdk_version(elf, "7.61")
         self.assertEqual(out, elf)
@@ -104,8 +89,6 @@ class LowerSdkVersion(unittest.TestCase):
             bp.lower_sdk_version(b"\x7fELF" + b"\x00" * 60, "8.60")
 
     def test_ignores_a_non_elf(self):
-        """A staging step that mislabelled a data blob as .prx must not be
-        rewritten. The header check is the guard."""
         out, changes = bp.lower_sdk_version(b"not an ELF at all" + b"\x00" * 64, "7.61")
         self.assertEqual(out, b"not an ELF at all" + b"\x00" * 64)
         self.assertEqual(changes, [])
@@ -113,18 +96,13 @@ class LowerSdkVersion(unittest.TestCase):
 
 class WalkAndWrite(unittest.TestCase):
     def test_lower_sdk_in_folder_rewrites_only_the_changed_files(self):
-        """A tree with one high-SDK eboot, one prx already low, and one non-ELF.
-        Only the eboot is rewritten; the non-ELF is left as-is; the low prx is
-        reported as considered-but-unchanged."""
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             eboot = _elf_with_param(bp.PT_SCE_PROCPARAM, 0x4942524F, 0x11090001, 0x08000041)
             low = _elf_with_param(bp.PT_SCE_MODULE_PARAM, 0x3C13F4BF, 0x10090001, 0x06000038)
             (root / "eboot.bin").write_bytes(eboot)
             (root / "libSceExample.prx").write_bytes(low)
-            # A .txt is never iterated (filename filter); a .prx that is NOT a
-            # raw ELF (say, already fake-signed and thus a SELF) reaches the
-            # walker but is refused by the ELF header check.
+            # the .txt never gets walked; the SELF-looking .prx is walked but fails the ELF check
             (root / "libSceAlreadySelf.prx").write_bytes(b"\x54\x14\xF5\xEE" + b"\x00" * 60)
             (root / "readme.txt").write_bytes(b"not an ELF")
 
@@ -133,10 +111,8 @@ class WalkAndWrite(unittest.TestCase):
             self.assertEqual({p.name for p, _ in report.written}, {"eboot.bin", "libSceExample.prx"})
             self.assertEqual({p.name for p in report.skipped_not_elf}, {"libSceAlreadySelf.prx"})
 
-            # The eboot on disk now carries the lowered words.
             after = (root / "eboot.bin").read_bytes()
             self.assertEqual(struct.unpack_from("<I", after, 64 + 56 + 0x14)[0], 0x07000038)
-            # The low prx bytes are unchanged.
             self.assertEqual((root / "libSceExample.prx").read_bytes(), low)
 
     @unittest.skipIf(os.name == "nt", "chmod cannot make a file unreadable on Windows")
@@ -156,7 +132,6 @@ class WalkAndWrite(unittest.TestCase):
                 os.chmod(locked, 0o644)
             self.assertIn("libSceLocked.prx", str(cm.exception))
             self.assertEqual([p.name for p, _e in cm.exception.report.failed], ["libSceLocked.prx"])
-            # nothing was lowered: the readable eboot is as it was
             self.assertEqual((root / "eboot.bin").read_bytes(), eboot)
 
     def test_a_param_segment_past_the_end_is_a_clear_error(self):
@@ -189,15 +164,11 @@ class MalformedInputs(unittest.TestCase):
 
 class EncodeId(unittest.TestCase):
     def test_matches_shadps4_table(self):
-        # shadPS4's EncodeId rule verbatim: 1 char for id<0x40, 2 for id<0x1000,
-        # 3 otherwise; alphabet A..Z a..z 0..9 + -
         cases = {
             0x00: "A", 0x01: "B", 0x3F: "-",
             0x40: "BA", 0x41: "BB", 0xFFF: "--",
             0x1000: "BAA", 0x1001: "BAB",
-            # 0xFFFF is 16 bits and three base64 chars hold 18 bits: the top
-            # nibble (F=15) encodes to alphabet[15]='P', then '-','-'. Sanity-
-            # checks the shift ordering.
+            # 16 bits in 18: the top nibble 15 gives 'P', which checks the shift order
             0xFFFF: "P--",
         }
         for v, want in cases.items():
@@ -208,14 +179,11 @@ class EncodeId(unittest.TestCase):
         with self.assertRaises(ValueError): bp.encode_id(0x10000)
 
 
-# ── NID reader synthetic fixture ──────────────────────────────────────────
 def _elf_with_imports(imports: list[tuple[str, int, str, int, str]]) -> bytes:
-    """A minimal PS5 ELF with PT_DYNAMIC + PT_SCE_DYNLIBDATA carrying a string table, symbol table and DT_SCE_IMPORT_LIB / DT_SCE_NEEDED_MODULE entries describing *imports*."""
     ehdr = bytearray(64)
     ehdr[0:4] = b"\x7fELF"; ehdr[4] = 2; ehdr[5] = 1
 
-    # Layout the strtab: first byte is the empty string, then every unique
-    # library, module and symbol name, NUL-terminated.
+    # strtab starts with the empty string, then each unique name, NUL-terminated
     strings: list[str] = []
     offsets: dict[str, int] = {}
     strings.append("")
@@ -235,15 +203,14 @@ def _elf_with_imports(imports: list[tuple[str, int, str, int, str]]) -> bytes:
         sym_offs.append(add(sym_name))
     strtab = b"\x00".join(s.encode() for s in strings) + b"\x00"
 
-    # Symtab: one Elf64_Sym (24 B) per import. Only st_name matters here.
+    # one 24-byte Elf64_Sym per import, only st_name matters
     symtab = b"".join(struct.pack("<IBBHQQ", off, 0, 0, 0, 0, 0) for off in sym_offs)
 
-    # dynlibdata carries both tables, packed sequentially.
     strtab_off = 0
     symtab_off = len(strtab)
     dynlibdata = strtab + symtab
 
-    # PT_DYNAMIC entries. Each Elf64_Dyn is 16 B (d_tag u64, d_val u64).
+    # Elf64_Dyn: d_tag u64, d_val u64
     dyn_entries: list[tuple[int, int]] = [
         (bp.DT_SCE_STRTAB, strtab_off),
         (bp.DT_SCE_STRSZ, len(strtab)),
@@ -261,7 +228,6 @@ def _elf_with_imports(imports: list[tuple[str, int, str, int, str]]) -> bytes:
     dyn_entries.append((0, 0))            # DT_NULL
     dyn_bytes = b"".join(struct.pack("<QQ", t, v) for t, v in dyn_entries)
 
-    # Program headers: [PT_DYNAMIC, PT_SCE_DYNLIBDATA].
     phdrs = []
     ph_off = 64
     ph_entsize = _PHDR_SIZE = 56
@@ -290,8 +256,7 @@ class ReadImportedNids(unittest.TestCase):
         elf = _elf_with_imports([
             ("AAAAAAAAAAA", 0x00, "libSceAgc",      0x00, "libSceAgc"),
             ("BBBBBBBBBBB", 0x01, "libSceGnmDriver",0x01, "libSceGnmDriver"),
-            # id ≥ 0x40 needs 2 chars - makes sure the encode_id/decode round-trip
-            # works for the reader too.
+            # id 0x40 and up takes 2 chars, so the reader's round trip gets checked too
             ("CCCCCCCCCCC", 0x40, "libSceRareLib",  0x02, "libSceGnmDriver"),
         ])
         got = bp.read_imported_nids(elf)
@@ -300,11 +265,7 @@ class ReadImportedNids(unittest.TestCase):
         self.assertEqual(sorted(i.nid for i in got), ["AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC"])
 
     def test_ignores_non_import_symbols(self):
-        """A symbol name without two '#' separators is a local/debug name; the
-        reader must skip it silently (matching shadPS4's LoadSymbols)."""
         base = _elf_with_imports([("mc36MRb8k1w", 0, "libSceAgc", 0, "libSceAgc")])
-        # Append a stray sym pointing at a non-NID string. Rebuild only if the
-        # test proves brittle; for now the positive path is what matters.
         got = bp.read_imported_nids(base)
         self.assertTrue(all(len(i.nid) == 11 for i in got))
         self.assertTrue(all(i.library for i in got))
@@ -313,8 +274,6 @@ class ReadImportedNids(unittest.TestCase):
         self.assertEqual(bp.read_imported_nids(b"this is not an ELF"), [])
 
     def test_returns_empty_for_elf_without_dynamic(self):
-        """A minimal 64-bit ELF with only PT_LOAD (no PT_DYNAMIC) has nothing
-        to import. Common for helper prx."""
         ehdr = bytearray(64)
         ehdr[0:4] = b"\x7fELF"; ehdr[4] = 2; ehdr[5] = 1
         struct.pack_into("<Q", ehdr, 32, 64)
@@ -325,14 +284,10 @@ class ReadImportedNids(unittest.TestCase):
 
 
 def _elf_with_exports(exports: list[tuple[str, int, str, int, str]]) -> bytes:
-    """Same shape as _elf_with_imports, but every symbol is marked defined
-    (st_shndx != 0) so read_symbols() classifies them as exports."""
+    """every symbol defined (st_shndx != 0), so they count as exports"""
     elf = _elf_with_imports(exports)
-    # Patch each Elf64_Sym's st_shndx (byte @ 6, u16 LE): set to 1 (any non-zero
-    # matches SHN_UNDEF != 0). Symbols sit at the end of the file, one after
-    # the other, 24 bytes each.
     buf = bytearray(elf)
-    # Locate symtab: it starts at the file's tail - we know exactly len(syms)*24.
+    # symtab is the file's tail, 24 bytes per symbol
     n = len(exports)
     sym_start = len(buf) - n * 24
     for i in range(n):
@@ -353,7 +308,6 @@ class ReadExportsAndDb(unittest.TestCase):
     def test_build_firmware_nid_db_groups_by_library_field(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            # One sprx that exports two NIDs, both tagged as belonging to libSceX.
             (root / "libSceX.sprx").write_bytes(_elf_with_exports([
                 ("AAAAAAAAAAA", 0, "libSceX", 0, "libSceX"),
                 ("BBBBBBBBBBB", 0, "libSceX", 0, "libSceX"),
@@ -370,9 +324,6 @@ class ReadExportsAndDb(unittest.TestCase):
 
 class AnalyseBackport(unittest.TestCase):
     def test_ok_partial_missing_categorisation(self):
-        """A game imports two NIDs from libSceX (both in firmware - ok), one
-        from libSceY (in firmware but only one NID exported - partial), and
-        one from libSceZ (not in firmware; not in fakelib - missing)."""
         with tempfile.TemporaryDirectory() as td:
             src = Path(td) / "src"; src.mkdir()
             fw = Path(td) / "fw"; fw.mkdir()
@@ -388,7 +339,7 @@ class AnalyseBackport(unittest.TestCase):
                 ("BBBBBBBBBBB", 0, "libSceX", 0, "libSceX"),
             ]))
             (fw / "libSceY.sprx").write_bytes(_elf_with_exports([
-                ("XXXXXXXXXXX", 0, "libSceY", 0, "libSceY"),   # doesn't cover CCC…
+                ("XXXXXXXXXXX", 0, "libSceY", 0, "libSceY"),  # doesn't cover CCC
             ]))
             report = bp.analyse_backport(src, "7.61", fw_libs_root=fw)
 
@@ -417,16 +368,12 @@ class AnalyseBackport(unittest.TestCase):
             self.assertEqual(by["libSceCustom"].fakelib_covers, {"AAAAAAAAAAA"})
 
 
-# ── fake-signed sources (SELF) ────────────────────────────────────────────
 MODULE_MAGIC = 0x3C13F4BF
 
 
 def _signable_elf(sdk_ps4: int = 0x12090001, sdk_ps5: int = 0x10000040,
                   symbols_elf: bytes | None = None) -> bytes:
-    """A small ELF the vendored make_fself accepts (x86-64, SCE dynamic type) with a
-    module param struct and, optionally, the dynamic tables of *symbols_elf*
-    (from _elf_with_imports / _elf_with_exports). As in real files the param
-    struct and PT_DYNAMIC lie inside a PT_LOAD, so a fake-signed copy keeps them."""
+    """make_fself-friendly ELF; param and PT_DYNAMIC sit in a PT_LOAD so the SELF keeps them"""
     param = bytearray(40)
     struct.pack_into("<Q", param, 0x00, 40)
     struct.pack_into("<I", param, 0x08, MODULE_MAGIC)
@@ -461,7 +408,6 @@ def _signable_elf(sdk_ps4: int = 0x12090001, sdk_ps5: int = 0x10000040,
 
 
 def _fself(elf: bytes, ps5: bool = False) -> bytes:
-    """Fake-sign *elf* with the vendored make_fself, as the app's Sign step does."""
     import contextlib, io
     from backend import make_fself
     f = make_fself.ElfFile(ignore_shdrs=True)
@@ -564,7 +510,6 @@ class SdkWordsOfFile(unittest.TestCase):
             self.assertIsNone(bp.sdk_words_of_file(root / "missing.bin"))
 
 
-# ── one folder per firmware ───────────────────────────────────────────────
 def _fw_lib(folder: Path, ps4: int, ps5: int, name: str = "libSceKernel.sprx", sub: str = "system/common/lib"):
     d = folder / sub
     d.mkdir(parents=True, exist_ok=True)

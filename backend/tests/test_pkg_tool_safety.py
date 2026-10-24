@@ -1,10 +1,4 @@
-"""The fPKG tool never deletes or overwrites what is not its own: an in-place build frees only
-real files outside sce_sys, a cancelled build leaves foreign packages alone, extracts fail on
-missing metadata and a selective extract keeps existing files. Builds the homebrew sample
-(set PS5_HBT_SAMPLE to its folder; skipped without it or without the built tool).
-
-    python3 -m unittest backend.tests.test_pkg_tool_safety
-"""
+"""PS5_HBT_SAMPLE=<homebrew sample folder> python3 -m unittest backend.tests.test_pkg_tool_safety"""
 from __future__ import annotations
 
 import os
@@ -60,8 +54,7 @@ class PkgToolSafety(unittest.TestCase):
         return run(build_argv(self.src, self.out, self.temp, *extra))
 
     def test_in_place_consume_frees_only_real_files_outside_sce_sys(self):
-        # The library prints a "data NN% (i/n): /path -> ..." line per percent step, so files
-        # of equal size past #999 get lines with "1,0xx/1,100"; the larger ones always get one.
+        # one log line per percent step: 1100 equal files give 1,0xx/1,100 lines
         (self.src / "sce_sys" / "extra.bin").write_bytes(os.urandom(2 << 20))
         data = self.src / "data"; data.mkdir()
         for i in range(1100):
