@@ -101,6 +101,15 @@ def pump(cond, timeout=20.0):
         if cond(): return True
         time.sleep(0.05)
     return cond()
+# A folder of sources is read off the main thread; the checks below look at the dialog once
+# it is read. The checks of the reading itself switch this off (dialog.read.*).
+_wait_reads = [True]
+_jd_init = m.JobDialog.__init__
+def _jd_init_read(self, *a, **k):
+    _jd_init(self, *a, **k)
+    if _wait_reads[0]:
+        pump(lambda: not self._reading, 60)
+m.JobDialog.__init__ = _jd_init_read
 _settle_timeouts, _settle_secs = [], []
 def settle(timeout=60.0):
     """Add job builds new jobs on a worker and hands them to the queue one by one: wait
@@ -2630,6 +2639,54 @@ try:
         app.queue.remove(_j)
     app.update_queue_box()
     shutil.rmtree(_mix, ignore_errors=True)
+    # a big folder is read off the main thread: the line under the source counts, Add waits
+    # until every archive is checked, archives past the 60th included
+    _big = S / "big_src"; shutil.rmtree(_big, ignore_errors=True); _big.mkdir()
+    for _i in range(61):
+        with zipfile.ZipFile(_big / f"Game {_i:02d}.zip", "w") as _z:
+            _z.writestr(f"Game {_i:02d}/note.txt", "x")
+    _zp4 = _big / "zz PS4 Game.zip"
+    with zipfile.ZipFile(_zp4, "w") as _z:
+        _z.write(_p4g, "zz PS4 Game/base.pkg")
+    # a folder of PS4 packages only is one PS4 source, known once the folder is read
+    _dp = m.JobDialog(app, init_src=str(_p4dir)); root.update()
+    ok("dialog.read.ps4-folder-is-one-ps4-source", _dp._kind == "ps4" and _dp._games == [_p4dir]
+       and _dp.detect_var.get().startswith("PS4 packages · ") and _dp._to_key() == "pkg",
+       f"{_dp._kind} {_dp.detect_var.get()} {_dp._to_key()}")
+    _dp.destroy(); root.update()
+    _wait_reads[0] = False
+    try:
+        _qb0 = len(app.queue)
+        _db = m.JobDialog(app, init_src=str(_big), init_to="ffpfsc"); root.update()
+        _db.out_var.set(str(OUT)); root.update()
+        _r0 = (_db._reading, _db._add_btn.cget("state"), _db.summary_var.get(), _db.detect_var.get())
+        _db._add(); root.update()
+        ok("dialog.read.folder-waits", _r0[0] == "folder" and _r0[1] == "disabled"
+           and _r0[2] == "Reading the folder…" and _r0[3].startswith("Reading the folder")
+           and len(app.queue) == _qb0, str(_r0))
+        pump(lambda: _db._reading == "archives", 30)
+        _r1 = (_db._reading, _db._add_btn.cget("state"), _db.summary_var.get(), _db.detect_var.get())
+        ok("dialog.read.archives-counted", _r1[0] == "archives" and _r1[1] == "disabled"
+           and _r1[2].startswith("Checking the archives for PS4 packages: ") and _r1[2].endswith(" of 62…")
+           and _r1[3].startswith("Parent folder · 62 sources: 62 archives"), str(_r1))
+        pump(lambda: not _db._reading, 120)
+        ok("dialog.read.every-archive-checked", str(_zp4) in _db._ps4_set and _db._ps4_n == 1
+           and _db._add_btn.cget("state") == "normal" and "1 archive of PS4 packages" in _db.detect_var.get()
+           and not _db.summary_var.get().startswith("Checking"), f"{_db._ps4_n} {_db.detect_var.get()}")
+        _db.destroy(); root.update()
+        # another source while the archives are checked: that check stops and changes nothing
+        _dc = m.JobDialog(app, init_src=str(_big), init_to="ffpfsc"); root.update()
+        pump(lambda: _dc._reading == "archives", 30)
+        _was = _dc._reading
+        _dc.src_var.set(str(HBT)); root.update()
+        pump(lambda: False, 1.5)
+        ok("dialog.read.new-source-stops-the-read", _was == "archives" and not _dc._reading and _dc._kind == "folder"
+           and _dc._games == [HBT] and _dc._ps4_n == 0 and not _dc.summary_var.get().startswith("Checking"),
+           f"{_was} {_dc._reading} {_dc._kind} {_dc._ps4_n} {_dc.detect_var.get()}")
+        _dc.destroy(); root.update()
+    finally:
+        _wait_reads[0] = True
+        shutil.rmtree(_big, ignore_errors=True)
     _p4item = app._ps4_item_for(_p4dir, output_path=str(OUT))
     _p4cmd, *_ = app.build_command(_p4item)
     ok("ps4.item-is-sorted-copy", _p4item.operation == "copy" and _p4item.content_kind == "ps4"

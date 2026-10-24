@@ -4525,6 +4525,9 @@ class JobDialog(EmbeddedDialog):
         self._kind = "none"
         self._games: list[Path] = []
         self._check_thread = None
+        # a folder of sources is read off the main thread: "folder" while it is walked,
+        # "archives" while its archives are checked for PS4 packages; Add waits for both
+        self._reading, self._read_seq = "", 0
 
         src0 = init_src or ""
         if item is not None:
@@ -5257,41 +5260,55 @@ class JobDialog(EmbeddedDialog):
         if p:
             self.ps4_out_var.set(p)
 
-    def _probe_parent_archives(self, sources, raw: str) -> None:
-        """Read, off the main thread, which archives of a folder of sources hold PS4 packages; once
-        known (and the source is still the same) they count with the PS4 packages, which get their
-        own target and folder."""
-        archives = [s for s in sources if is_archive_file(s)][:60]
+    def _probe_parent_archives(self, sources) -> None:
+        """Check, off the main thread, which archives of a folder of sources hold PS4 packages:
+        the line under the source counts them and Add waits until every one is checked. Those
+        found count with the PS4 packages, which get their own target and folder."""
+        archives = [s for s in sources if is_archive_file(s)]
         if not archives:
             return
+        seq = self._read_seq
+        count = [0, len(archives)]               # this check's own: an older one may still finish an archive
+        self._reading, self._read_count = "archives", count
         pw = self.app._candidate_passwords()
         box: dict = {}
+
+        def stop():
+            return seq != self._read_seq or self._gone
 
         def work():
             found = set()
             for a in archives:
+                if stop():
+                    return
                 try:
                     if ArchiveExtractor.ps4_archive_info(a, pw) is not None:
                         found.add(str(a))
                 except Exception:
                     pass
+                count[0] += 1
             box["v"] = found
 
         def poll():                       # Tk is touched on the main thread only
-            try:
-                if not self.winfo_exists() or (self.src_var.get() or "").strip() != raw or self._kind != "parent":
-                    return
-            except Exception:
+            if stop():
                 return
             if "v" not in box:
+                self.summary_var.set(self._reading_text())     # beside Add, which waits for it
                 self.after(120, poll); return
-            if box["v"]:
-                self._ps4_set |= box["v"]
-                self._ps4_n = len(self._ps4_set)
-                self._ps5_n = len(self._games) - self._ps4_n
-                self._refresh()
+            self._reading = ""
+            self._ps4_set |= box["v"]
+            self._ps4_n = len(self._ps4_set)
+            self._ps5_n = len(self._games) - self._ps4_n
+            self.detect_var.set(self._parent_text())
+            self._refresh()
         threading.Thread(target=work, daemon=True).start()
         self.after(120, poll)
+
+    def _reading_text(self) -> str:
+        if self._reading == "folder":
+            return tr("Reading the folder…")
+        done, total = self._read_count
+        return tr("Checking the archives for PS4 packages: {i} of {n}…", i=done, n=total)
 
     def _remember_outputs(self, out: str) -> None:
         """The folders of an add that goes through, for the Save to lists of their platforms."""
@@ -5499,6 +5516,8 @@ class JobDialog(EmbeddedDialog):
     def _on_source_changed(self):
         raw = (self.src_var.get() or "").strip()
         p = Path(raw) if raw else None
+        self._read_seq += 1                       # a read still running for the last source stops
+        self._reading = ""
         self._games = []
         self.check_var.set("")
         try:
@@ -5518,7 +5537,8 @@ class JobDialog(EmbeddedDialog):
         self._ps5_rows = None
         self.ps5_state_var.set("")
         dropped_root = bool(self._dropped) and p == self._dropped_root
-        if not dropped_root and _is_ps4_source(p):     # a drop's common folder is never walked
+        # a folder of PS4 packages only is known once the folder is read (_read_folder)
+        if p.is_file() and _is_ps4_source(p):
             self._kind = "ps4"; self._games = [p]
             self.detect_var.set(self._ps4_detect_text(p))
             if p.is_file():
@@ -5545,20 +5565,11 @@ class JobDialog(EmbeddedDialog):
                     bits.append("fakelib present")
                 self.detect_var.set(" · ".join(bits))
             else:
-                sources = self._scan_sources(p)
-                if sources:
-                    self._kind = "parent"; self._games = sources
-                    self._ps4_set = {str(s) for s in sources if s.suffix.lower() == ".pkg" and _is_ps4_source(s)}
-                    self._ps4_n = len(self._ps4_set)
-                    self._ps5_n = len(sources) - self._ps4_n
-                    _dropped = bool(self._dropped) and p == self._dropped_root
-                    self.detect_var.set(tr("{parent} · {v} - one job each",
-                                           parent=tr("Dropped items") if _dropped else tr(self._KIND_LABEL['parent']),
-                                           v=self._describe_sources(sources, self._ps4_set)))
-                    self._probe_parent_archives(sources, raw)
+                known = self._cached_sources(p)
+                if known is None:
+                    self._read_folder(p)
                 else:
-                    self._kind = "folder-unknown"
-                    self.detect_var.set("No game folder, archive, disk image, .ffpfs, .ffpfsc or .pkg in this folder")
+                    self._show_parent(p, *known)
         else:
             suf = p.suffix.lower()
             kind = {".exfat": "exfat", ".ffpkg": "ffpkg", ".ffpfs": "ffpfs", ".ffpfsc": "ffpfsc", ".pkg": "pkg"}.get(suf)
@@ -5736,20 +5747,94 @@ class JobDialog(EmbeddedDialog):
                 "inner": inner, "backend": back, "dll": dll}
 
     # ── live state ───────────────────────────────────────────────────────────
-    def _scan_sources(self, p: Path) -> list[Path]:
-        """find_job_sources, remembered per folder and its modification time: the source
-        field calls this on every keystroke, and a library on a USB drive is slow to walk.
-        For the folder of a drop of several paths, the dropped paths themselves."""
+    def _cached_sources(self, p: Path):
+        """(sources, the PS4 packages among them, the PS4 line when they are all it holds) of a
+        folder read before, remembered per folder and its modification time; for the folder
+        of a drop of several paths, the dropped paths themselves (never one PS4 source).
+        None when the folder still has to be read (_read_folder)."""
         if self._dropped and self._dropped_root is not None and Path(p) == self._dropped_root:
-            return list(self._dropped)
+            got = list(self._dropped)
+            return got, self._loose_ps4(got), None
         try:
             key = (str(p), p.stat().st_mtime_ns)
         except OSError:
-            return []
-        cache = self.__dict__.setdefault("_source_scan_cache", {})
-        if key not in cache:
-            cache[key] = find_job_sources(p)
-        return cache[key]
+            return [], set(), None
+        return self.__dict__.setdefault("_source_scan_cache", {}).get(key)
+
+    @staticmethod
+    def _loose_ps4(sources) -> set:
+        return {str(s) for s in sources if s.suffix.lower() == ".pkg" and _is_ps4_source(s)}
+
+    def _read_folder(self, p: Path) -> None:
+        """Walk a folder of sources off the main thread: a big drive takes a while, the line
+        under the source counts what turns up and Add waits until it is read. While a path
+        is typed, only the folder the typing stops at is walked."""
+        seq = self._read_seq
+        self._kind, self._games, self._reading = "parent", [], "folder"
+        self.detect_var.set("Reading the folder…")
+        try:
+            key = (str(p), p.stat().st_mtime_ns)
+        except OSError:
+            key = None
+        box = {"n": 0}
+
+        def stop():
+            return seq != self._read_seq or self._gone
+
+        def work():
+            got = find_job_sources(p, progress=lambda n: box.__setitem__("n", n), stop=stop)
+            ps4 = self._loose_ps4(got)
+            # PS4 packages and nothing else: one PS4 source (see _is_ps4_source)
+            line = self._ps4_detect_text(p) if got and len(ps4) == len(got) else None
+            if not stop():
+                box["v"] = (got, ps4, line)
+
+        def poll():                       # Tk is touched on the main thread only
+            if stop():
+                return
+            if "v" not in box:
+                if box["n"]:
+                    self.detect_var.set(plural(box["n"], "Reading the folder… 1 source so far",
+                                               "Reading the folder… {n} sources so far"))
+                self.after(150, poll)
+                return
+            if key is not None:
+                self.__dict__.setdefault("_source_scan_cache", {})[key] = box["v"]
+            self._reading = ""
+            self._show_parent(p, *box["v"])
+            self._update_identity_for_source(p)
+            self._refresh()
+
+        def begin():
+            if not stop():
+                threading.Thread(target=work, daemon=True).start()
+                self.after(150, poll)
+        self.after(250, begin)
+
+    def _show_parent(self, p: Path, sources: list, ps4: set, ps4_line: str | None) -> None:
+        """A folder of sources is read: one job each, its PS4 packages counted apart; its
+        archives are checked for PS4 packages next. A folder of PS4 packages only is one
+        PS4 source."""
+        if ps4_line is not None:
+            self._kind, self._games = "ps4", [p]
+            self.detect_var.set(ps4_line)
+            return
+        if not sources:
+            self._kind = "folder-unknown"
+            self.detect_var.set("No game folder, archive, disk image, .ffpfs, .ffpfsc or .pkg in this folder")
+            return
+        self._kind, self._games = "parent", sources
+        self._ps4_set = set(ps4)
+        self._ps4_n = len(self._ps4_set)
+        self._ps5_n = len(sources) - self._ps4_n
+        self._parent_label = ("Dropped items" if bool(self._dropped) and p == self._dropped_root
+                              else self._KIND_LABEL["parent"])
+        self.detect_var.set(self._parent_text())
+        self._probe_parent_archives(sources)
+
+    def _parent_text(self) -> str:
+        return tr("{parent} · {v} - one job each", parent=tr(self._parent_label),
+                  v=self._describe_sources(self._games, self._ps4_set))
 
     @staticmethod
     def _describe_sources(sources: list[Path], ps4: set | None = None) -> str:
@@ -5760,7 +5845,7 @@ class JobDialog(EmbeddedDialog):
             if s.is_dir():
                 label = "game folder"
             elif is_archive_file(s):
-                label = "archive"
+                label = "ps4 archive" if ps4 is not None and str(s) in ps4 else "archive"
             elif s.suffix.lower() in (".exfat", ".ffpkg"):
                 label = "disk image"
             elif s.suffix.lower() == ".pkg" and (str(s) in ps4 if ps4 is not None else _is_ps4_source(s)):
@@ -5768,10 +5853,11 @@ class JobDialog(EmbeddedDialog):
             else:
                 label = s.suffix.lower()
             counts[label] = counts.get(label, 0) + 1
-        order = ["game folder", "archive", "disk image", ".ffpfs", ".ffpfsc", ".pkg", "ps4"]
+        order = ["game folder", "archive", "disk image", ".ffpfs", ".ffpfsc", ".pkg", "ps4", "ps4 archive"]
         parts = []
         forms = {"game folder": ("1 game folder", "{n} game folders"), "archive": ("1 archive", "{n} archives"),
-                 "disk image": ("1 disk image", "{n} disk images"), "ps4": ("1 PS4 package", "{n} PS4 packages")}
+                 "disk image": ("1 disk image", "{n} disk images"), "ps4": ("1 PS4 package", "{n} PS4 packages"),
+                 "ps4 archive": ("1 archive of PS4 packages", "{n} archives of PS4 packages")}
         for label in sorted(counts, key=lambda k: order.index(k) if k in order else 99):
             n = counts[label]
             parts.append(plural(n, *forms[label]) if label in forms else f"{n} {label}")
@@ -6022,7 +6108,10 @@ class JobDialog(EmbeddedDialog):
         raw = (self.src_var.get() or "").strip()
         p = Path(raw) if raw else None
         copy_only = False
-        if self._kind in ("none", "folder-unknown", "file-unknown") or p is None:
+        if self._reading:
+            text = self._reading_text()
+            ok = False
+        elif self._kind in ("none", "folder-unknown", "file-unknown") or p is None:
             text = "Choose a source"
             ok = False
         elif ps4:
@@ -6244,6 +6333,8 @@ class JobDialog(EmbeddedDialog):
         self.destroy()
 
     def _add(self):
+        if self._reading:
+            return                       # Return while the folder is read: Add is greyed out
         raw = (self.src_var.get() or "").strip()
         p = Path(raw) if raw else None
         if not p or not p.exists() or self._kind in ("none", "folder-unknown", "file-unknown"):

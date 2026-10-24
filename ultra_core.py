@@ -1482,13 +1482,20 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
     return jobs, addons
 
 
-def find_job_sources(root: Path, max_depth: int = 6) -> list[Path]:
+def find_job_sources(root: Path, max_depth: int = 6, *, progress=None, stop=None) -> list[Path]:
     """Every source a job can start from under *root*, one entry each: game folders (not
     entered), containers (.ffpfs/.ffpfsc/.pkg/.exfat/.ffpkg) and archives (.zip/.rar/.7z;
     a multi-part RAR set once, as its first volume). Other files (notes, checksums),
-    filesystem junk and the app's own scratch folders are skipped. Sorted by path."""
+    filesystem junk and the app's own scratch folders are skipped. Sorted by path.
+    *progress*(n) hears the count while the walk goes on; once *stop*() is true the walk
+    ends early and what it found so far is incomplete."""
     found: list[Path] = []
     seen: set[str] = set()
+
+    def _found(p: Path) -> None:
+        found.append(p)
+        if progress is not None:
+            progress(len(found))
 
     def _scan(path: Path, depth: int) -> None:
         if depth > max_depth:
@@ -1498,6 +1505,8 @@ def find_job_sources(root: Path, max_depth: int = 6) -> list[Path]:
         except OSError:
             return
         for child in children:
+            if stop is not None and stop():
+                return
             name = child.name
             if name.startswith(".") or is_fs_junk_name(name):
                 continue
@@ -1506,18 +1515,18 @@ def find_job_sources(root: Path, max_depth: int = 6) -> list[Path]:
                     if name in _JOB_SCAN_SKIP_DIRS:
                         continue
                     if is_game_folder(child):
-                        found.append(child)
+                        _found(child)
                     else:
                         _scan(child, depth + 1)
                 elif child.is_file():
                     if child.suffix.lower() in JOB_CONTAINER_SUFFIXES:
-                        found.append(child)
+                        _found(child)
                     elif is_archive_file(child):
                         first = ArchiveExtractor._first_volume(child)
                         key = str(first).lower()
                         if key not in seen:
                             seen.add(key)
-                            found.append(first)
+                            _found(first)
             except OSError:
                 continue
 

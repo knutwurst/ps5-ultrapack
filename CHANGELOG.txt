@@ -67,6 +67,11 @@ ADD JOB
   - A sidebar click keeps a half-filled Add job for the next one.
   - The source field takes the focus, and Backspace in the editor never
     removes the job behind it.
+  - A big folder is read in the background: the window stays usable, the
+    line under the source counts what turns up, and the summary counts
+    the archives checked for PS4 packages. Add to queue waits until every
+    archive is checked, so no PS4 game turns up after the jobs are added.
+    Archives past the 60th were never checked before; now all of them are.
 
 QUEUE AND RESULTS
 

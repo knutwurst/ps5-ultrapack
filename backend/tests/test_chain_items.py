@@ -160,6 +160,16 @@ class FindJobSources(unittest.TestCase):
                 "Title [PPSA00001] [v01.000.000].pkg",
             ])
 
+    def test_progress_counts_and_stop_ends_the_walk(self):
+        with tempfile.TemporaryDirectory() as td:
+            conv = make_source_tree(Path(td))
+            seen = []
+            found = uc.find_job_sources(conv, progress=seen.append)
+            self.assertEqual(seen, list(range(1, len(found) + 1)))
+            calls = []
+            part = uc.find_job_sources(conv, stop=lambda: calls.append(1) or len(calls) > 2)
+            self.assertLess(len(part), len(found))
+
     def test_every_source_becomes_a_chain_job(self):
         with tempfile.TemporaryDirectory() as td:
             conv = make_source_tree(Path(td))

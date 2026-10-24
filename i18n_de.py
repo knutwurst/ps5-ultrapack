@@ -1347,4 +1347,10 @@ GERMAN: dict[str, str] = {
     '{name}: the package has the default keystone, so saves of the retail game will show as corrupted. Tools › PS4 PKG Tools replaces it with the keystone exported from one of your saves.': '{name}: Das Paket hat den Standard-Keystone, deshalb erscheinen Spielstände des Originalspiels als beschädigt. Tools › PS4 PKG Tools ersetzt ihn durch den Keystone, den du aus einem deiner Spielstände exportierst.',
     'an update package: it is checked only, the rebuild is for full games': 'ein Update-Paket: es wird nur geprüft, der Neubau ist für Vollspiele',
     'same format and no changes: copied as it is; PS5 PKG Tools rebuild a package': 'gleiches Format und keine Änderung: wird kopiert, wie es ist; die PS5 PKG Tools bauen ein Paket neu',
+    'Reading the folder…': 'Ordner wird gelesen…',
+    'Reading the folder… 1 source so far': 'Ordner wird gelesen… bisher 1 Quelle',
+    'Reading the folder… {n} sources so far': 'Ordner wird gelesen… bisher {n} Quellen',
+    'Checking the archives for PS4 packages: {i} of {n}…': 'Archive werden auf PS4-Pakete geprüft: {i} von {n}…',
+    '1 archive of PS4 packages': '1 Archiv mit PS4-Paketen',
+    '{n} archives of PS4 packages': '{n} Archive mit PS4-Paketen',
 }
