@@ -2280,6 +2280,84 @@ class ArchiveToolError(RuntimeError):
 class ArchiveExtractor:
     SUPPORTED = {".zip", ".rar", ".7z"}
 
+    # RAR has no central directory: listing a big set on a USB drive reads headers across
+    # every part and takes minutes, so a set is listed once per session (keyed by its parts)
+    _rar_lists: dict = {}
+    _rar_prefixes: dict = {}
+    _rar_locks: dict = {}
+    _rar_guard = threading.Lock()
+    _rar_busy: dict = {}
+
+    @staticmethod
+    def _rar_key(first: Path):
+        try:
+            return (str(first), tuple(sorted((q.name, q.stat().st_size, q.stat().st_mtime_ns)
+                                             for q in archive_set_parts(first))))
+        except OSError:
+            return None
+
+    @staticmethod
+    def _rar_lock(key) -> threading.Lock:
+        with ArchiveExtractor._rar_guard:
+            if len(ArchiveExtractor._rar_lists) > 64:
+                ArchiveExtractor._rar_lists.clear(); ArchiveExtractor._rar_prefixes.clear()
+            return ArchiveExtractor._rar_locks.setdefault(key, threading.Lock())
+
+    @staticmethod
+    def _rar_reading(name: str | None) -> None:
+        with ArchiveExtractor._rar_guard:
+            if name is None:
+                ArchiveExtractor._rar_busy.pop(threading.get_ident(), None)
+            else:
+                ArchiveExtractor._rar_busy[threading.get_ident()] = (name, time.monotonic())
+
+    @staticmethod
+    def reading_now():
+        """(archive, seconds) of the RAR read that has run longest right now, else None"""
+        with ArchiveExtractor._rar_guard:
+            busy = list(ArchiveExtractor._rar_busy.values())
+        if not busy:
+            return None
+        name, t0 = min(busy, key=lambda b: b[1])
+        return name, time.monotonic() - t0
+
+    @staticmethod
+    def _rar_infos(archive: Path, cands) -> tuple:
+        """(entries or None, first error other than a wrong password); entries are
+        (filename, is_directory, file_size) of the first password that opens the set"""
+        resolved = ArchiveExtractor._first_volume(archive)
+        key = ArchiveExtractor._rar_key(resolved)
+        with (ArchiveExtractor._rar_lock(key) if key else threading.Lock()):
+            hit = ArchiveExtractor._rar_lists.get(key) if key else None
+            if hit is not None:
+                return hit, None
+            try:
+                backend_dir = backend_base_dir()
+                if str(backend_dir) not in sys.path:
+                    sys.path.insert(0, str(backend_dir))
+                from unrar import rarfile as _br  # type: ignore
+            except Exception:
+                return None, None
+            err = None
+            ArchiveExtractor._rar_reading(resolved.name)
+            try:
+                for pwd in cands:
+                    try:
+                        with _br.RarFile(str(resolved), pwd=pwd or None) as rf:
+                            entries = [(i.filename, bool(i.is_directory), int(getattr(i, "file_size", 0) or 0))
+                                       for i in rf.infolist()]
+                    except _br.RarWrongPassword:
+                        continue
+                    except Exception as e:
+                        err = err or e
+                        continue
+                    if key:
+                        ArchiveExtractor._rar_lists[key] = entries
+                    return entries, None
+            finally:
+                ArchiveExtractor._rar_reading(None)
+            return None, err
+
     # how 7-Zip and UnRAR word a wrong or missing password
     _CLI_PASSWORD_RE = re.compile(
         r"wrong password|enter password|incorrect password|password (?:is )?incorrect", re.I)
@@ -2500,13 +2578,24 @@ class ArchiveExtractor:
                 if str(backend_dir) not in sys.path:
                     sys.path.insert(0, str(backend_dir))
                 from unrar import rarfile as _br  # type: ignore
-                for pwd in pwds + [""]:
-                    try:
-                        return _br.RarFile(str(archive), pwd=pwd or None).read_prefix(name, nbytes)
-                    except _br.RarWrongPassword:
-                        continue
-                    except Exception:
-                        return None
+                key = ArchiveExtractor._rar_key(archive)
+                got = ArchiveExtractor._rar_prefixes.get((key, name)) if key else None
+                if got is not None and (got[0] >= nbytes or len(got[1]) < got[0]):
+                    return got[1][:nbytes]          # asked before, or the member is shorter
+                ArchiveExtractor._rar_reading(archive.name)
+                try:
+                    for pwd in pwds + [""]:
+                        try:
+                            data = _br.RarFile(str(archive), pwd=pwd or None).read_prefix(name, nbytes)
+                        except _br.RarWrongPassword:
+                            continue
+                        except Exception:
+                            return None
+                        if key and data is not None and nbytes <= 4 * 1024 * 1024:
+                            ArchiveExtractor._rar_prefixes[(key, name)] = (nbytes, data)
+                        return data
+                finally:
+                    ArchiveExtractor._rar_reading(None)
         except Exception:
             return None
         return None
@@ -2557,21 +2646,8 @@ class ArchiveExtractor:
             except Exception:
                 return []
         if suffix == ".rar":
-            resolved = ArchiveExtractor._first_volume(archive)
-            try:
-                backend_dir = backend_base_dir()
-                if str(backend_dir) not in sys.path:
-                    sys.path.insert(0, str(backend_dir))
-                from unrar import rarfile as _br  # type: ignore
-            except Exception:
-                return []
-            for pwd in cands:
-                try:
-                    with _br.RarFile(str(resolved), pwd=pwd or None) as rf:
-                        return [n.replace("\\", "/") for n in rf.namelist()]
-                except Exception:
-                    continue
-            return []
+            entries, _err = ArchiveExtractor._rar_infos(archive, cands)
+            return [n.replace("\\", "/") for n, _d, _s in entries] if entries is not None else []
         if suffix == ".7z":
             try:
                 import py7zr  # type: ignore
@@ -2619,22 +2695,9 @@ class ArchiveExtractor:
         suffix = archive.suffix.lower()
         cands = [p for p in (passwords or []) if p] + [""]
         if suffix == ".rar":
-            resolved = ArchiveExtractor._first_volume(archive)
-            try:
-                backend_dir = backend_base_dir()
-                if str(backend_dir) not in sys.path:
-                    sys.path.insert(0, str(backend_dir))
-                from unrar import rarfile as _br  # type: ignore
-            except Exception:
-                return []
-            for pwd in cands:
-                try:
-                    with _br.RarFile(str(resolved), pwd=pwd or None) as rf:
-                        return [i.filename.replace("\\", "/").rstrip("/") + ("/" if i.is_directory else "")
-                                for i in rf.infolist()]
-                except Exception:
-                    continue
-            return []
+            entries, _err = ArchiveExtractor._rar_infos(archive, cands)
+            return ([n.replace("\\", "/").rstrip("/") + ("/" if d else "") for n, d, _s in entries]
+                    if entries is not None else [])
         if suffix == ".7z":
             try:
                 import py7zr  # type: ignore
@@ -2739,20 +2802,10 @@ class ArchiveExtractor:
                     return "damaged", 0, tr("it is not a readable ZIP ({e}): damaged or incomplete", e=e)
             if suffix == ".rar":
                 resolved = ArchiveExtractor._first_volume(archive)
-                backend_dir = backend_base_dir()
-                if str(backend_dir) not in sys.path:
-                    sys.path.insert(0, str(backend_dir))
-                from unrar import rarfile as _br  # type: ignore
-                damage = ""
-                for pwd in cands:
-                    try:
-                        with _br.RarFile(str(resolved), pwd=pwd or None) as rf:
-                            return "open", sum(int(getattr(ri, "file_size", 0) or 0) for ri in rf.infolist()), ""
-                    except _br.RarWrongPassword:
-                        continue
-                    except Exception as e:
-                        damage = damage or (ArchiveExtractor.rar_damage_reason(str(e), resolved) or str(e))
-                        continue
+                entries, err = ArchiveExtractor._rar_infos(resolved, cands)
+                if entries is not None:
+                    return "open", sum(size for _n, _d, size in entries), ""
+                damage = (ArchiveExtractor.rar_damage_reason(str(err), resolved) or str(err)) if err else ""
                 if damage and not ArchiveExtractor._rar4_encrypted_headers(resolved):
                     return "damaged", 0, damage
                 gaps = ArchiveExtractor.volume_gaps(resolved)

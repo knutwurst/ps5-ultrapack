@@ -116,7 +116,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.3.2"
 APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
 # archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
@@ -346,6 +346,15 @@ def fit_columns(tree) -> None:
 
 
 _WORD_WIDTHS: dict = {}
+
+
+def reading_note(after: float = 2.0) -> str:
+    """' · reading <archive> · m:ss' while a RAR listing has run for a while, else ''"""
+    now = ArchiveExtractor.reading_now()
+    if not now or now[1] < after:
+        return ""
+    secs = int(now[1])
+    return "  ·  " + tr("reading {name} · {time}", name=now[0], time=f"{secs // 60}:{secs % 60:02d}")
 
 
 def _wrapped_line_count(font, text: str, width: int) -> int:
@@ -4918,19 +4927,44 @@ class JobDialog(EmbeddedDialog):
         if p:
             self.ps4_out_var.set(p)
 
-    def _probe_parent_archives(self, sources) -> None:
+    @staticmethod
+    def _ps5_named(archive: Path, root: Path) -> bool:
+        """a PS5 id and no PS4 id in the archive's name or the folders down from the source"""
+        try:
+            names = [root.name, *archive.parent.relative_to(root).parts, archive.name]
+        except ValueError:
+            names = [archive.parent.name, archive.name]
+        text = " ".join(names)
+        return bool(re.search(r"PPSA\d{5}", text, re.I)) and not re.search(r"CUSA\d{5}", text, re.I)
+
+    def _probe_parent_archives(self, sources, root: Path) -> None:
         """off the main thread; Add waits until every archive is checked"""
         archives = [s for s in sources if is_archive_file(s)]
         if not archives:
             return
+        # a PS5 id says no PS4 packages; their listing is read ahead for Add instead
+        later = [a for a in archives if self._ps5_named(a, root)]
+        archives = [a for a in archives if a not in later]
         seq = self._read_seq
-        count = [0, len(archives)]  # own counter: an older check may still finish one
-        self._reading, self._read_count = "archives", count
         pw = self.app._candidate_passwords()
         box: dict = {}
 
         def stop():
             return seq != self._read_seq or self._gone
+
+        def ahead():
+            for a in later:
+                if stop():
+                    return
+                try:
+                    ArchiveExtractor.member_entries(a, pw)
+                except Exception:
+                    pass
+        if not archives:
+            threading.Thread(target=ahead, daemon=True).start()
+            return
+        count = [0, len(archives)]  # own counter: an older check may still finish one
+        self._reading, self._read_count = "archives", count
 
         def work():
             found = set()
@@ -4944,6 +4978,7 @@ class JobDialog(EmbeddedDialog):
                     pass
                 count[0] += 1
             box["v"] = found
+            ahead()
 
         def poll():                       # Tk is touched on the main thread only
             if stop():
@@ -4964,7 +4999,7 @@ class JobDialog(EmbeddedDialog):
         if self._reading == "folder":
             return tr("Reading the folder…")
         done, total = self._read_count
-        return tr("Checking the archives for PS4 packages: {i} of {n}…", i=done, n=total)
+        return tr("Checking the archives for PS4 packages: {i} of {n}…", i=done, n=total) + reading_note()
 
     def _remember_outputs(self, out: str) -> None:
         if out:
@@ -5463,7 +5498,7 @@ class JobDialog(EmbeddedDialog):
         self._parent_label = ("Dropped items" if bool(self._dropped) and p == self._dropped_root
                               else self._KIND_LABEL["parent"])
         self.detect_var.set(self._parent_text())
-        self._probe_parent_archives(sources)
+        self._probe_parent_archives(sources, p)
 
     def _parent_text(self) -> str:
         return tr("{parent} · {v} - one job each", parent=tr(self._parent_label),
@@ -14956,7 +14991,9 @@ class App:
             n, total = st["done"], st["total"]
             last = st["made"][-1] if st["made"] else None
             name = (getattr(last, "display_name", None) or getattr(last, "name", "")) if last else ""
-            self._add_label_var.set(tr("Adding jobs…  {n} of {total}", n=n, total=total) + (f"   ·   {name}" if name else ""))
+            note = reading_note()
+            self._add_label_var.set(tr("Adding jobs…  {n} of {total}", n=n, total=total)
+                                    + (note or (f"   ·   {name}" if name else "")))
             self._add_bar.set(n / total if total else 0)
             self._add_box.grid()
         except Exception:

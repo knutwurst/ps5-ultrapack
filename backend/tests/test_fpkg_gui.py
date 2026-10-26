@@ -2479,9 +2479,37 @@ try:
            and _dc._games == [HBT] and _dc._ps4_n == 0 and not _dc.summary_var.get().startswith("Checking"),
            f"{_was} {_dc._reading} {_dc._kind} {_dc._ps4_n} {_dc.detect_var.get()}")
         _dc.destroy(); root.update()
+        # a PS5 id in the folder or archive name skips the PS4 check; a CUSA id never does
+        _p5f = S / "ps5named" / "Some Game [PPSA00001] [v01.000]"; _p5f.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(_p5f / "Some.Game-PPSA00001.part.zip", "w") as _z:
+            _z.writestr("Some Game/note.txt", "x")
+        with zipfile.ZipFile(_p5f / "Extra CUSA00001.zip", "w") as _z:
+            _z.write(_p4g, "Extra/base.pkg")
+        _dn = m.JobDialog(app, init_src=str(_p5f), init_to="ffpfsc"); root.update()
+        pump(lambda: _dn._kind == "parent" and not _dn._reading, 30)
+        ok("dialog.read.ps5-id-skips-the-ps4-check",
+           m.JobDialog._ps5_named(_p5f / "Some.Game-PPSA00001.part.zip", _p5f)
+           and not m.JobDialog._ps5_named(_p5f / "Extra CUSA00001.zip", _p5f)
+           and _dn._ps4_set == {str(_p5f / "Extra CUSA00001.zip")}, f"{_dn._ps4_set}")
+        _dn.destroy(); root.update()
+        # a long RAR read is named, with its time, in the dialog and in the queue's adding line
+        m.ArchiveExtractor._rar_busy[-1] = ("Big.Set.part01.rar", time.monotonic() - 65)
+        try:
+            _note = m.reading_note()
+            app._add_state = {"total": 3, "done": 1, "made": [], "errors": 0}
+            app._show_add_progress()
+            _line = app._add_label_var.get()
+        finally:
+            m.ArchiveExtractor._rar_busy.pop(-1, None)
+            app._add_state = {"total": 0, "done": 0, "made": [], "errors": 0}
+            app._show_add_progress()
+        ok("dialog.read.slow-rar-is-named", _note == "  ·  reading Big.Set.part01.rar · 1:05"
+           and _line.startswith("Adding jobs…  1 of 3") and "reading Big.Set.part01.rar · 1:05" in _line
+           and m.reading_note() == "", f"{_note!r} {_line!r}")
     finally:
         _wait_reads[0] = True
         shutil.rmtree(_big, ignore_errors=True)
+        shutil.rmtree(S / "ps5named", ignore_errors=True)
     _p4item = app._ps4_item_for(_p4dir, output_path=str(OUT))
     _p4cmd, *_ = app.build_command(_p4item)
     ok("ps4.item-is-sorted-copy", _p4item.operation == "copy" and _p4item.content_kind == "ps4"

@@ -1353,4 +1353,5 @@ GERMAN: dict[str, str] = {
     'Checking the archives for PS4 packages: {i} of {n}…': 'Archive werden auf PS4-Pakete geprüft: {i} von {n}…',
     '1 archive of PS4 packages': '1 Archiv mit PS4-Paketen',
     '{n} archives of PS4 packages': '{n} Archive mit PS4-Paketen',
+    'reading {name} · {time}': 'liest {name} · {time}',
 }

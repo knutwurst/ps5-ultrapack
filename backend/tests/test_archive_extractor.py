@@ -599,5 +599,78 @@ class FolderEntries(unittest.TestCase):
         finally:
             _sh.rmtree(d, ignore_errors=True)
 
+class RarListedOnce(unittest.TestCase):
+    """a RAR set is listed once per session; a changed part is listed again"""
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / "backend"))
+        from unrar import rarfile
+        self.rf = rarfile
+        self.calls = {"list": 0, "prefix": 0}
+        calls, wrong = self.calls, rarfile.RarWrongPassword
+
+        class Info:
+            def __init__(self, name, is_dir, size):
+                self.filename, self.is_directory, self.file_size = name, is_dir, size
+
+        class FakeRar:
+            def __init__(self, filename, pwd=None):
+                self.pwd = pwd
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def infolist(self):
+                if self.pwd == "wrong":
+                    raise wrong("error 24")
+                calls["list"] += 1
+                return [Info("Game", True, 0), Info("Game\\eboot.bin", False, 5), Info("Game/a.pkg", False, 7)]
+            def read_prefix(self, name, n):
+                calls["prefix"] += 1
+                return b"0123456789"[:n]
+        self._real = rarfile.RarFile
+        rarfile.RarFile = FakeRar
+        AE._rar_lists.clear(); AE._rar_prefixes.clear()
+        self.d = Path(tempfile.mkdtemp())
+        for i in (1, 2):
+            (self.d / f"Set.part{i}.rar").write_bytes(b"Rar!" + bytes(i))
+
+    def tearDown(self):
+        self.rf.RarFile = self._real
+        AE._rar_lists.clear(); AE._rar_prefixes.clear()
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_one_listing_serves_every_reader(self):
+        p1, p2 = self.d / "Set.part1.rar", self.d / "Set.part2.rar"
+        self.assertEqual(AE.list_members(p2, ["wrong"]), ["Game", "Game/eboot.bin", "Game/a.pkg"])
+        self.assertEqual(AE.member_entries(p1), ["Game/", "Game/eboot.bin", "Game/a.pkg"])
+        self.assertEqual(AE.probe_header_state(p1), ("open", 12, ""))
+        self.assertEqual(self.calls["list"], 1)
+        os.utime(p2, (1, 1))                       # a part changed: listed again
+        AE.list_members(p1)
+        self.assertEqual(self.calls["list"], 2)
+
+    def test_prefixes_are_remembered(self):
+        p1 = self.d / "Set.part1.rar"
+        self.assertEqual(AE.read_member_prefix(p1, "Game/a.pkg", 4), b"0123")
+        self.assertEqual(AE.read_member_prefix(p1, "Game/a.pkg", 2), b"01")
+        self.assertEqual(self.calls["prefix"], 1)
+        self.assertEqual(AE.read_member_prefix(p1, "Game/a.pkg", 8), b"01234567")
+        self.assertEqual(AE.read_member_prefix(p1, "Game/a.pkg", 64), b"0123456789")
+        self.assertEqual(AE.read_member_prefix(p1, "Game/a.pkg", 99), b"0123456789")   # shorter member
+        self.assertEqual(self.calls["prefix"], 3)
+
+    def test_reading_now_names_the_set_while_it_is_read(self):
+        seen = []
+        orig = self.rf.RarFile.infolist
+        def slow(this):
+            seen.append(AE.reading_now())
+            return orig(this)
+        self.rf.RarFile.infolist = slow
+        AE.list_members(self.d / "Set.part2.rar")
+        self.assertEqual(seen[0][0], "Set.part1.rar")
+        self.assertIsNone(AE.reading_now())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
