@@ -68,6 +68,35 @@ class OneGamePerFolder(unittest.TestCase):
         self.assertEqual(list(jobs), ["PPSA00002-game.zip"])
         self.assertEqual(addons, ["Extras/bonus.zip"])
 
+    def test_small_game_shaped_archives_go_along_with_the_game(self):
+        rel = self.root / "Some Game [PPSA00003] [v01.008] [Folder]"
+        _zip(rel / "PPSA00003(v01.008).zip", dict(GAME, **{"Game/data.bin": os.urandom(2_000_000)}))
+        _zip(rel / "Addon" / "4XX PPSA00003 - EUR v01.008 By Someone.zip", GAME)
+        _zip(rel / "Addon" / "Backport Some Game 6.xx.zip", GAME)
+        _zip(rel / "Addon" / "Some Game ALL DLC.zip", {"dlc/content.pkg": b"p"})
+        jobs, addons = plan(self.root)
+        key = "Some Game [PPSA00003] [v01.008] [Folder]/PPSA00003(v01.008).zip"
+        self.assertEqual(list(jobs), [key])
+        self.assertEqual([Path(e).name for e in jobs[key]["extras"]], ["Addon"])
+        self.assertEqual(len(addons), 3)
+
+    def test_with_two_games_a_small_one_is_no_job_of_its_own(self):
+        rel = self.root / "Some Game [PPSA00004]"
+        _zip(rel / "Some Game PPSA00004 EUR.zip", dict(GAME, **{"Game/data.bin": os.urandom(1_000_000)}))
+        _zip(rel / "Some Game PPSA00004 US.zip", dict(GAME, **{"Game/data.bin": os.urandom(900_000)}))
+        _zip(rel / "Addon" / "backport.zip", GAME)
+        jobs, addons = plan(self.root)
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual(addons, ["Some Game [PPSA00004]/Addon/backport.zip"])
+
+    def test_in_a_collection_a_small_game_stays_a_job(self):
+        rel = self.root / "Collection"
+        _zip(rel / "big.zip", dict(GAME, **{"Game/data.bin": os.urandom(1_000_000)}))
+        _zip(rel / "tiny.zip", GAME)
+        jobs, addons = plan(self.root)
+        self.assertEqual(sorted(jobs), ["Collection/big.zip", "Collection/tiny.zip"])
+        self.assertEqual(addons, [])
+
     def test_two_games_each_get_a_job_and_the_addons_stay(self):
         rel = self.root / "Two"
         _zip(rel / "a.zip", GAME)

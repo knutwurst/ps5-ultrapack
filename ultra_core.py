@@ -1175,11 +1175,16 @@ def package_role(path: Path) -> str:
     return "game" if ct in _PS5_GAME else "addon" if ct in _PS5_ADDON else ""
 
 
+# a backport or patch archive holds eboot.bin and param.json too, but it is a sliver of the game
+ADDON_SHARE = 0.10
+
+
 def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=None):
     """one game per folder takes its add-ons and extras along; anything unsure stays one job per source"""
     root = Path(root)
     roles: dict = {}
     listed: dict = {}
+    small: set = set()
 
     def members(src: Path) -> list:
         key = str(src)
@@ -1214,8 +1219,31 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
 
     def is_addon(src: Path, folder: Path) -> bool:
         """a package archive is an add-on only in a subfolder, never next to the game"""
+        if str(src) in small:
+            return True
         r = role(src)
         return r == "addon" or (r == "pkg-archive" and src.parent != folder)
+
+    def size_of(src: Path) -> int:
+        try:
+            if src.is_file() and is_archive_file(src):
+                return sum(q.stat().st_size for q in archive_set_parts(src))
+            return get_folder_size(src) if src.is_dir() else src.stat().st_size
+        except OSError:
+            return 0
+
+    def big_only(folder: Path, cands: list) -> list:
+        """in a game's download folder, a game-shaped archive under ADDON_SHARE of the game is
+        an add-on; in a collection a small one may be a small game, so it stays a candidate"""
+        if len(cands) < 2:
+            return cands
+        sizes = {str(x): size_of(x) for x in cands}
+        top = max(sizes.values())
+        keep = [x for x in cands if sizes[str(x)] >= top * ADDON_SHARE]
+        if len(keep) == len(cands) or not any(k.parent == folder and named_after(folder, k) for k in keep):
+            return cands
+        small.update(str(x) for x in cands if x not in keep)
+        return keep
 
     def named_after(folder: Path, game: Path) -> bool:
         """folder named after the game's title id or set name, like a download folder"""
@@ -1247,12 +1275,10 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
         if len(srcs) == 1:
             game = srcs[0]
         else:
-            cands = []
-            for x in direct + [x for x in srcs if x not in direct]:
-                if not is_addon(x, folder):
-                    cands.append(x)
-                    if len(cands) > 1:
-                        return "multi"
+            cands = big_only(folder, [x for x in direct + [x for x in srcs if x not in direct]
+                                      if not is_addon(x, folder)])
+            if len(cands) > 1:
+                return "multi"
             if len(cands) != 1 or cands[0].parent != folder:
                 return None
             game = cands[0]
