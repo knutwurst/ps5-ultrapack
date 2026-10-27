@@ -9916,8 +9916,10 @@ class App:
         if not rel:
             return []
         root = os.path.realpath(rel) + os.sep
+        beside = os.path.realpath(Path(rel).parent)      # a folder next to it with the game's title id
         return [Path(x) for x in (getattr(item, "bundle_siblings", None) or [])
-                if os.path.realpath(x).startswith(root)]
+                if os.path.realpath(x).startswith(root)
+                or (os.path.realpath(Path(x).parent) == beside and Path(x).is_dir())]
 
     def _sibling_extras(self, parent: Path, game_paths) -> list:
         """Copied, never moved: the source is not touched."""
@@ -15486,6 +15488,8 @@ class App:
         targets = ([rel] if whole else game) + [p for p in patch
                                                 if not (whole and str(os.path.realpath(p)).startswith(
                                                     str(os.path.realpath(rel)) + os.sep))]
+        if whole:                                # a folder beside the release that went along goes too
+            targets += [s for s in self._download_extras(item) if s.parent == Path(rel).parent and s.exists()]
         item._after_info = {"release": rel, "whole": whole, "keep_dirs": keep_dirs}
         return act, targets, dest, aj.refusal(targets, output=out, dest=dest, protected=self._app_folders(),
                                               others=others)

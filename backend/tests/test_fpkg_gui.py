@@ -298,7 +298,8 @@ try:
     (_brel / "Addon" / "Folder Game update.pkg").write_bytes(b"p" * 64)
     (_brel / "Addon" / "Backport 4.xx").mkdir()
     shutil.copyfile(_seed_pkg, _brel / "Addon" / "Backport 4.xx" / "Folder Game 4xx.pkg")
-    _prel = _bs / "Package Game [PPSA99099]"; (_prel / "Addon").mkdir(parents=True)
+    # its own id: two releases of one title id beside each other, the much smaller one goes along
+    _prel = _bs / "Package Game [PPSA99098]"; (_prel / "Addon").mkdir(parents=True)
     shutil.copyfile(_seed_pkg, _prel / "Package Game.pkg")
     with zipfile.ZipFile(_prel / "Addon" / "bonus.zip", "w") as z:
         z.writestr("art/cover.png", b"x")
@@ -321,6 +322,20 @@ try:
     _whole_after = app._bundle_release(_bf, _bgame, []) is not None
     (_brel / "new download.zip").unlink()
     ok("bundle.new-file-keeps-the-folder", _whole_before and not _whole_after, f"{_whole_before} {_whole_after}")
+    # a folder beside the release with the game's title id went along: Delete takes it too
+    _bsib = _bs / "Folder Game Extras [PPSA99099]"; _bsib.mkdir(exist_ok=True); (_bsib / "notes.zip").write_bytes(b"z")
+    _bout_f = S / "bundle_plan_out.ffpfsc"; _bout_f.write_bytes(b"x" * 64)
+    _sib0, _act0 = list(_bf.bundle_siblings), _bf.after_source
+    _bf.bundle_siblings, _bf.after_source = _sib0 + [_bsib], "delete"
+    try:
+        _bw = types.SimpleNamespace(output_path=str(_bout_f), extras_copied=True, extras_left=[], _is_copy=False,
+                                    validate_failed=False)
+        _bpl = app._after_job_plan(_bf, _bw)
+    finally:
+        _bf.bundle_siblings, _bf.after_source = _sib0, _act0
+        shutil.rmtree(_bsib, ignore_errors=True); _bout_f.unlink()
+    ok("bundle.folder-beside-goes-too", sorted(str(x) for x in _bpl[1]) == sorted([str(_brel), str(_bsib)])
+       and _bpl[3] is None, str(_bpl))
     _be = m.JobDialog(app, item=_bf); root.update()
     app.queue.append(_bf); _be._add(); settle()
     _bf2 = app.queue[-1] if app.queue else None

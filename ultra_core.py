@@ -1267,70 +1267,113 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
             return {str(q.resolve()) for q in archive_set_parts(game)}
         return {str(game.resolve())}
 
-    def bundle(folder: Path, srcs: list):
-        """(game, extras, others) for one game, 'multi' for several, else None"""
-        direct = [x for x in srcs if x.parent == folder]
-        if not direct:
-            return None
-        if len(srcs) == 1:
-            game = srcs[0]
-        else:
-            cands = big_only(folder, [x for x in direct + [x for x in srcs if x not in direct]
-                                      if not is_addon(x, folder)])
-            if len(cands) > 1:
-                return "multi"
-            if len(cands) != 1 or cands[0].parent != folder:
-                return None
-            game = cands[0]
-        if not named_after(folder, game):
-            return None                          # a collection or a drive, not this game's download
+    def release_extras(folder: Path, game: Path, skip: set) -> list:
         mine = own_files(game)
-        extras = []
         try:
             entries = sorted(folder.iterdir(), key=lambda q: q.name.lower())
         except OSError:
-            return None
+            return []
+        out = []
         for e in entries:
             if (is_fs_junk_name(e.name) or e.name.startswith(".") or e.name in _JOB_SCAN_SKIP_DIRS
-                    or str(e.resolve()) in mine or (e.is_file() and e.suffix.lower() in EXTRA_JUNK_EXTS)):
+                    or str(e.resolve()) in mine or e in skip or (e.is_file() and e.suffix.lower() in EXTRA_JUNK_EXTS)):
                 continue
-            extras.append(e)
-        if not extras:
-            return None
-        return game, extras, [x for x in srcs if x != game]
+            out.append(e)
+        return out
 
     jobs: list = []
     addons: list = []
+    releases: dict = {}                          # release folder -> its game's index in jobs
 
-    def walk(folder: Path, srcs: list, drop: bool = False, top: Path = None) -> None:
-        top = top or folder
-        b = None if drop else bundle(folder, srcs)   # below a release with several games: no bundles
-        if b == "multi":
-            drop, top = True, folder             # the add-ons belong to no one game here
-            b = None
-        if b is not None:
-            game, extras, rest = b
-            jobs.append((game, {"release": str(folder), "extras": [str(e) for e in extras]}))
-            addons.extend(rest)
-            if log_fn:
-                log_fn("INFO", f"{folder.name}: one game ({game.name}); {len(extras)} other item(s) "
-                               f"go along with it, {len(rest)} of them not queued on their own")
-            return
+    def ids_of(text: str) -> set:
+        return {m.upper() for m in re.findall(r"(?:PPSA|CUSA)\d{5}", text, re.I)}
+
+    def sibling_owner(folder: Path, sub: Path):
+        """a folder without a game next to releases goes with the one whose title id it carries"""
+        ids = ids_of(sub.name)
+        if len(ids) != 1:
+            return None
+        hits = [i for rel, i in releases.items() if Path(rel).parent == folder
+                and ids <= ids_of(f"{Path(rel).name} {jobs[i][0].name}")]
+        return hits[0] if len(hits) == 1 else None
+
+    def attach(i: int, sub: Path, srcs: list) -> None:
+        game, b = jobs[i]
+        rel = next(r for r, j in releases.items() if j == i)
+        b = b or {"release": rel, "extras": []}
+        b["extras"].append(str(sub))
+        jobs[i] = (game, b)
+        addons.extend(srcs)
+        if log_fn:
+            log_fn("INFO", f"{sub.name}: no game in it, goes along with {game.name} (same title id)")
+
+    def walk(folder: Path, srcs: list) -> None:
+        """from the inside out: a folder with one game is its release and the rest goes along; a
+        subfolder with another game is that game's own release"""
+        direct = [x for x in srcs if x.parent == folder]
         groups: dict = {}
         for x in srcs:
-            try:
-                head = x.relative_to(folder).parts[0]
-            except (ValueError, IndexError):
-                jobs.append((x, None)); continue
-            if x == folder / head:
-                if drop and is_addon(x, top):
-                    addons.append(x)
-                else:
+            if x.parent != folder:
+                try:
+                    groups.setdefault(x.relative_to(folder).parts[0], []).append(x)
+                except (ValueError, IndexError):
                     jobs.append((x, None))
+        cands = {str(c) for c in big_only(folder, [x for x in srcs if not is_addon(x, folder)])}
+        with_game = {h for h, xs in groups.items() if any(str(x) in cands for x in xs)}
+        here = [x for x in direct if str(x) in cands]
+        if len(here) == 1 and named_after(folder, here[0]):
+            game = here[0]
+            extras = release_extras(folder, game, {folder / h for h in with_game})
+            rest = [x for x in direct if x != game] + [x for h, xs in groups.items() if h not in with_game for x in xs]
+            releases[str(folder)] = len(jobs)
+            jobs.append((game, {"release": str(folder), "extras": [str(e) for e in extras]} if extras else None))
+            addons.extend(rest)
+            if extras and log_fn:
+                log_fn("INFO", f"{folder.name}: one game ({game.name}); {len(extras)} other item(s) "
+                               f"go along with it, {len(rest)} of them not queued on their own")
+            for h in sorted(with_game, key=str.lower):
+                walk(folder / h, groups[h])
+            return
+        if len(here) > 1:
+            # several games side by side: what holds none of them has no owner and stays
+            for x in direct:
+                if str(x) in cands:
+                    jobs.append((x, None))
+                else:
+                    addons.append(x)
+            for h in sorted(groups, key=str.lower):
+                if h in with_game:
+                    walk(folder / h, groups[h])
+                else:
+                    addons.extend(groups[h])
+            return
+        for x in direct:
+            jobs.append((x, None))
+        # a sibling whose "game" is a sliver of the game with the same title id holds a backport
+        top = {h: max(size_of(x) for x in groups[h] if str(x) in cands) for h in with_game}
+        sliver = {h for h in with_game if len(ids_of(h)) == 1 and any(
+            h2 != h and ids_of(h) <= ids_of(h2) and top[h] < top[h2] * ADDON_SHARE for h2 in with_game)}
+        for h in sorted(with_game - sliver, key=str.lower):
+            walk(folder / h, groups[h])
+        for h in sorted(sliver, key=str.lower):
+            owner = sibling_owner(folder, folder / h)
+            if owner is not None:
+                attach(owner, folder / h, groups[h])
             else:
-                groups.setdefault(head, []).append(x)
-        for head in sorted(groups, key=str.lower):
-            walk(folder / head, groups[head], drop, top if drop else None)
+                walk(folder / h, groups[h])
+        with_game -= sliver
+        try:
+            subs = sorted((d for d in folder.iterdir() if d.is_dir() and d.name not in with_game | sliver
+                           and not d.name.startswith(".") and not is_fs_junk_name(d.name)
+                           and d.name not in _JOB_SCAN_SKIP_DIRS), key=lambda d: d.name.lower())
+        except OSError:
+            subs = []
+        for d in subs:
+            owner = sibling_owner(folder, d)
+            if owner is not None:
+                attach(owner, d, groups.get(d.name, []))
+            elif d.name in groups:
+                walk(d, groups[d.name])
 
     walk(root, [Path(x) for x in sources])
     order = {str(Path(x)): i for i, x in enumerate(sources)}

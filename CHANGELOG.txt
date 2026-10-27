@@ -22,6 +22,13 @@ ADD JOB
     and lands beside the output as it is, unpacked only when it holds
     packages. With two real games in the folder, the small ones stay in
     the source. In a collection a small game is still a job.
+  - A folder is planned from the inside out: a subfolder holding another
+    game is that game's own download folder and takes its own add-ons;
+    before, one more game anywhere in the folder left every add-on behind.
+  - A folder beside the game's download folder that holds no game and
+    carries the game's title id (a DLC or backport folder) goes along with
+    the game, and Move, Trash or Delete take it with the download folder.
+    Without the title id, or with an id two games share, it stays.
 
 FIXED
 

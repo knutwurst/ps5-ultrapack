@@ -97,6 +97,54 @@ class OneGamePerFolder(unittest.TestCase):
         self.assertEqual(sorted(jobs), ["Collection/big.zip", "Collection/tiny.zip"])
         self.assertEqual(addons, [])
 
+    def test_a_game_inside_a_game_folder_is_its_own_release(self):
+        a = self.root / "Game A [PPSA00010]"
+        _zip(a / "Game A PPSA00010.zip", dict(GAME, **{"Game/data.bin": os.urandom(1_000_000)}))
+        _zip(a / "bonus.zip", {"art/cover.png": b"x"})
+        _zip(a / "Addon" / "dlc.zip", {"x/content.pkg": b"p"})
+        b = a / "Game B [PPSA00011]"
+        _zip(b / "Game B PPSA00011.zip", dict(GAME, **{"Game/data.bin": os.urandom(900_000)}))
+        _zip(b / "Extra" / "more.zip", {"art/more.png": b"x"})
+        jobs, addons = plan(self.root)
+        ka, kb = "Game A [PPSA00010]/Game A PPSA00010.zip", "Game A [PPSA00010]/Game B [PPSA00011]/Game B PPSA00011.zip"
+        self.assertEqual(sorted(jobs), [ka, kb])
+        self.assertEqual(sorted(Path(e).name for e in jobs[ka]["extras"]), ["Addon", "bonus.zip"])
+        self.assertEqual([Path(e).name for e in jobs[kb]["extras"]], ["Extra"])
+        self.assertEqual(len(addons), 3)
+
+    def test_a_folder_beside_the_release_goes_with_the_game_of_its_title_id(self):
+        c = self.root / "Game C [PPSA00012] [v01.000]"
+        _zip(c / "Game C.zip", GAME)
+        _zip(self.root / "Game C DLC [PPSA00012]" / "dlc.zip", {"x/content.pkg": b"p"})
+        (self.root / "Game C Backport [PPSA00012]").mkdir()
+        (self.root / "Game C Backport [PPSA00012]" / "libSceAgc.prx").write_bytes(b"x")
+        _zip(self.root / "Some DLC" / "other.zip", {"y/content.pkg": b"p"})
+        jobs, addons = plan(self.root)
+        key = "Game C [PPSA00012] [v01.000]/Game C.zip"
+        self.assertEqual(jobs[key]["release"], str(c))
+        self.assertEqual(sorted(Path(e).name for e in jobs[key]["extras"]),
+                         ["Game C Backport [PPSA00012]", "Game C DLC [PPSA00012]"])
+        self.assertEqual(addons, ["Game C DLC [PPSA00012]/dlc.zip"])
+        self.assertIn("Some DLC/other.zip", jobs)                 # no id: it stays a job of its own
+
+    def test_a_backport_folder_beside_the_release_is_no_game(self):
+        e = self.root / "Game E [PPSA00014] [v01.000] [Folder]"
+        _zip(e / "PPSA00014-app.zip", dict(GAME, **{"Game/data.bin": os.urandom(1_000_000)}))
+        _zip(self.root / "Game E Backport 4.xx [PPSA00014]" / "PPSA00014 backport.zip", GAME)
+        jobs, addons = plan(self.root)
+        key = "Game E [PPSA00014] [v01.000] [Folder]/PPSA00014-app.zip"
+        self.assertEqual(list(jobs), [key])
+        self.assertEqual([Path(x).name for x in jobs[key]["extras"]], ["Game E Backport 4.xx [PPSA00014]"])
+        self.assertEqual(addons, ["Game E Backport 4.xx [PPSA00014]/PPSA00014 backport.zip"])
+
+    def test_a_title_id_two_releases_carry_attaches_to_neither(self):
+        for n in ("Game D [PPSA00013] EUR", "Game D [PPSA00013] US"):
+            _zip(self.root / n / "Game D.zip", GAME)
+        _zip(self.root / "Game D DLC [PPSA00013]" / "dlc.zip", {"x/content.pkg": b"p"})
+        jobs, addons = plan(self.root)
+        self.assertIn("Game D DLC [PPSA00013]/dlc.zip", jobs)
+        self.assertEqual(addons, [])
+
     def test_two_games_each_get_a_job_and_the_addons_stay(self):
         rel = self.root / "Two"
         _zip(rel / "a.zip", GAME)
