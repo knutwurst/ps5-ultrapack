@@ -3548,6 +3548,10 @@ class CLIWorker(threading.Thread):
                 if (self.operation in ("unpack", "fpkg-extract") or self._chain_to() == "folder") and p.exists() and p.is_dir():
                     self.final_size = get_folder_size(p)
                     return True
+                # a copy or a move into the library keeps the file's old date: no age check there
+                if (self.operation == "copy" or self._is_copy) and p.exists() and (p.is_dir() or p.stat().st_size > 0):
+                    self.final_size = get_folder_size(p) if p.is_dir() else p.stat().st_size
+                    return True
                 if p.exists() and p.is_file() and p.stat().st_size > 0 and p.stat().st_mtime >= self.start_time - 2:
                     if self.operation == "fpkg-build" or self._chain_to() == "pkg":
                         # the fPKG marker lands here, so the auto-organize rename has to happen here too

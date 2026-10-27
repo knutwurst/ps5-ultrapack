@@ -2543,6 +2543,20 @@ try:
     _plan = app._after_job_plan(_p4a, _w4)
     ok("ps4.after-job-acts-on-the-archive", _plan[0] == _p4a.after_source and str(_arch4) in [str(x) for x in _plan[1]],
        str(_plan))
+    # what a copy moved into the library keeps its old date: still this job's output after
+    # the report, so the archive gets the after-job rule (the age check is for builds)
+    _oldpkg = OUT / "Old Lib [PPSA00001]" / "Old.pkg"; _oldpkg.parent.mkdir(parents=True, exist_ok=True)
+    _oldpkg.write_bytes(b"P" * 64); os.utime(_oldpkg, (1_600_000_000, 1_600_000_000))
+    _old_seen = []
+    for _line, _want in ((f"[OK] Organized: {_oldpkg}", _oldpkg), (f"[OK] PS4 sorted: {_oldpkg.parent}", _oldpkg.parent)):
+        _w6 = m.CLIWorker(app, _p4a, ["py", "cli.py", "placeholder", str(OUT), "--ps4-sort", str(_p4dir)], _pcwd, _pout, _ptmp)
+        _w6.start_time = time.time()
+        _w6._handle_line(_line)
+        _w6._write_report(True)
+        _old_seen.append((_w6.output_path == str(_want),
+                          str(_arch4) in [str(x) for x in app._after_job_plan(_p4a, _w6)[1]]))
+    ok("copy.old-dated-output-still-counts", _old_seen == [(True, True), (True, True)], str(_old_seen))
+    shutil.rmtree(_oldpkg.parent, ignore_errors=True)
     # exFAT keeps ._ sidecars on a quick eject, a finished job removes its own
     _cl = S / "clutter_out" / "Title [PPSA00001]"; _cl.mkdir(parents=True, exist_ok=True)
     _clf = _cl / "Title.ffpfsc"; _clf.write_bytes(b"x")

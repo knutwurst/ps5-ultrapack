@@ -17,6 +17,13 @@ ADD JOB
   - While a RAR takes a while, Add job and the "Adding jobs" line name the
     archive and the time it has taken so far.
 
+FIXED
+
+  - An archive of packages that went into the library (Organize, Auto, a
+    PS4 set) stayed where it was after the job, whatever Delete, Move or
+    Trash said: the packages keep the date the archive gave them, so the
+    app took the output for an old one and found "no output".
+
 ────────────────────────────────────────────────────────────────────────
   v2.3.1
 ────────────────────────────────────────────────────────────────────────
