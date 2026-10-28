@@ -3,6 +3,21 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.3.3
+────────────────────────────────────────────────────────────────────────
+
+QUEUE
+
+  - One source in several jobs (a .ffpfsc and a .pkg of the same game,
+    say): the earlier jobs leave the source for the next one, and the
+    last job's After the job choice decides what happens to it.
+  - An add-on that is already in the library as the same file counts as
+    placed. A second job from the same source, or the same download run
+    again, now deletes or moves its source; before, it kept everything
+    because an add-on had been "skipped". A different file under that
+    name still keeps the source.
+
+────────────────────────────────────────────────────────────────────────
   v2.3.2
 ────────────────────────────────────────────────────────────────────────
 

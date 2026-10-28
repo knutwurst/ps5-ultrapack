@@ -116,7 +116,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.3.2"
+APP_VERSION = "2.3.3"
 APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
 # archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
@@ -297,6 +297,26 @@ def _firmware_folder_status(raw: str) -> str:
     if any(root.rglob("*.sprx")):
         return "No firmware subfolders: the libraries here count for every target. Name a subfolder per firmware."
     return "No firmware subfolders and no .sprx libraries found."
+
+
+def same_content(a: Path, b: Path) -> bool:
+    """byte for byte up to 256 MB; above that size, head, tail and 16 samples (no hashing of GBs)"""
+    try:
+        size = a.stat().st_size
+        if not b.is_file() or b.stat().st_size != size:
+            return False
+        if size <= 256 * 1024 * 1024:
+            return filecmp.cmp(a, b, shallow=False)
+        edge, block = 8 * 1024 * 1024, 1024 * 1024
+        spots = [(0, edge), (size - edge, edge)] + [(size * k // 17, block) for k in range(1, 17)]
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            for off, n in spots:
+                fa.seek(off); fb.seek(off)
+                if fa.read(n) != fb.read(n):
+                    return False
+        return True
+    except OSError:
+        return False
 
 
 def fit_notes(view, notes, beside=None) -> None:
@@ -3801,10 +3821,13 @@ class CLIWorker(threading.Thread):
                     self._title_folder_renamed(library / m_ren.group(1), library / m_ren.group(2))
                 if line.startswith(("[OK] Organized: ", "[OK] Came along: ", "[INFO] already there")):
                     placed = True
-                    if line.startswith("[INFO] already there"):
+                    m_had = re.match(r"\[INFO\] already there, skipped(?: \(.*?\))?: (.+)$", line)
+                    same = bool(m_had) and src.is_file() and same_content(src, library / m_had.group(1))
+                    if m_had and not same:
                         # same name in the library may be another version: never delete the source over it
                         self._addons_skipped = getattr(self, "_addons_skipped", 0) + 1
-                    self.app.log("INFO", f"Add-on: {line[5:] if line.startswith('[OK] ') else line[7:]}")
+                    self.app.log("INFO", f"Add-on: already in the library, the same file: {m_had.group(1)}" if same
+                                 else f"Add-on: {line[5:] if line.startswith('[OK] ') else line[7:]}")
                     if line.startswith("[OK] Organized: "):
                         self._written.append(line[len("[OK] Organized: "):].split(" (replaced)")[0].strip())
                 elif line.startswith(("[WARN]", "[ERROR]")):
@@ -15539,6 +15562,12 @@ class App:
         if why and origin and any(j is not item and getattr(j, "origin_archive", None) == origin
                                   and getattr(j, "status", "") != "Done" for j in self.queue):
             self.log("INFO", f"After the job: the archive of {name} stays until the other games from it are done.")
+            then(); return
+        if why and why.startswith("another job in the queue still needs"):
+            # one source, several jobs (a .ffpfsc and a .pkg, say): the last one decides
+            item._after_result = ("deferred", why)
+            self.log("INFO", f"After the job: the source of {name} stays for the next job from it; "
+                             "the last one decides what happens to it.")
             then(); return
         if why:
             item._after_result = ("refused", why)

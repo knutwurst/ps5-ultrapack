@@ -1632,6 +1632,25 @@ try:
     _j6 = m.GameItem.from_chain(_g6, to="ffpfsc", output_path=str(_aout)); _j6.after_source = "delete"
     _run_done(_j6, _fake_worker(_outf), lambda: _j6.status == "Failed", ok_flag=False)
     ok("after.failed-job-keeps-source", _g6.is_dir() and _j6.status == "Failed", _j6.status)
+    # one source, two jobs: the earlier one leaves it for the next, the last decides
+    _g7 = _src_game("G7")
+    _j7a = m.GameItem.from_chain(_g7, to="ffpfsc", output_path=str(_aout)); _j7a.after_source = "delete"
+    _j7b = m.GameItem.from_chain(_g7, to="pkg", output_path=str(_aout)); _j7b.after_source = "keep"
+    _j7a.status = "Running"
+    app.queue[:] = [_j7a, _j7b]; app._active_item = _j7a; app.worker = _fake_worker(_outf)
+    app.finish(True, "ok", "cmd")
+    pump(lambda: _j7a.status == "Done" and not getattr(app, "_after_busy", False), timeout=10.0)
+    ok("after.same-source-waits-for-the-last-job", _g7.is_dir() and _j7a.status == "Done"
+       and (getattr(_j7a, "_after_result", None) or ("",))[0] == "deferred", str(getattr(_j7a, "_after_result", None)))
+    app.queue[:] = []; app._active_item = None; app.worker = None
+    # an add-on already in the library counts as placed only when it is the same file
+    _sc = S / "same_content"; _sc.mkdir(exist_ok=True)
+    (_sc / "a.pkg").write_bytes(b"x" * 5000); (_sc / "b.pkg").write_bytes(b"x" * 5000)
+    (_sc / "c.pkg").write_bytes(b"x" * 4999 + b"y"); (_sc / "d.pkg").write_bytes(b"x" * 4000)
+    ok("after.same-content-check", m.same_content(_sc / "a.pkg", _sc / "b.pkg")
+       and not m.same_content(_sc / "a.pkg", _sc / "c.pkg") and not m.same_content(_sc / "a.pkg", _sc / "d.pkg")
+       and not m.same_content(_sc / "a.pkg", _sc / "missing.pkg"), "")
+    shutil.rmtree(_sc, ignore_errors=True)
     app.queue[:] = []; app._active_item = None; app.worker = None
     _went, _canc = [], []
     _cd = m.CountdownWindow(root, "sleep", on_go=lambda: _went.append("go"))
