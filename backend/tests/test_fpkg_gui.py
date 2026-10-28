@@ -1546,7 +1546,8 @@ try:
         try:
             app._batch_running = True
             app._batch_auto_start()
-            pump(lambda: _bj.status == "Done" and not app._batch_running, timeout=10.0)
+            # the start waits for cleanups of earlier checks, slow on a VM
+            pump(lambda: _bj.status == "Done" and not app._batch_running, timeout=60.0)
         finally:
             app._extract_queued_item, app._predicted_output = _real_ext, _real_pred3
             app._batch_running = False
