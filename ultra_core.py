@@ -28,6 +28,8 @@ def _bundled_backend_dir() -> Path:
 
 if sys.platform == "darwin":
     APP_DIR = Path.home() / "Library" / "Application Support" / "PS5_UltraPack"
+elif sys.platform.startswith("linux"):
+    APP_DIR = Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "PS5_UltraPack"
 else:
     APP_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / "PS5_UltraPack"
 # tests point this at a scratch folder so they never touch the real profile
@@ -181,7 +183,16 @@ def drive_display_name(path, system: str = "the system drive") -> str:
             pass
         return f"{letter} ({label})" if label else letter
     parts = p.parts
-    return parts[2] if len(parts) > 2 and parts[1] == "Volumes" else tr(system)
+    if len(parts) > 2 and parts[1] == "Volumes":
+        return parts[2]
+    # Linux automounts: /media/<user>/<label>, /run/media/<user>/<label>, /mnt/<label>
+    if len(parts) > 3 and parts[1] == "media":
+        return parts[3]
+    if len(parts) > 4 and parts[1:3] == ("run", "media"):
+        return parts[4]
+    if len(parts) > 2 and parts[1] == "mnt":
+        return parts[2]
+    return tr(system)
 
 
 def _existing_ancestor(path: Path) -> Path:
@@ -194,7 +205,62 @@ def _existing_ancestor(path: Path) -> Path:
     return target
 
 
+SHM_DIR = Path("/dev/shm")
+RAM_TEMP_RESERVE = 6 << 30      # RAM that stays free for the app, the backend and the desktop
+
+
+def ram_temp_gb() -> int:
+    """Settings › Drives: GB of RAM a job's temp may take, 0 = off; Linux only"""
+    if not sys.platform.startswith("linux"):
+        return 0
+    try:
+        return max(0, int(load_settings().get("ram_temp_gb", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def ram_temp_root() -> Path | None:
+    """the per-user folder in /dev/shm (RAM) the auto drive usage may build in, None when off"""
+    if not ram_temp_gb() or not SHM_DIR.is_dir():
+        return None
+    return SHM_DIR / f"PS5_UltraPack-{os.getuid()}"
+
+
+def is_ram_temp(path) -> bool:
+    if not str(path).startswith(str(SHM_DIR) + os.sep):   # cheap: most paths never get further
+        return False
+    root = ram_temp_root()
+    p = Path(path)
+    return root is not None and (p == root or root in p.parents)
+
+
+def _mem_available() -> int:
+    try:
+        with open("/proc/meminfo", encoding="ascii") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+def ram_temp_free() -> int:
+    """what more the RAM temp may take: the budget minus what is in it, capped by /dev/shm and free RAM"""
+    root = ram_temp_root()
+    if root is None:
+        return 0
+    try:
+        shm_free = shutil.disk_usage(str(SHM_DIR)).free
+    except OSError:
+        return 0
+    budget = (ram_temp_gb() << 30) - get_folder_size(root)
+    return max(0, min(budget, shm_free, _mem_available() - RAM_TEMP_RESERVE))
+
+
 def get_free_space(path: Path) -> int:
+    if is_ram_temp(path):
+        return ram_temp_free()
     try:
         return shutil.disk_usage(str(_existing_ancestor(path))).free
     except Exception:
@@ -871,6 +937,8 @@ def _drive_cache_key(path: Path):
 
 def get_drive_type(path: Path) -> str:
     """may shell out: never on the UI thread, use drive_type_cached() there"""
+    if is_ram_temp(path):
+        return "SSD"                    # RAM: at least as fast, and same-drive reads and writes cost nothing
     key = _drive_cache_key(path)
     if key in _DRIVE_TYPE_CACHE:
         return _DRIVE_TYPE_CACHE[key]
@@ -883,6 +951,8 @@ def get_drive_type(path: Path) -> str:
 
 def drive_type_cached(path: Path) -> str:
     """never shells out, safe on the UI thread"""
+    if is_ram_temp(path):
+        return "SSD"
     return _DRIVE_TYPE_CACHE.get(_drive_cache_key(path), "Unknown")
 
 
@@ -4252,6 +4322,10 @@ __all__ = [
     "LONG_STEPS",
     "humanize_eta",
     "get_free_space",
+    "ram_temp_gb",
+    "ram_temp_root",
+    "ram_temp_free",
+    "is_ram_temp",
     "get_total_space",
     "same_drive",
     "space_safety_factor",

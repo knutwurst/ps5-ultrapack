@@ -14,6 +14,8 @@ if S.exists(): shutil.rmtree(S)
 S.mkdir(parents=True)
 # APP_DIR is computed at import time, so set this before loading the GUI
 os.environ["PS5_FFPFSC_APP_DIR"] = str(S / "app_dir")
+# Linux: Tk's own dialogs, which the stubs below catch, not zenity/kdialog
+os.environ["PS5_TK_DIALOGS"] = "1"
 # pretend setup is done, or the wizard pops up
 (S / "app_dir").mkdir(parents=True, exist_ok=True)
 # no sounds or notifications on the test machine

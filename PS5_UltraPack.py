@@ -29,6 +29,21 @@ def _ensure_std_streams() -> None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
 
 
+def _restore_host_library_path() -> None:
+    """Linux bundle: the bootloader points LD_LIBRARY_PATH at _internal, and xdg-open, gio or zenity
+    would load our libraries instead of their own. The loader read it at start, so this only reaches children."""
+    if not (getattr(sys, "frozen", False) and sys.platform.startswith("linux")):
+        return
+    orig = os.environ.pop("LD_LIBRARY_PATH_ORIG", None)
+    if orig is None:
+        os.environ.pop("LD_LIBRARY_PATH", None)
+    else:
+        os.environ["LD_LIBRARY_PATH"] = orig
+
+
+_restore_host_library_path()
+
+
 def _prepare_multiprocessing_runtime() -> None:
     """Keep frozen multiprocessing children from starting the GUI."""
     multiprocessing.freeze_support()
@@ -447,7 +462,8 @@ RED     = ctk_pair("danger")
 DANGER_HOVER = ctk_pair("danger_hover")
 WHITE   = ctk_pair("text")            # primary text (dark text in light mode)
 MUTED   = ctk_pair("muted")
-MONO_FONT = "Consolas" if sys.platform == "win32" else "Menlo"   # each ships with its system
+MONO_FONT = ("Consolas" if sys.platform == "win32" else "Menlo" if sys.platform == "darwin"
+             else "DejaVu Sans Mono")   # each ships with its system
 # menus get ACCEL (Tk on macOS maps Command-N to a real key), tooltips SHORTCUT
 IS_MAC = sys.platform == "darwin"
 TRASH_NAME = "Recycle Bin" if sys.platform == "win32" else "Trash"
@@ -492,6 +508,101 @@ def _native_paths(fn):
 if sys.platform == "win32":
     for _n in ("askdirectory", "askopenfilename", "askopenfilenames", "asksaveasfilename"):
         setattr(filedialog, _n, _native_paths(getattr(filedialog, _n)))
+
+
+class _NoPortalDialog(Exception):
+    """no zenity/kdialog, or it could not open: Tk's own dialog takes over"""
+
+
+def _patterns(spec) -> list:
+    pats = spec.split() if isinstance(spec, str) else list(spec)
+    return ["*" if p in ("*.*", "*") else p for p in pats]
+
+
+def _host_dialog(kind: str, kw: dict):
+    """zenity (GNOME) or kdialog (KDE) instead of Tk's dated picker; the app stays drawn but takes no clicks"""
+    kde = "KDE" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+    tool = next((t for t in (("kdialog", "zenity") if kde else ("zenity", "kdialog")) if shutil.which(t)), None)
+    if not tool:
+        raise _NoPortalDialog
+    title = kw.get("title") or ""
+    start = str(kw.get("initialdir") or os.getcwd())
+    if kw.get("initialfile"):
+        start = os.path.join(start, kw["initialfile"])
+    filetypes = kw.get("filetypes") or []
+    multiple = kind == "askopenfilenames"
+    if tool == "zenity":
+        # zenity 4 opens a bare folder's parent with the folder selected and drops the filters;
+        # a name inside it opens the folder itself, and OK with nothing picked still returns the folder
+        if os.path.isdir(start):
+            start = os.path.join(start, "" if kind == "asksaveasfilename" else " ")
+        cmd = ["zenity", "--file-selection", "--modal", f"--title={title}", f"--filename={start}"]
+        if kind == "askdirectory":
+            cmd.append("--directory")
+        elif kind == "asksaveasfilename":
+            cmd += ["--save", "--confirm-overwrite"]
+        if multiple:
+            cmd += ["--multiple", "--separator=\n"]
+        cmd += [f"--file-filter={label} | {' '.join(_patterns(spec))}" for label, spec in filetypes]
+    else:
+        flt = "\n".join(f"{' '.join(_patterns(spec))}|{label}" for label, spec in filetypes)
+        op = {"askdirectory": "--getexistingdirectory", "asksaveasfilename": "--getsavefilename"}.get(
+            kind, "--getopenfilename")
+        cmd = ["kdialog", "--title", title, op, start] + ([flt] if flt and kind != "askdirectory" else [])
+        if multiple:
+            cmd += ["--multiple", "--separate-output"]
+    parent = kw.get("parent") or tk._default_root
+    held = []
+    if parent is not None:
+        root = parent.winfo_toplevel()
+        held = [w for w in [root, *root.winfo_children()] if isinstance(w, tk.Toplevel) or w is root]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+    except OSError:
+        raise _NoPortalDialog
+    for w in held:
+        try:
+            w.tk.call("tk", "busy", "hold", w)
+        except tk.TclError:
+            pass
+    try:
+        while proc.poll() is None:              # keep the app drawn while the dialog is up
+            if parent is not None:
+                parent.update()
+            time.sleep(0.02)
+        out = proc.stdout.read()
+    finally:
+        for w in held:
+            try:
+                w.tk.call("tk", "busy", "forget", w)
+            except tk.TclError:
+                pass
+    if proc.returncode == 1 or proc.returncode < 0:     # Cancel, or the dialog was killed
+        return () if multiple else ""
+    if proc.returncode != 0:
+        raise _NoPortalDialog
+    paths = [p for p in out.splitlines() if p]
+    if kind == "asksaveasfilename" and paths and kw.get("defaultextension") and not Path(paths[0]).suffix:
+        paths[0] += kw["defaultextension"]
+    if multiple:
+        return tuple(paths)
+    return paths[0] if paths else ""
+
+
+def _prefer_host_dialog(kind: str, fn):
+    def call(*args, **kw):
+        try:
+            return _host_dialog(kind, kw)
+        except _NoPortalDialog:
+            return fn(*args, **kw)
+    call.__wrapped__ = fn
+    call.__name__ = getattr(fn, "__name__", "dialog")
+    return call
+
+
+if sys.platform.startswith("linux") and os.environ.get("PS5_TK_DIALOGS") != "1":
+    for _n in ("askdirectory", "askopenfilename", "askopenfilenames", "asksaveasfilename"):
+        setattr(filedialog, _n, _prefer_host_dialog(_n, getattr(filedialog, _n)))
 
 MOD = "Command" if IS_MAC else "Control"
 _KEYS = {"add": "N", "open": "O", "start": "R", "stop": ".", "settings": ",", "queue": "1",
@@ -2346,6 +2457,31 @@ class SettingsView:
         sf_menu.set(sf_labels[_cur_sf])
         sf_menu.pack(side="left")
 
+        # Linux: a job whose scratch fits builds in /dev/shm; tmpfs caps it at half the RAM unless remounted
+        try:
+            _shm_gb = shutil.disk_usage(str(ultra_core.SHM_DIR)).total >> 30 if sys.platform.startswith("linux") else 0
+        except OSError:
+            _shm_gb = 0
+        if _shm_gb >= 4:
+            _cur_ram = ram_temp_gb()
+            # a value set by hand (settings.json) shows as it is
+            ram_gbs = sorted({g for g in (4, 8, 12, 16, 24, 32, 48, 64, 96, 128) if g <= _shm_gb}
+                             | ({_cur_ram} if 0 < _cur_ram <= _shm_gb else set()))
+            ram_labels = {0: "Off", **{g: f"{g} GB" for g in ram_gbs}}
+            ram_rev = {v: k for k, v in ram_labels.items()}
+            ram_menu = ctk.CTkOptionMenu(
+                _ds_row("RAM for temp:"), values=list(ram_labels.values()), width=200,
+                command=lambda disp: save_settings({"ram_temp_gb": ram_rev.get(disp, 0)}))
+            ram_menu.set(ram_labels[max((g for g in ram_labels if g <= _cur_ram), default=0)])
+            ram_menu.pack(side="left")
+            ctk.CTkLabel(ds, text=f"With Drive usage on Auto, a job whose temp fits in this much RAM builds there "
+                                  f"(/dev/shm), which is much faster than any drive and spares its writes. "
+                                  f"A bigger job keeps one piece in RAM when it can, or uses the drives as before. "
+                                  f"At most {_shm_gb} GB here (half the RAM, the /dev/shm limit), and "
+                                  f"{ultra_core.RAM_TEMP_RESERVE >> 30} GB of RAM always stay free.",
+                         text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
+                         wraplength=640).pack(anchor="w", padx=14, pady=(0, 4))
+
         lp_labels = {"ask": "Ask me", "auto": "Proceed anyway", "skip": "Skip the game"}
         lp_rev = {v: k for k, v in lp_labels.items()}
         lp_menu = ctk.CTkOptionMenu(
@@ -2450,7 +2586,7 @@ class SettingsView:
         self.app.show_space_dialog_var.set(True)
         self.app.keep_drives_awake_var.set(False)
         save_settings({"space_safety_factor": 1.0, "low_space_policy": "ask", "same_drive_rw": "auto",
-                       "keep_awake_interval": 8})
+                       "keep_awake_interval": 8, "ram_temp_gb": 0})
         self._rebuild("drives")
 
 
@@ -10362,6 +10498,14 @@ class App:
                 continue
             seen.add(dev)
             out.append(d)
+        ram = ram_temp_root()                      # Settings › Drives › RAM for temp, Linux
+        if ram is not None:
+            try:
+                ram.mkdir(mode=0o700, exist_ok=True)
+                if _drive_cache_key(ram) not in seen:
+                    out.append(ram)
+            except OSError:
+                pass
         return out
 
     def _keepalive_dirs(self):
@@ -10666,9 +10810,12 @@ class App:
         fit_full = [(d, f) for d, f in pool if f >= full_need and self._same_drive_rw_allowed(d)]
         if size > 0 and fit_full and not size_is_estimate:
             ssd_full = [(d, f) for d, f in fit_full if _is_ssd(d)]
-            best = max(ssd_full or fit_full, key=lambda t: t[1])[0]
+            ram_full = [d for d, _f in fit_full if is_ram_temp(d)]
+            best = ram_full[0] if ram_full else max(ssd_full or fit_full, key=lambda t: t[1])[0]
             _set(_scratch(best), _scratch(best) / "_extracted", False, False)
-            if _drive_cache_key(best) != _drive_cache_key(temp_base_p):
+            if ram_full:
+                _plog("INFO", f"Auto: {item.name} (~{szs}): whole scratch in RAM ({best}).")
+            elif _drive_cache_key(best) != _drive_cache_key(temp_base_p):
                 _plog("INFO", f"Auto: {item.name} (~{szs}): whole scratch on pool drive {best}.")
             return item._build_root
         # 2) archives: image on one SSD, source on another; not on an estimate either
@@ -10689,7 +10836,8 @@ class App:
         img_fit = [(d, f) for d, f in pool if f >= image_need]
         if size > 0 and img_fit and out_free >= out_split_need and not pkg_chain:
             ssd_img = [(d, f) for d, f in img_fit if _is_ssd(d)]
-            img_dir = max(ssd_img or img_fit, key=lambda t: t[1])[0]  # prefer an SSD for the image
+            ram_img = [d for d, _f in img_fit if is_ram_temp(d)]
+            img_dir = ram_img[0] if ram_img else max(ssd_img or img_fit, key=lambda t: t[1])[0]  # RAM, else an SSD
             _set(_scratch(img_dir), spread_root, True, False)   # source extracts to the big output drive
             _plog("INFO", f"Auto: {item.name} (~{szs}): 1) extract source → output drive "
                              f"({out_dir}); 2) build inner image → {temp_drive_label(img_dir)} "
@@ -16242,6 +16390,14 @@ class App:
                 snd = "/System/Library/Sounds/Glass.aiff" if success else "/System/Library/Sounds/Basso.aiff"
                 subprocess.Popen(["afplay", snd],
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif sys.platform.startswith("linux"):
+                # freedesktop sound theme; canberra picks the user's theme, paplay needs the file
+                ev = "complete" if success else "dialog-error"
+                snd = f"/usr/share/sounds/freedesktop/stereo/{ev}.oga"
+                cmd = (["canberra-gtk-play", "-i", ev] if shutil.which("canberra-gtk-play")
+                       else ["paplay", snd] if shutil.which("paplay") and os.path.isfile(snd) else None)
+                if cmd:
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 
