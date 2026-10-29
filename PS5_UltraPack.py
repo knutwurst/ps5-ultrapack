@@ -116,7 +116,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.3.3"
+APP_VERSION = "2.3.4"
 APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
 # archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
@@ -1313,7 +1313,7 @@ class FirstRunWizard(EmbeddedDialog):
     def _browse_temp(self):
         p = filedialog.askdirectory(title="Choose the temp folder")
         if p:
-            self.temp_path.set(str(Path(p) / "_ffpfsc_temp"))
+            self.temp_path.set(str(Path(p) / TEMP_DIR))
 
     def _browse_output(self):
         p = filedialog.askdirectory(title="Choose the output folder")
@@ -2667,10 +2667,10 @@ def _package_platform(p) -> str | None:
 
 
 def _is_inner_image_path(p) -> bool:
-    """pass-1 image: <temp>/_ffpfsc_inner/<id>.ffpfs"""
+    """pass-1 image: <temp>/_ultrapack_inner/<id>.ffpfs"""
     try:
         q = Path(str(p or ""))
-        return (q.is_absolute() and q.suffix.lower() == ".ffpfs" and q.parent.name == "_ffpfsc_inner"
+        return (q.is_absolute() and q.suffix.lower() == ".ffpfs" and q.parent.name in INNER_DIR_NAMES
                 and ".." not in q.parts)
     except (TypeError, ValueError):
         return False
@@ -7887,7 +7887,7 @@ class LookInsideView:
         if not dest:
             return
         try:
-            fd, mfpath = tempfile.mkstemp(prefix="ffpfsc_members_", suffix=".txt")
+            fd, mfpath = tempfile.mkstemp(prefix="ultrapack_members_", suffix=".txt")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write("\n".join(members))
         except Exception as e:
@@ -8194,6 +8194,9 @@ class App:
 
         self._saved_output = native_path(settings.get("output_folder", ""))
         self._saved_temp = native_path(settings.get("temp_folder", ""))
+        if renamed_temp_folder(self._saved_temp) != self._saved_temp:
+            self._saved_temp = renamed_temp_folder(self._saved_temp)   # the old folder gets cleaned up as ours
+            save_settings({"temp_folder": self._saved_temp})
         self._saved_source = native_path(settings.get("source_path", ""))
         self._saved_auto_clear_temp = settings.get("auto_clear_temp", False)
         def _safe_int(v, default):
@@ -9693,7 +9696,7 @@ class App:
         if not self.output_var.get():
             self.output_var.set(str(p.parent))
         if not self.temp_var.get():
-            self.temp_var.set(str(p.parent / "_ffpfsc_temp"))
+            self.temp_var.set(str(p.parent / TEMP_DIR))
         self.preview_light(p)
         self.add_source_to_queue()
 
@@ -9739,7 +9742,7 @@ class App:
         if not self.output_var.get():
             self.output_var.set(str(p.parent))
         if not self.temp_var.get():
-            self.temp_var.set(str(p.parent / "_ffpfsc_temp"))
+            self.temp_var.set(str(p.parent / TEMP_DIR))
         self.add_source_to_queue()
 
     def browse_pfs_image(self):
@@ -9764,14 +9767,14 @@ class App:
         if p:
             self.output_var.set(p)
             if not self.temp_var.get():
-                self.temp_var.set(str(Path(p) / "_ffpfsc_temp"))
+                self.temp_var.set(str(Path(p) / TEMP_DIR))
             save_settings({"output_folder": p})
             self.update_command_preview()
 
     def browse_temp_folder(self):
         p = filedialog.askdirectory(title="Select temp folder")
         if p:
-            tp = str(Path(p) / "_ffpfsc_temp")
+            tp = str(Path(p) / TEMP_DIR)
             self.temp_var.set(tp)
             save_settings({"temp_folder": tp})
             self.update_command_preview()
@@ -10533,7 +10536,7 @@ class App:
         temp_base = self.temp_var.get().strip()
         if not temp_base:
             anchor = archive.parent if archive else Path.home()
-            temp_base = str(anchor / "_ffpfsc_temp")
+            temp_base = str(anchor / TEMP_DIR)
             self.temp_var.set(temp_base)
         temp_base_p = Path(temp_base)
         temp_root = temp_base_p / "_extracted"
@@ -10568,8 +10571,8 @@ class App:
             return temp_root
 
         out_dir = Path(out_str)
-        spread_root = out_dir / "_ffpfsc_extract"
-        spread_temp = out_dir / "_ffpfsc_temp"
+        spread_root = out_dir / EXTRACT_DIR
+        spread_temp = out_dir / TEMP_DIR
 
         def set_spread():
             item._build_root = spread_root
@@ -10645,9 +10648,9 @@ class App:
             item._extract_on_pool = on_pool
 
         def _scratch(d):
-            """Extra pool drives get a '_ffpfsc_temp' subfolder, never the drive root."""
+            """Extra pool drives get a '_ultrapack_temp' subfolder, never the drive root."""
             d = Path(d)
-            return d if d == temp_base_p else d / "_ffpfsc_temp"
+            return d if d == temp_base_p else d / TEMP_DIR
 
         def _is_ssd(d):
             # speed only: keep the image on real flash, not a roomy HDD pool entry
@@ -10708,8 +10711,9 @@ class App:
         """A folder the user named '_extracted' anywhere else is not ours."""
         cands = []
         try:
-            cands.append(self.temp_var.get().strip())
-            cands.append(self.output_var.get().strip())
+            for c in (self.temp_var.get().strip(), self.output_var.get().strip()):
+                if c:
+                    cands += [c] + [str(r) for r in temp_scratch_roots(c)]   # an old-named twin too
         except Exception:
             pass
         try:
@@ -10717,7 +10721,7 @@ class App:
             pool = list(self._temp_pool_dirs()) + [str(x) for x in (getattr(self, "temp_pool", None) or [])]
             for d in pool:
                 cands.append(str(d))
-                cands.append(str(Path(d) / "_ffpfsc_temp"))
+                cands += [str(r) for r in temp_scratch_roots(d)]
         except Exception:
             pass
         if item is not None:
@@ -10736,14 +10740,14 @@ class App:
         return roots
 
     def _extract_dir_for_item(self, item):
-        """The item's unpack dir under an app-made '_extracted' or '_ffpfsc_extract', else None."""
+        """The item's unpack dir under an app-made '_extracted' or '_ultrapack_extract', else None."""
         try:
             src = Path(getattr(item, "path", "") or "").resolve()
         except Exception:
             return None
         roots = self._scratch_parent_roots(item)
         for parent in src.parents:
-            if parent.name in ("_extracted", "_ffpfsc_extract"):
+            if parent.name in EXTRACT_DIR_NAMES:
                 if parent not in roots and parent.parent not in roots:
                     return None
                 try:
@@ -10831,20 +10835,10 @@ class App:
                 shutil.rmtree(str(base / name), ignore_errors=True)
             except Exception:
                 pass
-        try:
-            ex = base / "_extracted"
-            if ex.is_dir() and not any(ex.iterdir()):
-                ex.rmdir()
-        except Exception:
-            pass
+        drop_empty_scratch(base / "_extracted")
         # only after the last job; mid-batch the temp base gets reused
-        try:
-            if (not self.queue and base.name == "_ffpfsc_temp"
-                    and base.is_dir() and not any(base.iterdir())):
-                base.rmdir()
-                self.log("INFO", "Removed the now-empty temp folder.")
-        except Exception:
-            pass
+        if not self.queue and drop_empty_scratch(base):
+            self.log("INFO", "Removed the now-empty temp folder.")
 
     def _cleanup_item_extract(self, item) -> None:
         """Spares what other jobs still read; the rmtree runs on a thread."""
@@ -10856,12 +10850,8 @@ class App:
                 sz = sum(_remove_scratch(p) for p in parts)
                 if sz:
                     self.log("INFO", f"Cleaned {format_size(sz)} extracted source from {d.parent.name}.")
-                if d is not None and d.parent.name == "_ffpfsc_extract":
-                    try:
-                        if not any(d.parent.iterdir()):
-                            d.parent.rmdir()
-                    except Exception:
-                        pass
+                if d is not None:
+                    drop_empty_scratch(d.parent)
             except Exception:
                 pass
             # also for jobs with no extracted dir
@@ -10883,12 +10873,7 @@ class App:
                     sz = sum(_remove_scratch(p) for p in parts)
                     self.log("INFO", f"Freed {format_size(sz)} extracted source after pass 1 "
                                      f"(no longer needed for compression).")
-                    if d.parent.name == "_ffpfsc_extract":
-                        try:
-                            if not any(d.parent.iterdir()):
-                                d.parent.rmdir()
-                        except Exception:
-                            pass
+                    drop_empty_scratch(d.parent)
             except Exception:
                 pass
         self._run_cleanup(_work)
@@ -10914,13 +10899,7 @@ class App:
                     p.unlink()
                     if sz:
                         self.log("INFO", f"Removed {format_size(sz)} inner image (pass-1 cache).")
-                par = p.parent
-                if par.name == "_ffpfsc_inner":
-                    try:
-                        if not any(par.iterdir()):
-                            par.rmdir()
-                    except Exception:
-                        pass
+                drop_empty_scratch(p.parent)
             except Exception:
                 pass
         self._run_cleanup(_work)
@@ -11128,7 +11107,7 @@ class App:
         self.update_queue_box()
         self.start_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
-        temp_base = self.temp_var.get().strip() or str(Path(item.path).parent / "_ffpfsc_temp")
+        temp_base = self.temp_var.get().strip() or str(Path(item.path).parent / TEMP_DIR)
         self.temp_var.set(temp_base)
         pw = self._candidate_passwords(item)
         game = Path(item.path)
@@ -11927,7 +11906,7 @@ class App:
             return _ps4pkg_module().read_icon(p)
         if suf not in (".ffpfs", ".ffpfsc", ".pkg"):
             return None
-        tmp = Path(tempfile.mkdtemp(prefix="ffpfsc_icon_"))
+        tmp = Path(tempfile.mkdtemp(prefix="ultrapack_icon_"))
         try:
             mfile = tmp / "members.txt"
             mfile.write_text("sce_sys/icon0.png\n", encoding="utf-8")
@@ -12001,7 +11980,7 @@ class App:
     def _read_image_metadata(self, p: Path) -> dict | None:
         suf = p.suffix.lower()
         if suf in (".ffpfs", ".ffpfsc"):
-            tmp = Path(tempfile.mkdtemp(prefix="ffpfsc_ident_"))
+            tmp = Path(tempfile.mkdtemp(prefix="ultrapack_ident_"))
             try:
                 mfile = tmp / "members.txt"
                 mfile.write_text("sce_sys/param.json\n", encoding="utf-8")
@@ -12015,7 +11994,7 @@ class App:
         if suf == ".pkg" and _is_ps4_source(p):
             return self._ps4_identity(p)
         if suf == ".pkg":
-            tmp = Path(tempfile.mkdtemp(prefix="ffpfsc_pkg_ident_"))
+            tmp = Path(tempfile.mkdtemp(prefix="ultrapack_pkg_ident_"))
             try:
                 mfile = tmp / "members.txt"
                 mfile.write_text("sce_sys/param.json\n", encoding="utf-8")
@@ -14145,7 +14124,7 @@ class App:
         roots, seen = [], set()
         _jo = self._job_output_dir(item)
         out_str = str(_jo) if _jo else ""
-        out_spool = (str(Path(out_str) / "_ffpfsc_temp") if out_str else None)
+        out_spools = [str(r) for r in temp_scratch_roots(out_str)] if out_str else []
         # a build killed in pass 2 leaves <name>.ffpfsc.partial (and .tmp) in the output
         _w = getattr(self, "worker", None)
         _partial_dir = Path(str(getattr(_w, "output_dir", "") or "")) if _w is not None else None
@@ -14164,9 +14143,9 @@ class App:
             _stage_parent = None
         _bt = getattr(item, "_build_temp", None)
         _tv = self.temp_var.get().strip()
-        # the backend keeps its own scratch in <temp>/_ffpfsc_temp (chain-*, tmp*)
-        _scr = [str(Path(c) / "_ffpfsc_temp") for c in (_bt, _tv) if c and Path(c).name != "_ffpfsc_temp"]
-        for cand in (_bt, _tv, out_spool, *_scr):
+        # the backend keeps its own scratch in <temp>/_ultrapack_temp (chain-*, tmp*)
+        _scr = [str(r) for c in (_bt, _tv) if c for r in temp_scratch_roots(c)]
+        for cand in (_bt, _tv, *out_spools, *_scr):
             if not cand:
                 continue
             r = Path(cand)
@@ -14196,25 +14175,22 @@ class App:
             for root in roots:
                 try:
                     for p in root.iterdir():
-                        if p.is_dir() and (is_app_tmp_dir_in(p) or p.name.startswith("ffpfsc_spool_")
-                                           or (root.name == "_ffpfsc_temp" and p.name.startswith("chain-")
+                        if p.is_dir() and (is_app_tmp_dir_in(p) or p.name.startswith(("ultrapack_spool_", "ffpfsc_spool_"))
+                                           or (root.name in TEMP_DIR_NAMES and p.name.startswith("chain-")
                                                and not p.name.startswith("chain-extras-"))   # undelivered extras stay
-                                           or (not keep_source and p.name == "_ffpfsc_inner")):
+                                           or (not keep_source and p.name in INNER_DIR_NAMES)):
                             sz = get_folder_size(p)
                             shutil.rmtree(str(p), ignore_errors=True)
                             freed += sz
                 except Exception:
                     pass
-            # the output's _ffpfsc_temp goes once only OS markers are left, the temp folder itself stays
-            try:
-                if out_spool and Path(out_spool).is_dir() and str(Path(out_spool).resolve()) not in _temp_roots:
-                    junk = list(Path(out_spool).iterdir())
-                    if all(q.is_file() and (is_fs_junk_name(q.name) or q.name == ".metadata_never_index") for q in junk):
-                        for q in junk:
-                            q.unlink(missing_ok=True)
-                        os.rmdir(out_spool)          # fails when a new job put its folder in meanwhile
-            except OSError:
-                pass
+            # the output's _ultrapack_temp goes once only OS markers are left, the temp folder itself stays
+            for spool in out_spools:
+                try:
+                    if Path(spool).is_dir() and str(Path(spool).resolve()) not in _temp_roots:
+                        drop_empty_scratch(spool)
+                except OSError:
+                    pass
             # fPKG tool's hard-link mirror (.ffpfsc-stage-<id>): rmtree only drops links, sources stay
             if _stage_parent is not None and _stage_parent.is_dir():
                 try:
@@ -14270,15 +14246,10 @@ class App:
                     pass
             if not keep_source:
                 try:
-                    own = _own   # temp/_extracted OR output/_ffpfsc_extract
+                    own = _own   # temp/_extracted OR output/_ultrapack_extract
                     if own is not None and _own_parts:
                         freed += sum(_remove_scratch(p) for p in _own_parts)
-                        if own.parent.name == "_ffpfsc_extract":
-                            try:
-                                if not any(own.parent.iterdir()):
-                                    own.parent.rmdir()
-                            except Exception:
-                                pass
+                        drop_empty_scratch(own.parent)
                 except Exception:
                     pass
             if freed:
@@ -14295,7 +14266,8 @@ class App:
             pb = _patch_backup_module()
             for rec in d.glob("*/restore.jsonl"):
                 game, _ops = pb._entries(rec.parent)
-                if game and "_ffpfsc_temp" not in Path(game).parts and "_extracted" not in Path(game).parts:
+                parts = Path(game).parts if game else ()
+                if game and not any(n in parts for n in (*TEMP_DIR_NAMES, "_extracted")):
                     return True
             return False
         except Exception:
@@ -14314,7 +14286,7 @@ class App:
             if not base:
                 continue
             b = Path(base)
-            for root in {b if b.name == "_ffpfsc_temp" else b / "_ffpfsc_temp"}:
+            for root in temp_scratch_roots(b):
                 try:
                     for d in root.glob("patch-backup-*"):
                         if d.is_dir() and not d.is_symlink() and App._backup_is_users(d):
@@ -14333,7 +14305,7 @@ class App:
         for base in bases:
             if not base:
                 continue
-            for root in {Path(base) if Path(base).name == "_ffpfsc_temp" else Path(base) / "_ffpfsc_temp"}:
+            for root in temp_scratch_roots(base):
                 try:
                     cands = [d for d in root.glob("patch-backup-*/*") if (d / "restore.jsonl").is_file()]
                 except OSError:
@@ -14343,8 +14315,8 @@ class App:
                         game, _ops = pb._entries(d)
                     except Exception:
                         game = None
-                    if not game or not Path(game).is_dir() or "_ffpfsc_temp" in Path(game).parts \
-                            or "_extracted" in Path(game).parts:
+                    if not game or not Path(game).is_dir() \
+                            or any(n in Path(game).parts for n in (*TEMP_DIR_NAMES, "_extracted")):
                         continue  # our own copy, or the folder is gone
                     try:
                         n = pb.restore_originals(d, Path(game))
@@ -14363,7 +14335,7 @@ class App:
     def _offer_startup_sweep(self):
         if getattr(self, "_browser_only", False):
             return  # browser-only launch: no prompt on the hidden window
-        NAMES = ("_extracted", "_ffpfsc_extract", "_ffpfsc_temp", "_ffpfsc_inner")
+        NAMES = SCRATCH_DIR_NAMES
         keep = self._open_extracts()          # copies queued jobs still read
         # Tk variables are read on the main thread only; the scan thread gets a snapshot.
         bases0 = [self.temp_var.get().strip(), self.output_var.get().strip()]
@@ -14371,6 +14343,8 @@ class App:
             bases0 += [str(p) for p in self._temp_pool_dirs()]   # extra scratch SSDs too
         except Exception:
             pass
+        bases0 += [str(r) for b in list(bases0) if b and Path(b).name in TEMP_DIR_NAMES
+                   for r in temp_scratch_roots(b)[1:]]           # the old-named twin of a temp folder
 
         def _scan():
             targets, seen = [], set()
@@ -14382,7 +14356,7 @@ class App:
             finally:
                 self._restore_count(-1)   # raised before the thread
             keep.update(self._patch_backup_dirs(bases0))   # whatever could not be restored stays
-            # every output in the history is a folder we wrote to, its parent may hold an old _ffpfsc_temp
+            # every output in the history is a folder we wrote to, its parent may hold an old _ultrapack_temp
             try:
                 hist = load_history() or []
                 hist_bases: set[str] = set()
@@ -14485,7 +14459,7 @@ class App:
         for p in [q for c in list(temp_dir.iterdir()) for q in removable_parts(c, keep)]:
             # only our own working data, never anything else a user keeps in the temp folder
             if not (is_app_tmp_dir_in(p)
-                    or p.name in ("_extracted", "_patch_game", "_patch_files", "_ffpfsc_inner")):
+                    or p.name in ("_extracted", "_patch_game", "_patch_files", *INNER_DIR_NAMES)):
                 continue
             try:
                 sz = get_folder_size(p) if p.is_dir() else (p.stat().st_size if p.is_file() else 0)
@@ -15454,7 +15428,7 @@ class App:
         out = [str(ultra_core.APP_DIR)]
         for r in roots:
             if r:
-                out += [str(Path(r) / sub) for sub in ("_extracted", "_ffpfsc_temp", "_ffpfsc_extract")]
+                out += [str(Path(r) / sub) for sub in SCRATCH_DIR_NAMES if sub not in INNER_DIR_NAMES]
         t = (self.temp_var.get() or "").strip()
         if t and not os.path.ismount(t):
             out.append(t)
@@ -15716,13 +15690,13 @@ class App:
 
     @staticmethod
     def _staged_patch_backup(worker) -> Path | None:
-        """only an absolute folder in patch-backup-* under our _ffpfsc_temp, anything else stays untouched"""
+        """only an absolute folder in patch-backup-* under our _ultrapack_temp, anything else stays untouched"""
         raw = str(getattr(worker, "patch_backup", "") or "").strip() if worker is not None else ""
         if not raw:
             return None
         p = Path(raw)
         if (not p.is_absolute() or not p.parent.name.startswith("patch-backup-")
-                or "_ffpfsc_temp" not in p.parts or not p.is_dir()):
+                or not any(n in p.parts for n in TEMP_DIR_NAMES) or not p.is_dir()):
             return None
         return p
 
@@ -15908,7 +15882,7 @@ class App:
             messagebox.showerror("Missing output", "Select an output folder.")
             return
         if not self.temp_var.get().strip():
-            self.temp_var.set(str(Path(self.output_var.get()) / "_ffpfsc_temp"))
+            self.temp_var.set(str(Path(self.output_var.get()) / TEMP_DIR))
         if not self.queue:
             # an async scan from Add may still be running, re-adding would queue a duplicate
             if getattr(self, "_scan_in_flight", 0) > 0:
@@ -16146,9 +16120,8 @@ class App:
         out = (self.output_var.get() or "").strip()
         # only our own scratch folders, temp might point at a drive root or a shared folder
         def _ours(p: Path) -> bool:
-            return p.is_dir() and (p.name in ("_extracted", "_ffpfsc_extract", "_ffpfsc_inner",
-                                              "_patch_game", "_patch_files", "_ffpfsc_temp")
-                                   or is_app_tmp_dir_in(p) or p.name.startswith("ffpfsc_spool_"))
+            return p.is_dir() and (p.name in (*SCRATCH_DIR_NAMES, "_patch_game", "_patch_files")
+                                   or is_app_tmp_dir_in(p) or p.name.startswith(("ultrapack_spool_", "ffpfsc_spool_")))
         if self._job_active() or self._restores_inflight or getattr(self, "_cleanup_inflight", 0):
             messagebox.showinfo("Clean temp", "A job or a cleanup is working in the temp folder. Clean it once "
                                               "the queue has stopped and the cleanup is done.")
@@ -16164,8 +16137,10 @@ class App:
                         seen.add(os.path.realpath(q)); targets.append(q)
             except OSError as e:
                 unread.append(f"{root}: {e}")
-        if out and (Path(out) / "_ffpfsc_temp").is_dir():          # a package build stopped half-way
-            for q in removable_parts(Path(out) / "_ffpfsc_temp", keep):
+        for spool in (temp_scratch_roots(out) if out else []):     # a package build stopped half-way
+            if not spool.is_dir():
+                continue
+            for q in removable_parts(spool, keep):
                 if os.path.realpath(q) not in seen:
                     seen.add(os.path.realpath(q)); targets.append(q)
         for u in unread:

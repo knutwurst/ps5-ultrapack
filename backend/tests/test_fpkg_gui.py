@@ -649,11 +649,15 @@ try:
     ok("cleanup.extract-dir.own-scratch", app._extract_dir_for_item(_ia) == (_tmp_root / "_extracted" / "game-a").resolve(),
        str(app._extract_dir_for_item(_ia)))
     ok("cleanup.extract-dir.foreign-never", app._extract_dir_for_item(_ib) is None, str(app._extract_dir_for_item(_ib)))
-    # a pool drive's root is not scratch, only <pool>/_ffpfsc_temp is
-    _pool = S / "pool"; _pool.mkdir(exist_ok=True); _ic = _Fake(); _ic.path = str(_pool / "_ffpfsc_temp" / "_extracted" / "g")
-    (_pool / "_ffpfsc_temp" / "_extracted" / "g").mkdir(parents=True, exist_ok=True)
+    # a pool drive's root is not scratch, only <pool>/_ultrapack_temp is (and the old-named one)
+    _pool = S / "pool"; _pool.mkdir(exist_ok=True)
+    _ics = []
+    for _n in ("_ultrapack_temp", "_ffpfsc_temp"):
+        _ic = _Fake(); _ic.path = str(_pool / _n / "_extracted" / "g"); _ics.append(_ic)
+        (_pool / _n / "_extracted" / "g").mkdir(parents=True, exist_ok=True)
     app.temp_pool = [str(_pool)]
-    ok("cleanup.extract-dir.pool-subfolder", app._extract_dir_for_item(_ic) is not None, str(app._extract_dir_for_item(_ic)))
+    ok("cleanup.extract-dir.pool-subfolder", all(app._extract_dir_for_item(_ic) is not None for _ic in _ics),
+       str([app._extract_dir_for_item(_ic) for _ic in _ics]))
     app.temp_pool = []
     conv = OUT / "convert"; conv.mkdir(exist_ok=True); shutil.copy2(ZP, conv / ZP.name)
     bi2 = m.GameItem.from_bundle(conv, conv / ZP.name, []); bi2.output_compressed = True; bi2.auto_organize = False; bi2.output_path = OUT
@@ -3102,9 +3106,11 @@ try:
     ok("details.placeholders-hidden", "Space" not in _phinfo and _plast.startswith("Totals"),
        f"space={_phinfo.get('Space')!r} last={_plast!r}")
     _pool = S / "pool_drive"; _hist = S / "old_library" / "Game [PPSA99095] [v01.000.000]"
-    for _d in (_pool / "_ffpfsc_temp" / "_extracted", _hist.parent / "_ffpfsc_temp", _hist.parent / "_ffpfsc_extract" / "kept"):
+    for _d in (_pool / "_ultrapack_temp" / "_extracted", _hist.parent / "_ultrapack_temp", _hist.parent / "_ffpfsc_temp",
+               _hist.parent / "_ultrapack_extract" / "kept"):
         _d.mkdir(parents=True, exist_ok=True)
-    (_hist.parent / "_ffpfsc_extract" / "kept" / "eboot.bin").write_bytes(b"E")
+        (_d / ".metadata_never_index").touch()          # the Spotlight marker we put in ourselves
+    (_hist.parent / "_ultrapack_extract" / "kept" / "eboot.bin").write_bytes(b"E")
     _old = time.time() - 600
     for _d in [x for x in S.rglob("*") if x.is_dir() and ("pool_drive" in x.parts or "old_library" in x.parts)]:
         os.utime(_d, (_old, _old))
@@ -3115,13 +3121,14 @@ try:
     try:
         app._batch_running = True
         app._prune_scratch_later(delay=0.0); pump(lambda: not app._prune_pending, timeout=10.0)
-        _while = (_pool / "_ffpfsc_temp").exists()
+        _while = (_pool / "_ultrapack_temp").exists()
         app._batch_running = False
         app._prune_scratch_later(delay=0.0); pump(lambda: not app._prune_pending, timeout=10.0)
-        ok("scratch.empty-work-folders-go", _while and not (_pool / "_ffpfsc_temp").exists()
-           and not (_hist.parent / "_ffpfsc_temp").exists()
-           and (_hist.parent / "_ffpfsc_extract" / "kept" / "eboot.bin").is_file(),
-           f"kept while running={_while} pool={(_pool / '_ffpfsc_temp').exists()} hist={(_hist.parent / '_ffpfsc_temp').exists()}")
+        ok("scratch.empty-work-folders-go", _while and not (_pool / "_ultrapack_temp").exists()
+           and not (_hist.parent / "_ultrapack_temp").exists() and not (_hist.parent / "_ffpfsc_temp").exists()
+           and (_hist.parent / "_ultrapack_extract" / "kept" / "eboot.bin").is_file(),
+           f"kept while running={_while} pool={(_pool / '_ultrapack_temp').exists()} "
+           f"hist={sorted(x.name for x in _hist.parent.iterdir())}")
     finally:
         app._batch_running = False; app.temp_pool = _pool0; m.save_history(_hist0)
     _tj = m.GameItem.from_chain(ZP, to="ffpfsc"); _gb = 10**9
@@ -3463,7 +3470,8 @@ try:
 
         # a file name in a package can fake the backend's markers: only our own paths count
         ok("review.inner-marker-shape", not m._is_inner_image_path("/Volumes")
-           and not m._is_inner_image_path(str(S / "x")) and m._is_inner_image_path(str(S / "_ffpfsc_inner" / "PPSA00001.ffpfs")), "")
+           and not m._is_inner_image_path(str(S / "x")) and m._is_inner_image_path(str(S / "_ultrapack_inner" / "PPSA00001.ffpfs"))
+           and m._is_inner_image_path(str(S / "_ffpfsc_inner" / "PPSA00001.ffpfs")), "")
         _victim = S / "review_victim"; _victim.mkdir(exist_ok=True); (_victim / "keep.bin").write_bytes(b"x")
         _vi = types.SimpleNamespace(_inner_image=str(_victim))
         app._cleanup_inner_image(_vi); pump(lambda: False, timeout=0.5)

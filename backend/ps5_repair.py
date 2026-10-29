@@ -175,14 +175,14 @@ def keystone_from(source: str, scratch=None, image_member=None) -> tuple[bytes |
         elif p.suffix.lower() == ".pkg" and p.is_file():
             if fpkg.is_ps4(p):
                 return None, "a PS4 package; a PS5 package needs a PS5 keystone"
-            with tempfile.TemporaryDirectory(prefix="ffpfsc_ps5ks_", dir=scratch) as td:
+            with tempfile.TemporaryDirectory(prefix="ultrapack_ps5ks_", dir=scratch) as td:
                 data = _pkg_member(p, "sce_sys/keystone", fpkg.list_inner(p).get("entries") or [], Path(td))
             if data is None:
                 return None, "the package has no sce_sys/keystone"
         elif p.suffix.lower() in (".ffpfsc", ".ffpfs") and p.is_file():
             if image_member is None:
                 return None, "cannot read inside this image here"
-            with tempfile.TemporaryDirectory(prefix="ffpfsc_ps5ks_", dir=scratch) as td:
+            with tempfile.TemporaryDirectory(prefix="ultrapack_ps5ks_", dir=scratch) as td:
                 got = image_member(p, "sce_sys/keystone", Path(td))
                 data = Path(got).read_bytes() if got and Path(got).is_file() else None
             if data is None:
@@ -267,7 +267,7 @@ def peek(pkg, scratch=None, title_id: str = "") -> dict | None:
         return None
     out = {"path": str(pkg), "name": pkg.name, "title_id": str(ident.get("title_id") or ""), "version": "",
            "origin": "", "update": is_update({"ident": ident})}
-    with tempfile.TemporaryDirectory(prefix="ffpfsc_ps5peek_", dir=scratch) as td:
+    with tempfile.TemporaryDirectory(prefix="ultrapack_ps5peek_", dir=scratch) as td:
         pj = _pkg_member(pkg, "sce_sys/param.json", fpkg.list_inner(pkg).get("entries") or [], Path(td))
     if pj:
         try:
@@ -317,7 +317,7 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
     except Exception as e:
         out["error"] = f"not a readable PS5 package: {e}"
         return out
-    with tempfile.TemporaryDirectory(prefix="ffpfsc_ps5check_", dir=scratch) as td:
+    with tempfile.TemporaryDirectory(prefix="ultrapack_ps5check_", dir=scratch) as td:
         lines: list[str] = []
         fpkg.validate(pkg, json_out=True, temp_dir=td, on_line=lines.append)
         text = "\n".join(lines)

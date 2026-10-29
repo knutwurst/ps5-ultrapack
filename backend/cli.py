@@ -434,7 +434,11 @@ def _backport_dirs(args):
     fw = getattr(args, "fw_libs_root", None)
     return (Path(libs).expanduser().resolve() if libs else None,
             Path(fw).expanduser().resolve() if fw else None)
-_REPORT_SKIP_DIRS = {"_extracted", "_ffpfsc_extract", "_ffpfsc_temp", "_ffpfsc_inner", "__MACOSX"}
+# our work folders, same names as in ultra_core; the _ffpfsc_ ones are from before the rename
+_TEMP_DIR, _INNER_DIR = "_ultrapack_temp", "_ultrapack_inner"
+_TEMP_DIR_NAMES = (_TEMP_DIR, "_ffpfsc_temp")
+_REPORT_SKIP_DIRS = {"_extracted", "_ultrapack_extract", "_ffpfsc_extract", *_TEMP_DIR_NAMES,
+                     _INNER_DIR, "_ffpfsc_inner", "__MACOSX"}
 
 
 def _read_param_json(src: Path) -> dict | None:
@@ -444,7 +448,7 @@ def _read_param_json(src: Path) -> dict | None:
     if src.is_dir():
         pj = src / "sce_sys" / "param.json"
         return json.loads(pj.read_text(encoding="utf-8", errors="replace")) if pj.is_file() else None
-    with tempfile.TemporaryDirectory(prefix="ffpfsc_param_", dir=_app_scratch_root()) as td:
+    with tempfile.TemporaryDirectory(prefix="ultrapack_param_", dir=_app_scratch_root()) as td:
         out = Path(td) / "x"
         with contextlib.redirect_stdout(io.StringIO()):
             if src.suffix.lower() == ".pkg":
@@ -813,28 +817,21 @@ def _unlink_quiet(path) -> None:
 
 
 def _app_scratch_root(temp_dir=None) -> Path:
-    """every scratch folder lives in <temp>/_ffpfsc_temp, never loose in the temp root"""
+    """every scratch folder lives in <temp>/_ultrapack_temp, never loose in the temp root"""
     base = Path(temp_dir) if temp_dir else Path(tempfile.gettempdir())
     base = base.resolve()
-    root = base if base.name == "_ffpfsc_temp" else base / "_ffpfsc_temp"      # an extra temp drive's folder is one already
+    root = base if base.name in _TEMP_DIR_NAMES else base / _TEMP_DIR      # an extra temp drive's folder is one already
     made = not root.exists()
     root.mkdir(parents=True, exist_ok=True)
     if made and str(root) not in _SCRATCH_ROOTS_MADE:
         # made by this run: it goes again at the end when nothing is left in it
         _SCRATCH_ROOTS_MADE.add(str(root))
         import atexit
-        atexit.register(_drop_empty_dir, root)
+        atexit.register(_drop_scratch_holder, root)
     return root
 
 
 _SCRATCH_ROOTS_MADE: set = set()
-
-
-def _drop_empty_dir(path: Path) -> None:
-    try:
-        Path(path).rmdir()          # only an empty folder; anything else stays
-    except OSError:
-        pass
 
 
 def _plain_mode(path) -> None:
@@ -1018,9 +1015,9 @@ def _open_pass2_spool_dir(image_path, default_temp_dir, output_path, spill_base=
     if not same:
         try:
             if shutil.disk_usage(str(probe)).free >= need:
-                spill = base / "_ffpfsc_temp"
+                spill = base / _TEMP_DIR
                 spill.mkdir(parents=True, exist_ok=True)
-                ctx = tempfile.TemporaryDirectory(prefix="ffpfsc_spool_", dir=str(spill))
+                ctx = tempfile.TemporaryDirectory(prefix="ultrapack_spool_", dir=str(spill))
                 print(f"[INFO] Pass-2 spool routed to the output drive ({spill}) - temp can't "
                       f"hold image+spool; the inner image stays on temp for fast reads.", flush=True)
                 return Path(ctx.name), ctx
@@ -2733,7 +2730,7 @@ def main() -> None:
                              "Use a fast NVMe drive for best performance.")
     parser.add_argument("--spool-fallback-dir", type=str, default=None, metavar="DIR",
                         help="Output-drive root to spill the pass-2 spool into (under "
-                             "<DIR>/_ffpfsc_temp) when --temp-dir can't hold image+spool. "
+                             "<DIR>/_ultrapack_temp) when --temp-dir can't hold image+spool. "
                              "Keeps the inner image on the fast temp drive for big games.")
     parser.add_argument("--patch",        type=str, default=None, metavar="DIR",
                         help="PATCH MODE: overlay the loose files in DIR onto the game "
@@ -3466,10 +3463,10 @@ def main() -> None:
                 print("[INFO] Building in the unpacked copy itself: each file is removed as soon as the package "
                       "holds it. A build that fails is unpacked again on Retry.", flush=True)
             # build in a folder of its own: an existing package is never written over halfway
-            _holder_made = not (out_dir / "_ffpfsc_temp").exists()
+            _holder_made = not (out_dir / _TEMP_DIR).exists()
             for _try in range(3):             # a cleanup of the last job may take an empty holder away
                 try:
-                    stage_out = Path(tempfile.mkdtemp(prefix="tmp", dir=str(_ensure_dir(out_dir / "_ffpfsc_temp"))))
+                    stage_out = Path(tempfile.mkdtemp(prefix="tmp", dir=str(_ensure_dir(out_dir / _TEMP_DIR))))
                     break
                 except FileNotFoundError:
                     if _try == 2:
@@ -3537,7 +3534,7 @@ def main() -> None:
             finally:
                 if not keep_stage:
                     shutil.rmtree(stage_out, ignore_errors=True)
-                    if _holder_made:  # only the _ffpfsc_temp this build made, if empty
+                    if _holder_made:  # only the _ultrapack_temp this build made, if empty
                         _drop_scratch_holder(stage_out.parent)
             # validate before announcing: a failed check exits 3, but the package stays
             validate_rc, failed_checks = 0, []
@@ -3604,7 +3601,7 @@ def main() -> None:
     if user_temp:
         user_temp.mkdir(parents=True, exist_ok=True)
         print(f"[INFO] Using user-specified temp folder: {user_temp}", flush=True)
-    # where the pass-2 spool spills when --temp-dir is too small (<root>/_ffpfsc_temp)
+    # where the pass-2 spool spills when --temp-dir is too small (<root>/_ultrapack_temp)
     user_spill: Path | None = Path(args.spool_fallback_dir).resolve() if args.spool_fallback_dir else None
 
     _is_zip = lambda p: p.suffix.lower() == ".zip"
@@ -3976,7 +3973,7 @@ def main() -> None:
                         continue  # done with this item, no pass 2
                     # stable dir, not a TemporaryDirectory: a retry resumes pass 2 from this image
                     # removed only after pass 2 succeeds; every failure leaves it for the resume
-                    inner_dir = (Path(user_temp) if user_temp else Path(tempfile.gettempdir())).resolve() / "_ffpfsc_inner"
+                    inner_dir = (Path(user_temp) if user_temp else Path(tempfile.gettempdir())).resolve() / _INNER_DIR
                     inner_dir.mkdir(parents=True, exist_ok=True)
                     temp_pfs = inner_dir / f"{title_id}.ffpfs"
                     # a crashed run's leftover is stale here (resumes don't come this way) and mkpfs would prompt

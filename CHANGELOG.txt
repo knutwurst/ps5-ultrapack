@@ -3,6 +3,21 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.3.4
+────────────────────────────────────────────────────────────────────────
+
+WORK FOLDERS
+
+  - The work folders carry the app's name: '_ultrapack_temp',
+    '_ultrapack_extract' and '_ultrapack_inner' instead of the old
+    '_ffpfsc_' ones. A temp folder set to an old '_ffpfsc_temp' moves to
+    '_ultrapack_temp' in the same place. Folders under the old names are
+    still the app's own and get cleaned up like the new ones.
+  - Empty work folders really go now. On a Mac each one holds a small
+    marker that keeps Spotlight out, and the cleanup took that marker for
+    content, so the folders stayed.
+
+────────────────────────────────────────────────────────────────────────
   v2.3.3
 ────────────────────────────────────────────────────────────────────────
 

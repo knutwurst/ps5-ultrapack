@@ -324,8 +324,37 @@ def _is_app_tmp_dir(name: str) -> bool:
     return bool(_APP_TMP_RE.fullmatch(name))
 
 
-_APP_TMP_PARENTS = ("_ffpfsc_temp", "_ffpfsc_inner", "_ffpfsc_extract", "_extracted")
-_APP_TMP_LEFTOVER_PREFIXES = ("mkpfs-", "ffpfsc_spool_")
+# our work folders; the _ffpfsc_ names are from before the rename and still ours when found
+TEMP_DIR, EXTRACT_DIR, INNER_DIR = "_ultrapack_temp", "_ultrapack_extract", "_ultrapack_inner"
+TEMP_DIR_NAMES = (TEMP_DIR, "_ffpfsc_temp")
+EXTRACT_DIR_NAMES = (EXTRACT_DIR, "_ffpfsc_extract", "_extracted")
+INNER_DIR_NAMES = (INNER_DIR, "_ffpfsc_inner")
+SCRATCH_DIR_NAMES = TEMP_DIR_NAMES + EXTRACT_DIR_NAMES + INNER_DIR_NAMES
+
+
+def scratch_temp_of(base) -> Path:
+    """<base>/_ultrapack_temp, or base itself when it is one"""
+    b = Path(base)
+    return b if b.name in TEMP_DIR_NAMES else b / TEMP_DIR
+
+
+def temp_scratch_roots(base) -> list:
+    """every temp scratch folder that may hang off base, old name included"""
+    b = Path(base)
+    if b.name in TEMP_DIR_NAMES:
+        return [b] + [b.parent / n for n in TEMP_DIR_NAMES if n != b.name]
+    return [b / n for n in TEMP_DIR_NAMES]
+
+
+def renamed_temp_folder(path: str) -> str:
+    """a temp folder picked before the rename: same place, new name"""
+    if path and Path(path).name in TEMP_DIR_NAMES[1:]:
+        return str(Path(path).with_name(TEMP_DIR))
+    return path
+
+
+_APP_TMP_PARENTS = SCRATCH_DIR_NAMES
+_APP_TMP_LEFTOVER_PREFIXES = ("mkpfs-", "ultrapack_spool_", "ffpfsc_spool_")
 _APP_TMP_LEFTOVER_SUFFIXES = (".ffpfs", ".ffpfsc", ".pfsc", ".partial", ".tmp")
 
 
@@ -1120,7 +1149,7 @@ def find_game_folders(root: Path, max_depth: int = 3) -> list[Path]:
 
 JOB_CONTAINER_SUFFIXES = {".ffpfs", ".ffpfsc", ".pkg", ".exfat", ".ffpkg"}
 # our own scratch folders: never sources, even inside the scanned tree
-_JOB_SCAN_SKIP_DIRS = {"_ffpfsc_temp", "_extracted", "_ffpfsc_extract", "_ffpfsc_inner", "__MACOSX"}
+_JOB_SCAN_SKIP_DIRS = {*SCRATCH_DIR_NAMES, "__MACOSX"}
 
 
 def is_archive_file(path: Path) -> bool:
@@ -3621,8 +3650,9 @@ def strip_fs_junk(root) -> int:
     return removed
 
 
-# our own work folders; nothing else is ever pruned
-SCRATCH_DIR_NAMES = ("_ffpfsc_temp", "_ffpfsc_extract", "_extracted", "_ffpfsc_inner")
+def _is_scratch_clutter(name: str) -> bool:
+    # we put the Spotlight marker there ourselves, it never makes a folder full
+    return is_fs_junk_name(name) or name == ".metadata_never_index"
 
 
 def _only_clutter_below(d: Path) -> bool:
@@ -3633,7 +3663,7 @@ def _only_clutter_below(d: Path) -> bool:
             if e.is_dir():
                 if not _only_clutter_below(e):
                     return False
-            elif not is_fs_junk_name(e.name):
+            elif not _is_scratch_clutter(e.name):
                 return False
     except OSError:
         return False
@@ -3644,6 +3674,27 @@ def _remove_with_sidecar(d: Path) -> bool:
     try:
         shutil.rmtree(d)
     except OSError:
+        return False
+    try:
+        (d.parent / ("._" + d.name)).unlink()
+    except OSError:
+        pass
+    return True
+
+
+def drop_empty_scratch(d) -> bool:
+    """one of our work folders with nothing but markers and Finder files left goes; any subfolder keeps it"""
+    try:
+        d = Path(d)
+        if d.name not in SCRATCH_DIR_NAMES or d.is_symlink() or not d.is_dir():
+            return False
+        left = list(d.iterdir())
+        if any(e.is_dir() or not _is_scratch_clutter(e.name) for e in left):
+            return False
+        for e in left:
+            e.unlink(missing_ok=True)
+        d.rmdir()                         # fails when a job put something in meanwhile, fine
+    except (OSError, TypeError, ValueError):
         return False
     try:
         (d.parent / ("._" + d.name)).unlink()
@@ -3690,8 +3741,10 @@ def prune_empty_scratch(bases, min_age: float = 0.0, stop=None) -> list:
         if key in seen or not base.is_dir():
             continue
         seen.add(key)
-        for name in SCRATCH_DIR_NAMES:
-            top = base / name
+        tops = [base / name for name in SCRATCH_DIR_NAMES]
+        if base.name in TEMP_DIR_NAMES:
+            tops += temp_scratch_roots(base)      # a temp folder named like ours is ours, so is its old twin
+        for top in tops:
             if top.is_dir() and not top.is_symlink():
                 prune(top)
     return gone
@@ -4166,7 +4219,17 @@ __all__ = [
     "APP_DIR",
     "strip_written_clutter",
     "prune_empty_scratch",
+    "drop_empty_scratch",
     "SCRATCH_DIR_NAMES",
+    "TEMP_DIR",
+    "EXTRACT_DIR",
+    "INNER_DIR",
+    "TEMP_DIR_NAMES",
+    "EXTRACT_DIR_NAMES",
+    "INNER_DIR_NAMES",
+    "scratch_temp_of",
+    "renamed_temp_folder",
+    "temp_scratch_roots",
     "ident_from_folder_name",
     "_ENV_APP_DIR",
     "_LEGACY_APP_DIRS",

@@ -89,7 +89,7 @@ class ChainMode(unittest.TestCase):
         self.assertIsNotNone(eboot, f"no eboot under {dest}: {log[-800:]}")
         self.assertEqual(sdk_of(eboot), (SDK_761_PS5, SDK_761_PS4))
         self.assertTrue(src.is_file(), "the source image must be left in place")
-        self.assertFalse(list((self.temp / "_ffpfsc_temp").glob("chain-*")), "scratch must be cleaned up")
+        self.assertFalse(list((self.temp / "_ultrapack_temp").glob("chain-*")), "scratch must be cleaned up")
 
     def test_5_ffpfsc_to_ffpfsc_with_backport_is_one_job(self):
         src = getattr(type(self), "ffpfsc", None) or self._pack_once()
@@ -266,7 +266,7 @@ class BackportRules(unittest.TestCase):
         self.assertIn("on the executables of", log)
         self.assertIn("patched libraries for 7.61", log)
         self.assertNotIn("before the next step", log, "refused before the unpack")
-        self.assertFalse(list((self.root / "t" / "_ffpfsc_temp").glob("chain-*")))
+        self.assertFalse(list((self.root / "t" / "_ultrapack_temp").glob("chain-*")))
         rc, log = run(str(img), str(self.root / "out3"), "--to", "folder", "--backport-target", "9.60",
                       "--fw-libs-root", str(self.fw), "--temp-dir", str(self.root / "t"))
         self.assertEqual(rc, 0, log[-1500:])

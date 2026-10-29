@@ -79,7 +79,7 @@ class PackGuardTests(unittest.TestCase):
         self.assertEqual(image.read_bytes(), before, "the source image must be untouched")
 
     def test_stale_pass1_image_does_not_block_a_rebuild(self):
-        inner_dir = self.temp / "_ffpfsc_inner"
+        inner_dir = self.temp / "_ultrapack_inner"
         inner_dir.mkdir()
         (inner_dir / f"{TITLE_ID}.ffpfs").write_bytes(b"\0" * 100)   # left by a crash
         (inner_dir / f"{TITLE_ID}.ffpfs.tmp").write_bytes(b"\0" * 10)

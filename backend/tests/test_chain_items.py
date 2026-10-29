@@ -131,9 +131,10 @@ def make_source_tree(root: Path) -> Path:
     (game / "eboot.bin").write_bytes(b"\x7fELF")
     (game / "dlc.pkg").write_bytes(b"\x7fCNT")
     (conv / ".hidden.ffpfsc").write_bytes(b"x")
-    scratch = conv / "_ffpfsc_temp"
-    scratch.mkdir()
-    (scratch / "leftover.ffpfsc").write_bytes(b"x")
+    for name in ("_ultrapack_temp", "_ffpfsc_temp"):      # the old name is still ours
+        scratch = conv / name
+        scratch.mkdir()
+        (scratch / "leftover.ffpfsc").write_bytes(b"x")
     return conv
 
 

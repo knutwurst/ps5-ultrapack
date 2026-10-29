@@ -339,7 +339,7 @@ class ChainSources(Case):
         self.assertEqual(rc, 1, log[-2000:])
         self.assertIn("[ERROR]", log)
         self.assertNotIn("Traceback", log)
-        self.assertFalse(list((self.temp / "_ffpfsc_temp").glob("chain-*")))
+        self.assertFalse(list((self.temp / "_ultrapack_temp").glob("chain-*")))
 
 
 class PackPath(Case):
@@ -348,7 +348,7 @@ class PackPath(Case):
         real = cli.shutil.move
 
         def failing(src, dst, *a, **kw):
-            if str(src).endswith(".ffpfs") and "_ffpfsc_inner" in str(src):
+            if str(src).endswith(".ffpfs") and "_ultrapack_inner" in str(src):
                 Path(dst).write_bytes(b"half")
                 raise OSError("disk full")
             return real(src, dst, *a, **kw)
@@ -363,7 +363,7 @@ class PackPath(Case):
         self.assertEqual(sorted(p.name for p in self.out.iterdir()), ["G.ffpfsc"])
 
     def test_success_removes_only_its_own_inner_image(self):
-        inner = self.temp / "_ffpfsc_inner"
+        inner = self.temp / "_ultrapack_inner"
         inner.mkdir()
         other = inner / "PPSA99999.ffpfs"
         other.write_bytes(b"another job's pass-1 image")
@@ -472,7 +472,7 @@ class TempFolders(Case):
         self.assertIn("The unpacked copy is ours", log)
 
     def test_every_scratch_lives_in_the_app_folder(self):
-        app = self.temp / "_ffpfsc_temp"
+        app = self.temp / "_ultrapack_temp"
         game = make_game(self.root)
         for target, extra in ((self.out / "G.ffpfsc", ()), (self.out / "U.ffpfs", ("--no-compress",)),
                               (self.out / "Z.ffpfsc", ())):
@@ -487,7 +487,7 @@ class TempFolders(Case):
             if target.stem == "Z":
                 found = re.search(r"\[OK\] Found game source at (.+)", log).group(1)
                 self.assertTrue(Path(found).is_relative_to(app), found)
-        self.assertEqual(sorted(p.name for p in self.temp.iterdir() if p.name != "_ffpfsc_inner"), [])
+        self.assertEqual(sorted(p.name for p in self.temp.iterdir() if p.name != "_ultrapack_inner"), [])
 
 
 class ChainArchiveExtras(Case):
@@ -548,8 +548,19 @@ class ReviewRoundTwo(unittest.TestCase):
         self.assertFalse(hold.exists())
 
     def test_an_extra_temp_drive_folder_gets_no_second_scratch_folder(self):
-        base = self.d / "_ffpfsc_temp"; base.mkdir()
-        self.assertEqual(cli._app_scratch_root(base), base.resolve())
+        for name in ("_ultrapack_temp", "_ffpfsc_temp"):          # the old name too
+            base = self.d / name; base.mkdir()
+            self.assertEqual(cli._app_scratch_root(base), base.resolve())
+
+    def test_a_temp_folder_gets_the_new_scratch_name(self):
+        self.assertEqual(cli._app_scratch_root(self.d), (self.d / "_ultrapack_temp").resolve())
+
+    def test_a_scratch_root_with_only_the_spotlight_marker_goes(self):
+        root = self.d / "_ultrapack_temp"; root.mkdir()
+        (root / ".metadata_never_index").touch()
+        (root / ".DS_Store").write_bytes(b"x")
+        cli._drop_scratch_holder(root)
+        self.assertFalse(root.exists())
 
 if __name__ == "__main__":
     unittest.main()

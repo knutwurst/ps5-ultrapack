@@ -211,6 +211,71 @@ class EmptyScratch(unittest.TestCase):
         gone = self.uc.prune_empty_scratch([b], min_age=60)            # a nested pair, both settled
         self.assertEqual(gone, [b / "_ffpfsc_temp" / "_extracted", b / "_ffpfsc_temp"])
 
+    def test_our_spotlight_marker_does_not_keep_a_folder(self):
+        b = self.base
+        for d in (b / "_ultrapack_temp" / "_extracted", b / "_ultrapack_extract", b / "_ultrapack_inner"):
+            d.mkdir(parents=True)
+            (d / ".metadata_never_index").touch()
+        (b / "_ultrapack_extract" / "kept" / "eboot.bin").parent.mkdir()
+        (b / "_ultrapack_extract" / "kept" / "eboot.bin").write_bytes(b"E")
+        gone = self.uc.prune_empty_scratch([b])
+        self.assertEqual(sorted(p.relative_to(b).as_posix() for p in b.rglob("*")),
+                         ["_ultrapack_extract", "_ultrapack_extract/.metadata_never_index",
+                          "_ultrapack_extract/kept", "_ultrapack_extract/kept/eboot.bin"])
+        self.assertIn(b / "_ultrapack_temp", gone)
+        self.assertIn(b / "_ultrapack_inner", gone)
+
+    def test_a_temp_folder_named_like_ours_and_its_old_twin_go(self):
+        b = self.base
+        for name in ("_ultrapack_temp", "_ffpfsc_temp"):
+            (b / name).mkdir()
+            (b / name / ".metadata_never_index").touch()
+        gone = self.uc.prune_empty_scratch([b / "_ultrapack_temp"])
+        self.assertEqual(sorted(g.name for g in gone), ["_ffpfsc_temp", "_ultrapack_temp"])
+        self.assertEqual(list(b.iterdir()), [])
+
+
+class DropEmptyScratch(unittest.TestCase):
+    def setUp(self):
+        import ultra_core
+        self.uc = ultra_core
+        self.base = Path(tempfile.mkdtemp(prefix="scratch_drop_"))
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def test_markers_only_goes_with_its_sidecar(self):
+        d = self.base / "_ultrapack_extract"; d.mkdir()
+        (d / ".metadata_never_index").touch()
+        (d / "._.metadata_never_index").write_bytes(b"\0\5\26\7")
+        (self.base / "._" "_ultrapack_extract").write_bytes(b"\0\5\26\7")
+        self.assertTrue(self.uc.drop_empty_scratch(d))
+        self.assertEqual(list(self.base.iterdir()), [])
+
+    def test_a_subfolder_or_a_real_file_keeps_it(self):
+        for name, make in (("_ultrapack_temp", lambda d: (d / "next-job").mkdir()),
+                           ("_ffpfsc_extract", lambda d: (d / "eboot.bin").write_bytes(b"E"))):
+            d = self.base / name; d.mkdir(); (d / ".metadata_never_index").touch(); make(d)
+            self.assertFalse(self.uc.drop_empty_scratch(d))
+            self.assertTrue((d / ".metadata_never_index").exists())
+
+    def test_a_folder_that_is_not_ours_stays(self):
+        d = self.base / "Games"; d.mkdir(); (d / ".metadata_never_index").touch()
+        self.assertFalse(self.uc.drop_empty_scratch(d))
+        self.assertTrue(d.is_dir())
+
+    def test_temp_roots_know_the_old_name(self):
+        b = self.base
+        self.assertEqual(self.uc.temp_scratch_roots(b), [b / "_ultrapack_temp", b / "_ffpfsc_temp"])
+        self.assertEqual(self.uc.temp_scratch_roots(b / "_ffpfsc_temp"), [b / "_ffpfsc_temp", b / "_ultrapack_temp"])
+        self.assertEqual(self.uc.scratch_temp_of(b), b / "_ultrapack_temp")
+        self.assertEqual(self.uc.scratch_temp_of(b / "_ffpfsc_temp"), b / "_ffpfsc_temp")
+
+    def test_an_old_temp_setting_gets_the_new_name(self):
+        self.assertEqual(self.uc.renamed_temp_folder("/V/x/_ffpfsc_temp"), str(Path("/V/x/_ultrapack_temp")))
+        for keep in ("", "/V/x", "/V/x/_ultrapack_temp", "/V/_ffpfsc_temp/sub"):
+            self.assertEqual(self.uc.renamed_temp_folder(keep), keep)
+
 class RemovableParts(unittest.TestCase):
     def setUp(self):
         import ultra_core
