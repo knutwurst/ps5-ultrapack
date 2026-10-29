@@ -276,7 +276,8 @@ class Fonts:
         base = tkfont.nametofont("TkDefaultFont").actual().get("family", "Helvetica")
         # try Menlo first: listing families or asking for a missing one costs ~350 ms
         mono = next((fam for fam in (("Consolas", "Courier New") if sys.platform == "win32"
-                                     else ("Menlo", "Monaco", "Courier New"))
+                                     else ("Menlo", "Monaco", "Courier New") if sys.platform == "darwin"
+                                     else ("DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono"))
                      if tkfont.Font(root=root, family=fam, size=-11).actual("family") == fam), "Courier")
         # Negative Tk sizes are pixels.
         f = lambda px, weight="normal", fam=base: _Font(root=root, family=fam, size=-round(px * SCALE), weight=weight)

@@ -447,7 +447,8 @@ RED     = ctk_pair("danger")
 DANGER_HOVER = ctk_pair("danger_hover")
 WHITE   = ctk_pair("text")            # primary text (dark text in light mode)
 MUTED   = ctk_pair("muted")
-MONO_FONT = "Consolas" if sys.platform == "win32" else "Menlo"   # each ships with its system
+MONO_FONT = ("Consolas" if sys.platform == "win32" else "Menlo" if sys.platform == "darwin"
+             else "DejaVu Sans Mono")   # each ships with its system
 # menus get ACCEL (Tk on macOS maps Command-N to a real key), tooltips SHORTCUT
 IS_MAC = sys.platform == "darwin"
 TRASH_NAME = "Recycle Bin" if sys.platform == "win32" else "Trash"
@@ -16242,6 +16243,14 @@ class App:
                 snd = "/System/Library/Sounds/Glass.aiff" if success else "/System/Library/Sounds/Basso.aiff"
                 subprocess.Popen(["afplay", snd],
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif sys.platform.startswith("linux"):
+                # freedesktop sound theme; canberra picks the user's theme, paplay needs the file
+                ev = "complete" if success else "dialog-error"
+                snd = f"/usr/share/sounds/freedesktop/stereo/{ev}.oga"
+                cmd = (["canberra-gtk-play", "-i", ev] if shutil.which("canberra-gtk-play")
+                       else ["paplay", snd] if shutil.which("paplay") and os.path.isfile(snd) else None)
+                if cmd:
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 

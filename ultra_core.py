@@ -28,6 +28,8 @@ def _bundled_backend_dir() -> Path:
 
 if sys.platform == "darwin":
     APP_DIR = Path.home() / "Library" / "Application Support" / "PS5_UltraPack"
+elif sys.platform.startswith("linux"):
+    APP_DIR = Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "PS5_UltraPack"
 else:
     APP_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / "PS5_UltraPack"
 # tests point this at a scratch folder so they never touch the real profile
@@ -181,7 +183,16 @@ def drive_display_name(path, system: str = "the system drive") -> str:
             pass
         return f"{letter} ({label})" if label else letter
     parts = p.parts
-    return parts[2] if len(parts) > 2 and parts[1] == "Volumes" else tr(system)
+    if len(parts) > 2 and parts[1] == "Volumes":
+        return parts[2]
+    # Linux automounts: /media/<user>/<label>, /run/media/<user>/<label>, /mnt/<label>
+    if len(parts) > 3 and parts[1] == "media":
+        return parts[3]
+    if len(parts) > 4 and parts[1:3] == ("run", "media"):
+        return parts[4]
+    if len(parts) > 2 and parts[1] == "mnt":
+        return parts[2]
+    return tr(system)
 
 
 def _existing_ancestor(path: Path) -> Path:

@@ -219,6 +219,16 @@ This writes `dist/PS5 UltraPack.app` plus `dist/PS5-UltraPack-<version>-macos-ar
 
 **Windows:** build the native parts on a Mac first with `WIN_PYTHON=<copy of the Windows Python folder> ./BUILD_WINDOWS_PARTS.sh` (needs the .NET SDK and `mingw-w64`). Then run `BUILD_WINDOWS_APP.ps1` on Windows. It writes `dist\windows\PS5 UltraPack\PS5 UltraPack.exe` and the release zip.
 
+**Linux x64**, from the repo root. Use the distro Python, not a uv/pyenv standalone build: those have Tk compiled in with their own Xlib, which crashes against tkdnd's system Xlib on startup. The script checks for this.
+
+```bash
+sudo apt install python3-venv python3-dev python3-tk g++   # plus the .NET SDK 9+
+/usr/bin/python3 -m venv .venv && source .venv/bin/activate
+./BUILD_LINUX_APP.sh
+```
+
+This writes `dist/PS5 UltraPack/` plus `dist/PS5-UltraPack-<version>-linux-x64.tar.gz` and its `.sha256`. Unpack it anywhere and run `./PS5 UltraPack`; `./install.sh` adds it to the app menu (`--uninstall` removes it). Settings live in `~/.local/share/PS5_UltraPack`. Trash uses `gio trash` (or `kioclient`/`trash-cli`), notifications use `notify-send`.
+
 ## Credits
 
 This isn't a fork, but it builds on a lot of other people's work. Thanks to:
