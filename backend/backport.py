@@ -313,6 +313,12 @@ def encrypted_selfs(root: Path) -> list[Path]:
             if is_encrypted_self(path) and not is_system_module(path, root)]
 
 
+def encrypted_system_modules(root: Path) -> list[Path]:
+    """the encrypted sce_sys/about modules a backport leaves as they are; a decrypted one is lowered as usual"""
+    return [path for path in iter_source_elfs(root)
+            if is_system_module(path, root) and is_encrypted_self(path)]
+
+
 def lower_sdk_version(elf: bytes, target: str,
                       words: tuple[int, int] | None = None) -> tuple[bytes, list[SdkChange]]:
     """one SdkChange per field even when equal, so a no-op gets logged too"""
