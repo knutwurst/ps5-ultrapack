@@ -2463,13 +2463,15 @@ class SettingsView:
         except OSError:
             _shm_gb = 0
         if _shm_gb >= 4:
-            ram_gbs = [g for g in (4, 8, 12, 16, 24, 32, 48, 64, 96, 128) if g <= _shm_gb]
+            _cur_ram = ram_temp_gb()
+            # a value set by hand (settings.json) shows as it is
+            ram_gbs = sorted({g for g in (4, 8, 12, 16, 24, 32, 48, 64, 96, 128) if g <= _shm_gb}
+                             | ({_cur_ram} if 0 < _cur_ram <= _shm_gb else set()))
             ram_labels = {0: "Off", **{g: f"{g} GB" for g in ram_gbs}}
             ram_rev = {v: k for k, v in ram_labels.items()}
             ram_menu = ctk.CTkOptionMenu(
                 _ds_row("RAM for temp:"), values=list(ram_labels.values()), width=200,
                 command=lambda disp: save_settings({"ram_temp_gb": ram_rev.get(disp, 0)}))
-            _cur_ram = ram_temp_gb()
             ram_menu.set(ram_labels[max((g for g in ram_labels if g <= _cur_ram), default=0)])
             ram_menu.pack(side="left")
             ctk.CTkLabel(ds, text=f"With Drive usage on Auto, a job whose temp fits in this much RAM builds there "
