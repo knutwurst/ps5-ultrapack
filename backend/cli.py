@@ -1000,8 +1000,10 @@ def _open_pass2_spool_dir(image_path, default_temp_dir, output_path, spill_base=
         need = int(Path(image_path).stat().st_size * 1.10)
     except Exception:
         return default_temp_dir, None
+    # temp in RAM (/dev/shm) was sized for the scratch alone: a spool there could eat the rest of the RAM
+    in_ram = str(Path(default_temp_dir).resolve()).startswith("/dev/shm/")
     try:
-        if shutil.disk_usage(str(default_temp_dir)).free >= need:
+        if not in_ram and shutil.disk_usage(str(default_temp_dir)).free >= need:
             return default_temp_dir, None  # fits beside the image, fastest path
     except Exception:
         return default_temp_dir, None

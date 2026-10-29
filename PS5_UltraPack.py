@@ -2457,6 +2457,29 @@ class SettingsView:
         sf_menu.set(sf_labels[_cur_sf])
         sf_menu.pack(side="left")
 
+        # Linux: a job whose scratch fits builds in /dev/shm; tmpfs caps it at half the RAM unless remounted
+        try:
+            _shm_gb = shutil.disk_usage(str(ultra_core.SHM_DIR)).total >> 30 if sys.platform.startswith("linux") else 0
+        except OSError:
+            _shm_gb = 0
+        if _shm_gb >= 4:
+            ram_gbs = [g for g in (4, 8, 12, 16, 24, 32, 48, 64, 96, 128) if g <= _shm_gb]
+            ram_labels = {0: "Off", **{g: f"{g} GB" for g in ram_gbs}}
+            ram_rev = {v: k for k, v in ram_labels.items()}
+            ram_menu = ctk.CTkOptionMenu(
+                _ds_row("RAM for temp:"), values=list(ram_labels.values()), width=200,
+                command=lambda disp: save_settings({"ram_temp_gb": ram_rev.get(disp, 0)}))
+            _cur_ram = ram_temp_gb()
+            ram_menu.set(ram_labels[max((g for g in ram_labels if g <= _cur_ram), default=0)])
+            ram_menu.pack(side="left")
+            ctk.CTkLabel(ds, text=f"With Drive usage on Auto, a job whose temp fits in this much RAM builds there "
+                                  f"(/dev/shm), which is much faster than any drive and spares its writes. "
+                                  f"A bigger job keeps one piece in RAM when it can, or uses the drives as before. "
+                                  f"At most {_shm_gb} GB here (half the RAM, the /dev/shm limit), and "
+                                  f"{ultra_core.RAM_TEMP_RESERVE >> 30} GB of RAM always stay free.",
+                         text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
+                         wraplength=640).pack(anchor="w", padx=14, pady=(0, 4))
+
         lp_labels = {"ask": "Ask me", "auto": "Proceed anyway", "skip": "Skip the game"}
         lp_rev = {v: k for k, v in lp_labels.items()}
         lp_menu = ctk.CTkOptionMenu(
@@ -2561,7 +2584,7 @@ class SettingsView:
         self.app.show_space_dialog_var.set(True)
         self.app.keep_drives_awake_var.set(False)
         save_settings({"space_safety_factor": 1.0, "low_space_policy": "ask", "same_drive_rw": "auto",
-                       "keep_awake_interval": 8})
+                       "keep_awake_interval": 8, "ram_temp_gb": 0})
         self._rebuild("drives")
 
 
@@ -10473,6 +10496,14 @@ class App:
                 continue
             seen.add(dev)
             out.append(d)
+        ram = ram_temp_root()                      # Settings › Drives › RAM for temp, Linux
+        if ram is not None:
+            try:
+                ram.mkdir(mode=0o700, exist_ok=True)
+                if _drive_cache_key(ram) not in seen:
+                    out.append(ram)
+            except OSError:
+                pass
         return out
 
     def _keepalive_dirs(self):
@@ -10777,9 +10808,12 @@ class App:
         fit_full = [(d, f) for d, f in pool if f >= full_need and self._same_drive_rw_allowed(d)]
         if size > 0 and fit_full and not size_is_estimate:
             ssd_full = [(d, f) for d, f in fit_full if _is_ssd(d)]
-            best = max(ssd_full or fit_full, key=lambda t: t[1])[0]
+            ram_full = [d for d, _f in fit_full if is_ram_temp(d)]
+            best = ram_full[0] if ram_full else max(ssd_full or fit_full, key=lambda t: t[1])[0]
             _set(_scratch(best), _scratch(best) / "_extracted", False, False)
-            if _drive_cache_key(best) != _drive_cache_key(temp_base_p):
+            if ram_full:
+                _plog("INFO", f"Auto: {item.name} (~{szs}): whole scratch in RAM ({best}).")
+            elif _drive_cache_key(best) != _drive_cache_key(temp_base_p):
                 _plog("INFO", f"Auto: {item.name} (~{szs}): whole scratch on pool drive {best}.")
             return item._build_root
         # 2) archives: image on one SSD, source on another; not on an estimate either
@@ -10800,7 +10834,8 @@ class App:
         img_fit = [(d, f) for d, f in pool if f >= image_need]
         if size > 0 and img_fit and out_free >= out_split_need and not pkg_chain:
             ssd_img = [(d, f) for d, f in img_fit if _is_ssd(d)]
-            img_dir = max(ssd_img or img_fit, key=lambda t: t[1])[0]  # prefer an SSD for the image
+            ram_img = [d for d, _f in img_fit if is_ram_temp(d)]
+            img_dir = ram_img[0] if ram_img else max(ssd_img or img_fit, key=lambda t: t[1])[0]  # RAM, else an SSD
             _set(_scratch(img_dir), spread_root, True, False)   # source extracts to the big output drive
             _plog("INFO", f"Auto: {item.name} (~{szs}): 1) extract source → output drive "
                              f"({out_dir}); 2) build inner image → {temp_drive_label(img_dir)} "
