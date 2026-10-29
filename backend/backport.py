@@ -297,9 +297,20 @@ def is_encrypted_self(path: Path, head_size: int = 1 << 16) -> bool:
     return img is not None and not img.readable
 
 
+def is_system_module(path: Path, root: Path) -> bool:
+    """sce_sys/about/*.sprx: Sony's own module, retail-encrypted even in a decrypted dump. The console
+    loads it as it is, the fPKG builder leaves it alone too, so it neither blocks nor gets backported."""
+    try:
+        parts = [x.lower() for x in Path(path).relative_to(root).parts]
+    except ValueError:
+        return False
+    return parts[:2] == ["sce_sys", "about"]
+
+
 def encrypted_selfs(root: Path) -> list[Path]:
     """no backport can read or change these"""
-    return [path for path in iter_source_elfs(root) if is_encrypted_self(path)]
+    return [path for path in iter_source_elfs(root)
+            if is_encrypted_self(path) and not is_system_module(path, root)]
 
 
 def lower_sdk_version(elf: bytes, target: str,
@@ -702,7 +713,7 @@ def analyse_backport(source_root: Path, target: str,
             raise ValueError(f"{path.relative_to(source_root)} is damaged and cannot be read ({e})") from e
         if elf is None:
             img = self_file.parse_self(data) if self_file.is_self(data) else None
-            if img is not None and not img.readable:
+            if img is not None and not img.readable and not is_system_module(path, source_root):
                 unreadable.append(str(path.relative_to(source_root)))
             continue
         imports, exports = read_symbols(elf)
