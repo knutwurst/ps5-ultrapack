@@ -17,6 +17,12 @@ WORK FOLDERS
     marker that keeps Spotlight out, and the cleanup took that marker for
     content, so the folders stayed.
 
+ABOUT
+
+  - Donations go through Ko-fi now (ko-fi.com/knutwurst) instead of
+    PayPal: the button in Settings > About, the "Buy me a coffee" link
+    in the sidebar and the Help menu entry all open the Ko-fi page.
+
 ────────────────────────────────────────────────────────────────────────
   v2.3.3
 ────────────────────────────────────────────────────────────────────────

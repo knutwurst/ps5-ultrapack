@@ -17,7 +17,7 @@ The app used to be called PS5 FFPFSC ULTRA.
 </p>
 
 <p align="center">
-  If you like what I do, you can buy me a coffee*: <a href="https://paypal.me/oliverkoester"><img src="https://img.shields.io/badge/Donate-PayPal-0070ba?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate with PayPal" align="absmiddle"></a><br>
+  If you like what I do, you can buy me a coffee*: <a href="https://ko-fi.com/knutwurst"><img src="https://img.shields.io/badge/Ko--fi-knutwurst-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support me on Ko-fi" align="absmiddle"></a><br>
   <sub>*It doesn't have to be a big donation. A few cents show me who uses the tool and cares about where it goes next. That keeps me motivated, and I know I'm not coding for the bin ;)</sub>
 </p>
 
@@ -254,5 +254,5 @@ Not affiliated with Sony Interactive Entertainment. "PlayStation" and "PS5" are 
 
 ---
 
-### If you like what I do, you can buy me a coffee*: [![Donate](https://img.shields.io/badge/Donate-PayPal-0070ba?logo=paypal&logoColor=white)](https://paypal.me/oliverkoester)
+### If you like what I do, you can buy me a coffee*: [![Ko-fi](https://img.shields.io/badge/Ko--fi-knutwurst-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/knutwurst)
 <sub>*It doesn't have to be a big donation. A few cents show me who uses the tool and cares about where it goes next. That keeps me motivated, and I know I'm not coding for the bin ;)</sub>
