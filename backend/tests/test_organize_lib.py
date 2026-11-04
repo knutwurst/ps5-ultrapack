@@ -485,7 +485,8 @@ class Into(Tree):
             self.assertEqual(rc, 0, lines)
             got = sorted(json.loads(p.read_text())["title"] for p in out.rglob("*DLC*.pkg"))
             self.assertEqual(got, ["Alpha Game - X", "Alpha Game - x"], lines)
-            self.assertEqual(len({p.name.casefold() for p in out.rglob("*DLC*.pkg")}), 2)
+            if ol.case_blind(out):           # a case-sensitive drive (Linux ext4) keeps both names as they are
+                self.assertEqual(len({p.name.casefold() for p in out.rglob("*DLC*.pkg")}), 2)
             self.assertFalse([p for p in out.rglob("*") if p.name.endswith(".copy-old")])
 
     def test_items_left_in_the_source_give_code_4(self):
