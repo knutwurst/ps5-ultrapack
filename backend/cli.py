@@ -1000,8 +1000,10 @@ def _open_pass2_spool_dir(image_path, default_temp_dir, output_path, spill_base=
         need = int(Path(image_path).stat().st_size * 1.10)
     except Exception:
         return default_temp_dir, None
+    # temp in RAM (/dev/shm) was sized for the scratch alone: a spool there could eat the rest of the RAM
+    in_ram = str(Path(default_temp_dir).resolve()).startswith("/dev/shm/")
     try:
-        if shutil.disk_usage(str(default_temp_dir)).free >= need:
+        if not in_ram and shutil.disk_usage(str(default_temp_dir)).free >= need:
             return default_temp_dir, None  # fits beside the image, fastest path
     except Exception:
         return default_temp_dir, None
@@ -2308,6 +2310,10 @@ def _backport_precheck(folder, target: str, libs_root=None, fw_root=None):
         names = ", ".join(str(p.relative_to(folder)) for p in locked[:4]) + (", …" if len(locked) > 4 else "")
         raise RuntimeError(f"{len(locked)} executable(s) are encrypted ({names}). A backport needs "
                            f"decrypted or fake-signed executables.")
+    for p in _bp.encrypted_system_modules(folder):
+        print(f"[WARN] Backport: {p.relative_to(folder)} is encrypted and is skipped; it stays as the dump has it. "
+              f"The other executables are backported, but the result may not start on {target} firmware.",
+              flush=True)
     libs = _bp.patched_libs_folder(libs_root, target) if libs_root else None
     if libs_root and libs is None:
         print(f"[WARN] Backport: {libs_root} holds no patched libraries for {target}.", flush=True)

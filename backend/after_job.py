@@ -451,7 +451,23 @@ def move_to_trash(path: Path) -> str:
     if sys.platform == "win32":
         _trash_windows(path)
         return "Recycle Bin"
+    if sys.platform.startswith("linux"):
+        return _trash_linux(path)
     raise OSError("this system has no Trash the app can use")
+
+
+def _trash_linux(path: Path) -> str:
+    """gio puts it into the Trash of its own drive (.Trash-UID), as the file manager would"""
+    for cmd in (["gio", "trash", "--"], ["kioclient", "move"], ["trash-put", "--"]):
+        exe = shutil.which(cmd[0])
+        if not exe:
+            continue
+        args = [exe, *cmd[1:], str(path)] + (["trash:/"] if cmd[0] == "kioclient" else [])
+        r = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+        if r.returncode == 0 and not os.path.lexists(path):
+            return "Trash"
+        raise OSError(f"could not move {path.name} to the Trash: {r.stderr.strip() or f'{cmd[0]} exit {r.returncode}'}")
+    raise OSError("no Trash tool found (install gio, kioclient or trash-cli)")
 
 
 def _trash_mac(path: Path) -> str:
@@ -570,6 +586,13 @@ def notify(title: str, message: str) -> None:
     if sys.platform == "win32":
         import threading
         threading.Thread(target=_notify_windows, args=(title, message), name="notify", daemon=True).start()
+        return
+    if sys.platform.startswith("linux"):
+        try:
+            subprocess.Popen(["notify-send", "-a", "PS5 UltraPack", title, message],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
         return
     if sys.platform != "darwin":
         return
