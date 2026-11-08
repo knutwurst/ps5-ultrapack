@@ -5,7 +5,7 @@ The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
 | File | What it is |
 |---|---|
 | `LibProsperoPkg.dll.orig` | The pristine upstream assembly, v1.2.0.0, informational version `1.2.0+d7090eb68e315e086edfd150738ffa0dcfc0cd27`, as compiled by its author. Never modified here. |
-| `LibProsperoPkg.dll` | The same assembly with the three IL patches applied. This is what `PkgTool.csproj` links against and what ships inside the tool binary. |
+| `LibProsperoPkg.dll` | The same assembly with the IL patches below applied. This is what `PkgTool.csproj` links against and what ships inside the tool binary. |
 | `SHA256SUMS` | Sums of both files: `shasum -a 256 -c SHA256SUMS`. |
 
 ## Provenance
@@ -34,11 +34,15 @@ The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
 2. `ProsperoPkgBuilder.BuildInnerTree`: the root-file exclusion list
    `{ "ampr_emu.index", "entitlements.txt", "entitlement_key.dat" }` has its first string
    blanked, so `/ampr_emu.index` stays in the image; the other two names stay excluded.
-(A third change, `ProsperoPackageArchive.ResolveParallelism` returning 1, was applied from
+3. `ProsperoPkgBuilder.CollectMediaEntries` (added 2026-11-08): the suffix in
+   `EndsWith(".dds", StringComparison.Ordinal)` of the generic `sce_sys` loop is replaced by
+   `"\0"`, so localized icons and backgrounds (`icon0_NN.dds`, `pic1_NN.dds`) go into the CNT
+   instead of being dropped; `icon0`/`pic0`/`pic1`/`pic2.dds` still come from their own table.
+(A further change, `ProsperoPackageArchive.ResolveParallelism` returning 1, was applied from
 2026-10-05 to 2026-10-06 and is gone: the crash it worked around was the tool's compressed
 single-file bundle, see `../patches/README.md`.)
 
-Both patches are applied by `../patches/CecilPatch` (Mono.Cecil, pattern-based, idempotent);
+The patches are applied by `../patches/CecilPatch` (Mono.Cecil, pattern-based, idempotent);
 the reasoning is in `../patches/README.md`. To reproduce the patched file from the pristine one:
 
 ```bash

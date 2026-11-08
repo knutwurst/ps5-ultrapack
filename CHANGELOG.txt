@@ -17,6 +17,14 @@ WORK FOLDERS
     marker that keeps Spotlight out, and the cleanup took that marker for
     content, so the folders stayed.
 
+PACKAGES
+
+  - A .pkg build keeps localized icons and backgrounds (icon0_10.dds,
+    icon0_11.dds, pic1_NN.dds). The package library dropped every .dds
+    in sce_sys except icon0, pic0, pic1 and pic2, so the build failed
+    its own check for games that ship them (#12). The library carries
+    one more IL patch for it; the package tool is 2.3.4.
+
 ABOUT
 
   - Donations go through Ko-fi now (ko-fi.com/knutwurst) instead of

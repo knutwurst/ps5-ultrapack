@@ -74,6 +74,23 @@ using (var asm = AssemblyDefinition.ReadAssembly(dll, new ReaderParameters { Rea
     }
     applied++;
 
+    // patch 5: keep icon0_NN.dds and pic1_NN.dds in the CNT; the generic sce_sys loop skipped every .dds
+    // and only icon0/pic0/pic1/pic2 got theirs. A NUL never ends a file name, so the skip never matches
+    var media = builder.NestedTypes.FirstOrDefault(t => t.Name.Contains("CollectMediaEntries"))
+                ?.Methods.FirstOrDefault(m => m.Name == "MoveNext" && m.HasBody);
+    if (media == null) { Console.Error.WriteLine("[5] FAILED: CollectMediaEntries iterator not found (upstream changed?)"); return 3; }
+    {
+        var il = media.Body.Instructions;
+        bool EndsWithOrdinal(int i) => i + 2 < il.Count && il[i + 1].OpCode == OpCodes.Ldc_I4_4
+            && il[i + 2].Operand is MethodReference mr && mr.Name == "EndsWith" && mr.Parameters.Count == 2;
+        var hits = Enumerable.Range(0, il.Count).Where(i => il[i].OpCode == OpCodes.Ldstr && EndsWithOrdinal(i)).ToList();
+        var dds = hits.Where(i => (string)il[i].Operand == ".dds").ToList();
+        if (dds.Count == 1) { il[dds[0]].Operand = "\0"; Console.WriteLine("[5] .dds skip in CollectMediaEntries disabled (localized icon/pic DDS are kept)"); }
+        else if (dds.Count == 0 && hits.Any(i => (string)il[i].Operand == "\0")) Console.WriteLine("[5] .dds skip in CollectMediaEntries already disabled");
+        else { Console.Error.WriteLine($"[5] FAILED: expected one EndsWith(\".dds\", Ordinal) in CollectMediaEntries, found {dds.Count} (upstream changed?)"); return 3; }
+    }
+    applied++;
+
     asm.Write();
 }
 Console.WriteLine($"OK: {applied} patch(es) applied to {dll}  (backup: {orig})");

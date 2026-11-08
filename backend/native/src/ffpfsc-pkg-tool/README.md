@@ -64,7 +64,7 @@ source is kept in the repo.
 
 1. Install a .NET SDK (9 or newer; 10.0.400 was used).
 2. Nothing to fetch. `lib/LibProsperoPkg.dll` is tracked in git and already carries the
-   two IL patches; `lib/LibProsperoPkg.dll.orig` is the pristine upstream assembly and
+   IL patches; `lib/LibProsperoPkg.dll.orig` is the pristine upstream assembly and
    `lib/SHA256SUMS` proves both (`cd lib && shasum -a 256 -c SHA256SUMS`). To re-apply
    the patches to a fresh copy of the pristine assembly, see `patches/README.md` — the
    patcher is idempotent. Every other dependency is a NuGet package pinned in

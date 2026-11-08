@@ -7,10 +7,11 @@ ffpfsc-pkg-tool bundles the following third-party components:
       compiled from the author's fpkg-gui 0.6.11 release (2026-10-04); the
       source of this particular build is not in a public repository we know
       of (see src/ffpfsc-pkg-tool/lib/README.md).
-      THE BUNDLED COPY IS MODIFIED (2026-10-05): three IL patches applied
-      with the patcher in src/ffpfsc-pkg-tool/patches/CecilPatch —
+      THE BUNDLED COPY IS MODIFIED (2026-10-05, 2026-11-08): IL patches
+      applied with the patcher in src/ffpfsc-pkg-tool/patches/CecilPatch —
       FilterFakeLibraryDirectory made a no-op, the root exclusion of
-      ampr_emu.index disabled, and package reading forced single-threaded.
+      ampr_emu.index disabled, and localized sce_sys .dds files kept in
+      the CNT.
       What and why: src/ffpfsc-pkg-tool/patches/README.md. Pristine and
       patched assemblies with SHA-256 sums: src/ffpfsc-pkg-tool/lib/.
 

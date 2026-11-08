@@ -6,8 +6,9 @@
 (`lib/LibProsperoPkg.dll`) are tracked in git, with SHA-256 sums in
 `lib/SHA256SUMS`; `lib/README.md` records the provenance and the
 modification notice. Two upstream behaviours keep a backported title from
-launching on a jailbroken PS5; both are fixed by rewriting IL in the assembly
-before the tool is compiled.
+launching on a jailbroken PS5, and a third drops localized icons from the
+package; all are fixed by rewriting IL in the assembly before the tool is
+compiled.
 
 ## Applying
 
@@ -74,6 +75,18 @@ every multithreaded pass died that way, the Kraken encoder included. With
 `EnableCompressionInSingleFile` off (`../PkgTool.csproj`), 36 parallel
 extractions of two test packages matched the single-threaded tree byte for
 byte, so the library's own worker count is back.
+
+## Patch 5 — keep localized `icon0_NN.dds` and `pic1_NN.dds`
+
+`CollectMediaEntries` writes `icon0.dds`, `pic0.dds`, `pic1.dds` and
+`pic2.dds` from a fixed table. Its generic loop over the other `sce_sys`
+entries then skips every name ending in `.dds`, so the localized variants
+(`icon0_10.dds`, `icon0_11.dds`, `pic1_10.dds`, …) never reach the CNT even
+though `EntryNames` has ids for them and the PNG twins are packed. The tool's
+validate step fails such a package (issue #12). The patcher replaces the
+`".dds"` in that `EndsWith(…, StringComparison.Ordinal)` with `"\0"`; no file
+name ends in a NUL, so the loop now packs them. The four fixed-table names
+are already in `emitted` and are not written twice.
 
 ## What is deliberately not patched
 

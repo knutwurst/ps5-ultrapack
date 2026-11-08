@@ -1004,6 +1004,27 @@ def test_publishing_rules(r: Runner):
             "\n".join(l for l in log.splitlines() if "[FAIL]" in l or "summary:" in l) or log[-300:])
     r.check("rules.icon0.source-untouched", (src / "sce_sys" / "icon0.png").read_bytes() == bad_png,
             "source icon0.png unchanged", "the source was modified")
+
+    # localized icons: the library used to drop every icon0_NN.dds from the CNT (#12)
+    loc = base("rules_icon_loc")
+    for n in ("icon0_10.png", "icon0_11.png"):
+        (loc / "sce_sys" / n).write_bytes(make_png_1x1_rgb())
+    (loc / "sce_sys" / "icon0_11.dds").write_bytes(make_bc7_dds(256, 256))
+    rc_l, log_l, pkg_l = build(loc, "rules_icon_loc_out")
+    r.check("rules.icon0-localized.validate",
+            rc_l == 0 and pkg_l is not None and "image.icon0_10.dds" in log_l and "image.icon0_11.dds" in log_l
+            and re.search(r"summary: \d+ passed, \d+ warned, 0 failed", log_l) is not None,
+            "icon0_10.dds (generated) and icon0_11.dds (regenerated) are in the package",
+            "\n".join(l for l in log_l.splitlines() if "[FAIL]" in l or "summary:" in l or "icon0_1" in l) or log_l[-300:])
+    if pkg_l is not None:
+        xl = r.work / "rules_icon_loc_x"
+        if xl.exists(): shutil.rmtree(xl)
+        rc_xl, _ = r.run_tool(["extract-inner", str(pkg_l), str(xl)])
+        got = [n for n in ("icon0_10.dds", "icon0_11.dds")
+               if (xl / "sce_sys" / n).is_file() and struct.unpack("<I", (xl / "sce_sys" / n).read_bytes()[128:132])[0] == 98]
+        r.check("rules.icon0-localized.extract", rc_xl == 0 and len(got) == 2,
+                "both localized BC7 icons come back out of the package", f"rc={rc_xl} found={got}")
+        shutil.rmtree(xl, ignore_errors=True)
     if pkg is None:
         return
     x = r.work / "rules_pg_x"
