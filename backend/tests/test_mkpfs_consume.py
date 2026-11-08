@@ -81,7 +81,7 @@ class Consume(unittest.TestCase):
             (self.d / "game" / "data" / "link.bin").unlink(); (self.ref / "data" / "link.bin").unlink()
             r = pack(self.d / "game", self.d / "img2.ffpfs", "--consume-source", "--no-verify-structure")
             self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
-            (self.d / "img2.ffpfs").rename(self.d / "img.ffpfs")
+            (self.d / "img2.ffpfs").replace(self.d / "img.ffpfs")
         self.assertIn("[consume] freed", r.stdout)
         self.assertEqual(self.files(self.d / "game"), ["eboot.bin", "sce_sys/big.dat", "sce_sys/param.json"])
         # full verify against the untouched copy

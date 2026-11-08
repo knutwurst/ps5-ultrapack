@@ -42,7 +42,12 @@ m.messagebox.askyesno = lambda *a, **k: True
 import signal, shutil as _sh
 SLOW = max(1.0, float(os.environ.get("PS5_TEST_SLOW") or 1))   # a slower machine (CI) stretches every wait
 if hasattr(signal, "SIGALRM"):
-    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(SystemExit("driver timeout")))
+    import faulthandler
+
+    def _alarm(*_):
+        faulthandler.dump_traceback(all_threads=True)      # where it hangs
+        raise SystemExit("driver timeout")
+    signal.signal(signal.SIGALRM, _alarm)
     signal.alarm(int(240 * SLOW))
 else:                               # Windows: no SIGALRM; interrupt the main thread, then end hard
     import _thread, threading as _thr
@@ -87,7 +92,8 @@ app.temp_var.set(str(S / "temp")); app.output_var.set(str(OUT))
 res = []
 def ok(name, cond, detail=""):
     res.append((name, bool(cond), detail))
-    print(f"... {'pass' if cond else 'FAIL'} {name}", file=sys.stderr, flush=True)    # progress, for a run that hangs
+    print(f"... {'pass' if cond else 'FAIL'} {name}" + ("" if cond else f"  {str(detail)[:300]}"),
+          file=sys.stderr, flush=True)    # progress, for a run that hangs
 ok("driver.no-first-run-wizard", _no_wizard, "the isolated profile is a finished setup, so no wizard window opens")
 ok("driver.silent", not app.sound_complete_var.get() and not app.sound_error_var.get() and app.notify_var.get() == "off",
    "no done/failed sounds and no notifications while the driver runs jobs")
