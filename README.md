@@ -4,13 +4,14 @@
   <img src="images/overview.png" alt="Sources on the left, the steps of a job in the middle, the output formats on the right, the tools below" width="900">
 </p>
 
-A desktop app for macOS and Windows that packs, converts, patches, backports and signs PS5 games, builds installable `.pkg` files, and checks and fixes PS4 and PS5 packages. You add a game folder, an archive, a disk image, a `.ffpfs`/`.ffpfsc` or a `.pkg`, pick what should happen to it and what should come out, and the queue works through it.
+A desktop app for macOS, Windows and Linux that packs, converts, patches, backports and signs PS5 games, builds installable `.pkg` files, and checks and fixes PS4 and PS5 packages. You add a game folder, an archive, a disk image, a `.ffpfs`/`.ffpfsc` or a `.pkg`, pick what should happen to it and what should come out, and the queue works through it.
 
 The app used to be called PS5 FFPFSC ULTRA.
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS%2026+-Apple%20Silicon-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 26 or newer (Apple Silicon)">
   <a href="https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.3.0-windows-preview.1"><img src="https://img.shields.io/badge/Windows%20x64-preview-f59e0b?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64 preview"></a>
+  <img src="https://img.shields.io/badge/Linux-x64-3b82f6?style=for-the-badge&logo=linux&logoColor=white" alt="Linux x64">
   <img src="https://img.shields.io/badge/FW%2011.60-verified-22c55e?style=for-the-badge" alt="FW 11.60 verified">
   <img src="https://img.shields.io/badge/source-MIT-3a3a3a?style=for-the-badge" alt="Source MIT">
   <img src="https://img.shields.io/badge/binary-GPL--3-3a3a3a?style=for-the-badge" alt="Binary GPL-3">
@@ -32,6 +33,7 @@ Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack
   xattr -dr com.apple.quarantine "PS5 UltraPack.app"
   ```
 - **Windows x64** (preview): unzip and start `PS5 UltraPack.exe`. SmartScreen will warn on first start because the exe isn't signed ("More info", then "Run anyway"). Everything works on Windows 11 in my tests, but I haven't tried a package built on Windows on a console yet.
+- **Linux x64** (from 2.3.5 on): unpack `PS5-UltraPack-<version>-linux-x64.tar.gz` anywhere and run `./PS5 UltraPack`; `./install.sh` adds it to the app menu (`--uninstall` removes it). Every release is built and tested on Ubuntu 24.04: the build, the unit, pipeline and GUI tests, and a start of the finished app. Trash uses `gio trash` (or `kioclient`/`trash-cli`), notifications use `notify-send`. Thanks to [@trongio](https://github.com/trongio) for the Linux port.
 
 ## Screenshots
 

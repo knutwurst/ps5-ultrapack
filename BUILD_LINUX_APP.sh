@@ -46,7 +46,7 @@ DL="build/7zip-${VER}"
 TAR="${DL}/7z${VER}-linux-x64.tar.xz"
 mkdir -p "${DL}"
 if [[ ! -f "${TAR}" ]] || ! echo "${LINUX_SHA}  ${TAR}" | sha256sum -c --status; then
-    curl -fsSL -o "${TAR}" "https://www.7-zip.org/a/7z${VER}-linux-x64.tar.xz"
+    curl -fsSL --retry 5 --retry-all-errors -o "${TAR}" "https://www.7-zip.org/a/7z${VER}-linux-x64.tar.xz"
 fi
 echo "${LINUX_SHA}  ${TAR}" | sha256sum -c --quiet
 rm -rf "${DL}/linux"

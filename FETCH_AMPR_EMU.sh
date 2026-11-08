@@ -13,7 +13,7 @@ mkdir -p "${DL}" backend/native/ampr
 
 fetch() {   # file url sha256
     if [[ ! -f "${DL}/$1" ]] || ! echo "$3  ${DL}/$1" | shasum -a 256 -c --status; then
-        curl -fsSL -o "${DL}/$1" "$2"
+        curl -fsSL --retry 5 --retry-all-errors -o "${DL}/$1" "$2"
     fi
     echo "$3  ${DL}/$1" | shasum -a 256 -c --quiet
 }

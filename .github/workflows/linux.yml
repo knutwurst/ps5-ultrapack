@@ -1,0 +1,80 @@
+# Linux x64 build: tested, then attached to the published release (Windows previews are skipped)
+name: Linux build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.release.tag_name, 'windows')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      # the distro Python: a standalone one has Tk built in and crashes with tkdnd
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv python3-dev python3-tk xvfb xauth libxcursor1
+
+      - name: Build
+        run: |
+          /usr/bin/python3 -m venv .venv
+          . .venv/bin/activate
+          ./BUILD_LINUX_APP.sh
+
+      - name: Unit suites
+        run: |
+          . .venv/bin/activate
+          fails=0
+          for f in backend/tests/test_*.py; do
+            case "$(basename "$f" .py)" in test_fpkg_gui|test_fpkg_pipelines|test_e2e_corpus) continue;; esac
+            PYTHONPATH=. PS5_FFPFSC_APP_DIR="$RUNNER_TEMP/appdir" python -B "$f" > "$RUNNER_TEMP/u.log" 2>&1 \
+              || { echo "::error::$f failed"; tail -20 "$RUNNER_TEMP/u.log"; fails=$((fails+1)); }
+          done
+          exit $fails
+
+      - name: Pipelines
+        run: |
+          . .venv/bin/activate
+          python -B -u backend/tests/test_fpkg_pipelines.py --work "$RUNNER_TEMP/pipelines"
+
+      - name: GUI suite
+        run: |
+          . .venv/bin/activate
+          xvfb-run -a -s "-screen 0 1600x1000x24" python -B -u backend/tests/test_fpkg_gui.py --work "$RUNNER_TEMP/gui"
+
+      - name: The built app starts
+        run: |
+          xvfb-run -a "dist/PS5 UltraPack/PS5 UltraPack" > "$RUNNER_TEMP/app.log" 2>&1 &
+          sleep 25
+          cat "$RUNNER_TEMP/app.log"
+          pgrep -f "dist/PS5 UltraPack/PS5 UltraPack" > /dev/null
+          ! grep -q Traceback "$RUNNER_TEMP/app.log"
+          pkill -f "dist/PS5 UltraPack/PS5 UltraPack" || true
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/PS5-UltraPack-*-linux-x64.tar.gz dist/PS5-UltraPack-*-linux-x64.tar.gz.sha256 --clobber
+
+      - name: Keep the build of a manual run
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: dist/PS5-UltraPack-*-linux-x64.tar.gz*
+          retention-days: 7
