@@ -10592,10 +10592,11 @@ class App:
         # .pkg chain: image and finished file share one drive, no spool check in pass 2
         pkg_chain = (getattr(item, "operation", "") == "chain" and chain_needs_unpack(item)
                      and chain_source_kind(item) == "pkg")
-        same_pad = same_to and (pkg_chain or not same_rw_ok)
+        to_folder = chain_unpacks_to_folder(item)    # the unpack is the result, no container on top
+        same_pad = same_to and not to_folder and (pkg_chain or not same_rw_ok)
         full_need  = estimate_peak_space_needed(size, factor, same_pad)  # src+image+spool on temp
         image_need = estimate_image_space_needed(size)                   # just the inner image on temp
-        out_full   = estimate_peak_space_needed(size, factor, True)      # everything on the output drive
+        out_full   = estimate_peak_space_needed(size, factor, not to_folder)   # everything on the output drive
         # split: output holds the extracted source (archives) plus the final container
         comp_out = bool(getattr(item, "_output_compressed", True))
         known_out = int(getattr(item, "size", 0) or 0) if getattr(item, "source_kind", "") == "archive" else 0
@@ -13257,7 +13258,7 @@ class App:
                 # the unpacked game and the image both sit on the temp drive
                 image_need = estimate_peak_space_needed(size, factor, False)
                 need_label = "Temp peak"
-            out_full   = estimate_peak_space_needed(size, factor, True)
+            out_full   = estimate_peak_space_needed(size, factor, not chain_unpacks_to_folder(item))
             # fits if the SSD holds the image (the spool goes to the output drive) or the output holds it all
             ok = (size > 0 and free >= image_need) or (out_dir is not None and out_free >= out_full)
             flag = tr("fits" if ok else "LOW, may not fit")
@@ -15292,7 +15293,8 @@ class App:
                         need = estimate_image_space_needed(_sz)
                         kind = tr("image on {v} (spool auto-routed)", v=temp_drive_label(Path(bt)))
                     else:
-                        need = estimate_peak_space_needed(_sz, _peak_factor_for(item), same_drive(Path(bt), od))
+                        need = estimate_peak_space_needed(_sz, _peak_factor_for(item),
+                                                          same_drive(Path(bt), od) and not chain_unpacks_to_folder(item))
                         kind = "full scratch"
                     self.log("INFO", f"Space check - {item.name}: {kind} on {bt} | "
                                      f"need ~{format_size(need)} | free {format_size(get_free_space(bt))} | {gate}")

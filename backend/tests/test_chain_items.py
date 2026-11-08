@@ -65,6 +65,31 @@ class FromChain(unittest.TestCase):
         self.assertEqual(uc.chain_summary(it), "Unpack to folder")
         self.assertTrue(uc.chain_needs_unpack(it))
 
+    def test_pkg_to_folder_needs_the_game_once(self):
+        # nothing is built from the unpacked files: on one drive they are only renamed into place
+        pkg = self.root / "UP0000-PPSA00005_00-EXAMPLE000000000-A0100-V0100.pkg"
+        pkg.write_bytes(b"\0" * 1000)
+        it = uc.GameItem.from_chain(pkg, to="folder")
+        self.assertTrue(uc.chain_unpacks_to_folder(it))
+        self.assertEqual(uc._peak_factor_for(it), uc.PATCH_PEAK_FACTOR, "game size unknown: stay careful")
+        it.pkg_content_size = it.extracted_size = 2000
+        self.assertEqual(uc._peak_factor_for(it), uc.FOLDER_UNPACK_PEAK_FACTOR)
+        same = uc._space_needs(it, self.root, self.root / "out")
+        self.assertEqual([n[0] for n in same], ["Temp drive (unpacked game)"])
+        self.assertLess(same[0][2], 2 * 2000, "no image and no second copy on the same drive")
+        self.assertGreaterEqual(same[0][2], 2000)
+        _real = uc.same_drive
+        uc.same_drive = lambda a, b: False
+        try:
+            other = uc._space_needs(it, self.root, self.root / "out")
+        finally:
+            uc.same_drive = _real
+        self.assertEqual([n[0] for n in other], ["Temp drive (unpacked game)", "Output drive"])
+        self.assertEqual(other[1][2], uc.estimate_output_space_needed(2000, False))
+        it2 = uc.GameItem.from_chain(pkg, to="ffpfsc")
+        it2.pkg_content_size = it2.extracted_size = 2000
+        self.assertFalse(uc.chain_unpacks_to_folder(it2))
+
     def test_pkg_space_uses_the_game_size(self):
         # pkg size is only a floor until its directory is read: conservative factor till then
         pkg = self.root / "UP0000-PPSA00004_00-EXAMPLE000000000-A0100-V0100.pkg"

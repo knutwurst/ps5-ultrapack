@@ -24,6 +24,10 @@ PACKAGES
     in sce_sys except icon0, pic0, pic1 and pic2, so the build failed
     its own check for games that ship them (#12). The library carries
     one more IL patch for it; the package tool is 2.3.4.
+  - Unpacking a .pkg to a folder asks for the space it needs: about the
+    game's size once. The estimate counted it like a .ffpfsc build (the
+    files, an image beside them and the finished file on top), so a
+    package of 282 GB of files asked for over 900 GB (#11).
 
 ABOUT
 

@@ -236,6 +236,8 @@ PATCH_PEAK_FACTOR   = 3.0
 # .pkg chain: pass 1 holds files plus image (2.0x) unless --consume-source frees as it goes
 PKG_UNPACK_PEAK_FACTOR = 2.2            # pass 1 without freeing (a check against the source)
 PKG_CONSUME_MARGIN = 0.1                # the image's own blocks and directories, metadata
+# container to folder: the unpacked files are the result, nothing is built from them
+FOLDER_UNPACK_PEAK_FACTOR = 1.05
 
 # pass-1 inner image alone, for the split path: 64 KiB padding plus margin
 IMAGE_PEAK_FACTOR = 1.2
@@ -415,6 +417,8 @@ def _peak_factor_for(item) -> float:
     # holds the unpack and the inner image at once, same shape as a patch
     if getattr(item, "operation", "pack") == "chain" and chain_needs_unpack(item):
         if chain_source_kind(item) == "pkg" and getattr(item, "pkg_content_size", 0):
+            if chain_unpacks_to_folder(item):
+                return FOLDER_UNPACK_PEAK_FACTOR  # the package's directory gave the real game size
             return pkg_peak_factor(item)
         return PATCH_PEAK_FACTOR
     return INPLACE_PEAK_FACTOR if getattr(item, "source_kind", "archive") == "inplace" else ARCHIVE_PEAK_FACTOR
@@ -559,6 +563,12 @@ def chain_changes(item) -> list[str]:
     if getattr(item, "chain_lz4", False):
         out.append("lz4")
     return out
+
+
+def chain_unpacks_to_folder(item) -> bool:
+    """a container unpacked to a folder: no image, and on the same drive the files are only renamed"""
+    return (getattr(item, "operation", "") == "chain" and getattr(item, "chain_to", None) == "folder"
+            and chain_needs_unpack(item))
 
 
 def chain_needs_unpack(item) -> bool:
@@ -755,6 +765,12 @@ def _space_needs(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, i
             work = int(size * (2.0 if lz4 else 1.02))
         image = int(size * 1.02) + (64 << 20)
         return ([("Temp drive (whole scratch)", temp_dir, work)] if work else []) + [("Output drive", out_dir, image)]
+    if chain_unpacks_to_folder(item):
+        # the unpacked files are the result: renamed into place on the same drive, copied to another
+        needs = [("Temp drive (unpacked game)", temp_dir, estimate_peak_space_needed(size, _peak_factor_for(item), False))]
+        if not same_drive(temp_dir, out_dir):
+            needs.append(("Output drive", out_dir, estimate_output_space_needed(size, False)))
+        return needs
     if _item_is_single_pass(item):
         return [("Output drive", out_dir, out_final)]
     if getattr(item, "_extract_on_pool", False):
@@ -4367,6 +4383,8 @@ __all__ = [
     "chain_changes",
     "is_backport_target",
     "chain_needs_unpack",
+    "chain_unpacks_to_folder",
+    "FOLDER_UNPACK_PEAK_FACTOR",
     "chain_summary",
     "is_first_run",
     "get_last_log_lines",
