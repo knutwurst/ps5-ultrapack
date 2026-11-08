@@ -485,6 +485,40 @@ class SignedSources(unittest.TestCase):
             self.assertEqual((root / "eboot.bin").read_bytes(), locked)
             self.assertEqual(bp.analyse_backport(root, "7.61").unreadable, ["eboot.bin"])
 
+    def test_the_encrypted_about_module_does_not_block(self):
+        locked = _encrypt_flag(_fself(_signable_elf(), ps5=True))
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "sce_sys" / "about").mkdir(parents=True)
+            (root / "sce_sys" / "about" / "right.sprx").write_bytes(locked)
+            (root / "eboot.bin").write_bytes(_fself(_signable_elf(), ps5=True))
+            self.assertEqual(bp.encrypted_selfs(root), [])
+            self.assertEqual(bp.analyse_backport(root, "7.61").unreadable, [])
+            report = bp.lower_sdk_in_folder(root, "7.61")
+            self.assertEqual([p.name for p in report.encrypted], ["right.sprx"])
+            self.assertEqual((root / "sce_sys" / "about" / "right.sprx").read_bytes(), locked)
+            self.assertEqual([p.name for p in bp.encrypted_system_modules(root)], ["right.sprx"])
+            # the check before the backport lets it through, with a warning that names it
+            import contextlib, io, sys
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            import cli
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                cli._backport_precheck(root, "7.61")
+            self.assertIn("[WARN] Backport: sce_sys/about/right.sprx is encrypted and is skipped", out.getvalue())
+            # anywhere else it still blocks
+            (root / "sce_sys" / "right.sprx").write_bytes(locked)
+            self.assertEqual([p.name for p in bp.encrypted_selfs(root)], ["right.sprx"])
+
+    def test_a_decrypted_about_module_is_backported_as_usual(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "sce_sys" / "about").mkdir(parents=True)
+            (root / "sce_sys" / "about" / "right.sprx").write_bytes(_fself(_signable_elf(), ps5=True))
+            self.assertEqual(bp.encrypted_system_modules(root), [])
+            report = bp.lower_sdk_in_folder(root, "7.61")
+            self.assertEqual([p.name for p in report.self_patched], ["right.sprx"])
+
     def test_a_signed_file_in_a_folder_is_lowered_in_place(self):
         from backend import self_file
         with tempfile.TemporaryDirectory() as td:

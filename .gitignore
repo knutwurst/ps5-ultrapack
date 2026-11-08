@@ -60,3 +60,7 @@ backend/tests/_backpork_*.bps
 /backend/native/LICENSE.7-Zip.*
 /backend/native/LICENSE.OpenSSL
 /backend/native/ampr/
+
+# Linux build
+backend/native/src/ffpfsc-pkg-tool/out-linux/
+backend/unrar/build.log
