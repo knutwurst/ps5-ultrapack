@@ -13,6 +13,7 @@ permissions:
 
 env:
   PYTHONUTF8: "1"
+  PS5_TEST_SLOW: "3"      # the hosted machines are slower than the build Mac: the GUI driver waits longer
 
 jobs:
   macos:

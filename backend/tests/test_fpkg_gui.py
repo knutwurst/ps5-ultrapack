@@ -40,9 +40,10 @@ m.messagebox.showerror = showerror
 m.messagebox.showinfo = lambda *a, **k: None
 m.messagebox.askyesno = lambda *a, **k: True
 import signal, shutil as _sh
+SLOW = max(1.0, float(os.environ.get("PS5_TEST_SLOW") or 1))   # a slower machine (CI) stretches every wait
 if hasattr(signal, "SIGALRM"):
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(SystemExit("driver timeout")))
-    signal.alarm(240)
+    signal.alarm(int(240 * SLOW))
 else:                               # Windows: no SIGALRM; interrupt the main thread, then end hard
     import _thread, threading as _thr
     def _later(seconds, fn):
@@ -54,7 +55,7 @@ else:                               # Windows: no SIGALRM; interrupt the main th
         print("driver timeout", flush=True)
         _thread.interrupt_main()
         _later(60, lambda: os._exit(3))
-    _later(900, _timeout)
+    _later(900 * SLOW, _timeout)
 # never clobber the real settings: back up settings.json, restored in finally
 _settings = m.APP_DIR / "settings.json"
 _backup = _settings.with_suffix(".json.driver-backup")
@@ -91,6 +92,7 @@ ok("driver.no-first-run-wizard", _no_wizard, "the isolated profile is a finished
 ok("driver.silent", not app.sound_complete_var.get() and not app.sound_error_var.get() and app.notify_var.get() == "off",
    "no done/failed sounds and no notifications while the driver runs jobs")
 def pump(cond, timeout=20.0):
+    timeout *= SLOW
     t0 = time.monotonic()
     while time.monotonic() - t0 < timeout:
         root.update()

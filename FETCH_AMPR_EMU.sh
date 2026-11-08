@@ -3,6 +3,8 @@
 # GPL-3: the matching source archive in build/ ships next to each release
 set -euo pipefail
 cd "$(dirname "$0")"
+# Git Bash on Windows has sha256sum, not shasum
+sha256() { if command -v shasum >/dev/null; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }
 
 VER=0.4.2.1
 COMMIT=e0b24bdfc344e37e8aced99a22e6f9f5c65d9152
@@ -12,10 +14,10 @@ DL="build/ampr_emu-${VER}"
 mkdir -p "${DL}" backend/native/ampr
 
 fetch() {   # file url sha256
-    if [[ ! -f "${DL}/$1" ]] || ! echo "$3  ${DL}/$1" | shasum -a 256 -c --status; then
+    if [[ ! -f "${DL}/$1" ]] || ! echo "$3  ${DL}/$1" | sha256 -c --status; then
         curl -fsSL --retry 5 --retry-all-errors -o "${DL}/$1" "$2"
     fi
-    echo "$3  ${DL}/$1" | shasum -a 256 -c --quiet
+    echo "$3  ${DL}/$1" | sha256 -c --quiet
 }
 fetch libSceAmpr.sprx "https://github.com/drakmor/ampr_emu/releases/download/${VER}/libSceAmpr.sprx" "${SPRX_SHA}"
 fetch "ampr_emu-${VER}-source.tar.gz" "https://github.com/drakmor/ampr_emu/archive/${COMMIT}.tar.gz" "${SRC_SHA}"

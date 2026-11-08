@@ -2,6 +2,8 @@
 # fetch pinned, hash-checked 7zz (mac arm64) and 7za.exe (win x64) into backend/native
 set -euo pipefail
 cd "$(dirname "$0")"
+# Git Bash on Windows has sha256sum, not shasum
+sha256() { if command -v shasum >/dev/null; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }
 
 VER=2604
 MAC_SHA=bee04358cbcbc7106273cee0e8d72916db2696c48067a3538c34d8cd6fd16578
@@ -10,10 +12,10 @@ DL="build/7zip-${VER}"
 mkdir -p "${DL}"
 
 fetch() {   # file sha256
-    if [[ ! -f "${DL}/$1" ]] || ! echo "$2  ${DL}/$1" | shasum -a 256 -c --status; then
+    if [[ ! -f "${DL}/$1" ]] || ! echo "$2  ${DL}/$1" | sha256 -c --status; then
         curl -fsSL -o "${DL}/$1" "https://www.7-zip.org/a/$1"
     fi
-    echo "$2  ${DL}/$1" | shasum -a 256 -c --quiet
+    echo "$2  ${DL}/$1" | sha256 -c --quiet
 }
 fetch "7z${VER}-mac.tar.xz" "${MAC_SHA}"
 fetch "7z${VER}-extra.7z" "${EXTRA_SHA}"
