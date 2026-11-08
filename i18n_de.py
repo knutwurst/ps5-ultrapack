@@ -122,6 +122,9 @@ GERMAN: dict[str, str] = {
     "Temp drive only": "Nur Temp-Laufwerk",
     "Spread across drives": "Auf Laufwerke verteilen",
     "Drive usage:": "Laufwerksnutzung:",
+    "RAM for temp:": "RAM für Temp:",
+    "With Drive usage on Auto, a job whose temp fits in this much RAM builds there (/dev/shm), which is much faster than any drive and spares its writes. A bigger job keeps one piece in RAM when it can, or uses the drives as before. At most {max} GB here (half the RAM, the /dev/shm limit), and {keep} GB of RAM always stay free.":
+        "Steht die Laufwerksnutzung auf Auto, baut ein Job, dessen Temp in so viel RAM passt, dort (/dev/shm). Das ist viel schneller als jedes Laufwerk und schont dessen Schreibzyklen. Ein größerer Job legt, wenn es geht, einen Teil in den RAM oder nutzt wie bisher die Laufwerke. Hier höchstens {max} GB (der halbe RAM, die Grenze von /dev/shm), und {keep} GB RAM bleiben immer frei.",
     "70% (risky)": "70 % (riskant)",
     "100% (recommended)": "100 % (empfohlen)",
     "150% (cautious)": "150 % (vorsichtig)",

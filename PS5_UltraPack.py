@@ -525,7 +525,7 @@ def _host_dialog(kind: str, kw: dict):
     tool = next((t for t in (("kdialog", "zenity") if kde else ("zenity", "kdialog")) if shutil.which(t)), None)
     if not tool:
         raise _NoPortalDialog
-    title = kw.get("title") or ""
+    title = tr(kw.get("title") or "")          # Tk's own dialog gets it translated by i18n, these don't
     start = str(kw.get("initialdir") or os.getcwd())
     if kw.get("initialfile"):
         start = os.path.join(start, kw["initialfile"])
@@ -543,9 +543,9 @@ def _host_dialog(kind: str, kw: dict):
             cmd += ["--save", "--confirm-overwrite"]
         if multiple:
             cmd += ["--multiple", "--separator=\n"]
-        cmd += [f"--file-filter={label} | {' '.join(_patterns(spec))}" for label, spec in filetypes]
+        cmd += [f"--file-filter={tr(label)} | {' '.join(_patterns(spec))}" for label, spec in filetypes]
     else:
-        flt = "\n".join(f"{' '.join(_patterns(spec))}|{label}" for label, spec in filetypes)
+        flt = "\n".join(f"{' '.join(_patterns(spec))}|{tr(label)}" for label, spec in filetypes)
         op = {"askdirectory": "--getexistingdirectory", "asksaveasfilename": "--getsavefilename"}.get(
             kind, "--getopenfilename")
         cmd = ["kdialog", "--title", title, op, start] + ([flt] if flt and kind != "askdirectory" else [])
@@ -2474,11 +2474,12 @@ class SettingsView:
                 command=lambda disp: save_settings({"ram_temp_gb": ram_rev.get(disp, 0)}))
             ram_menu.set(ram_labels[max((g for g in ram_labels if g <= _cur_ram), default=0)])
             ram_menu.pack(side="left")
-            ctk.CTkLabel(ds, text=f"With Drive usage on Auto, a job whose temp fits in this much RAM builds there "
-                                  f"(/dev/shm), which is much faster than any drive and spares its writes. "
-                                  f"A bigger job keeps one piece in RAM when it can, or uses the drives as before. "
-                                  f"At most {_shm_gb} GB here (half the RAM, the /dev/shm limit), and "
-                                  f"{ultra_core.RAM_TEMP_RESERVE >> 30} GB of RAM always stay free.",
+            ctk.CTkLabel(ds, text=tr("With Drive usage on Auto, a job whose temp fits in this much RAM builds there "
+                                     "(/dev/shm), which is much faster than any drive and spares its writes. "
+                                     "A bigger job keeps one piece in RAM when it can, or uses the drives as before. "
+                                     "At most {max} GB here (half the RAM, the /dev/shm limit), and "
+                                     "{keep} GB of RAM always stay free.",
+                                     max=_shm_gb, keep=ultra_core.RAM_TEMP_RESERVE >> 30),
                          text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
                          wraplength=640).pack(anchor="w", padx=14, pady=(0, 4))
 
