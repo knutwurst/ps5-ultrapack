@@ -10,6 +10,37 @@ from collections import OrderedDict
 from types import SimpleNamespace
 from i18n import t as _t  # canvas texts are measured in the interface language
 
+
+# A Tk object the garbage collector frees in a worker thread would call Tk from there, and that call
+# waits for the main thread; if the main thread waits for the worker (an import lock), both hang.
+# So such objects wait in a list and go with the next one the main thread frees.
+import threading as _threading
+
+_tk_held: list = []
+
+
+def _main_thread_finalizer(cls) -> None:
+    done = cls.__dict__.get("__del__")
+    if done is None or getattr(done, "_main_thread_only", False):
+        return
+
+    def __del__(self):
+        if _threading.current_thread() is not _threading.main_thread():
+            _tk_held.append(self)
+            return
+        while _tk_held:
+            try:
+                done(_tk_held.pop())
+            except Exception:
+                pass
+        done(self)
+    __del__._main_thread_only = True
+    cls.__del__ = __del__
+
+
+for _cls in (tkfont.Font, tk.Variable, tk.Image):
+    _main_thread_finalizer(_cls)
+
 # blue: primary action and selection. green ok, amber warning, red error, orange pause
 PALETTE = {
     "dark": {
