@@ -3,6 +3,24 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.3.5
+────────────────────────────────────────────────────────────────────────
+
+LINUX
+
+  - A native Linux x64 build (BUILD_LINUX_APP.sh), with zenity/kdialog
+    file dialogs, gio/kioclient/trash-cli Trash, notify-send
+    notifications and an install.sh for the app menu. Contributed by
+    trongio (#9).
+  - RAM for temp on Linux (Settings > Drives & space): a job whose scratch
+    fits the budget builds in /dev/shm. Also by trongio (#10).
+
+BACKPORT
+
+  - An encrypted sce_sys/about module no longer blocks a backport; it
+    stays as the dump has it, with a warning (#9).
+
+────────────────────────────────────────────────────────────────────────
   v2.3.4
 ────────────────────────────────────────────────────────────────────────
 
