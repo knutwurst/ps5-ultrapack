@@ -1,0 +1,230 @@
+# Release builds for macOS, Windows and Linux. A tag vX.Y.Z builds Mac + Linux, vX.Y.Z-windows-preview.N
+# builds Windows; each build is tested, and only then the files go onto the draft release of that tag,
+# its {SHA}/{SHA_LINUX} placeholders get filled and it is published. A manual run builds and tests all three.
+name: Release builds
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  macos:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.ref_name, 'windows')
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      # Homebrew's Python with Tk 9, as on the build Mac
+      - name: Python
+        run: |
+          brew install python@3.13 python-tk@3.13
+          /opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv
+          .venv/bin/python -c "import sys, tkinter; print(sys.version, 'Tk', tkinter.TkVersion)"
+      - name: Build
+        run: |
+          . .venv/bin/activate
+          ./BUILD_MACOS_APP.sh
+      - name: Unit suites
+        run: |
+          . .venv/bin/activate
+          fails=0
+          for f in backend/tests/test_*.py; do
+            case "$(basename "$f" .py)" in test_fpkg_gui|test_fpkg_pipelines|test_e2e_corpus) continue;; esac
+            PYTHONPATH=. PS5_FFPFSC_APP_DIR="$RUNNER_TEMP/appdir" python -B "$f" > "$RUNNER_TEMP/u.log" 2>&1 \
+              || { echo "::error::$f failed"; tail -25 "$RUNNER_TEMP/u.log"; fails=$((fails+1)); }
+          done
+          exit $fails
+      - name: Pipelines
+        run: . .venv/bin/activate && python -B -u backend/tests/test_fpkg_pipelines.py --work "$RUNNER_TEMP/pipelines"
+      - name: GUI suite
+        run: . .venv/bin/activate && python -B -u backend/tests/test_fpkg_gui.py --work "$RUNNER_TEMP/gui"
+      - name: The built app, every operation
+        run: |
+          . .venv/bin/activate
+          MATRIX_EXE="$PWD/dist/PS5 UltraPack.app/Contents/MacOS/PS5 UltraPack" MATRIX_WORK="$RUNNER_TEMP" \
+            python -B backend/tests/frozen_matrix.py
+      - name: The built app starts
+        run: |
+          "dist/PS5 UltraPack.app/Contents/MacOS/PS5 UltraPack" > "$RUNNER_TEMP/app.log" 2>&1 &
+          pid=$!
+          sleep 25
+          cat "$RUNNER_TEMP/app.log"
+          kill -0 $pid && ! grep -q Traceback "$RUNNER_TEMP/app.log"
+          kill $pid || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/PS5-UltraPack-*-macos-arm64.zip
+            dist/PS5-UltraPack-*-macos-arm64.zip.sha256
+            build/ampr_emu-*/ampr_emu-*-source.tar.gz
+          retention-days: 7
+
+  linux:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.ref_name, 'windows')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      # the distro Python: a standalone one has Tk built in and crashes with tkdnd
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv python3-dev python3-tk xvfb xauth libxcursor1
+      - name: Build
+        run: |
+          /usr/bin/python3 -m venv .venv
+          . .venv/bin/activate
+          ./BUILD_LINUX_APP.sh
+      - name: Unit suites
+        run: |
+          . .venv/bin/activate
+          fails=0
+          for f in backend/tests/test_*.py; do
+            case "$(basename "$f" .py)" in test_fpkg_gui|test_fpkg_pipelines|test_e2e_corpus) continue;; esac
+            PYTHONPATH=. PS5_FFPFSC_APP_DIR="$RUNNER_TEMP/appdir" python -B "$f" > "$RUNNER_TEMP/u.log" 2>&1 \
+              || { echo "::error::$f failed"; tail -25 "$RUNNER_TEMP/u.log"; fails=$((fails+1)); }
+          done
+          exit $fails
+      - name: Pipelines
+        run: . .venv/bin/activate && python -B -u backend/tests/test_fpkg_pipelines.py --work "$RUNNER_TEMP/pipelines"
+      - name: GUI suite
+        run: . .venv/bin/activate && xvfb-run -a -s "-screen 0 1600x1000x24" python -B -u backend/tests/test_fpkg_gui.py --work "$RUNNER_TEMP/gui"
+      - name: The built app, every operation
+        run: |
+          . .venv/bin/activate
+          MATRIX_EXE="$PWD/dist/PS5 UltraPack/PS5 UltraPack" MATRIX_WORK="$RUNNER_TEMP" \
+            xvfb-run -a python -B backend/tests/frozen_matrix.py
+      - name: The built app starts
+        run: |
+          xvfb-run -a "dist/PS5 UltraPack/PS5 UltraPack" > "$RUNNER_TEMP/app.log" 2>&1 &
+          sleep 25
+          cat "$RUNNER_TEMP/app.log"
+          pgrep -f "dist/PS5 UltraPack/PS5 UltraPack" > /dev/null && ! grep -q Traceback "$RUNNER_TEMP/app.log"
+          pkill -f "dist/PS5 UltraPack/PS5 UltraPack" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/PS5-UltraPack-*-linux-x64.tar.gz
+            dist/PS5-UltraPack-*-linux-x64.tar.gz.sha256
+          retention-days: 7
+
+  windows:
+    if: github.event_name == 'workflow_dispatch' || contains(github.ref_name, 'windows')
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      # python.org 3.12 with Tk 8.6, as in the build VM
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.8"
+      - name: Build
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\Activate.ps1
+          python -m pip install -r requirements-build.txt setuptools
+          if ($LASTEXITCODE) { exit 1 }
+          .\BUILD_PKG_TOOL.ps1
+          Push-Location backend\unrar
+          python setup.py build_ext --inplace
+          if ($LASTEXITCODE) { exit 1 }
+          Pop-Location
+          bash ./FETCH_7ZIP.sh
+          if ($LASTEXITCODE) { exit 1 }
+          bash ./FETCH_AMPR_EMU.sh
+          if ($LASTEXITCODE) { exit 1 }
+          .\BUILD_WINDOWS_APP.ps1 -Python .\.venv\Scripts\python.exe -WorkPath build\windows
+      - name: Unit suites
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          $env:PYTHONPATH = $PWD; $env:PS5_FFPFSC_APP_DIR = "$env:RUNNER_TEMP\appdir"; $fails = 0
+          foreach ($f in Get-ChildItem backend\tests\test_*.py) {
+            if ($f.BaseName -in "test_fpkg_gui", "test_fpkg_pipelines", "test_e2e_corpus") { continue }
+            python -B $f.FullName *> "$env:RUNNER_TEMP\u.log"
+            if ($LASTEXITCODE) { "::error::$($f.Name) failed"; Get-Content "$env:RUNNER_TEMP\u.log" -Tail 25; $fails++ }
+          }
+          exit $fails
+      - name: Pipelines
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          $env:PYTHONPATH = $PWD
+          python -B -u backend\tests\test_fpkg_pipelines.py --work "$env:RUNNER_TEMP\pipelines"
+      - name: GUI suite
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          python -B -u backend\tests\test_fpkg_gui.py --work "$env:RUNNER_TEMP\gui"
+      - name: The built app, every operation
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          $env:MATRIX_EXE = "$PWD\dist\windows\PS5 UltraPack\PS5 UltraPack.exe"; $env:MATRIX_WORK = $env:RUNNER_TEMP
+          python -B backend\tests\frozen_matrix.py
+      - name: The built app starts
+        run: |
+          $p = Start-Process -PassThru "dist\windows\PS5 UltraPack\PS5 UltraPack.exe"
+          Start-Sleep 25
+          if ($p.HasExited) { "the app exited with $($p.ExitCode)"; exit 1 }
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/PS5-UltraPack-*-windows-x64-preview.zip
+            dist/PS5-UltraPack-*-windows-x64-preview.zip.sha256
+            build/ampr_emu-*/ampr_emu-*-source.tar.gz
+          retention-days: 7
+
+  publish:
+    if: github.event_name == 'push' && !cancelled() && !failure()
+    needs: [macos, linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+          merge-multiple: true
+      - name: Files onto the draft release, checksums into its notes, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          draft=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft) \
+            || { echo "::error::no draft release for $TAG, create it with the notes first"; exit 1; }
+          [ "$draft" = "true" ] || { echo "::error::the release $TAG is already published"; exit 1; }
+          files=$(find art -type f \( -name 'PS5-UltraPack-*' -o -name 'ampr_emu-*-source.tar.gz' \) | sort)
+          echo "$files"
+          gh release upload "$TAG" --repo "$REPO" --clobber $files
+          gh release view "$TAG" --repo "$REPO" --json body --jq .body > notes.md
+          sha() { f=$(find art -name "$1" | head -1); if [ -n "$f" ]; then cut -c1-64 "$f"; fi; }
+          mac=$(sha 'PS5-UltraPack-*-macos-arm64.zip.sha256')
+          win=$(sha 'PS5-UltraPack-*-windows-x64-preview.zip.sha256')
+          lin=$(sha 'PS5-UltraPack-*-linux-x64.tar.gz.sha256')
+          sed -i "s/{SHA}/${mac:-$win}/g; s/{SHA_LINUX}/${lin}/g" notes.md
+          if grep -q '{SHA' notes.md; then echo "::error::a checksum placeholder is left"; exit 1; fi
+          case "$TAG" in
+            *windows*) gh release edit "$TAG" --repo "$REPO" --notes-file notes.md --draft=false --prerelease ;;
+            *)         gh release edit "$TAG" --repo "$REPO" --notes-file notes.md --draft=false --latest ;;
+          esac
+          gh release view "$TAG" --repo "$REPO" --json url,assets --jq '.url, (.assets[] | "\(.name) \(.digest)")'

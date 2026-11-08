@@ -24,8 +24,9 @@ if system == "Darwin":
     extra_link_args.append("-stdlib=libc++")
 elif system == "Windows":
     UNRAR_SOURCES.extend(["motw.cpp", "isnt.cpp"])
-    extra_compile_args = ["/DRARDLL", "/DUNRAR", "/DSILENT"]
-    extra_link_args = ["advapi32.lib", "shell32.lib", "ole32.lib"]
+    # the same switches as the MinGW build in BUILD_WINDOWS_PARTS.sh
+    extra_compile_args = ["/std:c++17", "/EHsc", "/DRARDLL", "/DUNRAR", "/DSILENT", "/DUNICODE", "/D_UNICODE"]
+    extra_link_args = ["advapi32.lib", "shell32.lib", "ole32.lib", "uuid.lib", "powrprof.lib"]
 
 sources = ["_unrar.cpp"] + [f"src/{s}" for s in UNRAR_SOURCES]
 
