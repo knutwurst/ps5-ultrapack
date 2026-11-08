@@ -14,7 +14,8 @@ $Zip = "dist\PS5-UltraPack-$Version-windows-x64-preview.zip"
 Remove-Item -Force -ErrorAction SilentlyContinue $Zip, "$Zip.sha256"
 Compress-Archive -Path "dist\windows\PS5 UltraPack" -DestinationPath $Zip
 $Hash = (Get-FileHash -Algorithm SHA256 $Zip).Hash.ToLower()
-"$Hash  $(Split-Path -Leaf $Zip)" | Set-Content -Encoding ascii "$Zip.sha256"
+# LF only, so shasum -c works on macOS and Linux too
+[IO.File]::WriteAllText("$PWD\$Zip.sha256", "$Hash  $(Split-Path -Leaf $Zip)`n")
 "Built: dist\windows\PS5 UltraPack\PS5 UltraPack.exe"
 "Release: $Zip"
 $Hash
