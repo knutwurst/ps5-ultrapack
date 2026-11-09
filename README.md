@@ -10,7 +10,7 @@ The app used to be called PS5 FFPFSC ULTRA.
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS%2026+-Apple%20Silicon-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 26 or newer (Apple Silicon)">
-  <a href="https://github.com/knutwurst/ps5-ultrapack/releases/tag/v2.3.0-windows-preview.1"><img src="https://img.shields.io/badge/Windows%20x64-preview-f59e0b?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64 preview"></a>
+  <img src="https://img.shields.io/badge/Windows-x64-0ea5e9?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64">
   <img src="https://img.shields.io/badge/Linux-x64-3b82f6?style=for-the-badge&logo=linux&logoColor=white" alt="Linux x64">
   <img src="https://img.shields.io/badge/FW%2011.60-verified-22c55e?style=for-the-badge" alt="FW 11.60 verified">
   <img src="https://img.shields.io/badge/source-MIT-3a3a3a?style=for-the-badge" alt="Source MIT">
@@ -32,7 +32,7 @@ Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack
   ```bash
   xattr -dr com.apple.quarantine "PS5 UltraPack.app"
   ```
-- **Windows x64** (preview): unzip and start `PS5 UltraPack.exe`. SmartScreen will warn on first start because the exe isn't signed ("More info", then "Run anyway"). Everything works on Windows 11 in my tests, but I haven't tried a package built on Windows on a console yet.
+- **Windows x64**: unzip and start `PS5 UltraPack.exe`. SmartScreen will warn on first start because the exe isn't signed ("More info", then "Run anyway"). Every release is built and tested on Windows: the unit, pipeline and GUI tests, every function of the finished app, and a start of it. I haven't tried a package built on Windows on a console yet.
 - **Linux x64** (from 2.4.0 on): unpack `PS5-UltraPack-<version>-linux-x64.tar.gz` anywhere and run `./PS5 UltraPack`; `./install.sh` adds it to the app menu (`--uninstall` removes it). Every release is built and tested on Ubuntu 24.04: the build, the unit, pipeline and GUI tests, and a start of the finished app. Trash uses `gio trash` (or `kioclient`/`trash-cli`), notifications use `notify-send`. Thanks to [@trongio](https://github.com/trongio) for the Linux port.
 
 ## Screenshots

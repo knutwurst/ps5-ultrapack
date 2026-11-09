@@ -2,7 +2,6 @@
 
 GERMAN: dict[str, str] = {
     "Missing customtkinter. Run: py -m pip install customtkinter": "customtkinter fehlt. Ausführen: py -m pip install customtkinter",
-    " (Windows preview)": " (Windows-Vorschau)",
     "Not set: backports use the three public targets, and Check has nothing to compare with.": "Nicht gesetzt: Backports nutzen die drei öffentlichen Ziele, und Prüfen hat nichts zum Vergleichen.",
     "This folder does not exist.": "Dieser Ordner existiert nicht.",
     "Could not read the folder: {e}": "Der Ordner konnte nicht gelesen werden: {e}",

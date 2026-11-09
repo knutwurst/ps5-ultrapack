@@ -16,13 +16,20 @@ LINUX
   - RAM for temp on Linux (Settings > Drives & space): a job whose scratch
     fits the budget builds in /dev/shm. Also by trongio (#10).
 
+WINDOWS
+
+  - Windows is a regular build now, no longer a preview: it ships on the
+    same release as macOS and Linux as PS5-UltraPack-<version>-windows-x64.zip,
+    and the title bar, About and the sidebar no longer say "preview".
+
 RELEASE BUILDS
 
   - GitHub Actions builds the macOS, Windows and Linux apps for every
     release (.github/workflows/release.yml). Each build runs the unit,
     pipeline and GUI suites, every backend operation through the built
     app (backend/tests/frozen_matrix.py) and a start of the app, and only
-    then goes onto the release.
+    then goes onto the release. One tag vX.Y.Z builds all three; there
+    are no separate Windows tags any more.
   - The Windows .sha256 file ends with LF only, so shasum -c works on it
     on macOS and Linux.
 

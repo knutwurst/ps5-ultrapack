@@ -1,6 +1,6 @@
-# Release builds for macOS, Windows and Linux. A tag vX.Y.Z builds Mac + Linux, vX.Y.Z-windows-preview.N
-# builds Windows; each build is tested, and only then the files go onto the draft release of that tag,
-# its {SHA}/{SHA_LINUX} placeholders get filled and it is published. A manual run builds and tests all three.
+# Release builds for macOS, Windows and Linux. A tag vX.Y.Z builds all three; each build is tested, and only
+# then the files go onto the draft release of that tag, its {SHA}/{SHA_LINUX}/{SHA_WINDOWS} placeholders get filled
+# and it is published as the latest release. A manual run builds and tests all three.
 name: Release builds
 
 on:
@@ -17,7 +17,6 @@ env:
 
 jobs:
   macos:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.ref_name, 'windows')
     runs-on: macos-26
     timeout-minutes: 90
     steps:
@@ -72,7 +71,6 @@ jobs:
           retention-days: 7
 
   linux:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.ref_name, 'windows')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -125,7 +123,6 @@ jobs:
           retention-days: 7
 
   windows:
-    if: github.event_name == 'workflow_dispatch' || contains(github.ref_name, 'windows')
     runs-on: windows-2025
     timeout-minutes: 90
     defaults:
@@ -190,8 +187,8 @@ jobs:
         with:
           name: windows
           path: |
-            dist/PS5-UltraPack-*-windows-x64-preview.zip
-            dist/PS5-UltraPack-*-windows-x64-preview.zip.sha256
+            dist/PS5-UltraPack-*-windows-x64.zip
+            dist/PS5-UltraPack-*-windows-x64.zip.sha256
             build/ampr_emu-*/ampr_emu-*-source.tar.gz
           retention-days: 7
 
@@ -220,12 +217,10 @@ jobs:
           gh release view "$TAG" --repo "$REPO" --json body --jq .body > notes.md
           sha() { f=$(find art -name "$1" | head -1); if [ -n "$f" ]; then cut -c1-64 "$f"; fi; }
           mac=$(sha 'PS5-UltraPack-*-macos-arm64.zip.sha256')
-          win=$(sha 'PS5-UltraPack-*-windows-x64-preview.zip.sha256')
+          win=$(sha 'PS5-UltraPack-*-windows-x64.zip.sha256')
           lin=$(sha 'PS5-UltraPack-*-linux-x64.tar.gz.sha256')
-          sed -i "s/{SHA}/${mac:-$win}/g; s/{SHA_LINUX}/${lin}/g" notes.md
+          [ -n "$mac" ] && [ -n "$lin" ] && [ -n "$win" ] || { echo "::error::a build's checksum is missing"; exit 1; }
+          sed -i "s/{SHA}/${mac}/g; s/{SHA_LINUX}/${lin}/g; s/{SHA_WINDOWS}/${win}/g" notes.md
           if grep -q '{SHA' notes.md; then echo "::error::a checksum placeholder is left"; exit 1; fi
-          case "$TAG" in
-            *windows*) gh release edit "$TAG" --repo "$REPO" --notes-file notes.md --draft=false --prerelease ;;
-            *)         gh release edit "$TAG" --repo "$REPO" --notes-file notes.md --draft=false --latest ;;
-          esac
+          gh release edit "$TAG" --repo "$REPO" --notes-file notes.md --draft=false --latest
           gh release view "$TAG" --repo "$REPO" --json url,assets --jq '.url, (.assets[] | "\(.name) \(.digest)")'
