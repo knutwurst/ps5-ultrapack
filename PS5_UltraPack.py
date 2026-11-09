@@ -131,7 +131,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.3.5"
+APP_VERSION = "2.4.0"
 APP_EDITION = " (Windows preview)" if sys.platform == "win32" else ""
 # archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25

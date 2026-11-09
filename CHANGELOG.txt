@@ -3,7 +3,7 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
-  v2.3.5
+  v2.4.0
 ────────────────────────────────────────────────────────────────────────
 
 LINUX
@@ -11,14 +11,31 @@ LINUX
   - A native Linux x64 build (BUILD_LINUX_APP.sh), with zenity/kdialog
     file dialogs, gio/kioclient/trash-cli Trash, notify-send
     notifications and an install.sh for the app menu. Contributed by
-    trongio (#9).
+    trongio (#9). Every release ships it as
+    PS5-UltraPack-<version>-linux-x64.tar.gz.
   - RAM for temp on Linux (Settings > Drives & space): a job whose scratch
     fits the budget builds in /dev/shm. Also by trongio (#10).
+
+RELEASE BUILDS
+
+  - GitHub Actions builds the macOS, Windows and Linux apps for every
+    release (.github/workflows/release.yml). Each build runs the unit,
+    pipeline and GUI suites, every backend operation through the built
+    app (backend/tests/frozen_matrix.py) and a start of the app, and only
+    then goes onto the release.
+  - The Windows .sha256 file ends with LF only, so shasum -c works on it
+    on macOS and Linux.
 
 BACKPORT
 
   - An encrypted sce_sys/about module no longer blocks a backport; it
     stays as the dump has it, with a warning (#9).
+
+FIXED
+
+  - The app could hang when Python freed a Tk font, variable or image in
+    a worker thread while the main thread waited for that thread. Those
+    objects now wait for the main thread and go there.
 
 ────────────────────────────────────────────────────────────────────────
   v2.3.4

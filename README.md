@@ -33,7 +33,7 @@ Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack
   xattr -dr com.apple.quarantine "PS5 UltraPack.app"
   ```
 - **Windows x64** (preview): unzip and start `PS5 UltraPack.exe`. SmartScreen will warn on first start because the exe isn't signed ("More info", then "Run anyway"). Everything works on Windows 11 in my tests, but I haven't tried a package built on Windows on a console yet.
-- **Linux x64** (from 2.3.5 on): unpack `PS5-UltraPack-<version>-linux-x64.tar.gz` anywhere and run `./PS5 UltraPack`; `./install.sh` adds it to the app menu (`--uninstall` removes it). Every release is built and tested on Ubuntu 24.04: the build, the unit, pipeline and GUI tests, and a start of the finished app. Trash uses `gio trash` (or `kioclient`/`trash-cli`), notifications use `notify-send`. Thanks to [@trongio](https://github.com/trongio) for the Linux port.
+- **Linux x64** (from 2.4.0 on): unpack `PS5-UltraPack-<version>-linux-x64.tar.gz` anywhere and run `./PS5 UltraPack`; `./install.sh` adds it to the app menu (`--uninstall` removes it). Every release is built and tested on Ubuntu 24.04: the build, the unit, pipeline and GUI tests, and a start of the finished app. Trash uses `gio trash` (or `kioclient`/`trash-cli`), notifications use `notify-send`. Thanks to [@trongio](https://github.com/trongio) for the Linux port.
 
 ## Screenshots
 

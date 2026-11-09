@@ -18,7 +18,7 @@ namespace PkgTool;
 
 internal static partial class Program
 {
-    const string ToolVersion = "2.3.4";
+    const string ToolVersion = "2.4.0";
 
     static int Main(string[] args)
     {
