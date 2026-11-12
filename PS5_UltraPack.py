@@ -131,7 +131,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.1"
 # archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
 # copy jobs unpack on the output drive, so a rename follows (or a copy across drives)
@@ -1722,8 +1722,10 @@ class QueueReportWindow(MessageWindow):
 
 
 class SpaceSkipWindow(MessageWindow):
-    _HINTS = {"output": "Free up space there, or pick another output with Edit, then Retry.",
+    _HINTS = {"missing": "Connect the drive, or pick another output with Edit, then Retry.",
+              "output": "Free up space there, or pick another output with Edit, then Retry.",
               "temp": "Free up space there, or add a temp drive in Settings, then Retry."}
+    _HEADS = {"missing": "Drive not connected", "output": "Output drive full", "temp": "Temp drive full"}
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -1749,12 +1751,12 @@ class SpaceSkipWindow(MessageWindow):
         self._lines.append(line)
         self._kinds.append(kind)
         kinds = set(self._kinds)
-        head = ("Output drive full" if kinds == {"output"} else
-                "Temp drive full" if kinds == {"temp"} else "Not enough space")
+        head = (self._HEADS[next(iter(kinds))] if len(kinds) == 1 else
+                "Not enough space" if "missing" not in kinds else "Jobs skipped")
         self.title(head)
         self._head.configure(text=head)
         self._body.configure(text="\n\n".join(self._lines))
-        self._hint.configure(text=" ".join(self._HINTS[k] for k in ("output", "temp") if k in kinds))
+        self._hint.configure(text=" ".join(self._HINTS[k] for k in ("missing", "output", "temp") if k in kinds))
         self.update_idletasks()
         self.geometry(f"540x{max(180, self.winfo_reqheight())}")
 
@@ -4430,6 +4432,7 @@ class JobDialog(EmbeddedDialog):
         self.out_var = tk.StringVar(value=out0)
         # PS4 and PS5 outputs are remembered per platform; a mixed folder shows both
         _r4 = app._recent_outputs("ps4")
+        _r4 = [x for x in _r4 if ultra_core.drive_attached(x)] or _r4   # the last library on a drive that is plugged in
         self._out_default = {"ps5": out0, "ps4": (_r4[0] if _r4 else out0)}
         self._platform = "ps5"
         self.ps4_out_var = tk.StringVar(value=self._out_default["ps4"])
@@ -11141,6 +11144,10 @@ class App:
                     return
                 if kind == "ps4":
                     item.operation = "copy"           # sorted into the library, whatever the job said
+                    if getattr(item, "content_kind", "") != "ps4" and getattr(item, "auto_output", False):
+                        lib = next((x for x in self._recent_outputs("ps4") if ultra_core.drive_attached(x)), None)
+                        if lib:                           # a PS5 output folder is not the PS4 library
+                            item.output_path = Path(lib)
                 if kind == "pkg" and getattr(item, "operation", "") != "chain":
                     item.chain_to = ("pkg" if getattr(item, "operation", "") == "fpkg-build" else
                                      "ffpfs" if getattr(item, "output_compressed", True) is False else "ffpfsc")
@@ -14660,7 +14667,9 @@ class App:
         label, folder, need, free = short
         kind = "output" if label.startswith("Output") else "temp"
         drive = _drive_name(folder)
-        item._skip_reason = tr("{kind} drive full: {drive} needs ~{need}, {free} free", kind=kind, drive=drive, need=format_size(need), free=format_size(free))
+        item._skip_reason = (tr("Output drive full: {drive} needs ~{need}, {free} free", drive=drive, need=format_size(need), free=format_size(free))
+                             if kind == "output" else
+                             tr("Temp drive full: {drive} needs ~{need}, {free} free", drive=drive, need=format_size(need), free=format_size(free)))
         self.log("WARN", f"{kind.capitalize()} drive full: {name} skipped, {drive} needs ~{format_size(need)} "
                          f"and has {format_size(free)} free (policy: skip).")
         to = getattr(item, "chain_to", None) or {"fpkg-build": "pkg", "copy": "copy"}.get(
@@ -14676,8 +14685,28 @@ class App:
         except tk.TclError:
             pass
 
+    def _note_drive_missing(self, item, folder: Path, kind: str) -> None:
+        """an unplugged drive is not a full one: say which drive to connect"""
+        name = getattr(item, "display_name", None) or item.name
+        drive = _drive_name(folder)
+        item._skip_reason = (tr("Output drive not connected: {drive}", drive=drive) if kind == "output"
+                             else tr("Temp drive not connected: {drive}", drive=drive))
+        self.log("WARN", f"{kind.capitalize()} drive not connected: {name} skipped, {drive} ({folder}) is not attached.")
+        line = tr("{name} was skipped. {drive} is not connected.", name=name, drive=drive)
+        win = getattr(self, "_space_skip_win", None)
+        try:
+            if win is None or not win.winfo_exists():
+                win = self._space_skip_win = SpaceSkipWindow(self.root)
+            win.add(line, "missing")
+        except tk.TclError:
+            pass
+
     def _space_gate(self, item, out_dir):
         """place the run by its REAL footprint, then go/skip/cancel against that drive"""
+        if out_dir and not ultra_core.drive_attached(out_dir):
+            item._skip_reason = ""
+            self._note_drive_missing(item, Path(out_dir), "output")
+            return "skip"
         op = getattr(item, "operation", "pack")
         # unpack, fPKG extract and fake-sign build no image, no space gate needed
         if op in ("unpack", "fake-sign", "fpkg-extract", "ps4-keystone"):
@@ -14694,6 +14723,9 @@ class App:
             self.log("WARN", f"Placement failed ({e}); using temp.")
         temp_dir = Path(getattr(item, "_build_temp", None)
                         or (self.temp_var.get().strip() or str(Path.home())))
+        if not ultra_core.drive_attached(temp_dir):
+            self._note_drive_missing(item, temp_dir, "temp")
+            return "skip"
         try:
             ok = _space_preflight_ok(item, temp_dir, out_dir)
         except Exception as e:

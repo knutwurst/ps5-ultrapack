@@ -672,5 +672,28 @@ class RarListedOnce(unittest.TestCase):
         self.assertIsNone(AE.reading_now())
 
 
+class LockedArchiveNamedPs4(unittest.TestCase):
+    """an archive no password opens: the CUSA id on it or its folder still makes it a PS4 job"""
+
+    def _locked(self, folder: str, name: str) -> Path:
+        d = Path(tempfile.mkdtemp(prefix="ultrapack-locked-")) / folder
+        d.mkdir()
+        self.addCleanup(shutil.rmtree, d.parent, True)
+        f = d / name
+        f.write_bytes(b"Rar!\x1a\x07\x01\x00" + os.urandom(256))   # a RAR5 mark with nothing readable after it
+        return f
+
+    def test_cusa_on_the_folder_means_ps4(self):
+        info = AE.ps4_archive_info(self._locked("Some Game [CUSA12345] [v1.06] [PKG]", "x.part1.rar"), ["nope"])
+        self.assertEqual(info, {"packages": [], "ident": None})
+
+    def test_cusa_on_the_archive_means_ps4(self):
+        self.assertIsNotNone(AE.ps4_archive_info(self._locked("Downloads", "Game-CUSA12345.rar"), []))
+
+    def test_no_id_or_a_ps5_id_stays_unknown(self):
+        self.assertIsNone(AE.ps4_archive_info(self._locked("Downloads", "Game.rar"), []))
+        self.assertIsNone(AE.ps4_archive_info(self._locked("Game [PPSA12345] [CUSA12345]", "Game.rar"), []))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

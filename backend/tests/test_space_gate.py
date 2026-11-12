@@ -202,5 +202,24 @@ class CloneProbe(unittest.TestCase):
     def test_the_answer_is_a_bool(self):
         self.assertIsInstance(m._drive_can_clone(Path(tempfile.gettempdir())), bool)
 
+class DriveAttached(unittest.TestCase):
+    def test_an_existing_folder_and_a_folder_not_made_yet_are_attached(self):
+        t = Path(tempfile.gettempdir())
+        self.assertTrue(m.drive_attached(t))
+        self.assertTrue(m.drive_attached(t / "not" / "made" / "yet"))
+
+    @unittest.skipIf(os.name == "nt", "mount folders are a macOS/Linux thing")
+    def test_an_unplugged_drive_is_not_attached_and_has_no_free_space(self):
+        for gone in ("/Volumes/NoSuchDrive_ultrapack/PS4", "/media/someone/NoSuchDrive_ultrapack/x",
+                     "/run/media/someone/NoSuchDrive_ultrapack", "/mnt/NoSuchDrive_ultrapack/x"):
+            self.assertFalse(m.drive_attached(gone), gone)
+        self.assertEqual(m.get_free_space(Path("/Volumes/NoSuchDrive_ultrapack/PS4")), 0)
+
+    @unittest.skipUnless(os.name == "nt", "drive letters")
+    def test_a_missing_drive_letter_is_not_attached(self):
+        free = next(c for c in "ZYXWVUTSRQ" if not Path(f"{c}:\\").exists())
+        self.assertFalse(m.drive_attached(f"{free}:\\Games"))
+
+
 if __name__ == "__main__":
     unittest.main()

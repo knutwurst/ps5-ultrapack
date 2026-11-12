@@ -195,14 +195,29 @@ def drive_display_name(path, system: str = "the system drive") -> str:
     return tr(system)
 
 
+def _is_mount_point_name(p: Path) -> bool:
+    """/Volumes/X, /mnt/X, /media/<user>/X or /run/media/<user>/X: where a removable drive appears"""
+    parts = p.parts
+    return ((len(parts) == 3 and parts[1] in ("Volumes", "mnt")) or (len(parts) == 4 and parts[1] == "media")
+            or (len(parts) == 5 and parts[1:3] == ("run", "media")))
+
+
 def _existing_ancestor(path: Path) -> Path:
     """nearest existing folder at or above path, so a folder not made yet still has a drive"""
     target = Path(path)
     while not target.exists() and target != target.parent:
-        if target.parent == Path("/Volumes"):
+        if _is_mount_point_name(target):
             break  # unplugged drive: don't fall back to the startup disk
         target = target.parent
     return target
+
+
+def drive_attached(path) -> bool:
+    """False when the path's drive is unplugged (or its Windows drive letter is gone)"""
+    try:
+        return _existing_ancestor(Path(path)).exists()
+    except (OSError, ValueError):
+        return False
 
 
 SHM_DIR = Path("/dev/shm")
@@ -2790,6 +2805,12 @@ class ArchiveExtractor:
         archive = Path(archive)
         names = ArchiveExtractor.list_members(
             ArchiveExtractor._first_volume(archive) if archive.suffix.lower() == ".rar" else archive, passwords)
+        if not names:
+            # names locked behind a password nothing opened: a CUSA id on the archive or its folder still says PS4
+            hints = (archive.name, archive.parent.name)
+            if any(re.search(r"CUSA\d{5}", h, re.I) for h in hints) and not any(re.search(r"PPSA\d{5}", h, re.I) for h in hints):
+                return {"packages": [], "ident": None}
+            return None
         pkgs = [n for n in names if n.lower().endswith(".pkg")
                 and not any(is_fs_junk_name(part) for part in n.split("/"))]
         if not pkgs or any(n.lower().rstrip("/").endswith(("eboot.bin", "sce_sys/param.json")) for n in names):

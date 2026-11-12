@@ -3,6 +3,33 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.4.1
+────────────────────────────────────────────────────────────────────────
+
+DRIVES
+
+  - A job whose output or temp drive is unplugged is skipped as "drive
+    not connected: <name>", with a hint to connect it or pick another
+    output. It said "drive full, 0 B free" before, which looked like a
+    full disk while the drive simply wasn't there.
+  - New jobs take the last PS4 library on a drive that is plugged in.
+    The job window used to suggest the last PS4 library even when its
+    drive was gone, so a job could go to a drive that wasn't attached.
+  - Linux: a missing drive under /media, /run/media or /mnt counts as
+    unplugged like one under /Volumes on a Mac, instead of falling back
+    to the system drive's free space.
+  - The German skip note no longer reads "output-Laufwerk voll".
+
+PS4
+
+  - An archive whose names no saved password opens counts as PS4 when
+    its own name or its folder carries a CUSA id (and no PPSA id). It
+    was taken for a PS5 game and queued as a .ffpfsc build.
+  - When an archive turns out to hold PS4 packages after unpacking, a job
+    with automatic output goes to the PS4 library on a plugged-in drive
+    instead of the PS5 output folder.
+
+────────────────────────────────────────────────────────────────────────
   v2.4.0
 ────────────────────────────────────────────────────────────────────────
 

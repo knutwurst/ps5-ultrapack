@@ -534,6 +534,15 @@ try:
     ok("pending-identity.cleared-on-error", app._pending_fpkg_identity is None, str(app._pending_fpkg_identity))
     if pkg:
         ok("space-gate.fpkg-extract-proceeds", app._space_gate(ie, OUT) == "proceed", "")
+    gone = Path("Q:\\NoSuchDrive_ultrapack") if os.name == "nt" else Path("/Volumes/NoSuchDrive_ultrapack/PS4 Games")
+    gi = m.GameItem(HBT); gi.output_path = str(gone)
+    ok("space-gate.unplugged-output-is-not-full", app._space_gate(gi, gone) == "skip"
+       and "not connected" in gi._skip_reason.lower() and "full" not in gi._skip_reason.lower(), gi._skip_reason)
+    sw = getattr(app, "_space_skip_win", None)
+    ok("space-gate.unplugged-window-says-so", sw is not None and sw.winfo_exists() and m._drive_name(gone) in sw.text(),
+       sw.text() if sw is not None else "no window")
+    if sw is not None:
+        sw.destroy(); app._space_skip_win = None
     olds = {"fpkg-build": fb}
     if pkg:
         olds["fpkg-extract"] = m.GameItem.from_fpkg_extract(pkg, output_path=str(OUT / "ext"))
@@ -1749,7 +1758,7 @@ try:
     _skt = _skw.text() if _skw is not None and _skw.winfo_exists() else ""
     _skinfo = app._card_info_text(_sk[0]).get("Status", "")
     ok("space-skip.names-the-drive", all(j.status == "Skipped" for j in _sk)
-       and _skinfo.startswith("Skipped: output drive full") and _skw is not None
+       and _skinfo.startswith("Skipped: Output drive full") and _skw is not None
        and _skw.title() == "Output drive full" and _skt.count("was skipped") == 2
        and any("output drive full" in x.lower() and "free" in x for x in _sklog),
        f"status={[j.status for j in _sk]} info={_skinfo!r} title={_skw.title() if _skw else None} "
