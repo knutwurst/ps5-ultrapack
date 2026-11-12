@@ -2674,18 +2674,21 @@ class ArchiveExtractor:
                 f"Could not extract {archive.name}: the archive looks damaged or incomplete. "
                 f"Saved password {n} opened it, but the data failed its check ({e}).\n\n"
                 "Download the archive again. Should it be intact, that password is not the "
-                "right one: add the correct one in Settings › Archives.")
+                "right one: add the correct one in Settings › Archives."
+                + ArchiveExtractor.lone_part_note(archive))
         if named:
             raise RuntimeError(
                 f"Could not open {archive.name}: wrong or missing password - none of the "
                 f"{len(named)} saved password(s) worked.\n\n"
                 "Add the correct password in Settings › Archives "
                 "(or in the 'Archive Password' field) and try again."
+                + ArchiveExtractor.lone_part_note(archive, password_error=True)
             )
         raise RuntimeError(
             f"Could not open {archive.name}: it is password-protected and no password "
             "is saved.\n\nAdd the password in Settings › Archives "
             "(or in the 'Archive Password' field) and try again."
+            + ArchiveExtractor.lone_part_note(archive, password_error=True)
         )
 
     @staticmethod
@@ -3302,6 +3305,31 @@ class ArchiveExtractor:
                 returncode=code)
 
     @staticmethod
+    def lone_first_part(archive: Path) -> bool:
+        """a part1.rar with no part2 beside it: the set may be incomplete"""
+        first = ArchiveExtractor._first_volume(Path(archive))
+        m = re.match(r"^(?P<base>.*\.part)(?P<num>0*1)(?P<ext>\.rar)$", first.name, re.I)
+        if not m:
+            return False
+        nxt = first.with_name(f"{m.group('base')}{'2'.zfill(len(m.group('num')))}{m.group('ext')}")
+        try:
+            return not nxt.exists()
+        except OSError:
+            return False
+
+    @staticmethod
+    def lone_part_note(archive: Path, password_error: bool = False) -> str:
+        """'' unless only part 1 of a set is there"""
+        if not ArchiveExtractor.lone_first_part(archive):
+            return ""
+        note = ("\n\nOnly part 1 of this archive is in its folder. If the set has more parts "
+                "(….part2.rar and on), they are missing: put them next to part 1.")
+        if password_error:
+            note += (" Missing parts do not cause a password error, the password is checked in part 1. "
+                     "Once the password is right, the unpack needs every part.")
+        return note
+
+    @staticmethod
     def _first_volume(archive: Path) -> Path:
         """later parts map to part1.rar (width kept), .rNN to .rar; else unchanged"""
         name = archive.name
@@ -3385,7 +3413,8 @@ class ArchiveExtractor:
 
         # macOS: native module ran and failed, so the archive is bad; unsigned CLIs only bring Gatekeeper popups
         if sys.platform == "darwin" and bundled_imported:
-            extra = "" if "password" in (bundled_err or "").lower() else f"\n\n{multipart_hint}"
+            extra = ("" if "password" in (bundled_err or "").lower() else
+                     ArchiveExtractor.lone_part_note(archive) or f"\n\n{multipart_hint}")
             raise RuntimeError(
                 f"RAR extraction failed - {bundled_err}.{extra}\n\n"
                 "ZIP and .7z archives extract without external RAR tools."

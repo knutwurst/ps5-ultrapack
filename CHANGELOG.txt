@@ -20,6 +20,14 @@ DRIVES
     to the system drive's free space.
   - The German skip note no longer reads "output-Laufwerk voll".
 
+ARCHIVES
+
+  - When only part1.rar of a set is in the folder, a failed unpack says
+    so: further parts may be missing and belong next to it. For a wrong
+    password it adds that missing parts don't cause that error (the
+    password is checked in part 1), but the unpack needs them once the
+    password is right.
+
 PS4
 
   - An archive whose names no saved password opens counts as PS4 when

@@ -695,5 +695,51 @@ class LockedArchiveNamedPs4(unittest.TestCase):
         self.assertIsNone(AE.ps4_archive_info(self._locked("Game [PPSA12345] [CUSA12345]", "Game.rar"), []))
 
 
+class LonePartOne(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="ultrapack-parts-"))
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+    def _make(self, *names):
+        for n in names:
+            (self.d / n).write_bytes(b"Rar!")
+        return self.d / names[0]
+
+    def test_part1_alone_gets_the_note(self):
+        a = self._make("Game.part1.rar")
+        self.assertTrue(AE.lone_first_part(a))
+        self.assertIn("Only part 1", AE.lone_part_note(a))
+        self.assertIn("password is checked in part 1", AE.lone_part_note(a, password_error=True))
+
+    def test_padded_numbers_count(self):
+        self.assertTrue(AE.lone_first_part(self._make("Game.part01.rar")))
+        self.assertFalse(AE.lone_first_part(self._make("Other.part001.rar", "Other.part002.rar")))
+
+    def test_a_complete_set_or_a_single_archive_has_no_note(self):
+        self.assertFalse(AE.lone_first_part(self._make("Game.part1.rar", "Game.part2.rar")))
+        self.assertFalse(AE.lone_first_part(self._make("Single.rar")))
+        self.assertEqual(AE.lone_part_note(self.d / "Single.rar"), "")
+
+    def test_the_password_error_of_a_lone_part1_says_so(self):
+        a = self._make("Locked.part1.rar")
+        real = AE.extract
+        def wrong(*_a, **_k):
+            raise RuntimeError("Password required or incorrect")
+        AE.extract = staticmethod(wrong)
+        try:
+            with self.assertRaises(RuntimeError) as cm:
+                AE.extract_with_passwords(a, self.d / "out", ["one", "two"])
+        finally:
+            AE.extract = staticmethod(real)
+        msg = str(cm.exception)
+        self.assertIn("none of the 2 saved password(s) worked", msg)
+        self.assertIn("Only part 1", msg)
+        self.assertIn("password is checked in part 1", msg)
+
+    def test_a_later_part_looks_at_its_set(self):
+        self._make("Set.part1.rar", "Set.part2.rar")
+        self.assertFalse(AE.lone_first_part(self.d / "Set.part2.rar"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
