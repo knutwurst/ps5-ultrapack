@@ -122,16 +122,24 @@ try:
 except Exception:
     winsound = None
 
+_DND_DISABLED_REASON = None
 try:
     from tkinterdnd2 import TkinterDnD, DND_FILES
-    _HAS_DND = True
+    _HAS_DND = tk.TclVersion < 9
+    if not _HAS_DND:
+        TkinterDnD = None
+        DND_FILES = None
+        _DND_DISABLED_REASON = (
+            "Drag-and-drop is disabled because tkinterdnd2 supports Tcl 8, not Tcl 9. "
+            "Use Add to select files."
+        )
 except Exception:
     TkinterDnD = None
     DND_FILES = None
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.4.3"
 # archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
 # copy jobs unpack on the output drive, so a rename follows (or a copy across drives)
@@ -17198,6 +17206,8 @@ def main():
     ensure_app_dir()
     root = _CTkDnD()
     app = App(root)
+    if _DND_DISABLED_REASON:
+        app.log("WARN", _DND_DISABLED_REASON)
     _wire_open_document(root, app)
     root.mainloop()
 

@@ -94,6 +94,9 @@ def ok(name, cond, detail=""):
     res.append((name, bool(cond), detail))
     print(f"... {'pass' if cond else 'FAIL'} {name}" + ("" if cond else f"  {str(detail)[:300]}"),
           file=sys.stderr, flush=True)    # progress, for a run that hangs
+if tk.TclVersion >= 9:
+    ok("driver.tcl9-dnd-disabled", not m._HAS_DND and bool(m._DND_DISABLED_REASON),
+       m._DND_DISABLED_REASON or "Tcl 9 must not load tkinterdnd2's Tcl 8 extension")
 ok("driver.no-first-run-wizard", _no_wizard, "the isolated profile is a finished setup, so no wizard window opens")
 ok("driver.silent", not app.sound_complete_var.get() and not app.sound_error_var.get() and app.notify_var.get() == "off",
    "no done/failed sounds and no notifications while the driver runs jobs")

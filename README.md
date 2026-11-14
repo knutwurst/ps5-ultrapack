@@ -28,7 +28,7 @@ The app used to be called PS5 FFPFSC ULTRA.
 
 Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack/releases).
 
-- **macOS** 26 or newer on Apple Silicon (every M1 or later Mac can update to it for free): unzip and start the app. The app is only ad-hoc signed, so if macOS refuses to open it, run this once:
+- **macOS**: the published app is for macOS 26 or newer on Apple Silicon (every M1 or later Mac can update to it for free). Intel Macs can build an app for their own architecture from source; Intel builds support macOS 14.8.9 and newer. See [Building the app](#building-the-app) below. The app is only ad-hoc signed, so if macOS refuses to open it, run this once:
   ```bash
   xattr -dr com.apple.quarantine "PS5 UltraPack.app"
   ```
@@ -217,7 +217,7 @@ python3 -m venv .venv && source .venv/bin/activate
 ./BUILD_MACOS_APP.sh
 ```
 
-This writes `dist/PS5 UltraPack.app` plus `dist/PS5-UltraPack-<version>-macos-arm64.zip` and its `.sha256`. `FETCH_7ZIP.sh` downloads the pinned 7-Zip binaries for the bundle.
+This writes `dist/PS5 UltraPack.app` plus `dist/PS5-UltraPack-<version>-macos-x64.zip` on Intel or `dist/PS5-UltraPack-<version>-macos-arm64.zip` on Apple Silicon, and its `.sha256`. Intel bundles support macOS 14.8.9 and newer; Apple Silicon bundles support macOS 26 and newer. The native helpers are built for the architecture of the active Python interpreter. On Tcl/Tk 9, drag-and-drop is disabled with a startup warning because `tkinterdnd2` requires Tcl 8; use **Add** to select files. `FETCH_7ZIP.sh` downloads and selects the matching pinned 7-Zip binary.
 
 **Windows:** build the native parts on a Mac first with `WIN_PYTHON=<copy of the Windows Python folder> ./BUILD_WINDOWS_PARTS.sh` (needs the .NET SDK and `mingw-w64`). Then run `BUILD_WINDOWS_APP.ps1` on Windows. It writes `dist\windows\PS5 UltraPack\PS5 UltraPack.exe` and the release zip.
 
