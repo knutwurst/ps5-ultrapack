@@ -133,7 +133,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.4.2"
 # archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
 # copy jobs unpack on the output drive, so a rename follows (or a copy across drives)
