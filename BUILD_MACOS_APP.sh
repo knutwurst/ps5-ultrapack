@@ -10,6 +10,24 @@ if [[ -z "${VIRTUAL_ENV:-}" ]] \
     exit 1
 fi
 
+# Build every native component for the architecture of the Python that PyInstaller bundles.
+PYTHON_ARCH="$(python3 -c 'import platform; print(platform.machine())')"
+case "${PYTHON_ARCH}" in
+    x86_64)
+        MACOS_ARCH=x86_64
+        MACOS_LABEL=x64
+        ;;
+    arm64|aarch64)
+        MACOS_ARCH=arm64
+        MACOS_LABEL=arm64
+        ;;
+    *)
+        echo "BUILD_MACOS_APP.sh: unsupported Python architecture: ${PYTHON_ARCH}" >&2
+        exit 1
+        ;;
+esac
+export MACOS_ARCH
+
 # fPKG helper always built from source, never taken from git
 ./BUILD_PKG_TOOL.sh
 # 7-Zip, pinned and checked, from 7-zip.org
@@ -29,7 +47,7 @@ APP="dist/PS5 UltraPack.app"
 # APP_VERSION from the main script; quotes are hex escapes so it fits in single quotes
 VERSION="$(python3 -c 'import re; m = re.search(r"^APP_VERSION\s*=\s*[\x22\x27]([^\x22\x27]+)[\x22\x27]", open("PS5_UltraPack.py", encoding="utf-8").read(), re.M); print(m.group(1) if m else "1.0")')"
 
-ZIP="PS5-UltraPack-${VERSION}-macos-arm64.zip"
+ZIP="PS5-UltraPack-${VERSION}-macos-${MACOS_LABEL}.zip"
 rm -f "dist/${ZIP}" "dist/${ZIP}.sha256"
 ditto -c -k --keepParent "${APP}" "dist/${ZIP}"
 (cd dist && shasum -a 256 "${ZIP}" > "${ZIP}.sha256")

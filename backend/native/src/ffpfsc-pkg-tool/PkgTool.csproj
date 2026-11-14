@@ -6,13 +6,12 @@
     <AssemblyName>ffpfsc-pkg-tool</AssemblyName>
     <Nullable>enable</Nullable>
     <LangVersion>13</LangVersion>
-    <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <!-- Magick.NET's Prospero-facing path is reflection-driven, so trimming
          would rip out the very types the DDS conversion needs. No trim. -->
     <PublishTrimmed>false</PublishTrimmed>
-    <!-- The one native library (Magick.Native-Q8-arm64.dll.dylib) ships NEXT TO the
+    <!-- The one architecture-specific native library ships NEXT TO the
          executable. Bundling it made the .NET host unpack it into ~/.net/ffpfsc-pkg-tool/
          <bundle hash>/ on first run — a new ~27 MB folder for every build, never removed. -->
     <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>

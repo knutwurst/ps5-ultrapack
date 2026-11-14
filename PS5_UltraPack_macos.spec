@@ -10,6 +10,15 @@ APP_VERSION = _m.group(1) if _m else "1.0"
 
 
 import os as _os
+import platform as _platform
+
+_MACOS_MACHINE = _platform.machine()
+if _MACOS_MACHINE == "x86_64":
+    _MACOS_MAGICK = "Magick.Native-Q8-x64.dll.dylib"
+elif _MACOS_MACHINE in ("arm64", "aarch64"):
+    _MACOS_MAGICK = "Magick.Native-Q8-arm64.dll.dylib"
+else:
+    raise SystemExit(f"PS5_UltraPack_macos.spec: unsupported Python architecture: {_MACOS_MACHINE}")
 
 # backend/ ships as data, minus what never runs inside the app
 _BACKEND_SKIP_DIRS = {
@@ -35,7 +44,7 @@ _BACKEND_REQUIRED = [
     _os.path.join("mkpfs", "cli.py"), _os.path.join("mkpfs", "pfs.py"),
     _os.path.join("unrar", "__init__.py"), _os.path.join("unrar", "rarfile.py"),
     _os.path.join("native", "ffpfsc-pkg-tool"),
-    _os.path.join("native", "Magick.Native-Q8-arm64.dll.dylib"),   # loaded from the tool's folder
+    _os.path.join("native", _MACOS_MAGICK),   # loaded from the tool's folder
     _os.path.join("native", "7zz"), _os.path.join("native", "LICENSE.7-Zip.macos"),   # FETCH_7ZIP.sh
     _os.path.join("native", "libcrypto.3.dylib"), _os.path.join("native", "libssl.3.dylib"),   # BUILD_OPENSSL.sh
     _os.path.join("native", "LICENSE.OpenSSL"),
@@ -178,7 +187,14 @@ def _min_macos() -> str:
     """highest minimum of our Python and the bundled tools; a Homebrew build follows the build Mac"""
     import subprocess, sys
     found = []
-    for binary in (sys.executable, _os.path.join("backend", "native", "7zz")):
+    for binary in (
+        sys.executable,
+        _os.path.join("backend", "native", "7zz"),
+        _os.path.join("backend", "native", "ffpfsc-pkg-tool"),
+        _os.path.join("backend", "native", _MACOS_MAGICK),
+        _os.path.join("backend", "native", "libcrypto.3.dylib"),
+        _os.path.join("backend", "native", "libssl.3.dylib"),
+    ):
         try:
             out = subprocess.run(["otool", "-l", _os.path.realpath(binary)], capture_output=True,
                                  text=True, timeout=30).stdout

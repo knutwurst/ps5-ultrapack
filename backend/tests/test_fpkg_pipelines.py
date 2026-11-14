@@ -6,6 +6,7 @@ import binascii
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import struct
@@ -26,8 +27,19 @@ CLI = BACKEND / "cli.py"
 # FFPFSC_PKG_TOOL points the harness, and fpkg.py, at a candidate build
 TOOL = (Path(os.environ["FFPFSC_PKG_TOOL"]) if os.environ.get("FFPFSC_PKG_TOOL")
         else BACKEND / "native" / ("ffpfsc-pkg-tool.exe" if os.name == "nt" else "ffpfsc-pkg-tool"))
-MAGICK = ("Magick.Native-Q8-x64.dll" if os.name == "nt" else "Magick.Native-Q8-arm64.dll.dylib"
-          if sys.platform == "darwin" else "Magick.Native-Q8-x64.dll.so")
+if os.name == "nt":
+    MAGICK = "Magick.Native-Q8-x64.dll"
+elif sys.platform == "darwin":
+    _mac_machine = platform.machine()
+    if _mac_machine == "x86_64":
+        _mac_arch = "x64"
+    elif _mac_machine in ("arm64", "aarch64"):
+        _mac_arch = "arm64"
+    else:
+        raise RuntimeError(f"unsupported macOS architecture: {_mac_machine}")
+    MAGICK = f"Magick.Native-Q8-{_mac_arch}.dll.dylib"
+else:
+    MAGICK = "Magick.Native-Q8-x64.dll.so"
 
 # Backend cli.py wants to import fpkg / mkpfs as if run from backend/
 sys.path.insert(0, str(BACKEND))
@@ -163,6 +175,14 @@ def test_environment(r: Runner):
     magick = TOOL.parent / MAGICK
     r.check("tool.magick-native", magick.is_file(), f"{magick.name} next to the tool",
             f"missing: {magick} - icon conversion would fail (build it: ./BUILD_PKG_TOOL.sh)")
+    if sys.platform == "darwin" and platform.machine() == "x86_64" and magick.is_file():
+        result = subprocess.run(["xcrun", "vtool", "-show-build", str(magick)],
+                                capture_output=True, text=True, timeout=30)
+        minimum = re.search(r"\bminos\s+(\d+(?:\.\d+)*)", result.stdout)
+        r.check("tool.magick-minimum-macos14", result.returncode == 0 and minimum is not None
+                and minimum.group(1) == "14.0",
+                f"minos {minimum.group(1)}" if minimum else "",
+                result.stderr or result.stdout or f"vtool exited {result.returncode}")
     if TOOL.exists():
         rc, out = r.run_tool(["version"])
         r.check("tool.runs", rc == 0, out.strip().splitlines()[0] if out else "", out)

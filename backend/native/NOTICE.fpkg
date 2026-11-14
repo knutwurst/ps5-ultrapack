@@ -18,8 +18,8 @@ ffpfsc-pkg-tool bundles the following third-party components:
   BCnEncoder.NET 2.3.0                          — MIT OR Unlicense (NuGet)
   CommunityToolkit.HighPerformance 8.4.0        — MIT (NuGet)
   Magick.NET-Q8-AnyCPU + Magick.NET.Core 14.15.0 — Apache-2.0 (NuGet); the
-      native ImageMagick library (Magick.Native-Q8-arm64.dll.dylib, shipped
-      next to the executable) is under the ImageMagick License
+      native ImageMagick library (architecture-matched, shipped next to the
+      executable) is under the ImageMagick License
   .NET 9 runtime (self-contained)               — MIT
 
 Because the packaged runtime includes GPL-3-licensed code (LibProsperoPkg),

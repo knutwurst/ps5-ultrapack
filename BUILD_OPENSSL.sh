@@ -19,9 +19,17 @@ SRC="${DL}/src"
 rm -rf "${SRC}"
 mkdir -p "${SRC}"
 tar -xzf "${TAR}" -C "${SRC}" --strip-components 1
+case "${MACOS_ARCH:-$(uname -m)}" in
+    x86_64|x64) OPENSSL_TARGET=darwin64-x86_64-cc ;;
+    arm64|aarch64) OPENSSL_TARGET=darwin64-arm64-cc ;;
+    *)
+        echo "BUILD_OPENSSL.sh: unsupported macOS architecture: ${MACOS_ARCH:-$(uname -m)}" >&2
+        exit 1
+        ;;
+esac
 (
     cd "${SRC}"
-    MACOSX_DEPLOYMENT_TARGET="${MIN_MACOS}" ./Configure darwin64-arm64-cc shared no-tests no-docs \
+    MACOSX_DEPLOYMENT_TARGET="${MIN_MACOS}" ./Configure "${OPENSSL_TARGET}" shared no-tests no-docs \
         "-mmacosx-version-min=${MIN_MACOS}" >/dev/null
     make -j"$(sysctl -n hw.ncpu)" build_libs >/dev/null
 )
