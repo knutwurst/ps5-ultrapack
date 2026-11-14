@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 # builds the Windows x64 parts on a Mac: pkg tool, 7za.exe, UnRAR module
 # needs .NET SDK 9+, mingw-w64 and WIN_PYTHON (a copy of the Windows Python folder)
 set -euo pipefail

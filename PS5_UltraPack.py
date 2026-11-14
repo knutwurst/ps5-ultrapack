@@ -1,4 +1,6 @@
-
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 from __future__ import annotations
 
 import os
@@ -613,6 +615,7 @@ else:
     ACCEL = SHORTCUT = {k: ("Ctrl+Alt+I" if k == "details" else f"Ctrl+{v}") for k, v in _KEYS.items()}
 DETAILS_SEQ = "<Command-Option-i>" if IS_MAC else "<Control-Alt-i>"
 REPO_URL = "https://github.com/knutwurst/ps5-ultrapack"
+COPYRIGHT = "Copyright © 2024-2026 Knutwurst"   # NOTICE section 7(b) requires this attribution
 DONATE_URL = "https://ko-fi.com/knutwurst"
 # set any CTk scaling before the first window, later it pins open windows' sizes
 
@@ -2730,6 +2733,28 @@ class SettingsView:
         for line in [f"{tr(k):<{pad}}{v}" for k, v in rows]:
             ctk.CTkLabel(about, text=line, text_color=MUTED, anchor="w",
                          font=ctk.CTkFont(family=MONO_FONT, size=11)).pack(anchor="w", padx=14, pady=3)
+        # Appropriate Legal Notices (GPLv3 sections 0 and 5d); the attribution has to stay, see NOTICE
+        ctk.CTkLabel(about, text=f"{APP_NAME} {APP_VERSION} · {COPYRIGHT}", text_color=WHITE, anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=14, pady=(10, 2))
+        ctk.CTkLabel(about, text=tr("{app} comes with no warranty. You may share and change it under the GNU "
+                                    "General Public License v3 or later.", app=APP_NAME),
+                     text_color=MUTED, font=ctk.CTkFont(size=12), wraplength=520, justify="left").pack(
+            anchor="w", padx=14)
+        links = ctk.CTkFrame(about, fg_color="transparent")
+        links.pack(anchor="w", padx=8, pady=(2, 0))
+        self._about_links = []
+        for text, url in ((REPO_URL.split("://", 1)[1], REPO_URL), ("License", REPO_URL + "/blob/main/LICENSE"),
+                          ("Additional terms", REPO_URL + "/blob/main/NOTICE")):
+            b = ctk.CTkButton(links, text=text, fg_color="transparent", hover=False, width=0, height=22,
+                              text_color=ctk_pair("accent_text"), font=ctk.CTkFont(size=12, underline=True),
+                              command=lambda u=url: webbrowser.open(u))
+            b.pack(side="left", padx=(0, 6))
+            self._about_links.append(b)
+        info = ultra_core.build_info()
+        self._about_build = ctk.CTkLabel(
+            about, anchor="w", text_color=MUTED, font=ctk.CTkFont(family=MONO_FONT, size=11),
+            text=tr("Built from {repo} at {commit}", **info) if info else tr("Local build"))
+        self._about_build.pack(anchor="w", padx=14, pady=(2, 0))
         ctk.CTkLabel(about, text="By Knutwurst. The backend grew out of Bizkut's ps5-ffpfs-cli; images are built "
                                  "with PSBrew's MkPFS and packages with LibProsperoPkg. See NOTICES.md.",
                      text_color=MUTED, font=ctk.CTkFont(size=12), wraplength=520, justify="left").pack(

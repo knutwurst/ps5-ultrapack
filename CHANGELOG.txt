@@ -3,6 +3,23 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.4.2
+────────────────────────────────────────────────────────────────────────
+
+LICENSE
+
+  - PS5 UltraPack is now under the GPL 3.0 or later, with additional
+    terms in NOTICE: forks keep the copyright notices and the
+    attribution on the About page, and say that they are a modified
+    version. Versions up to and including 2.4.1 stay MIT.
+  - The About page shows the copyright, the license and links to the
+    repo, the license and the additional terms. A build from GitHub
+    Actions also names the repo and commit it came from, a local
+    build says so.
+  - LICENSE and NOTICE ship inside the app, and next to it on Windows
+    and Linux.
+
+────────────────────────────────────────────────────────────────────────
   v2.4.1
 ────────────────────────────────────────────────────────────────────────
 

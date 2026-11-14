@@ -13,8 +13,7 @@ The app used to be called PS5 FFPFSC ULTRA.
   <img src="https://img.shields.io/badge/Windows-x64-0ea5e9?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64">
   <img src="https://img.shields.io/badge/Linux-x64-3b82f6?style=for-the-badge&logo=linux&logoColor=white" alt="Linux x64">
   <img src="https://img.shields.io/badge/FW%2011.60-verified-22c55e?style=for-the-badge" alt="FW 11.60 verified">
-  <img src="https://img.shields.io/badge/source-MIT-3a3a3a?style=for-the-badge" alt="Source MIT">
-  <img src="https://img.shields.io/badge/binary-GPL--3-3a3a3a?style=for-the-badge" alt="Binary GPL-3">
+  <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-3a3a3a?style=for-the-badge" alt="License GPL-3.0 or later">
 </p>
 
 <p align="center">
@@ -27,6 +26,8 @@ The app used to be called PS5 FFPFSC ULTRA.
 ## Download
 
 Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack/releases).
+
+Official builds are only published there. GitHub Actions builds each one from the tagged source, and the release notes list the SHA-256 of every file. If you got PS5 UltraPack from somewhere else, compare it with `shasum -a 256 <file>` (macOS, Linux) or `certutil -hashfile <file> SHA256` (Windows). Settings › About shows the repo and commit an official build came from.
 
 - **macOS** 26 or newer on Apple Silicon (every M1 or later Mac can update to it for free): unzip and start the app. The app is only ad-hoc signed, so if macOS refuses to open it, run this once:
   ```bash
@@ -252,15 +253,16 @@ Python libraries: customtkinter, py7zr, rarfile, tkinterdnd2, Pillow, psutil, cr
 
 The details, including trademark notes, are in [`NOTICES.md`](NOTICES.md). Short version:
 
-- My own code (the GUI, the Python wrappers, the C# wrapper around LibProsperoPkg, tests and build scripts) is **MIT**, see [`LICENSE`](LICENSE).
+- My own code (the GUI, the Python wrappers, the C# wrapper around LibProsperoPkg, tests and build scripts) is **GPL-3.0-or-later**, see [`LICENSE`](LICENSE). Additional terms under section 7 of the GPL apply, see [`NOTICE`](NOTICE): forks are welcome, but they have to keep my copyright notices and the attribution on the About page, and say that they are a modified version of PS5 UltraPack. Versions up to and including 2.4.1 were MIT and stay MIT.
+- trongio's Linux build, RAM for temp and backport fix (#9, #10) came in under **MIT**, see `NOTICE`.
 - MkPFS 1.0.0 is **GPL-3.0-or-later** ([`backend/mkpfs/LICENSE`](backend/mkpfs/LICENSE)).
 - LibProsperoPkg 1.2.0 is **GPL-3.0-or-later** ([`backend/native/LICENSE.LibProsperoPkg`](backend/native/LICENSE.LibProsperoPkg)).
 - The UnRAR sources are under the **UnRAR license**: free for extraction, but they may not be used to build a RAR-compatible compressor ([`backend/unrar/license.txt`](backend/unrar/license.txt)).
 - ampr_emu's packer (`backend/ampr_pack/`) and its runtime `libSceAmpr.sprx` are **GPL-3.0** (drakmor).
 - `make_fself.py` is **BSD-3-Clause**, attribution in the file header.
-- Bizkut's ps5-ffpfs-cli has no license file. `backend/cli.py` started from it and has been mostly rewritten. I don't claim a license for what's left of the original code; MIT covers my changes. See `NOTICES.md`.
+- Bizkut's ps5-ffpfs-cli has no license file. `backend/cli.py` started from it and has been mostly rewritten. I don't claim a license for what's left of the original code; the GPL covers my changes. See `NOTICES.md`.
 
-Because the compiled app includes MkPFS and LibProsperoPkg, the binaries are distributed as a combined work under **GPL-3.0-or-later**. Everything needed to rebuild them is in this repo, including the LibProsperoPkg assembly (original and patched, with the patch tooling and a notice in `backend/native/src/ffpfsc-pkg-tool/lib/`).
+The compiled app is distributed under **GPL-3.0-or-later**. For my own code, `NOTICE` grants an additional permission to combine it with UnRAR, whose license isn't GPL-compatible. Everything needed to rebuild them is in this repo, including the LibProsperoPkg assembly (original and patched, with the patch tooling and a notice in `backend/native/src/ffpfsc-pkg-tool/lib/`).
 
 Not affiliated with Sony Interactive Entertainment. "PlayStation" and "PS5" are their trademarks and are only used to name the console and formats this tool works with. The app processes files you provide. It doesn't decrypt or distribute any Sony content, firmware, keys or executables, and it's your responsibility to only use it with content you have the right to use (your own game dumps, homebrew you're allowed to redistribute).
 

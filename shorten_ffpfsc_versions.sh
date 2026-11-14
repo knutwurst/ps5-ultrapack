@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 # trims .ffpfs(c) names for ShadowMount's length limit; dry run unless --apply
 # usage: ./shorten_ffpfsc_versions.sh [dir] [--apply]
 set -euo pipefail

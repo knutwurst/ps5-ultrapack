@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 """German texts of the interface, keyed by the English text in the code (i18n.t)."""
 
 GERMAN: dict[str, str] = {
@@ -168,6 +171,11 @@ GERMAN: dict[str, str] = {
     "Support me on Ko-fi": "Unterstütze mich auf Ko-fi",
     "It doesn't have to be a big donation. A few cents show me who uses the tool and cares about where it goes next. That keeps me motivated, and I know I'm not coding for the bin ;)": "Es muss keine große Spende sein. Schon ein paar Cent zeigen mir, wer das Tool nutzt und wem wichtig ist, wie es weitergeht. Das motiviert mich, und ich weiß, dass ich nicht für die Tonne programmiere ;)",
     "Open config folder": "Konfigurationsordner öffnen",
+    "{app} comes with no warranty. You may share and change it under the GNU General Public License v3 or later.": "{app} kommt ohne jede Gewährleistung. Du darfst es unter der GNU General Public License v3 oder später weitergeben und ändern.",
+    "License": "Lizenz",
+    "Additional terms": "Zusatzbedingungen",
+    "Built from {repo} at {commit}": "Gebaut aus {repo} bei {commit}",
+    "Local build": "Lokaler Build",
     "Delete sources?": "Quellen löschen?",
     "Choose the folder finished sources move to": "Ordner wählen, in den fertige Quellen verschoben werden",
     "Scanning Files": "Dateien scannen",

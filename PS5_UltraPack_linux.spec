@@ -1,4 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
+# SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+# Copyright (C) 2026 Giorgi Kakabadze (trongio), contributed under the MIT license, see NOTICE
+# Copyright (C) 2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply to Knutwurst's parts, see the NOTICE file.
 
 import re as _re
 from PyInstaller.utils.hooks import collect_all, collect_data_files
@@ -70,6 +74,16 @@ datas = _backend_datas()
 # window icon the app sets at start; the bundle icon comes further down
 datas += [(_os.path.join("assets", "icon", n), _os.path.join("assets", "icon"))
           for n in ("app-icon-256.png", "app-icon-32.png")]
+# license, NOTICE and, when GitHub Actions builds, the repo and commit for the About page
+datas += [("LICENSE", "."), ("NOTICE", ".")]
+_build_repo = _re.sub(r"[^A-Za-z0-9._/-]", "", _os.environ.get("GITHUB_REPOSITORY", ""))
+_build_sha = _re.sub(r"[^0-9a-f]", "", _os.environ.get("GITHUB_SHA", ""))[:7]
+if _build_repo and _build_sha:
+    import json as _json
+    _os.makedirs("build", exist_ok=True)
+    with open(_os.path.join("build", "build_info.json"), "w", encoding="utf-8") as _f:
+        _json.dump({"repo": _build_repo, "commit": _build_sha}, _f)
+    datas += [(_os.path.join("build", "build_info.json"), ".")]
 datas += collect_data_files("customtkinter")
 datas += collect_data_files("tkinterdnd2")
 cryptography_datas, cryptography_binaries, cryptography_hiddenimports = collect_all("cryptography")

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 """title id to name, from andshrew's PlayStation-Titles lists (MIT)"""
 from __future__ import annotations
 

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 """Every backend operation through the frozen app, with small test data only.
 python -B backend/tests/frozen_matrix.py, MATRIX_EXE = the built app's executable (default: the Windows build)"""
 import hashlib, json, os, shutil, subprocess, sys, tempfile, time, urllib.request, zipfile
@@ -268,6 +271,15 @@ make_pkg(PS4 / "u.pkg", content_id=cid, content_type=0x1A, sfo={"TITLE": "Sample
 run("PS4 sort", ["placeholder", out("ps4lib"), "--ps4-sort", PS4, "--copy-mode", "keep"],
     lambda rc, o: (rc == 0 and len(list((W / "ps4lib").rglob("*.pkg"))) == 2,
                    f"rc={rc} {[p.relative_to(W / 'ps4lib').as_posix() for p in (W / 'ps4lib').rglob('*.pkg')]}"))
+
+# the bundle carries LICENSE and NOTICE; a GitHub Actions build also names its repo and commit
+_base = Path(sys._MEIPASS)
+_legal = [n for n in ("LICENSE", "NOTICE") if not (_base / n).is_file()]
+_info = ultra_core.build_info(_base)
+_want = (os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_SHA", "")[:7])
+_ok = not _legal and (_info == {"repo": _want[0], "commit": _want[1]} if all(_want) else _info is None)
+results.append(("About: legal files, build line", _ok))
+print(f"{'PASS' if _ok else 'FAIL'} {'About: legal files, build line':<34}        missing {_legal}, build {_info}", flush=True)
 
 failed = [l for l, ok in results if not ok]
 print(f"\n{len(results) - len(failed)} of {len(results)} passed" + (f"; failed: {', '.join(failed)}" if failed else ""))

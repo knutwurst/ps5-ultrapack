@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 """Tk-free core of PS5 UltraPack."""
 from __future__ import annotations
 
@@ -24,6 +27,23 @@ def _bundled_backend_dir() -> Path:
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS) / "backend"
     return Path(__file__).resolve().parent / "backend"
+
+
+def build_info(base=None) -> dict | None:
+    """repo and commit a GitHub Actions build put into the bundle; None for a local build"""
+    if base is None:
+        if not (getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")):
+            return None
+        base = sys._MEIPASS
+    try:
+        data = json.loads((Path(base) / "build_info.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    repo = re.sub(r"[^A-Za-z0-9._/-]", "", str(data.get("repo", "")))[:100]
+    commit = re.sub(r"[^0-9a-f]", "", str(data.get("commit", "")))[:7]
+    return {"repo": repo, "commit": commit} if repo and commit else None
 
 
 if sys.platform == "darwin":

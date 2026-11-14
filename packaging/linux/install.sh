@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Giorgi Kakabadze (trongio), contributed under the MIT license, see NOTICE
+# Part of PS5 UltraPack, https://github.com/knutwurst/ps5-ultrapack
 # adds PS5 UltraPack to the app menu for this user; run it from the unpacked folder
 # --uninstall takes the menu entry and icon away again (the folder stays where it is)
 set -euo pipefail

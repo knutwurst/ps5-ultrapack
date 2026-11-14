@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Giorgi Kakabadze (trongio), contributed under the MIT license, see NOTICE
+# Part of PS5 UltraPack, https://github.com/knutwurst/ps5-ultrapack
 from __future__ import annotations
 
 import os

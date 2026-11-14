@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 """PS5_HBT_SAMPLE=<homebrew sample folder> python3 -m unittest backend.tests.test_pkg_tool_safety"""
 from __future__ import annotations
 

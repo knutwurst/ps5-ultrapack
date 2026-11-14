@@ -48,7 +48,7 @@ Their upstream authors and licenses:
 | **make_fself** | Alex Free's [ps5-make-fself-recursive](https://github.com/alex-free/ps5-make-fself-recursive), which redistributes `make_fself.py` from the [ps5-payload-dev SDK](https://github.com/ps5-payload-dev/sdk), originally by flatz | **BSD-3-Clause** | `backend/make_fself.py` (attribution in the file header) |
 | **BackPork BPS patches** | [BestPig/BackPork](https://github.com/BestPig/BackPork) — small BPS deltas that turn a PS5 10.01 system library into the version an older firmware loads | **GPL-3.0-or-later** (same as BackPork) | **Downloaded on demand** from the upstream repo by Settings → "Prepare 7.61 / 6.02 libraries"; cached under `~/Library/Application Support/PS5_UltraPack/backport-patches/`. The patches are applied to the user's own 10.01 libraries, which are never bundled with this app. |
 | **BPS format** (byuu, 2014) | [byuu.org — BPS specification](https://www.romhacking.net/utilities/1040/) | Public domain | `backend/bps_patch.py` — an independent Python implementation of the format; no external code copied. |
-| **Bizkut's ps5-ffpfs-cli** (the backend wrapper `backend/cli.py` grew out of) | [bizkut/ps5-ffpfs-cli](https://github.com/bizkut/ps5-ffpfs-cli) | **No license file upstream.** No license is claimed here for whatever remains of the upstream code; this project's own contributions are MIT (see the scope block in `LICENSE`). If you are Bizkut and want a specific licensing statement or attribution change, please open an issue. | `backend/cli.py` started as that tool's backend wrapper (imported with this repository's first commit) and has been rewritten extensively since. The UnRAR Python binding under `backend/unrar/` (`rarfile.py`, which mirrors the subset of the `rarfile` API that tool used, `_unrar.cpp`, `setup.py`) came in with the same import. |
+| **Bizkut's ps5-ffpfs-cli** (the backend wrapper `backend/cli.py` grew out of) | [bizkut/ps5-ffpfs-cli](https://github.com/bizkut/ps5-ffpfs-cli) | **No license file upstream.** No license is claimed here for whatever remains of the upstream code; this project's own contributions are GPL-3.0-or-later (they were MIT up to and including 2.4.1). If you are Bizkut and want a specific licensing statement or attribution change, please open an issue. | `backend/cli.py` started as that tool's backend wrapper (imported with this repository's first commit) and has been rewritten extensively since. The UnRAR Python binding under `backend/unrar/` (`rarfile.py`, which mirrors the subset of the `rarfile` API that tool used, `_unrar.cpp`, `setup.py`) came in with the same import. |
 
 ## Bundled runtime libraries (inside the .app)
 
@@ -101,11 +101,18 @@ combined compiled binary.
 
 ## What the compiled binary is, legally
 
-Because the compiled `.app` bundle statically embeds MkPFS (GPL-3.0-or-later)
-and LibProsperoPkg (GPL-3.0-or-later), the compiled binary as a whole is
-distributed as a work under the terms of **GNU General Public License
-version 3, or (at your option) any later version**, per GPL-3 section 5.
-Source code required to reproduce it is present in this repository (see the
-scope block at the end of `LICENSE`). The original Python and C# code
-authored for this project is separately licensed under MIT so downstream
-projects can reuse it under either compatible license.
+The code written for this project is under the **GNU General Public
+License version 3, or (at your option) any later version** (`LICENSE`), with
+the additional terms in `NOTICE`. Versions up to and including 2.4.1 were
+released under MIT, and copies of those stay under MIT. trongio's
+contributions came in under MIT, see `NOTICE`.
+
+The compiled app bundles MkPFS (GPL-3.0-or-later), LibProsperoPkg
+(GPL-3.0-or-later) and ampr_emu (GPL-3.0) and is distributed as a whole
+under the GPL version 3. Source code required to reproduce it is present in
+this repository.
+
+The UnRAR license is not compatible with the GPL. `NOTICE` grants an
+additional permission to combine the code written for this project with
+UnRAR. That permission can only cover this project's own code; it does not
+change the licenses of MkPFS, LibProsperoPkg or ampr_emu.

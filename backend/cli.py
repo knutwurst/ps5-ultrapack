@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Started as the backend wrapper of Bizkut's ps5-ffpfs-cli, which has no license file.
+# The license above covers this project's changes, see NOTICES.md.
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 """PS5 UltraPack backend, wraps the MkPFS 1.0.0 vendored in backend/mkpfs"""
 import sys
 import os

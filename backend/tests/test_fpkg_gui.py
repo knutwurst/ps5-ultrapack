@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 import sys, os, importlib.util, traceback, argparse, shutil, subprocess, tempfile, time, zipfile, json, re, types
 from pathlib import Path
 import tkinter as tk
@@ -3263,9 +3266,25 @@ try:
         try:
             sv._nav["about"].invoke(); root.update()
             sv._donate_btn.invoke(); root.update()
+            for _b in sv._about_links:
+                _b.invoke(); root.update()
         finally:
             m.webbrowser.open = _real_open
-        ok("wire.about.donate", _opened == [m.DONATE_URL], str(_opened))
+        ok("wire.about.donate", _opened[:1] == [m.DONATE_URL], str(_opened))
+        ok("wire.about.license-links", _opened[1:] == [m.REPO_URL, m.REPO_URL + "/blob/main/LICENSE",
+                                                       m.REPO_URL + "/blob/main/NOTICE"], str(_opened))
+        _about_texts = []
+        _stack = [sv._page_frames["about"]]
+        while _stack:
+            _w = _stack.pop()
+            _stack.extend(_w.winfo_children())
+            if isinstance(_w, m.ctk.CTkLabel):
+                _about_texts.append(_w.cget("text"))
+        _notice = (Path(m.__file__).resolve().parent / "NOTICE").read_text(encoding="utf-8")
+        ok("wire.about.attribution", any(m.COPYRIGHT in t for t in _about_texts)
+           and m.COPYRIGHT.replace("Copyright ©", "PS5 UltraPack · Copyright ©") in _notice, str(_about_texts[:6]))
+        ok("wire.about.local-build", sv._about_build.cget("text") == m.tr("Local build"),
+           sv._about_build.cget("text"))
         sv._nav["general"].invoke(); root.update()
         _real_ask2 = m.messagebox.askyesno
         m.messagebox.askyesno = lambda *a, **k: False

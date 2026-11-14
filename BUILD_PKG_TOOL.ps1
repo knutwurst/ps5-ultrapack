@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply, see the NOTICE file.
 # Windows x64 fPKG helper + ImageMagick lib into backend/native; needs .NET SDK 9+
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot

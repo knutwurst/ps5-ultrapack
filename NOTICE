@@ -1,0 +1,84 @@
+PS5 UltraPack
+Copyright (C) 2024-2026 Knutwurst
+https://github.com/knutwurst/ps5-ultrapack
+
+PS5 UltraPack is free software under the GNU General Public License version 3
+or, at your option, any later version. See LICENSE.
+
+Versions up to and including 2.4.1 were released under the MIT license, and
+copies of those versions stay under it. Later versions are under the GPL with
+the terms below.
+
+Bundled third-party components keep their own licenses, see NOTICES.md.
+
+
+Additional terms under section 7 of the GNU GPL
+
+These terms apply to all material in PS5 UltraPack written by Knutwurst, as
+permitted by sections 7(b) and 7(c) of the GPL.
+
+1. Author attribution (section 7(b)). Every copy and every modified
+   version of PS5 UltraPack, in source or object form, must:
+
+   a) keep the notice "Copyright (C) 2024-2026 Knutwurst" in each source
+      file that contains material from PS5 UltraPack, and
+
+   b) show the attribution
+
+          PS5 UltraPack · Copyright © 2024-2026 Knutwurst
+          https://github.com/knutwurst/ps5-ultrapack
+
+      in its Appropriate Legal Notices. In PS5 UltraPack these are on the
+      About page (Settings › About, also opened by "About PS5 UltraPack" in
+      the menu).
+
+   A modified version may add its own name, authors and copyright lines
+   next to this attribution.
+
+2. Marking of modified versions (section 7(c)). A modified version must
+   not present itself as the original PS5 UltraPack or present its changes
+   as the work of Knutwurst. Its README and its Appropriate Legal Notices
+   must say that it is a modified version of PS5 UltraPack and since when.
+
+
+Additional permission under section 7 of the GNU GPL
+
+PS5 UltraPack reads RAR archives with the UnRAR library by Alexander Roshal,
+which is under the UnRAR license and not under the GPL. If you modify
+PS5 UltraPack, or any covered work, by linking or combining it with the
+UnRAR library (or a modified version of that library), Knutwurst grants you
+additional permission to convey the resulting work. This permission covers
+only material written by Knutwurst. It does not change the license of any
+other component, such as MkPFS or LibProsperoPkg.
+
+
+Contributions under the MIT license
+
+Giorgi Kakabadze (trongio) contributed the native Linux build, the RAM for
+temp setting and a backport fix under the MIT license (pull requests #9 and
+#10). Those contributions are in BUILD_LINUX_APP.sh,
+PS5_UltraPack_linux.spec, packaging/linux/install.sh and
+backend/tests/test_ram_temp.py, and in parts of PS5_UltraPack.py,
+ultra_core.py, ui_kit.py, backend/cli.py, backend/after_job.py,
+backend/backport.py and their tests. They stay available under these terms:
+
+  Copyright (c) 2026 Giorgi Kakabadze (trongio)
+
+  Permission is hereby granted, free of charge, to any person obtaining a
+  copy of this software and associated documentation files (the
+  "Software"), to deal in the Software without restriction, including
+  without limitation the rights to use, copy, modify, merge, publish,
+  distribute, sublicense, and/or sell copies of the Software, and to permit
+  persons to whom the Software is furnished to do so, subject to the
+  following conditions:
+
+  The above copyright notice and this permission notice shall be included
+  in all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+  NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+  USE OR OTHER DEALINGS IN THE SOFTWARE.

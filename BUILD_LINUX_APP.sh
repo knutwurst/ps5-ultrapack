@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+# Copyright (C) 2026 Giorgi Kakabadze (trongio), contributed under the MIT license, see NOTICE
+# Copyright (C) 2026 Knutwurst, https://github.com/knutwurst/ps5-ultrapack
+# Additional terms under section 7 of the GPL apply to Knutwurst's parts, see the NOTICE file.
 # build the Linux x64 app, release tarball and SHA-256; run from the repo root in a venv
 # needs .NET SDK 9+, a C++ compiler (g++), python3-dev and python3-tk from the distro
 set -euo pipefail
@@ -66,6 +70,7 @@ python3 -m PyInstaller --clean --noconfirm PS5_UltraPack_linux.spec
 APP="dist/PS5 UltraPack"
 install -m 644 assets/icon/app-icon-256.png "${APP}/ps5-ultrapack.png"
 install -m 755 packaging/linux/install.sh "${APP}/install.sh"
+install -m 644 LICENSE NOTICE "${APP}/"
 
 VERSION="$(python3 -c 'import re; m = re.search(r"^APP_VERSION\s*=\s*[\x22\x27]([^\x22\x27]+)[\x22\x27]", open("PS5_UltraPack.py", encoding="utf-8").read(), re.M); print(m.group(1) if m else "1.0")')"
 TGZ="PS5-UltraPack-${VERSION}-linux-x64.tar.gz"
