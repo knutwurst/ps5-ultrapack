@@ -23,6 +23,12 @@ ZSTD PACKS
   - A .pkg built from a zstd-packed game keeps its ampr_emu.index, and
     the PS5 PKG Tools count packed files as present.
 
+DOCS
+
+  - README: a section on LZ4 and zstd packs, new screenshots (the old
+    set is in docs/screenshots/2.3.1) and the overview graphic with both
+    kinds of packs.
+
 ────────────────────────────────────────────────────────────────────────
   v2.4.2
 ────────────────────────────────────────────────────────────────────────

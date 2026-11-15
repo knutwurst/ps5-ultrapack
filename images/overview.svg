@@ -71,10 +71,10 @@
     <text x="634" y="464" font-size="14" fill="#9aa3b2">Executables fake-signed in place</text>
     <circle cx="602" cy="516" r="15" fill="#3a2412" stroke="#f0883e" stroke-width="2"/>
     <text x="602" y="521" text-anchor="middle" font-size="14" font-weight="700" fill="#f0883e">5</text>
-    <text x="634" y="512" font-size="19" font-weight="600" fill="#e7ebf2">LZ4 asset packs</text>
-    <rect x="798" y="496" width="70" height="22" rx="11" fill="#3a2412"/>
-    <text x="833" y="511" text-anchor="middle" font-size="12" font-weight="600" fill="#f0883e">optional</text>
-    <text x="634" y="534" font-size="14" fill="#9aa3b2">AMPR games about half the size, read by ampr_emu</text>
+    <text x="634" y="512" font-size="19" font-weight="600" fill="#e7ebf2">LZ4 or zstd packs</text>
+    <rect x="818" y="496" width="70" height="22" rx="11" fill="#3a2412"/>
+    <text x="853" y="511" text-anchor="middle" font-size="12" font-weight="600" fill="#f0883e">optional</text>
+    <text x="634" y="534" font-size="14" fill="#9aa3b2">Smaller games: LZ4 for AMPR titles, zstd for any game</text>
     <circle cx="602" cy="586" r="15" fill="#1f6feb"/>
     <text x="602" y="591" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">6</text>
     <text x="634" y="582" font-size="19" font-weight="600" fill="#e7ebf2">Build</text>
@@ -89,7 +89,7 @@
     <text x="634" y="744" font-size="14" fill="#9aa3b2">Keep, move or trash the source; sleep when the queue is done</text>
     <line x1="564" y1="770" x2="1036" y2="770" stroke="#262d3a"/>
     <text x="800" y="792" text-anchor="middle" font-size="14" fill="#9aa3b2">Pause and reorder the queue  ·  English and German, light and dark</text>
-    <text x="800" y="812" text-anchor="middle" font-size="14" fill="#9aa3b2">Every build spread across your SSD and hard disks</text>
+    <text x="800" y="812" text-anchor="middle" font-size="14" fill="#9aa3b2">Every build spread across your SSD and hard disks, or RAM on Linux</text>
     <path d="M1060 471 h66" fill="none" stroke="#3d8bff" stroke-width="2.5" stroke-linecap="round" marker-end="url(#ah)"/>
   </g>
 

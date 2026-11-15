@@ -4,7 +4,7 @@
   <img src="images/overview.png" alt="Sources on the left, the steps of a job in the middle, the output formats on the right, the tools below" width="900">
 </p>
 
-A desktop app for macOS, Windows and Linux that packs, converts, patches, backports and signs PS5 games, builds installable `.pkg` files, and checks and fixes PS4 and PS5 packages. You add a game folder, an archive, a disk image, a `.ffpfs`/`.ffpfsc` or a `.pkg`, pick what should happen to it and what should come out, and the queue works through it.
+A desktop app for macOS, Windows and Linux that packs, converts, patches, backports and signs PS5 games, shrinks them with LZ4 or zstd asset packs, builds installable `.pkg` files, and checks and fixes PS4 and PS5 packages. You add a game folder, an archive, a disk image, a `.ffpfs`/`.ffpfsc` or a `.pkg`, pick what should happen to it and what should come out, and the queue works through it.
 
 The app used to be called PS5 FFPFSC ULTRA.
 
@@ -60,7 +60,8 @@ Official builds are only published there. GitHub Actions builds each one from th
     <td align="center" width="50%"><img src="images/ps5-repair.jpg" width="400" alt="PS5 PKG Tools with a package that has the default keystone"><br><sub>PS5 PKG Tools</sub></td>
   </tr>
   <tr>
-    <td align="center" colspan="2"><img src="images/main-window-light.jpg" width="400" alt="Main window in light mode"><br><sub>Light mode</sub></td>
+    <td align="center" width="50%"><img src="images/add-job-zstd.jpg" width="400" alt="Add job with zstd packs at level 9 and .exfat as output"><br><sub>zstd packs</sub></td>
+    <td align="center" width="50%"><img src="images/main-window-light.jpg" width="400" alt="Main window in light mode"><br><sub>Light mode</sub></td>
   </tr>
 </table>
 
@@ -72,7 +73,7 @@ Older versions of the UI are in [docs/screenshots](docs/screenshots/README.md).
 
 **Outputs:** `.ffpfsc` (compressed), `.ffpfs` (uncompressed, faster to mount), `.exfat` (an exFAT image with 64 KiB clusters, which ShadowMountPlus reads fastest from USB), an installable `.pkg`, a plain folder, or "Organize", which files the source into your library as it is. **Auto** picks one of these per source: you set in Settings › Compression what a game folder, an image or a `.pkg` turns into, and an archive counts as what it holds.
 
-**On the way** a job can integrate a patch, backport the game to an older firmware, fake-sign the executables and, for games that load through AMPR, put their data into LZ4 asset packs, in that order. The packs make the game about half the size and are read by drakmor's ampr_emu, which the app puts into `fakelib/`; "Unpack LZ4" is the way back. For any game, AMPR or not, **zstd packs** do the same with zstd: everything except `eboot.bin`, the modules, `sce_sys`, `fakelib` and `.ini` files goes into `ampr_zstd-NNN.pak` volumes, which quer3q's ampr-emu-ng reads while the game runs (the app puts it into `fakelib/`, together with a fresh `ampr_emu.index`). You choose the zstd level (1, 5, 9 or 19). On the console, turn off fakelib updates in ShadowMountPlus so it doesn't replace the runtime. "Unpack zstd" is the way back. All of that happens on a working copy. Your source only changes if you ask for it (signing or backporting a folder in place), and if a patch job on your own folder fails, the patch is rolled back.
+**On the way** a job can integrate a patch, backport the game to an older firmware, fake-sign the executables and put the game into LZ4 or zstd asset packs, in that order (see [Asset packs](#asset-packs-lz4-and-zstd)). All of that happens on a working copy. Your source only changes if you ask for it (signing or backporting a folder in place), and if a patch job on your own folder fails, the patch is rolled back.
 
 Some things that make day-to-day use easier:
 
@@ -81,9 +82,41 @@ Some things that make day-to-day use easier:
 - A download folder with one game and a folder of add-ons next to it gives one job. After the game is done, its DLC and updates are unpacked and sorted into the game's title folder in the library, and anything else in the folder is copied next to the output. The add-ons don't show up as jobs of their own.
 - Output files are named from the game itself: `<Title> [PPSA12345] [v01.200] [fw8.00].ffpfsc` in a folder per title. The firmware tag comes from the SDK version in `eboot.bin`. Names stay within ShadowMountPlus's length limit.
 - Extras that come with a release (notes, checksums, backport files, DLC folders) don't go into the image, but they aren't thrown away either. They end up next to the output. macOS and Windows junk like `.DS_Store`, `._*` and `Thumbs.db` is dropped.
-- Work is spread across drives. The image is built on your fast temp SSD and the result is written to the output drive. If the SSD is too small, the app splits the work or falls back to the output drive. A job that won't fit is skipped up front, with the numbers, so it doesn't fail halfway.
+- Work is spread across drives. The image is built on your fast temp SSD and the result is written to the output drive. If the SSD is too small, the app splits the work or falls back to the output drive. On Linux the temp files of a job can go to RAM instead (Settings › Drives & space). A job that won't fit is skipped up front, with the numbers, so it doesn't fail halfway, and a drive that isn't plugged in is reported as not connected.
 - The queue keeps its order, can be rearranged by drag and drop, and shows overall progress and time left. Failed jobs stay in the list and can be edited and retried. Pause lets the running job finish first.
 - After a job the source can stay, go to the Trash, be moved somewhere or be deleted.
+
+## Asset packs: LZ4 and zstd
+
+<p align="center">
+  <img src="images/add-job-zstd.jpg" alt="Add job with zstd packs at level 9 and .exfat as output" width="760">
+</p>
+
+Asset packs make a game smaller and keep it a plain folder or `.exfat`. A runtime in the game's `fakelib/` reads the packs while the game runs. The app copies the runtime in and writes a fresh `ampr_emu.index` that lists every file, packed or loose.
+
+| | LZ4 asset packs | zstd packs |
+|---|---|---|
+| Games | Only games that load through AMPR (their `eboot.bin` imports libSceAmpr) | Any game |
+| What goes in | Data in subfolders; executables, configs and media stay loose (or your own profile) | Everything except `eboot.bin`, `.elf`/`.self`/`.prx`/`.sprx`, `.ini`, `sce_sys/`, `sce_module/` and `fakelib*/` |
+| Runtime | drakmor's ampr_emu 0.4.2.1 | quer3q's ampr-emu-ng 0.4.0 |
+| Files | `ampr_assets-NNN.pak`, `ampr_assets.index` | `ampr_zstd-NNN.pak`, `ampr_zstd.index` |
+| Settings | Optional TOML profile | Level 1 (fast), 5, 9 or 19 (smallest) |
+
+In Add job, tick **LZ4 asset packs** or **zstd packs** under "Change the content". A game holds one kind of packs, so ticking one clears the other. The output switches to `.exfat`; a folder works too, and the result then lands as `<name> [LZ4]` or `<name> [zstd]` in the output folder, never in the source. An `.ffpfsc` would compress the packs a second time and an installed `.pkg` uses Kraken anyway, so those outputs turn the option off.
+
+Every packed file is compared with the original before the originals go. A game that would shrink by less than 5 % stays as it is. **Unpack** turns a packed game back into plain files and works into any output; Add job picks it by itself when the source already holds packs.
+
+On the console, turn off fakelib updates in ShadowMountPlus, or it replaces the game's runtime with its own `libSceAmpr.sprx`. Keep the original until the game ran.
+
+The zstd packs follow format version 1 of ampr-emu-ng and ps5-dump-forge. ps5-dump-forge's writer makes byte-identical volumes from the same files, and ampr-emu-ng's own index and mount code accepts the result.
+
+On the command line:
+
+```bash
+python3 backend/cli.py <game folder> <out>/Game.exfat --to exfat --zstd --zstd-level 9
+python3 backend/cli.py <out>/Game.exfat "<out>/Game [unpacked]" --to folder --zstd-unpack
+python3 backend/cli.py <game folder> <out>/Game.exfat --to exfat --lz4 [--lz4-profile <toml>]
+```
 
 ## Building `.pkg` files
 
@@ -200,8 +233,9 @@ Look inside opens a `.ffpfs`, `.ffpfsc` or `.pkg` and shows the file tree. You c
 You need Python 3.10 or newer. This is also the way to run the app on a macOS older than 26: the release builds need macOS 26, but a source run uses whatever your Python is built for. I don't test or support older systems, though.
 
 ```bash
-python3 -m pip install customtkinter pillow tkinterdnd2 py7zr rarfile psutil cryptography
+python3 -m pip install customtkinter pillow tkinterdnd2 py7zr rarfile psutil cryptography lz4 backports.zstd
 python3 -m pip install ./backend/unrar
+./FETCH_AMPR_EMU.sh          # the runtimes for LZ4 and zstd packs
 python3 PS5_UltraPack.py
 ```
 
