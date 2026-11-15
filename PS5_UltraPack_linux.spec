@@ -33,9 +33,10 @@ _BACKEND_REQUIRED = [
     "cli.py", "fpkg.py", "copy_job.py", "fake_sign.py", "make_fself.py",
     "backport.py", "self_file.py", "backport_libs.py", "bps_patch.py",
     "organize_lib.py", "ps4pkg.py", "ps4_sort.py", "after_job.py", "title_db.py", "patch_backup.py",
-    "lz4_packs.py", _os.path.join("ampr_pack", "ampr_pack.py"), _os.path.join("ampr_pack", "ampr_pack_format.py"),
+    "lz4_packs.py", "zstd_packs.py", _os.path.join("ampr_pack", "ampr_pack.py"), _os.path.join("ampr_pack", "ampr_pack_format.py"),
     _os.path.join("ampr_pack", "build_ampr_index.py"), _os.path.join("ampr_pack", "LICENSE"),
     _os.path.join("native", "ampr", "libSceAmpr.sprx"), _os.path.join("native", "ampr", "LICENSE.ampr_emu"),   # FETCH_AMPR_EMU.sh
+    _os.path.join("native", "ampr-ng", "libSceAmpr.sprx"), _os.path.join("native", "ampr-ng", "LICENSE.ampr-emu-ng"),
     _os.path.join("mkpfs", "cli.py"), _os.path.join("mkpfs", "pfs.py"),
     _os.path.join("unrar", "__init__.py"), _os.path.join("unrar", "rarfile.py"),
     _os.path.join("native", "ffpfsc-pkg-tool"),
@@ -113,6 +114,7 @@ a = Analysis(
         "cryptography",
         "cryptography.hazmat.primitives.ciphers",
         # ampr_pack (LZ4 asset packs) imports these only at run time
+        "backports.zstd",   # zstd packs (py7zr pulls it in as well); Python 3.14+ has compression.zstd
         "lz4", "lz4.block", "tomllib", "ftplib", "statistics", "fnmatch", "bisect", "heapq",
         "concurrent.futures", "urllib.parse",
         "mkpfs",

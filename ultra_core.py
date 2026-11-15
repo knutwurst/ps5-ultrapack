@@ -530,6 +530,8 @@ CHAIN_TARGETS = ("folder", "ffpfs", "ffpfsc", "pkg", "exfat")
 CHAIN_TARGET_LABEL = {"folder": "folder", "ffpfs": ".ffpfs", "ffpfsc": ".ffpfsc", "pkg": ".pkg", "exfat": ".exfat"}
 # lz4 packs only for these: .ffpfsc compresses them twice, .ffpfs on USB skips the fast path
 LZ4_TARGETS = ("folder", "exfat")
+ZSTD_TARGETS = LZ4_TARGETS              # zstd packs: same reasons
+ZSTD_LEVELS = (1, 5, 9, 19)             # fast, default (as ps5-dump-forge), smaller, smallest that stays practical
 # not a chain target: the source goes into the library as it is
 ORGANIZE_TARGET = "organize"
 ARCHIVE_SUFFIXES = (".zip", ".rar", ".7z", ".r00")
@@ -651,10 +653,12 @@ def is_backport_target(name) -> bool:
 
 
 def chain_changes(item) -> list[str]:
-    """in backend order: patch, backport, sign, lz4"""
+    """in backend order: patch, backport, sign, lz4/zstd"""
     out: list[str] = []
     if getattr(item, "chain_lz4_unpack", False):
         out.append("lz4 unpack")                 # first: the other changes see plain files
+    if getattr(item, "chain_zstd_unpack", False):
+        out.append("zstd unpack")
     if getattr(item, "patch_source", None):
         out.append("patch")
     if getattr(item, "backport_target", None):
@@ -663,6 +667,8 @@ def chain_changes(item) -> list[str]:
         out.append("sign")
     if getattr(item, "chain_lz4", False):
         out.append("lz4")
+    if getattr(item, "chain_zstd", False):
+        out.append("zstd")
     return out
 
 
@@ -720,7 +726,8 @@ def chain_summary(item) -> str:
             parts.append(tr("backport to {target}", target=c.split(" ", 1)[1]))
         else:
             parts.append(tr({"patch": "integrate patch", "sign": "sign", "lz4": "pack with LZ4",
-                             "lz4 unpack": "unpack the LZ4 packs"}.get(c, c)))
+                             "lz4 unpack": "unpack the LZ4 packs", "zstd": "pack with zstd",
+                             "zstd unpack": "unpack the zstd packs"}.get(c, c)))
     if not parts:
         if kind == to == "folder":
             return "Nothing to do"
@@ -859,8 +866,8 @@ def _space_needs(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, i
         # Streamed through a .copy-tmp then os.replace (no doubling); 1.02x slack.
         return [("Output drive", out_dir, int(size * 1.02))]
     if getattr(item, "operation", "") == "chain" and getattr(item, "chain_to", None) == "exfat":
-        # unpacked or copied to scratch first, LZ4 never touches the user's folder
-        lz4 = bool(getattr(item, "chain_lz4", False))
+        # unpacked or copied to scratch first, the packs never touch the user's folder
+        lz4 = bool(getattr(item, "chain_lz4", False) or getattr(item, "chain_zstd", False))
         work = 0
         if chain_needs_unpack(item) or lz4 or getattr(item, "archive_path", None):
             work = int(size * (2.0 if lz4 else 1.02))
@@ -4078,6 +4085,9 @@ class GameItem:
     chain_lz4 = False       # chain job: LZ4 asset packs for an AMPR game (last; folder/.exfat only)
     lz4_profile = None      # str: an ampr_pack TOML profile; None = the conservative default
     chain_lz4_unpack = False  # chain job: LZ4 packs back to plain files (runs first)
+    chain_zstd = False      # chain job: zstd packs read by ampr-emu-ng, any game (last; folder/.exfat only)
+    zstd_level = None       # int 1..22; None = the default (5)
+    chain_zstd_unpack = False  # chain job: zstd packs back to plain files (runs first)
     header_locked = False   # archive: no saved password opened its header when it was added
     archive_problem = ""    # archive: why it cannot be read (damaged, a part missing); no password helps
     archive_title = ""      # archive: the game read from the param.json inside, before extraction
@@ -4089,6 +4099,8 @@ class GameItem:
     auto_sign = False       # Auto: sign and LZ4 as asked for, for the output the unpacked content picks
     auto_lz4 = False
     auto_lz4_profile = None
+    auto_zstd = False
+    auto_zstd_level = None
     pkg_content_size = 0    # .pkg source: bytes of its files, from the package's directory (0 = not read)
     pkg_largest_file = 0    # .pkg source: its largest file (pass 1 peaks at the game plus this one)
     pkg_kept_bytes = 0      # .pkg source: bytes pass 1 never frees (sce_sys, files under 1 MiB)
@@ -4294,8 +4306,9 @@ class GameItem:
     def from_chain(cls, source: Path, *, to: str, output_path=None,
                    sign: bool = False, patch_source=None,
                    backport_target=None, backport_libs_root=None,
-                   lz4: bool = False, lz4_profile=None, lz4_unpack: bool = False) -> "GameItem":
-        """what the job dialog builds: source -> [patch, backport, sign, lz4] -> to"""
+                   lz4: bool = False, lz4_profile=None, lz4_unpack: bool = False,
+                   zstd: bool = False, zstd_level=None, zstd_unpack: bool = False) -> "GameItem":
+        """what the job dialog builds: source -> [patch, backport, sign, lz4/zstd] -> to"""
         src = Path(source)
         suf = src.suffix.lower() if src.is_file() else ""
         if src.is_dir():
@@ -4323,6 +4336,9 @@ class GameItem:
         obj.chain_lz4          = bool(lz4) and obj.chain_to in LZ4_TARGETS
         obj.lz4_profile        = str(lz4_profile) if (lz4_profile and obj.chain_lz4) else None
         obj.chain_lz4_unpack   = bool(lz4_unpack) and not obj.chain_lz4
+        obj.chain_zstd         = bool(zstd) and obj.chain_to in ZSTD_TARGETS and not obj.chain_lz4
+        obj.zstd_level         = int(zstd_level) if (zstd_level and obj.chain_zstd) else None
+        obj.chain_zstd_unpack  = bool(zstd_unpack) and not obj.chain_zstd
         obj.patch_source       = Path(patch_source) if patch_source else None
         obj.backport_target    = backport_target if is_backport_target(backport_target) else None
         obj.backport_libs_root = str(backport_libs_root) if backport_libs_root else None

@@ -615,6 +615,7 @@ else:
     ACCEL = SHORTCUT = {k: ("Ctrl+Alt+I" if k == "details" else f"Ctrl+{v}") for k, v in _KEYS.items()}
 DETAILS_SEQ = "<Command-Option-i>" if IS_MAC else "<Control-Alt-i>"
 REPO_URL = "https://github.com/knutwurst/ps5-ultrapack"
+ZSTD_RUNTIME_VERSION = "0.4.0"   # ampr-emu-ng, zstd_packs.RUNTIME_VERSION
 COPYRIGHT = "Copyright © 2024-2026 Knutwurst"   # NOTICE section 7(b) requires this attribution
 DONATE_URL = "https://ko-fi.com/knutwurst"
 # set any CTk scaling before the first window, later it pins open windows' sizes
@@ -2913,7 +2914,7 @@ class CLIWorker(threading.Thread):
         "Cleaning Up":         (99, 100),
         "Complete":            (100, 100),
     }
-    CHAIN_EXFAT_WEIGHTS = {  # LZ4 packs show up as Compressing
+    CHAIN_EXFAT_WEIGHTS = {  # LZ4 and zstd packs show up as Compressing
         "Scanning Files":      (0,    2),
         "Extracting":          (2,   25),
         "Reading Game":        (25,  35),
@@ -2989,7 +2990,8 @@ class CLIWorker(threading.Thread):
             return self.RESUME_WEIGHTS, self._EXTRACT_FIRST_ORDER     # compression only
         if to:
             src = Path(str(getattr(self.item, "path", "") or ""))
-            changes = any(f in cmd for f in ("--patch", "--backport-target", "--sign", "--lz4", "--lz4-unpack"))
+            changes = any(f in cmd for f in ("--patch", "--backport-target", "--sign", "--lz4", "--lz4-unpack",
+                                             "--zstd", "--zstd-unpack"))
             unpacks = src.is_file() and (changes or src.suffix.lower() not in self._CHAIN_NATIVE.get(to, set()))
             if to == "pkg":
                 # the fPKG builder unwraps an image source itself, behind the same marker
@@ -3000,7 +3002,7 @@ class CLIWorker(threading.Thread):
             elif to == "ffpfs":
                 w = self.CHAIN_FFPFS_WEIGHTS
             elif to == "exfat":
-                w = self.CHAIN_EXFAT_WEIGHTS if "--lz4" in cmd else self.CHAIN_EXFAT_PLAIN_WEIGHTS
+                w = self.CHAIN_EXFAT_WEIGHTS if ("--lz4" in cmd or "--zstd" in cmd) else self.CHAIN_EXFAT_PLAIN_WEIGHTS
             else:
                 w = self.CHAIN_WEIGHTS
             return (w if unpacks else self._without_extract(w)), self._EXTRACT_FIRST_ORDER
@@ -4341,6 +4343,10 @@ class JobDialog(EmbeddedDialog):
                "the size, quicker from USB. Only for games that load through AMPR. Every packed file is checked "
                "against the original. Goes into an .exfat or a folder; keep the original until the game ran on "
                "the console.",
+        "zstd": "Packs the game's files into zstd packs that ampr-emu-ng reads while the game runs, for any game: "
+                "eboot.bin, modules, sce_sys, fakelib and .ini files stay loose, everything else goes into the packs. "
+                "Every packed file is checked against the original. Goes into an .exfat or a folder. On the console, "
+                "turn off fakelib updates in ShadowMountPlus, and keep the original until the game ran.",
         "output": "Folder: a plain /app0 folder (a folder source is changed in place). .ffpfs: uncompressed image, "
                   "full size. .ffpfsc: compressed image for ShadowMount. .exfat: the format ShadowMountPlus reads "
                   "fastest from USB. .pkg: installable package.",
@@ -4437,6 +4443,12 @@ class JobDialog(EmbeddedDialog):
         self.lz4_note_var = TextVar(value="")
         self.lz4_mode_var = tk.StringVar(value="unpack" if (item and getattr(item, "chain_lz4_unpack", False)) else "pack")
         self._lz4_seen: dict[str, object] = {}  # folder: uses AMPR (True/False/None)
+        self.zstd_var = tk.BooleanVar(value=bool(getattr(item, "chain_zstd", False)
+                                                 or getattr(item, "chain_zstd_unpack", False)) if item else False)
+        self.zstd_mode_var = tk.StringVar(value="unpack" if (item and getattr(item, "chain_zstd_unpack", False)) else "pack")
+        _zl = int(getattr(item, "zstd_level", None) or 5) if item else 5
+        self.zstd_level_var = tk.StringVar(value=str(_zl if _zl in ultra_core.ZSTD_LEVELS else 5))
+        self.zstd_note_var = TextVar(value="")
         self._archive_content: dict[str, str] = {}  # archive: what it holds
         self._detect_rest: tuple = ()
         self._auto_table = auto_actions(settings.get("auto_actions"))
@@ -4505,9 +4517,15 @@ class JobDialog(EmbeddedDialog):
         self.lz4_var.trace_add("write", lambda *_: self._lz4_toggled())
         self.lz4_mode_var.trace_add("write", lambda *_: self._lz4_toggled())
         self.to_var.trace_add("write", lambda *_: self._lz4_output_changed())
+        # zstd the same way; a game holds one kind of packs, so zstd and LZ4 packing exclude each other
+        self.zstd_var.trace_add("write", lambda *_: self._zstd_toggled())
+        self.zstd_mode_var.trace_add("write", lambda *_: self._zstd_toggled())
+        self.lz4_var.trace_add("write", lambda *_: self._lz4_zstd_exclusive("lz4"))
+        self.to_var.trace_add("write", lambda *_: self._zstd_output_changed())
         for v in (self.ps4_out_var, self.ps4_to_var, self.sign_var, self.patch_on_var, self.patch_var, self.backport_on_var,
                   self.backport_target_var, self.to_var, self.out_var,
-                  self.organize_var, self.after_var, self.lz4_var, self.lz4_profile_var, self.lz4_mode_var):
+                  self.organize_var, self.after_var, self.lz4_var, self.lz4_profile_var, self.lz4_mode_var,
+                  self.zstd_var, self.zstd_mode_var, self.zstd_level_var):
             v.trace_add("write", lambda *_: self._refresh())
         self.bind("<Return>", lambda e: self._add())
         self.bind("<Escape>", lambda e: self.destroy())
@@ -4660,6 +4678,28 @@ class JobDialog(EmbeddedDialog):
         ctk.CTkLabel(lo.inner, textvariable=self.lz4_note_var, text_color=MUTED, font=ctk.CTkFont(size=12),
                      wraplength=560, justify="left", anchor="w").pack(fill="x", pady=(0, 4))
         self._bind_help(self._HELP["lz4"], l1)
+
+        zo = option(self.zstd_var, "zstd packs", "smaller, for any game, read by ampr-emu-ng", "zstd")
+        self._zstd_opts, self._zstd_cb = zo.opts, zo.cb
+        z0 = ctk.CTkFrame(zo.inner, fg_color=PANEL); z0.pack(fill="x", pady=(2, 2))
+        ctk.CTkLabel(z0, text="Action:", text_color=MUTED, width=120, anchor="w", font=ctk.CTkFont(size=12)).pack(side="left")
+        self._zstd_mode_seg = ctk.CTkSegmentedButton(
+            z0, values=list(_modes.values()), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
+            command=lambda v: self.zstd_mode_var.set(next(k for k, lbl in _modes.items() if lbl == v)))
+        self._zstd_mode_seg.set(_modes[self.zstd_mode_var.get()])
+        self._zstd_mode_seg.pack(side="left")
+        z1 = self._zstd_level_row = ctk.CTkFrame(zo.inner, fg_color=PANEL); z1.pack(fill="x", pady=(2, 2))
+        ctk.CTkLabel(z1, text="Level:", text_color=MUTED, width=120, anchor="w", font=ctk.CTkFont(size=12)).pack(side="left")
+        _levels = {"1": "Fast (1)", "5": "Default (5)", "9": "Smaller (9)", "19": "Smallest (19)"}
+        self._zstd_levels = _levels
+        self._zstd_level_seg = ctk.CTkSegmentedButton(
+            z1, values=list(_levels.values()), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
+            command=lambda v: self.zstd_level_var.set(next(k for k, lbl in _levels.items() if lbl == v)))
+        self._zstd_level_seg.set(_levels.get(self.zstd_level_var.get(), _levels["5"]))
+        self._zstd_level_seg.pack(side="left")
+        ctk.CTkLabel(zo.inner, textvariable=self.zstd_note_var, text_color=MUTED, font=ctk.CTkFont(size=12),
+                     wraplength=560, justify="left", anchor="w").pack(fill="x", pady=(0, 4))
+        self._bind_help(self._HELP["zstd"], z1)
         # warns when the user's own game folder is changed in place, not a copy
         self._own_note = ctk.CTkLabel(cin, text="", text_color=YELLOW, font=ctk.CTkFont(size=12),
                                       wraplength=640, justify="left", anchor="w")
@@ -5085,6 +5125,28 @@ class JobDialog(EmbeddedDialog):
         if self._lz4_packs() and self._to_key() not in ultra_core.LZ4_TARGETS:
             self.lz4_var.set(False)
 
+    def _zstd_packs(self) -> bool:
+        return self.zstd_var.get() and self.zstd_mode_var.get() == "pack"
+
+    def _zstd_toggled(self):
+        if self._zstd_packs() and self._to_key() not in ultra_core.ZSTD_TARGETS:
+            self.to_var.set(self._TARGET_LABEL["exfat"])
+        self._lz4_zstd_exclusive("zstd")
+
+    def _zstd_output_changed(self):
+        if self._zstd_packs() and self._to_key() not in ultra_core.ZSTD_TARGETS:
+            self.zstd_var.set(False)
+
+    def _lz4_zstd_exclusive(self, turned_on: str):
+        if turned_on == "zstd" and self._zstd_packs() and self._lz4_packs():
+            self.lz4_var.set(False)
+        elif turned_on == "lz4" and self._lz4_packs() and self._zstd_packs():
+            self.zstd_var.set(False)
+
+    def _zstd_source_packed(self) -> bool:
+        raw = (self.src_var.get() or "").strip()
+        return self._kind == "folder" and bool(raw) and (Path(raw) / "ampr_zstd.index").is_file()
+
     def _lz4_source_packed(self) -> bool:
         raw = (self.src_var.get() or "").strip()
         return self._kind == "folder" and bool(raw) and (Path(raw) / "ampr_assets.index").is_file()
@@ -5354,8 +5416,8 @@ class JobDialog(EmbeddedDialog):
 
     _DRAFT_VARS = ("to_var", "out_var", "ps4_out_var", "ps4_to_var", "patch_on_var", "patch_var",
                    "backport_on_var", "backport_target_var", "sign_var", "lz4_var", "lz4_mode_var",
-                   "lz4_profile_var", "level_var", "pkg_level_var", "organize_var", "after_var",
-                   "after_dir_var", "retail_var", "regen_var")
+                   "lz4_profile_var", "zstd_var", "zstd_mode_var", "zstd_level_var", "level_var", "pkg_level_var",
+                   "organize_var", "after_var", "after_dir_var", "retail_var", "regen_var")
 
     def keep_draft(self):
         if self.edit_item is not None or not (self.src_var.get() or "").strip():
@@ -5786,6 +5848,8 @@ class JobDialog(EmbeddedDialog):
             chain_to=to, chain_sign=bool(self.sign_var.get()) and to != "pkg",
             chain_lz4=self._lz4_packs() and to in ultra_core.LZ4_TARGETS,
             chain_lz4_unpack=bool(self.lz4_var.get()) and self.lz4_mode_var.get() == "unpack",
+            chain_zstd=self._zstd_packs() and to in ultra_core.ZSTD_TARGETS,
+            chain_zstd_unpack=bool(self.zstd_var.get()) and self.zstd_mode_var.get() == "unpack",
             patch_source=(self.patch_var.get().strip() if self.patch_on_var.get() else None),
             backport_target=(self.backport_target_var.get() if self.backport_on_var.get() else None))
 
@@ -5803,7 +5867,7 @@ class JobDialog(EmbeddedDialog):
             if seg is not None:
                 seg.configure(values=[self._PS4_LABEL[k] for k in allowed])
                 seg.set(self.to_var.get())
-            for v in (self.patch_on_var, self.backport_on_var, self.sign_var, self.lz4_var):
+            for v in (self.patch_on_var, self.backport_on_var, self.sign_var, self.lz4_var, self.zstd_var):
                 v.set(False)
         crow, orow = getattr(self, "_crow", None), getattr(self, "_orow", None)
         org = not ps4 and self._to_key() == ORGANIZE_TARGET     # the source goes over as it is
@@ -5885,6 +5949,22 @@ class JobDialog(EmbeddedDialog):
         else:
             self._lz4_profile_row.pack_forget()
         (self._lz4_opts.pack(fill="x", pady=(2, 2)) if self.lz4_var.get() else self._lz4_opts.pack_forget())
+        if self._kind == "folder":
+            zwant = "unpack" if self._zstd_source_packed() else "pack"
+            if self.zstd_mode_var.get() != zwant:
+                self.zstd_mode_var.set(zwant)
+        if self._zstd_mode_seg.get() != self._lz4_modes[self.zstd_mode_var.get()]:
+            self._zstd_mode_seg.set(self._lz4_modes[self.zstd_mode_var.get()])
+        if self.zstd_mode_var.get() == "unpack":
+            self.zstd_note_var.set(tr("Unpack puts every file of the packs back and removes the packs; "
+                                      "the output can be any format."))
+            self._zstd_level_row.pack_forget()
+        else:
+            self.zstd_note_var.set(tr("On the console, turn off fakelib updates in ShadowMountPlus, or it replaces "
+                                      "the game's ampr-emu-ng with another libSceAmpr.sprx."))
+            if not self._zstd_level_row.winfo_manager():
+                self._zstd_level_row.pack(fill="x", pady=(2, 2), after=self._zstd_mode_seg.master)
+        (self._zstd_opts.pack(fill="x", pady=(2, 2)) if self.zstd_var.get() else self._zstd_opts.pack_forget())
         (self._pkg_opts.pack(fill="x", pady=(2, 0)) if to == "pkg" and not ps4 else self._pkg_opts.pack_forget())
         if to in ("ffpfsc", "pkg") and not ps4:
             show, hide = (self._comp_pkg, self._comp_ffpfsc) if to == "pkg" else (self._comp_ffpfsc, self._comp_pkg)
@@ -6291,6 +6371,9 @@ class JobDialog(EmbeddedDialog):
         sign_on, lz4_on = bool(self.sign_var.get()), self._lz4_packs()
         lz4_unpack = bool(self.lz4_var.get()) and self.lz4_mode_var.get() == "unpack"
         lz4_profile = (self.lz4_profile_var.get() or "").strip() if lz4_on else ""
+        zstd_on = self._zstd_packs()
+        zstd_unpack = bool(self.zstd_var.get()) and self.zstd_mode_var.get() == "unpack"
+        zstd_level = int(self.zstd_level_var.get() or 5)
         if lz4_profile and not Path(lz4_profile).is_file():
             messagebox.showerror("LZ4 asset packs", tr("The profile does not exist:\n{p}", p=lz4_profile), parent=self)
             return
@@ -6303,11 +6386,13 @@ class JobDialog(EmbeddedDialog):
 
         def build(s, to):
             lz4 = lz4_on and to in ultra_core.LZ4_TARGETS
+            zstd = zstd_on and to in ultra_core.ZSTD_TARGETS
             it = GameItem.from_chain(s, to=to, output_path=out or None,
                                      sign=sign_on and to != "pkg",     # a .pkg is always signed by its builder
                                      patch_source=patch or None, backport_target=target,
                                      backport_libs_root=libs or None, lz4=lz4,
-                                     lz4_profile=(lz4_profile or None) if lz4 else None, lz4_unpack=lz4_unpack)
+                                     lz4_profile=(lz4_profile or None) if lz4 else None, lz4_unpack=lz4_unpack,
+                                     zstd=zstd, zstd_level=zstd_level if zstd else None, zstd_unpack=zstd_unpack)
             if to == "pkg":
                 app._apply_fpkg_params(it, pkg_params)
             it.compression_level = ff_level if to == "ffpfsc" else None
@@ -6322,6 +6407,7 @@ class JobDialog(EmbeddedDialog):
             if auto:  # in case the unpacked content picks another output
                 it.auto_sign, it.auto_lz4 = sign_on, lz4_on
                 it.auto_lz4_profile = lz4_profile or None
+                it.auto_zstd, it.auto_zstd_level = zstd_on, zstd_level
             it.after_source, it.after_move_to = after, after_dir or None
             it.source_root = root
             return it
@@ -9295,7 +9381,8 @@ class App:
                       + (["Trophies"] if getattr(item, "ps5_trophies", False) else []))
             for c in chain_changes(item):
                 ch.append("Patch" if c == "patch" else "Sign" if c == "sign" else "LZ4" if c == "lz4"
-                          else "Unpack LZ4" if c == "lz4 unpack"
+                          else "Unpack LZ4" if c == "lz4 unpack" else "zstd" if c == "zstd"
+                          else "Unpack zstd" if c == "zstd unpack"
                           else ("Backport " + c.split(" ", 1)[1]) if c.startswith("backport") else c)
             to = getattr(item, "chain_to", None) or "ffpfsc"
             return [src, *ch, "Folder" if to == "folder" else CHAIN_TARGET_LABEL.get(to, to)]
@@ -11534,6 +11621,9 @@ class App:
         extra.chain_lz4 = bool(getattr(tpl, "chain_lz4", False))
         extra.lz4_profile = getattr(tpl, "lz4_profile", None)
         extra.chain_lz4_unpack = bool(getattr(tpl, "chain_lz4_unpack", False))
+        extra.chain_zstd = bool(getattr(tpl, "chain_zstd", False))
+        extra.zstd_level = getattr(tpl, "zstd_level", None)
+        extra.chain_zstd_unpack = bool(getattr(tpl, "chain_zstd_unpack", False))
         extra.patch_source = None
         extra.backport_target = getattr(tpl, "backport_target", None)
         extra.backport_libs_root = getattr(tpl, "backport_libs_root", None)
@@ -11829,6 +11919,11 @@ class App:
         item.chain_lz4 = (bool(getattr(item, "auto_lz4", item.chain_lz4)) and to in ultra_core.LZ4_TARGETS
                           and not getattr(item, "chain_lz4_unpack", False))
         item.lz4_profile = getattr(item, "auto_lz4_profile", item.lz4_profile) if item.chain_lz4 else None
+        item.chain_zstd = (bool(getattr(item, "auto_zstd", getattr(item, "chain_zstd", False)))
+                           and to in ultra_core.ZSTD_TARGETS and not item.chain_lz4
+                           and not getattr(item, "chain_zstd_unpack", False))
+        item.zstd_level = (getattr(item, "auto_zstd_level", None) or getattr(item, "zstd_level", None)) \
+            if item.chain_zstd else None
         if to == "pkg":
             if before != "pkg":
                 self._apply_fpkg_params(item, self.fpkg_defaults)
@@ -12365,8 +12460,11 @@ class App:
             if to == "folder":
                 src = Path(str(getattr(item, "path", "") or ""))
                 _od = self._job_output_dir(item)
-                if _od and src.is_dir() and (getattr(item, "chain_lz4", False) or getattr(item, "chain_lz4_unpack", False)):
-                    folder = _od / f"{sanitize_filename(src.name)} {'[LZ4]' if getattr(item, 'chain_lz4', False) else '[unpacked]'}"
+                if _od and src.is_dir() and any(getattr(item, a, False) for a in (
+                        "chain_lz4", "chain_lz4_unpack", "chain_zstd", "chain_zstd_unpack")):
+                    tag = "[LZ4]" if getattr(item, "chain_lz4", False) else \
+                        "[zstd]" if getattr(item, "chain_zstd", False) else "[unpacked]"
+                    folder = _od / f"{sanitize_filename(src.name)} {tag}"
                     return folder if self._folder_taken(folder) else None
                 if not _od or not src.is_file():
                     return None                   # a folder changed in place writes nothing new
@@ -13277,6 +13375,11 @@ class App:
             changes.append("Fake-sign the executables")
         if getattr(item, "chain_lz4_unpack", False):
             changes.insert(0, tr("LZ4 packs unpacked back to plain files"))
+        if getattr(item, "chain_zstd_unpack", False):
+            changes.insert(0, tr("zstd packs unpacked back to plain files"))
+        if getattr(item, "chain_zstd", False):
+            changes.append(tr("zstd packs at level {n}, read by ampr-emu-ng {v}",
+                              n=getattr(item, "zstd_level", None) or 5, v=ZSTD_RUNTIME_VERSION))
         if getattr(item, "chain_lz4", False):
             prof = getattr(item, "lz4_profile", None)
             changes.append(tr("LZ4 asset packs, profile {p}", p=Path(str(prof)).name) if prof
@@ -13557,7 +13660,10 @@ class App:
             if to == "folder":
                 if src.is_dir() and getattr(item, "chain_lz4", False):
                     out = out / f"{sanitize_filename(src.name)} [LZ4]"   # the packs never go into the source
-                elif src.is_dir() and getattr(item, "chain_lz4_unpack", False):
+                elif src.is_dir() and getattr(item, "chain_zstd", False):
+                    out = out / f"{sanitize_filename(src.name)} [zstd]"
+                elif src.is_dir() and (getattr(item, "chain_lz4_unpack", False)
+                                       or getattr(item, "chain_zstd_unpack", False)):
                     out = out / f"{sanitize_filename(src.name)} [unpacked]"
                 elif src.is_dir():
                     out = src                                   # changes in place; nothing is written elsewhere
@@ -13636,6 +13742,10 @@ class App:
                 cmd.append("--lz4")
                 if getattr(item, "lz4_profile", None):
                     cmd += ["--lz4-profile", str(item.lz4_profile)]
+            if getattr(item, "chain_zstd_unpack", False) and not _resuming:
+                cmd.append("--zstd-unpack")
+            if getattr(item, "chain_zstd", False) and not _resuming:
+                cmd += ["--zstd", "--zstd-level", str(int(getattr(item, "zstd_level", None) or 5))]
             if getattr(item, "_build_temp", None) is None:
                 try:
                     self._resolve_extract_root(item)
@@ -13645,8 +13755,8 @@ class App:
             tstr = str(Path(bt)) if bt else str(temp)
             if tstr:
                 cmd += ["--temp-dir", tstr]
-            if to in ("ffpfs", "ffpfsc", "pkg") or getattr(item, "chain_lz4", False):
-                # CPU cores: mkpfs workers for images, Kraken for .pkg, LZ4 for the packs
+            if to in ("ffpfs", "ffpfsc", "pkg") or getattr(item, "chain_lz4", False) or getattr(item, "chain_zstd", False):
+                # CPU cores: mkpfs workers for images, Kraken for .pkg, LZ4 and zstd for the packs
                 _cpu = getattr(item, "_cpu_retry_override", None)
                 if _cpu is None:
                     _cpu = self.cpu_count_var.get()
@@ -14074,6 +14184,10 @@ class App:
             return
         import struct as _struct
         root       = Path(item.path).resolve()
+        if (root / "ampr_zstd.index").is_file():
+            # the index lists the packed files too; one from a walk of the folder would lose them
+            self.log("INFO", "AMPR: the game holds zstd packs, its ampr_emu.index stays as it is")
+            return
         output     = root / "ampr_emu.index"
         output_tmp = output.with_suffix(output.suffix + ".tmp")
 

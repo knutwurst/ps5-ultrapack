@@ -120,6 +120,33 @@ run("folder -> .exfat with LZ4 packs", [AMPR, out("f2lz4") / "game.exfat", "--to
     lz4_inside(W / "f2lz4"))
 run("LZ4 refused for a game without AMPR", [GAME, out("f2lz4no") / "g.exfat", "--to", "exfat", "--lz4", *common],
     lambda rc, o: (rc != 0 and "does not load through AMPR" in o, f"rc={rc}"))
+
+
+def zstd_inside(d):
+    def check(rc, o):
+        f = one(d, "*.exfat")
+        if rc != 0 or f is None:
+            return False, f"rc={rc} {f.name if f else 'no .exfat'}"
+        import cli
+        import zstd_packs
+        back = W / "zstd-back"
+        shutil.rmtree(back, ignore_errors=True)
+        cli._extract_exfat_to(f, back)
+        names = {p.relative_to(back).as_posix() for p in back.rglob("*") if p.is_file()}
+        try:
+            with zstd_packs.Archive(back) as arc:
+                arc.compare_with(AMPR)
+                why = f"{len(arc.index.files)} packed file(s), level {arc.index.level}"
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
+        ok = ("fakelib/libSceAmpr.sprx" in names and "data/level.bin" not in names and "eboot.bin" in names)
+        return ok, f"rc={rc} {f.name} {why}"
+    return check
+
+
+# any game: the AMPR sample is just the one with a data file worth packing
+run("folder -> .exfat with zstd packs", [AMPR, out("f2zstd") / "game.exfat", "--to", "exfat", "--zstd", *common],
+    zstd_inside(W / "f2zstd"))
 run("folder -> folder refused (no change)", [GAME, out("f2f"), "--to", "folder", *common],
     lambda rc, o: (rc == 1 and "Nothing to do" in o, f"rc={rc}"))
 run("folder -> .ffpfsc via exFAT", [GAME, out("f2x"), "--to", "ffpfsc", "--via-exfat", *common],

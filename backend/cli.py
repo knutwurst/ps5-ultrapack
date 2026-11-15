@@ -2573,6 +2573,11 @@ def _chain_transforms(root: Path, args, scratch_root: Path, restorable: bool = F
         _phase("Extracting")
         lz4_packs.unpack_game(root, log=lambda line: print(line, flush=True))
         done.append("lz4 unpack")
+    if getattr(args, "chain_zstd_unpack", False):
+        import zstd_packs
+        _phase("Extracting")
+        zstd_packs.unpack_game(root, log=lambda line: print(line, flush=True))
+        done.append("zstd unpack")
     if args.patch or args.backport_target or getattr(args, "chain_sign", False):
         _phase("Reading Game")
     if getattr(args, "chain_lz4", False):
@@ -2620,6 +2625,13 @@ def _chain_transforms(root: Path, args, scratch_root: Path, restorable: bool = F
                                 workers=int(getattr(args, "cpu_count", 0) or 0),
                                 log=lambda line: print(line, flush=True))
             done.append("lz4")
+        if getattr(args, "chain_zstd", False):
+            import zstd_packs
+            _phase("Compressing")
+            zstd_packs.pack_game(root, level=int(getattr(args, "zstd_level", 0) or zstd_packs.DEFAULT_LEVEL),
+                                 threads=int(getattr(args, "cpu_count", 0) or 0),
+                                 log=lambda line: print(line, flush=True))
+            done.append("zstd")
     except Exception:
         if restorable and "patch" in done:
             # the user's folder: a later step failed, so the patch comes back out too
@@ -2927,6 +2939,15 @@ def main() -> None:
     parser.add_argument("--lz4-profile", type=str, default=None, metavar="TOML",
                         help="CHAIN: ampr_pack profile choosing the packed files (default: data in "
                              "subfolders packed; executables, modules, configs, media stay loose).")
+    parser.add_argument("--zstd", dest="chain_zstd", action="store_true",
+                        help="CHAIN: put the game's files into zstd packs read by ampr-emu-ng (any game; "
+                             "eboot, modules, sce_sys, fakelib and .ini stay loose), last after the other "
+                             "changes. Only with --to folder or --to exfat.")
+    parser.add_argument("--zstd-unpack", dest="chain_zstd_unpack", action="store_true",
+                        help="CHAIN: the way back from --zstd: restore every packed file, remove the packs "
+                             "and rebuild ampr_emu.index (first, before the other changes). Any output.")
+    parser.add_argument("--zstd-level", type=int, default=5, metavar="N",
+                        help="CHAIN: zstd level for --zstd, 1 (fastest) to 22 (smallest); default 5.")
     parser.add_argument("--backport-libs", type=str, default=None, metavar="DIR",
                         help="BACKPORT: folder holding user-supplied, PATCHED Sony system "
                              "libraries for the selected --backport-target (never bundled "
@@ -3184,6 +3205,8 @@ def main() -> None:
                                     (args.chain_sign, "sign"),
                                     (getattr(args, "chain_lz4", False), "lz4"),
                                     (getattr(args, "chain_lz4_unpack", False), "lz4 unpack"),
+                                    (getattr(args, "chain_zstd", False), "zstd"),
+                                    (getattr(args, "chain_zstd_unpack", False), "zstd unpack"),
                                     (getattr(args, "ps5_standalone", False), "standalone"),
                                     (getattr(args, "ps5_trophies", False), "trophies")) if flag]
         scratch_root = _app_scratch_root(args.temp_dir)
@@ -3195,6 +3218,18 @@ def main() -> None:
             print("[ERROR] Nothing to do: a folder to a folder with no changes.", flush=True); sys.exit(1)
         if getattr(args, "chain_lz4", False) and getattr(args, "chain_lz4_unpack", False):
             print("[ERROR] --lz4 and --lz4-unpack exclude each other.", flush=True); sys.exit(2)
+        if getattr(args, "chain_zstd", False) and getattr(args, "chain_zstd_unpack", False):
+            print("[ERROR] --zstd and --zstd-unpack exclude each other.", flush=True); sys.exit(2)
+        if getattr(args, "chain_zstd", False) and getattr(args, "chain_lz4", False):
+            print("[ERROR] --zstd and --lz4 exclude each other: a game holds one kind of packs.", flush=True)
+            sys.exit(2)
+        if getattr(args, "chain_zstd", False) and not 1 <= int(getattr(args, "zstd_level", 5)) <= 22:
+            print("[ERROR] --zstd-level is 1 through 22.", flush=True); sys.exit(2)
+        if getattr(args, "chain_zstd", False) and to not in ("folder", "exfat"):
+            print("[ERROR] zstd packs go into a folder or an .exfat: an .ffpfsc would compress them "
+                  "a second time and read them slower, a .ffpfs mounts from USB without the fast path, "
+                  "and an installed .pkg uses Kraken anyway.", flush=True)
+            sys.exit(2)
         if getattr(args, "chain_lz4", False) and to not in ("folder", "exfat"):
             print("[ERROR] LZ4 asset packs go into a folder or an .exfat: an .ffpfsc would compress them "
                   "a second time and read them slower, a .ffpfs mounts from USB without the fast path, "
@@ -3237,6 +3272,7 @@ def main() -> None:
             try:
                 root, owned = _chain_materialize(src, scratch_root, args)
                 if owned is None and any(getattr(args, a, False) for a in ("chain_lz4", "chain_lz4_unpack",
+                                                                            "chain_zstd", "chain_zstd_unpack",
                                                                             "ps5_standalone", "ps5_trophies")):
                     # the packs replace files: never in the user's own folder, always in a copy
                     root, owned = _chain_working_copy(root, scratch_root)
@@ -3460,6 +3496,15 @@ def main() -> None:
                      f"fake-sign {'off' if args.fpkg_no_fake_sign else 'on'}")
             print(f"[INFO] fPKG build ({args.fpkg_inner}, {args.fpkg_kraken_backend}, level {args.compression_level}; {_opts}): "
                   f"{build_src} -> {out_dir}   [temp: {fpkg_temp}]", flush=True)
+            try:
+                import zstd_packs as _zp
+                if Path(build_src).is_dir() and _zp.is_packed(build_src) and not args.fpkg_no_ampr_index:
+                    # a rebuild from the folder would drop the packed files from ampr_emu.index
+                    args._no_ampr_index = True
+                    print("[INFO] The game holds zstd packs, so its ampr_emu.index stays as it is: it lists "
+                          "the packed files, which a rebuild from the folder would lose.", flush=True)
+            except ImportError:
+                pass
             _fpkg_progress._set_phase("Scanning Files")
             # the tool drops package-sized intermediates where it's told; give it our own tmp
             build_temp = Path(tempfile.mkdtemp(prefix="tmp", dir=str(fpkg_temp)))

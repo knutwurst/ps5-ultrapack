@@ -237,6 +237,55 @@ try:
        and not qu.chain_lz4 and "--lz4-unpack" in _cu and "--lz4" not in _cu, f"mode={_mode} kept={_kept_out} {_cu[-6:]}")
     if qu is not None:
         app.queue.remove(qu)
+    # zstd packs: any game, folder/.exfat only, and never together with LZ4 packing
+    dz = m.JobDialog(app, init_src=str(_ag), init_to="ffpfsc"); root.update()     # AMPR, so LZ4 can be on too
+    _zen = dz._zstd_cb.cget("state") == "normal"
+    dz.zstd_var.set(True); root.update()
+    _zmoved = dz._to_key() == "exfat" and bool(dz._zstd_opts.winfo_manager()) and bool(dz._zstd_level_row.winfo_manager())
+    dz.zstd_level_var.set("19"); root.update()
+    dz.lz4_var.set(True); root.update()
+    _zexcl = dz.lz4_var.get() is True and not dz.zstd_var.get()
+    dz.zstd_var.set(True); root.update()
+    _zexcl = _zexcl and dz.zstd_var.get() and not dz.lz4_var.get()
+    dz.to_var.set(m.JobDialog._TARGET_LABEL["ffpfsc"]); root.update()
+    _zdropped = not dz.zstd_var.get()
+    dz.to_var.set(m.JobDialog._TARGET_LABEL["exfat"]); dz.zstd_var.set(True); dz.out_var.set(str(OUT)); root.update()
+    ok("zstd.option-output-and-lz4-follow-each-other", _zen and _zmoved and _zexcl and _zdropped and dz.zstd_var.get(),
+       f"enabled={_zen} moved={_zmoved} exclusive={_zexcl} dropped={_zdropped}")
+    n0 = len(app.queue); dz._add(); settle()
+    qz = app.queue[-1] if len(app.queue) > n0 else None
+    _cz = app.build_command(qz)[0] if qz else []
+    ok("zstd.job-and-command", qz is not None and qz.chain_zstd and not qz.chain_lz4 and qz.zstd_level == 19
+       and "--zstd" in _cz and _cz[_cz.index("--zstd-level") + 1] == "19" and _cz[_cz.index("--to") + 1] == "exfat",
+       " ".join(map(str, _cz[-12:])))
+    if qz is not None:
+        app.queue.remove(qz)
+    _fz = m.GameItem.from_chain(HBT, to="folder", output_path=str(OUT), zstd=True, zstd_level=5)
+    _cf = app.build_command(_fz)[0]
+    _dest = next((a for a in _cf if str(a).endswith("[zstd]")), "")
+    ok("zstd.folder-output-is-not-the-source", _dest and Path(_dest) != HBT and Path(_dest).parent == OUT, _dest)
+    _nz = m.GameItem.from_chain(HBT, to="ffpfsc", output_path=str(OUT), zstd=True)
+    ok("zstd.dropped-for-other-outputs", not _nz.chain_zstd and "--zstd" not in app.build_command(_nz)[0], "")
+    import zstd_packs as _zm
+    _zp = S / "zstd_packed"
+    if _zp.exists(): shutil.rmtree(_zp)
+    shutil.copytree(HBT, _zp)
+    (_zp / "data").mkdir(exist_ok=True); (_zp / "data" / "l.bin").write_bytes(b"mesh vertex " * 50000)
+    with _cl.redirect_stdout(_io.StringIO()):
+        _zm.pack_game(_zp, threads=2, log=lambda *_: None)
+    du = m.JobDialog(app, init_src=str(_zp), init_to="ffpfsc"); root.update()
+    _zmode = du.zstd_mode_var.get()
+    du.zstd_var.set(True); root.update()
+    _zkept = du._to_key() == "ffpfsc" and du.zstd_var.get() and not du._zstd_level_row.winfo_manager()
+    du.out_var.set(str(OUT)); root.update()
+    n0 = len(app.queue); du._add(); settle()
+    qu = app.queue[-1] if len(app.queue) > n0 else None
+    _cu = app.build_command(qu)[0] if qu else []
+    ok("zstd.unpack-for-a-packed-game", _zmode == "unpack" and _zkept and qu is not None and qu.chain_zstd_unpack
+       and not qu.chain_zstd and "--zstd-unpack" in _cu and "--zstd" not in _cu, f"mode={_zmode} kept={_zkept} {_cu[-6:]}")
+    if qu is not None:
+        app.queue.remove(qu)
+    shutil.rmtree(_zp, ignore_errors=True)
     _seed_pkg = next((S / "c1_pkg").glob("*.pkg"), None)
     _auto_src = S / "auto_sources"
     if _auto_src.exists(): shutil.rmtree(_auto_src)

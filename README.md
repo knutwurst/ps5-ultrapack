@@ -72,7 +72,7 @@ Older versions of the UI are in [docs/screenshots](docs/screenshots/README.md).
 
 **Outputs:** `.ffpfsc` (compressed), `.ffpfs` (uncompressed, faster to mount), `.exfat` (an exFAT image with 64 KiB clusters, which ShadowMountPlus reads fastest from USB), an installable `.pkg`, a plain folder, or "Organize", which files the source into your library as it is. **Auto** picks one of these per source: you set in Settings › Compression what a game folder, an image or a `.pkg` turns into, and an archive counts as what it holds.
 
-**On the way** a job can integrate a patch, backport the game to an older firmware, fake-sign the executables and, for games that load through AMPR, put their data into LZ4 asset packs, in that order. The packs make the game about half the size and are read by drakmor's ampr_emu, which the app puts into `fakelib/`; "Unpack LZ4" is the way back. All of that happens on a working copy. Your source only changes if you ask for it (signing or backporting a folder in place), and if a patch job on your own folder fails, the patch is rolled back.
+**On the way** a job can integrate a patch, backport the game to an older firmware, fake-sign the executables and, for games that load through AMPR, put their data into LZ4 asset packs, in that order. The packs make the game about half the size and are read by drakmor's ampr_emu, which the app puts into `fakelib/`; "Unpack LZ4" is the way back. For any game, AMPR or not, **zstd packs** do the same with zstd: everything except `eboot.bin`, the modules, `sce_sys`, `fakelib` and `.ini` files goes into `ampr_zstd-NNN.pak` volumes, which quer3q's ampr-emu-ng reads while the game runs (the app puts it into `fakelib/`, together with a fresh `ampr_emu.index`). You choose the zstd level (1, 5, 9 or 19). On the console, turn off fakelib updates in ShadowMountPlus so it doesn't replace the runtime. "Unpack zstd" is the way back. All of that happens on a working copy. Your source only changes if you ask for it (signing or backporting a folder in place), and if a patch job on your own folder fails, the patch is rolled back.
 
 Some things that make day-to-day use easier:
 
@@ -245,9 +245,10 @@ This isn't a fork, but it builds on a lot of other people's work. Thanks to:
 - EchoStretch for kstuff-lite, and Drakmor and ArkSama for the fpkg launch fixes. Without them fPKG on 11.60 wouldn't launch at all.
 - [BestPig](https://github.com/BestPig/BackPork) for the BackPork library patches.
 - [drakmor](https://github.com/drakmor/ampr_emu) for ampr_emu, whose packer and runtime the LZ4 asset packs use (GPL-3), and Nazky and the other Lazy_AMPR authors for showing what it can do.
+- [quer3q](https://github.com/quer3q/ampr-emu-ng) for ampr-emu-ng, the runtime that reads the zstd packs (bundled, GPL-3.0-or-later), and for the zstd pack format as ps5-dump-forge documents it. My packer is written from those documents. I checked it against ps5-dump-forge's reader and writer, ampr-emu-ng's own index and mount code, Alembic's format checker and strongt1me's implementation.
 - titoum-be, who got it running on Windows and sent the launcher and build script the Windows version is based on ([#1](https://github.com/knutwurst/ps5-ultrapack/issues/1)).
 
-Python libraries: customtkinter, py7zr, rarfile, tkinterdnd2, Pillow, psutil, cryptography.
+Python libraries: customtkinter, py7zr, rarfile, tkinterdnd2, Pillow, psutil, cryptography, backports.zstd.
 
 ## License
 
@@ -259,6 +260,7 @@ The details, including trademark notes, are in [`NOTICES.md`](NOTICES.md). Short
 - LibProsperoPkg 1.2.0 is **GPL-3.0-or-later** ([`backend/native/LICENSE.LibProsperoPkg`](backend/native/LICENSE.LibProsperoPkg)).
 - The UnRAR sources are under the **UnRAR license**: free for extraction, but they may not be used to build a RAR-compatible compressor ([`backend/unrar/license.txt`](backend/unrar/license.txt)).
 - ampr_emu's packer (`backend/ampr_pack/`) and its runtime `libSceAmpr.sprx` are **GPL-3.0** (drakmor).
+- ampr-emu-ng's runtime `libSceAmpr.sprx` for zstd packs is **GPL-3.0-or-later** (quer3q). It is fetched by `FETCH_AMPR_EMU.sh` with a pinned SHA-256, and its source archive is attached to every release.
 - `make_fself.py` is **BSD-3-Clause**, attribution in the file header.
 - Bizkut's ps5-ffpfs-cli has no license file. `backend/cli.py` started from it and has been mostly rewritten. I don't claim a license for what's left of the original code; the GPL covers my changes. See `NOTICES.md`.
 

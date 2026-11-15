@@ -3,6 +3,27 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.4.3
+────────────────────────────────────────────────────────────────────────
+
+ZSTD PACKS
+
+  - New option "zstd packs" for any game, AMPR or not: everything except
+    eboot.bin, the modules, sce_sys, fakelib and .ini files goes into
+    ampr_zstd-NNN.pak volumes with an ampr_zstd.index. quer3q's
+    ampr-emu-ng 0.4.0 reads them on the console; the app puts it into
+    fakelib/ and writes a fresh ampr_emu.index that lists every file.
+    Level 1, 5 (default), 9 or 19. Into a folder or an .exfat.
+  - Every packed file is checked against the original before the
+    originals go; a game that would shrink by less than 5 % stays as it
+    is. "Unpack zstd" turns a packed game back into plain files.
+  - The packs follow the format of ampr-emu-ng and ps5-dump-forge byte
+    for byte: ps5-dump-forge's writer makes the same volumes from the
+    same files, and ampr-emu-ng's own index and mount code accepts them.
+  - A .pkg built from a zstd-packed game keeps its ampr_emu.index, and
+    the PS5 PKG Tools count packed files as present.
+
+────────────────────────────────────────────────────────────────────────
   v2.4.2
 ────────────────────────────────────────────────────────────────────────
 

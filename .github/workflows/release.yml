@@ -68,6 +68,7 @@ jobs:
             dist/PS5-UltraPack-*-macos-arm64.zip
             dist/PS5-UltraPack-*-macos-arm64.zip.sha256
             build/ampr_emu-*/ampr_emu-*-source.tar.gz
+            build/ampr-emu-ng-*/ampr-emu-ng-*-source.tar.gz
           retention-days: 7
 
   linux:
@@ -190,6 +191,7 @@ jobs:
             dist/PS5-UltraPack-*-windows-x64.zip
             dist/PS5-UltraPack-*-windows-x64.zip.sha256
             build/ampr_emu-*/ampr_emu-*-source.tar.gz
+            build/ampr-emu-ng-*/ampr-emu-ng-*-source.tar.gz
           retention-days: 7
 
   publish:
@@ -211,7 +213,7 @@ jobs:
           draft=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft) \
             || { echo "::error::no draft release for $TAG, create it with the notes first"; exit 1; }
           [ "$draft" = "true" ] || { echo "::error::the release $TAG is already published"; exit 1; }
-          files=$(find art -type f \( -name 'PS5-UltraPack-*' -o -name 'ampr_emu-*-source.tar.gz' \) | sort)
+          files=$(find art -type f \( -name 'PS5-UltraPack-*' -o -name 'ampr_emu-*-source.tar.gz' -o -name 'ampr-emu-ng-*-source.tar.gz' \) | sort)
           echo "$files"
           gh release upload "$TAG" --repo "$REPO" --clobber $files
           gh release view "$TAG" --repo "$REPO" --json body --jq .body > notes.md

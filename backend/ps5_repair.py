@@ -78,6 +78,21 @@ def ampr_index_rows(data: bytes) -> dict:
 AMPR_UNINDEXED = ("ampr_emu.index", "ampr_commands.bin", "apr_emu.log")
 
 
+def _with_zstd_packed(sizes: dict, zindex: bytes | None) -> dict:
+    """the files in zstd packs count as present with their logical size; the packs themselves aren't indexed"""
+    import zstd_packs
+    if zindex is None:
+        raise ValueError("ampr_zstd.index cannot be read")
+    try:
+        idx = zstd_packs.parse_index(zindex)
+    except zstd_packs.ZstdPackError as e:
+        raise ValueError(str(e)) from e
+    out = {p: n for p, n in sizes.items() if not zstd_packs.is_pack_name(p)}
+    for rec in idx.files:
+        out[rec.path.lower()] = rec.size
+    return out
+
+
 def ampr_mismatch(index: dict, sizes: dict) -> list[str]:
     """game files the index sizes wrong or misses, plus indexed files that are gone"""
     try:
@@ -346,6 +361,8 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
             data = _pkg_member(pkg, "ampr_emu.index", entries, Path(td))
             try:
                 sizes = {p: int(e.get("size") or 0) for p, e in lower.items() if e.get("type") == "file"}
+                if "ampr_zstd.index" in lower:
+                    sizes = _with_zstd_packed(sizes, _pkg_member(pkg, "ampr_zstd.index", entries, Path(td)))
                 out["ampr"]["bad"] = ampr_mismatch(ampr_index_rows(data or b""), sizes)
             except ValueError as e:
                 out["ampr"]["error"] = str(e)
