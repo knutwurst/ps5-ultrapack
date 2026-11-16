@@ -29,7 +29,19 @@ esac
 # ampr_emu runtime for LZ4 packs (GPL-3); the packer lives in backend/ampr_pack
 ./FETCH_AMPR_EMU.sh
 
-python3 -m pip install -r requirements-build.txt
+# cryptography has no Intel wheel: pip builds it, linked statically against our OpenSSL like the
+# official wheels; linked against Homebrew's it drags a second libssl into the app that does not load
+if [[ "${MACOS_ARCH}" == "x86_64" ]]; then
+    OPENSSL_SRC="${PWD}/build/openssl-$(awk -F= '/^VER=/{print $2; exit}' BUILD_OPENSSL.sh)/src"
+    OPENSSL_STATIC=1 OPENSSL_LIB_DIR="${OPENSSL_SRC}" OPENSSL_INCLUDE_DIR="${OPENSSL_SRC}/include" \
+        python3 -m pip install --no-cache-dir -r requirements-build.txt
+else
+    python3 -m pip install -r requirements-build.txt
+fi
+if otool -L "$(python3 -c 'import cryptography.hazmat.bindings._rust as r; print(r.__file__)')" | grep -Eq 'libssl|libcrypto'; then
+    echo "BUILD_MACOS_APP.sh: cryptography links OpenSSL dynamically" >&2
+    exit 1
+fi
 python3 -m pip install ./backend/unrar
 (cd backend/unrar && python3 setup.py build_ext --inplace)
 python3 -m PyInstaller --clean --noconfirm PS5_UltraPack_macos.spec
