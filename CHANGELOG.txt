@@ -3,6 +3,23 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.5.1
+────────────────────────────────────────────────────────────────────────
+
+INTEL MACS
+
+  - New download for Intel Macs with macOS 15 or newer:
+    PS5-UltraPack-<version>-macos-x64.zip. GitHub Actions builds and
+    tests it with every release, the same suites as the Apple Silicon
+    build.
+  - The build scripts follow the architecture of the venv's Python: the
+    fPKG tool, ImageMagick, OpenSSL and 7-Zip come in arm64 or x86_64.
+    The Intel 7zz is 7-Zip 25.01, whose x86_64 slice runs from macOS 12.
+  - Drag and drop is off on Intel Macs: tkinterdnd2 ships no Tcl/Tk 9
+    library for them. The app starts without it and says so in the log;
+    Add job does the same.
+
+────────────────────────────────────────────────────────────────────────
   v2.5.0
 ────────────────────────────────────────────────────────────────────────
 
