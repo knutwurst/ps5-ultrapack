@@ -32,10 +32,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
-      # Homebrew's Python with Tk 9, as on the build Mac; Homebrew lives in /usr/local on Intel
+      # Homebrew's Python with Tk 9, as on the build Mac; Homebrew lives in /usr/local on Intel, where the
+      # image's own python3.13 links would stop brew link
       - name: Python
         run: |
-          brew install python@3.13 python-tk@3.13
+          brew install --overwrite python@3.13 python-tk@3.13
           "$(brew --prefix)/opt/python@3.13/bin/python3.13" -m venv .venv
           .venv/bin/python -c "import sys, tkinter; print(sys.version, 'Tk', tkinter.TkVersion)"
       - name: Build
