@@ -9,6 +9,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -236,6 +237,14 @@ class EmptyScratch(unittest.TestCase):
         gone = self.uc.prune_empty_scratch([b / "_ultrapack_temp"])
         self.assertEqual(sorted(g.name for g in gone), ["_ffpfsc_temp", "_ultrapack_temp"])
         self.assertEqual(list(b.iterdir()), [])
+
+    def test_no_minimum_age_ignores_a_clock_behind_the_file_times(self):
+        # Windows can stamp a fresh folder a little after time.time()
+        d = self.base / "_ultrapack_extract"; d.mkdir()
+        future = time.time() + 5
+        os.utime(d, (future, future))
+        gone = self.uc.prune_empty_scratch([self.base])
+        self.assertEqual([g.name for g in gone], ["_ultrapack_extract"])
 
 
 class DropEmptyScratch(unittest.TestCase):

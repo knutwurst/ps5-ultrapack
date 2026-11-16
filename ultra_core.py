@@ -3873,6 +3873,8 @@ def prune_empty_scratch(bases, min_age: float = 0.0, stop=None) -> list:
     def settled(d: Path) -> bool:
         if stop is not None and stop():
             return False
+        if min_age <= 0:      # no clock read: Windows can stamp a fresh folder after time.time()
+            return True
         try:
             return time.time() - d.stat().st_mtime >= min_age
         except OSError:
