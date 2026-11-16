@@ -10,6 +10,7 @@ The app used to be called PS5 FFPFSC ULTRA.
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS%2026+-Apple%20Silicon-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 26 or newer (Apple Silicon)">
+  <img src="https://img.shields.io/badge/macOS%2015+-Intel-22c55e?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 15 or newer (Intel)">
   <img src="https://img.shields.io/badge/Windows-x64-0ea5e9?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64">
   <img src="https://img.shields.io/badge/Linux-x64-3b82f6?style=for-the-badge&logo=linux&logoColor=white" alt="Linux x64">
   <img src="https://img.shields.io/badge/FW%2011.60-verified-22c55e?style=for-the-badge" alt="FW 11.60 verified">
@@ -29,10 +30,11 @@ Grab the latest build from [Releases](https://github.com/knutwurst/ps5-ultrapack
 
 Official builds are only published there. GitHub Actions builds each one from the tagged source, and the release notes list the SHA-256 of every file. If you got PS5 UltraPack from somewhere else, compare it with `shasum -a 256 <file>` (macOS, Linux) or `certutil -hashfile <file> SHA256` (Windows). Settings › About shows the repo and commit an official build came from.
 
-- **macOS** 26 or newer on Apple Silicon (every M1 or later Mac can update to it for free): unzip and start the app. The app is only ad-hoc signed, so if macOS refuses to open it, run this once:
+- **macOS** 26 or newer on Apple Silicon (every M1 or later Mac can update to it for free): `PS5-UltraPack-<version>-macos-arm64.zip`. On an Intel Mac with macOS 15 or newer, take `PS5-UltraPack-<version>-macos-x64.zip` (from 2.5.1 on). Unzip and start the app. The app is only ad-hoc signed, so if macOS refuses to open it, run this once:
   ```bash
   xattr -dr com.apple.quarantine "PS5 UltraPack.app"
   ```
+  The Intel build is built and tested on GitHub's Intel Macs with every release, the same tests as the Apple Silicon build. I don't have an Intel Mac myself. Drag and drop is off on Intel because tkinterdnd2 has no Tcl/Tk 9 library for it; **Add job** does the same.
 - **Windows x64**: unzip and start `PS5 UltraPack.exe`. SmartScreen will warn on first start because the exe isn't signed ("More info", then "Run anyway"). Every release is built and tested on Windows: the unit, pipeline and GUI tests, every function of the finished app, and a start of it. I haven't tried a package built on Windows on a console yet.
 - **Linux x64** (from 2.4.0 on): unpack `PS5-UltraPack-<version>-linux-x64.tar.gz` anywhere and run `./PS5 UltraPack`; `./install.sh` adds it to the app menu (`--uninstall` removes it). Every release is built and tested on Ubuntu 24.04: the build, the unit, pipeline and GUI tests, and a start of the finished app. Trash uses `gio trash` (or `kioclient`/`trash-cli`), notifications use `notify-send`. Thanks to [@trongio](https://github.com/trongio) for the Linux port.
 
@@ -252,7 +254,7 @@ python3 -m venv .venv && source .venv/bin/activate
 ./BUILD_MACOS_APP.sh
 ```
 
-This writes `dist/PS5 UltraPack.app` plus `dist/PS5-UltraPack-<version>-macos-arm64.zip` and its `.sha256`. `FETCH_7ZIP.sh` downloads the pinned 7-Zip binaries for the bundle.
+This writes `dist/PS5 UltraPack.app` plus `dist/PS5-UltraPack-<version>-macos-arm64.zip` and its `.sha256`. On an Intel Mac the native parts follow the venv's Python and the zip ends in `-macos-x64.zip`. `FETCH_7ZIP.sh` downloads the pinned 7-Zip binaries for the bundle.
 
 **Windows:** build the native parts on a Mac first with `WIN_PYTHON=<copy of the Windows Python folder> ./BUILD_WINDOWS_PARTS.sh` (needs the .NET SDK and `mingw-w64`). Then run `BUILD_WINDOWS_APP.ps1` on Windows. It writes `dist\windows\PS5 UltraPack\PS5 UltraPack.exe` and the release zip.
 

@@ -13,6 +13,11 @@ APP_VERSION = _m.group(1) if _m else "1.0"
 
 
 import os as _os
+import platform as _platform
+
+# BUILD_PKG_TOOL.sh puts the native library of the build Python's architecture beside the tool
+_MAGICK = {"arm64": "Magick.Native-Q8-arm64.dll.dylib",
+           "x86_64": "Magick.Native-Q8-x64.dll.dylib"}[_platform.machine()]
 
 # backend/ ships as data, minus what never runs inside the app
 _BACKEND_SKIP_DIRS = {
@@ -39,7 +44,7 @@ _BACKEND_REQUIRED = [
     _os.path.join("mkpfs", "cli.py"), _os.path.join("mkpfs", "pfs.py"),
     _os.path.join("unrar", "__init__.py"), _os.path.join("unrar", "rarfile.py"),
     _os.path.join("native", "ffpfsc-pkg-tool"),
-    _os.path.join("native", "Magick.Native-Q8-arm64.dll.dylib"),   # loaded from the tool's folder
+    _os.path.join("native", _MAGICK),   # loaded from the tool's folder
     _os.path.join("native", "7zz"), _os.path.join("native", "LICENSE.7-Zip.macos"),   # FETCH_7ZIP.sh
     _os.path.join("native", "libcrypto.3.dylib"), _os.path.join("native", "libssl.3.dylib"),   # BUILD_OPENSSL.sh
     _os.path.join("native", "LICENSE.OpenSSL"),
@@ -193,7 +198,9 @@ def _min_macos() -> str:
     """highest minimum of our Python and the bundled tools; a Homebrew build follows the build Mac"""
     import subprocess, sys
     found = []
-    for binary in (sys.executable, _os.path.join("backend", "native", "7zz")):
+    native = _os.path.join("backend", "native")
+    for binary in (sys.executable, _os.path.join(native, "7zz"), _os.path.join(native, "ffpfsc-pkg-tool"),
+                   _os.path.join(native, _MAGICK), _os.path.join(native, "libcrypto.3.dylib")):
         try:
             out = subprocess.run(["otool", "-l", _os.path.realpath(binary)], capture_output=True,
                                  text=True, timeout=30).stdout

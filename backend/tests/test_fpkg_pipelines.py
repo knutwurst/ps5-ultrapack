@@ -9,6 +9,7 @@ import binascii
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import struct
@@ -29,7 +30,8 @@ CLI = BACKEND / "cli.py"
 # FFPFSC_PKG_TOOL points the harness, and fpkg.py, at a candidate build
 TOOL = (Path(os.environ["FFPFSC_PKG_TOOL"]) if os.environ.get("FFPFSC_PKG_TOOL")
         else BACKEND / "native" / ("ffpfsc-pkg-tool.exe" if os.name == "nt" else "ffpfsc-pkg-tool"))
-MAGICK = ("Magick.Native-Q8-x64.dll" if os.name == "nt" else "Magick.Native-Q8-arm64.dll.dylib"
+MAGICK = ("Magick.Native-Q8-x64.dll" if os.name == "nt"
+          else f"Magick.Native-Q8-{'arm64' if platform.machine() == 'arm64' else 'x64'}.dll.dylib"
           if sys.platform == "darwin" else "Magick.Native-Q8-x64.dll.so")
 
 # Backend cli.py wants to import fpkg / mkpfs as if run from backend/

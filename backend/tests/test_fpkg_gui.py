@@ -97,6 +97,12 @@ def ok(name, cond, detail=""):
     res.append((name, bool(cond), detail))
     print(f"... {'pass' if cond else 'FAIL'} {name}" + ("" if cond else f"  {str(detail)[:300]}"),
           file=sys.stderr, flush=True)    # progress, for a run that hangs
+# drop must load wherever tkinterdnd2 ships a library for this Tcl; otherwise the app runs without it
+import platform as _platform
+_dnd_expected = not (sys.platform == "darwin" and _platform.machine() == "x86_64" and tk.TclVersion >= 9)
+ok("driver.dnd", bool(getattr(root, "TkdndVersion", None)) if _dnd_expected
+   else getattr(root, "TkdndVersion", None) is None and bool(getattr(root, "dnd_error", "")),
+   f"tkdnd {getattr(root, 'TkdndVersion', None)!r}, error {getattr(root, 'dnd_error', '')!r}")
 ok("driver.no-first-run-wizard", _no_wizard, "the isolated profile is a finished setup, so no wizard window opens")
 ok("driver.silent", not app.sound_complete_var.get() and not app.sound_error_var.get() and app.notify_var.get() == "off",
    "no done/failed sounds and no notifications while the driver runs jobs")

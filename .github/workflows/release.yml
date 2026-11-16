@@ -1,6 +1,6 @@
-# Release builds for macOS, Windows and Linux. A tag vX.Y.Z builds all three; each build is tested, and only
-# then the files go onto the draft release of that tag, its {SHA}/{SHA_LINUX}/{SHA_WINDOWS} placeholders get filled
-# and it is published as the latest release. A manual run builds and tests all three.
+# Release builds for macOS (Apple silicon and Intel), Windows and Linux. A tag vX.Y.Z builds all of them; each build
+# is tested, and only then the files go onto the draft release of that tag, its {SHA}/{SHA_MAC_INTEL}/{SHA_LINUX}/
+# {SHA_WINDOWS} placeholders get filled and it is published as the latest release. A manual run builds and tests all.
 name: Release builds
 
 on:
@@ -17,18 +17,26 @@ env:
 
 jobs:
   macos:
-    runs-on: macos-26
-    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26        # Apple silicon, macOS 26 and newer
+            arch: arm64
+          - runner: macos-15-intel  # Intel, macOS 15 and newer
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
-      # Homebrew's Python with Tk 9, as on the build Mac
+      # Homebrew's Python with Tk 9, as on the build Mac; Homebrew lives in /usr/local on Intel
       - name: Python
         run: |
           brew install python@3.13 python-tk@3.13
-          /opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv
+          "$(brew --prefix)/opt/python@3.13/bin/python3.13" -m venv .venv
           .venv/bin/python -c "import sys, tkinter; print(sys.version, 'Tk', tkinter.TkVersion)"
       - name: Build
         run: |
@@ -63,10 +71,10 @@ jobs:
           kill $pid || true
       - uses: actions/upload-artifact@v4
         with:
-          name: macos
+          name: macos-${{ matrix.arch }}
           path: |
-            dist/PS5-UltraPack-*-macos-arm64.zip
-            dist/PS5-UltraPack-*-macos-arm64.zip.sha256
+            dist/PS5-UltraPack-*-macos-${{ matrix.arch }}.zip
+            dist/PS5-UltraPack-*-macos-${{ matrix.arch }}.zip.sha256
             build/ampr_emu-*/ampr_emu-*-source.tar.gz
             build/ampr-emu-ng-*/ampr-emu-ng-*-source.tar.gz
           retention-days: 7
@@ -219,10 +227,11 @@ jobs:
           gh release view "$TAG" --repo "$REPO" --json body --jq .body > notes.md
           sha() { f=$(find art -name "$1" | head -1); if [ -n "$f" ]; then cut -c1-64 "$f"; fi; }
           mac=$(sha 'PS5-UltraPack-*-macos-arm64.zip.sha256')
+          mac_intel=$(sha 'PS5-UltraPack-*-macos-x64.zip.sha256')
           win=$(sha 'PS5-UltraPack-*-windows-x64.zip.sha256')
           lin=$(sha 'PS5-UltraPack-*-linux-x64.tar.gz.sha256')
-          [ -n "$mac" ] && [ -n "$lin" ] && [ -n "$win" ] || { echo "::error::a build's checksum is missing"; exit 1; }
-          sed -i "s/{SHA}/${mac}/g; s/{SHA_LINUX}/${lin}/g; s/{SHA_WINDOWS}/${win}/g" notes.md
+          [ -n "$mac" ] && [ -n "$mac_intel" ] && [ -n "$lin" ] && [ -n "$win" ] || { echo "::error::a build's checksum is missing"; exit 1; }
+          sed -i "s/{SHA}/${mac}/g; s/{SHA_MAC_INTEL}/${mac_intel}/g; s/{SHA_LINUX}/${lin}/g; s/{SHA_WINDOWS}/${win}/g" notes.md
           if grep -q '{SHA' notes.md; then echo "::error::a checksum placeholder is left"; exit 1; fi
           gh release edit "$TAG" --repo "$REPO" --notes-file notes.md --draft=false --latest
           gh release view "$TAG" --repo "$REPO" --json url,assets --jq '.url, (.assets[] | "\(.name) \(.digest)")'

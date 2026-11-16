@@ -18,9 +18,16 @@ fi
 SRC="backend/native/src/ffpfsc-pkg-tool"
 OUT="${SRC}/out"
 rm -rf "${OUT}"
-"${DOTNET}" publish "${SRC}/PkgTool.csproj" -c Release -r osx-arm64 --self-contained true -o "${OUT}"
+case "${MACOS_ARCH:-$(uname -m)}" in
+    arm64) RID=osx-arm64; MAGICK=Magick.Native-Q8-arm64.dll.dylib ;;
+    x86_64) RID=osx-x64; MAGICK=Magick.Native-Q8-x64.dll.dylib ;;
+    *) echo "BUILD_PKG_TOOL.sh: unsupported architecture" >&2; exit 1 ;;
+esac
+# the other architecture's library must not end up in the app
+rm -f backend/native/Magick.Native-Q8-*.dll.dylib
+"${DOTNET}" publish "${SRC}/PkgTool.csproj" -c Release -r "${RID}" --self-contained true -o "${OUT}"
 
-for f in ffpfsc-pkg-tool Magick.Native-Q8-arm64.dll.dylib; do
+for f in ffpfsc-pkg-tool "${MAGICK}"; do
     # rm first: macOS remembers the old signature per inode and kills the new binary
     rm -f "backend/native/${f}"
     cp "${OUT}/${f}" "backend/native/${f}"

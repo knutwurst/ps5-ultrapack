@@ -8550,9 +8550,11 @@ class App:
         self._filter_root_configure()
         self.update_queue_box()
 
-        if _HAS_DND:
+        if _HAS_DND and getattr(self.root, "TkdndVersion", None):
             self.root.drop_target_register(DND_FILES)
             self.root.dnd_bind("<<Drop>>", self._on_drop)
+        elif getattr(self.root, "dnd_error", None):
+            self.log("WARN", f"Drag and drop is off, use Add job instead: {self.root.dnd_error}")
 
     def _init_display_vars(self):
         S = TextVar
@@ -17297,7 +17299,12 @@ if _HAS_DND:
     class _CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
-            self.TkdndVersion = TkinterDnD._require(self)
+            # tkinterdnd2 has no Tcl 9 library for Intel Macs; the app then runs without drop
+            try:
+                self.TkdndVersion = TkinterDnD._require(self)
+            except (RuntimeError, tk.TclError) as e:
+                self.TkdndVersion = None
+                self.dnd_error = str(e)
 else:
     _CTkDnD = ctk.CTk
 

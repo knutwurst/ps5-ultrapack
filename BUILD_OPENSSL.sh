@@ -24,7 +24,7 @@ mkdir -p "${SRC}"
 tar -xzf "${TAR}" -C "${SRC}" --strip-components 1
 (
     cd "${SRC}"
-    MACOSX_DEPLOYMENT_TARGET="${MIN_MACOS}" ./Configure darwin64-arm64-cc shared no-tests no-docs \
+    MACOSX_DEPLOYMENT_TARGET="${MIN_MACOS}" ./Configure "darwin64-${MACOS_ARCH:-$(uname -m)}-cc" shared no-tests no-docs \
         "-mmacosx-version-min=${MIN_MACOS}" >/dev/null
     make -j"$(sysctl -n hw.ncpu)" build_libs >/dev/null
 )

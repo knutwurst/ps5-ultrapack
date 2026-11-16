@@ -1,7 +1,7 @@
 # ffpfsc-pkg-tool — source
 
 `backend/native/ffpfsc-pkg-tool` is a self-contained, single-file .NET 9 executable
-(macOS arm64), with its one native library `Magick.Native-Q8-arm64.dll.dylib` beside it,
+(macOS arm64 or x86_64), with its one native library `Magick.Native-Q8-arm64.dll.dylib` (or `-x64`) beside it,
 that the app calls for everything fPKG: `build`, `extract-inner`,
 `extract-outer`, `list-inner`, `inspect`, `validate`, `version`. This folder holds the part
 we wrote:
@@ -78,6 +78,7 @@ source is kept in the repo.
    ```
 
    It runs `dotnet publish PkgTool.csproj -c Release -r osx-arm64 --self-contained true -o out`
+   (`-r osx-x64` on Intel or with `MACOS_ARCH=x86_64`)
    and replaces `backend/native/ffpfsc-pkg-tool` and `backend/native/Magick.Native-Q8-arm64.dll.dylib`
    by delete + copy (copying over a signed binary in place can make macOS kill it on launch).
    Neither file is tracked in git; `BUILD_MACOS_APP.sh` runs the script first.
