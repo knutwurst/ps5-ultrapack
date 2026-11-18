@@ -1491,11 +1491,13 @@ class FpkgProgress:
         if "writing afid-ordered inner data" in low:
             self._set_phase("Creating Temp PFS"); self.t0 = self._clock()
             self._bar(0, "inner image (Kraken)"); return
+        # staging is only the start of Reading Game: 100 % there would move the GUI on to Creating Temp PFS
+        # before the files are prepared, and those bars would then hold its bar at 99 %
         m = re.search(r"\[stage\] copy (\d+)%", line)
         if m:
-            self._set_phase("Reading Game"); self._bar(int(m.group(1)), "staging copy"); return
+            self._set_phase("Reading Game"); self._bar(int(m.group(1)) * 40 // 100, "staging copy"); return
         if "[stage] staged in place" in low:
-            self._set_phase("Reading Game"); self._bar(100, "staged in place"); return
+            self._set_phase("Reading Game"); self._bar(5, "staged in place"); return
         if self.cur == "Creating Temp PFS":
             m = re.search(r"processing large file: (/\S+) \(([\d,]+) bytes\)", line)
             if m:

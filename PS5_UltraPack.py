@@ -4482,6 +4482,7 @@ class JobDialog(EmbeddedDialog):
         self._ps4_n = self._ps5_n = 0
         self._scanned: list = []           # everything a folder scan found; _games is what the filter lets through
         self._fmt_off: set = set()         # formats the user unticked; read by the archive check too
+        self._fmt_counts: dict = {}        # sources per format in the last scan; a format with none has no tick
         self._fmt_vars = {f: tk.BooleanVar(value=True) for f in SOURCE_FORMATS}
         _org = getattr(item, "auto_organize", None) if item else None
         self.organize_var = tk.BooleanVar(value=bool(app.auto_organize_var.get()) if _org is None else bool(_org))
@@ -5510,7 +5511,7 @@ class JobDialog(EmbeddedDialog):
         self._ps4_info = None
         self._ps4_n = self._ps5_n = 0
         self._ps4_set = set()
-        self._scanned, self._fmt_off = [], set()
+        self._scanned, self._fmt_off, self._fmt_counts = [], set(), {}
         for v in self._fmt_vars.values():
             v.set(True)
         self._fmt_row.pack_forget()
@@ -5805,15 +5806,19 @@ class JobDialog(EmbeddedDialog):
         counts = {f: 0 for f in SOURCE_FORMATS}
         for s in self._scanned:
             counts[source_format(s)] = counts.get(source_format(s), 0) + 1
+        self._fmt_counts = counts
         for f, cb in self._fmt_cbs.items():
             n = counts.get(f, 0)
+            if not n:
+                self._fmt_vars[f].set(False)        # nothing found: no tick, so it never looks chosen
             cb.configure(text=f"{tr(SOURCE_FORMAT_LABELS[f])}  {n}", state="normal" if n else "disabled")
         if not self._fmt_row.winfo_manager():
             self._fmt_row.pack(fill="x", padx=10, pady=(0, 8), after=self._src_detect_line)
 
     def _apply_formats(self) -> None:
         """_games is the scan minus the unticked formats; the PS4 counts follow it"""
-        self._fmt_off = {f for f, v in self._fmt_vars.items() if not v.get()}
+        # only formats the scan found and the user unticked count as left out (Rescan keeps them out)
+        self._fmt_off = {f for f, v in self._fmt_vars.items() if not v.get() and self._fmt_counts.get(f, 0)}
         self._games = filter_sources(self._scanned, self._fmt_off)
         self._ps4_n = sum(1 for g in self._games if str(g) in self._ps4_set)
         self._ps5_n = len(self._games) - self._ps4_n
@@ -5830,8 +5835,8 @@ class JobDialog(EmbeddedDialog):
         self._refresh()
 
     def _formats_all(self) -> None:
-        for v in self._fmt_vars.values():
-            v.set(True)
+        for f, v in self._fmt_vars.items():
+            v.set(bool(self._fmt_counts.get(f, 0)))
         self._formats_changed()
 
     def _parent_text(self) -> str:
@@ -6137,8 +6142,17 @@ class JobDialog(EmbeddedDialog):
             except Exception:
                 pass
         try:
-            self._inplace_cb.configure(state="normal" if self._beside_possible(to) else "disabled")
-            self._organize_cb.configure(state="disabled" if beside else "normal")
+            # a tick that can't apply is hidden, never shown greyed out with a check in it
+            if self._beside_possible(to):
+                if not self._inplace_row.winfo_manager():
+                    self._inplace_row.pack(fill="x", padx=10, pady=(2, 2),
+                                           before=self._ps4_box if self._ps4_box.winfo_manager() else self._oline)
+            elif self._inplace_row.winfo_manager():
+                self._inplace_row.pack_forget()
+            if beside:
+                self._organize_cb.pack_forget()       # In place names the result from the game anyway
+            elif not self._organize_cb.winfo_manager():
+                self._organize_cb.pack(side="left")
             warn = self._inplace_hdd_note() if beside else ""
             self._inplace_warn.configure(text=tr(warn) if warn else "")
             if warn and not self._inplace_warn.winfo_manager():

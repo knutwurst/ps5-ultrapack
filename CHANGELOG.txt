@@ -15,6 +15,17 @@ IN PLACE
   - On a hard disk with no temp folder on another drive, the dialog warns
     that reading and writing one disk at once is slow.
 
+FIXED
+
+  - A .pkg build staged in place showed Creating Temp PFS at 99 % for the
+    whole compression: staging reported Reading Game as done, so the
+    prepared-files bars landed on the next stage and held it there.
+  - The log on the job card follows the newest line when long lines wrap
+    instead of showing older ones.
+  - Formats a folder scan didn't find have no tick, Auto-organize is
+    hidden while In place is on, and In place is hidden where it can't
+    apply.
+
 FORMAT FILTER
 
   - After a folder scan, Add job shows every format it found with its

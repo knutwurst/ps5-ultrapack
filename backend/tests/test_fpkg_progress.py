@@ -28,6 +28,23 @@ class Replay:
         return [l[8:] for l in self.out if l.startswith("[PHASE] ")]
 
 
+class StagingNeverFinishesReadingGame(unittest.TestCase):
+    """Reading Game at 100 % moves the GUI on to Creating Temp PFS; staging must not get there first"""
+
+    def test_staged_in_place_and_copy_stay_below_the_prepared_files(self):
+        r = Replay()
+        r.feed("[stage] staged in place: /x (the caller's working copy)")
+        self.assertIn("5% staged in place", r.bars()[-1])
+        r = Replay()
+        r.feed("[stage] copy 100% (1.0 GB)")
+        self.assertIn("40% staging copy", r.bars()[-1])
+        r.feed("[+00:00:00.052]  [inner] Preparing 3 inner files (1,000 bytes)...",
+               "[+00:00:00.112]  [inner] Prepared inner tree: 3 files, 1 directories.")
+        reading = [b for b in r.bars() if "100%" in b]
+        self.assertEqual(len(reading), 1)
+        self.assertIn("inner files prepared", reading[0])
+
+
 class KrakenMeter(unittest.TestCase):
     def setUp(self):
         self.r = Replay()

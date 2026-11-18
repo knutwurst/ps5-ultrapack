@@ -1912,6 +1912,10 @@ class LogText(tk.Text):
 
     def _show_mirror_tail(self, text_lines: int | None = None):
         """pin the oldest line to the top: scrolled to the end Tk shows a blank line and a sliver"""
+        if str(self.mirror.cget("wrap")) != "none":
+            # wrapped lines take several rows: pinning a line number would push the newest ones out of view
+            self.mirror.see("end-2c")
+            return
         n = self._mirror_line_count() if text_lines is None else text_lines
         self.mirror.yview(f"{max(1, n - self.mirror_visible + 1)}.0")
 

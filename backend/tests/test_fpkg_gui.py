@@ -272,19 +272,22 @@ try:
     _ipd.mkdir(); _ipg = _ipd / "Game"; shutil.copytree(HBT, _ipg)
     di = m.JobDialog(app, init_src=str(_ipg), init_to="ffpfsc"); root.update()
     di.out_var.set(""); di.inplace_var.set(True); root.update()
-    _ipdis = di._out_entry.cget("state") == "disabled" and di._organize_cb.cget("state") == "disabled"
+    _ipdis = di._out_entry.cget("state") == "disabled" and not di._organize_cb.winfo_manager()
     di.to_var.set(m.JobDialog._TARGET_LABEL["organize"]); root.update()
-    _iporg = di._inplace_cb.cget("state") == "disabled"
+    _iporg = not di._inplace_row.winfo_manager()
+    di.to_var.set(m.JobDialog._TARGET_LABEL["ffpfsc"]); di.inplace_var.set(False); root.update()
+    _ipback = bool(di._inplace_row.winfo_manager()) and bool(di._organize_cb.winfo_manager())
+    di.inplace_var.set(True); root.update()
     di.to_var.set(m.JobDialog._TARGET_LABEL["ffpfsc"]); root.update()
     n0 = len(app.queue); di._add(); settle()
     qi = app.queue[-1] if len(app.queue) > n0 else None
     _ci = [str(a) for a in (app.build_command(qi)[0] if qi else [])]
     _ipout = Path(next((a for a in _ci if a.endswith(".ffpfsc")), ""))
-    ok("inplace.dialog-and-job", _ipdis and _iporg and qi is not None and qi.in_place_output
+    ok("inplace.dialog-and-job", _ipdis and _iporg and _ipback and qi is not None and qi.in_place_output
        and Path(str(qi.output_path)) == _ipd and _ipout.parent == _ipd and "[" in _ipout.name
        and m.load_settings().get("in_place_output") is True
        and m.load_settings().get("rescan_template", {}).get("in_place") is True,
-       f"disabled={_ipdis} organize={_iporg} out={_ipout}")
+       f"disabled={_ipdis} organize={_iporg} back={_ipback} out={_ipout}")
     _late_new = app._late_output_check(qi) if qi else None
     if qi is not None:
         _ipout.write_bytes(b"x"); qi._output_checked = False
@@ -306,7 +309,8 @@ try:
     dfm = m.JobDialog(app, init_src=str(_fd), init_to="ffpfs"); root.update()
     pump(lambda: dfm._kind == "parent" and not dfm._reading, 60)
     _txt = {f: dfm._fmt_cbs[f].cget("text") for f in ("folder", "ffpfsc", "zip", "rar")}
-    _shown = bool(dfm._fmt_row.winfo_manager()) and dfm._fmt_cbs["rar"].cget("state") == "disabled"
+    _shown = (bool(dfm._fmt_row.winfo_manager()) and dfm._fmt_cbs["rar"].cget("state") == "disabled"
+              and not dfm._fmt_vars["rar"].get() and not dfm._fmt_vars["7z"].get() and dfm._fmt_vars["zip"].get())
     root.update_idletasks()
     _fits = dfm._fmt_row.winfo_reqwidth() <= dfm._fmt_row.master.winfo_width() + 2
     print(f"... filter row width {dfm._fmt_row.winfo_reqwidth()} of {dfm._fmt_row.master.winfo_width()}", file=sys.stderr, flush=True)
@@ -326,10 +330,14 @@ try:
         app.queue.remove(_it)
     dfm2 = m.JobDialog(app, init_src=str(_fd), init_to="ffpfs"); root.update()
     pump(lambda: dfm2._kind == "parent" and not dfm2._reading, 60)
-    _fresh = all(v.get() for v in dfm2._fmt_vars.values()) and len(dfm2._games) == 4
+    # found formats ticked, the rest unticked and greyed; none of those counts as left out
+    _found = {"folder", "ffpfsc", "zip"}
+    _fresh = (all(v.get() == (f in _found) for f, v in dfm2._fmt_vars.items()) and len(dfm2._games) == 4
+              and not dfm2._fmt_off)
     dfm2._fmt_vars["ffpfsc"].set(False); dfm2._formats_changed(); _less = len(dfm2._games)
     dfm2._formats_all(); root.update()
-    ok("filter.all-supported-files", _fresh and _less == 2 and len(dfm2._games) == 4,
+    _all_found = all(v.get() == (f in _found) for f, v in dfm2._fmt_vars.items())
+    ok("filter.all-supported-files", _fresh and _less == 2 and len(dfm2._games) == 4 and _all_found,
        f"fresh={_fresh} less={_less} after={len(dfm2._games)}")
     dfm2.destroy(); root.update()
     shutil.rmtree(_fd, ignore_errors=True)
@@ -1231,6 +1239,33 @@ try:
     ok("progress.refused-phase-bars-ignored",
        _dw.phase == "Creating Temp PFS" and _dw.stage_progress["Creating Temp PFS"] == 17 and _dw.speed == "32.3 MB/s",
        f"phase={_dw.phase} temp={_dw.stage_progress['Creating Temp PFS']} speed={_dw.speed}")
+    # the bars the backend prints for a .pkg built in place: the Kraken bar must move after the prepared files
+    _kw = m.CLIWorker(app, _xi, ["py", "cli.py", str(_ex), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
+    _kw.start_time = time.time()
+    for _l in ("[PHASE] Reading Game", "[#-------------------] 5% staged in place",
+               "[##########----------] 50% inner files prepared", "[####################] 100% inner files prepared",
+               "[PHASE] Creating Temp PFS", "[--------------------] 0% inner image (Kraken)",
+               "[#-------------------] 7% inner image (Kraken) @ 40.1 MB/s ETA 1352s"):
+        _kw._handle_line(_l)
+    ok("progress.kraken-moves-after-staging-in-place",
+       _kw.phase == "Creating Temp PFS" and _kw.stage_progress["Creating Temp PFS"] == 7,
+       f"phase={_kw.phase} temp={_kw.stage_progress.get('Creating Temp PFS')}")
+    # the job card's log tail follows the newest line, also when long lines wrap; an off-screen window
+    # gives the widgets a real size without showing anything
+    import ui_kit as _uk
+    _tw = tk.Toplevel(root); _tw.overrideredirect(True); _tw.geometry("420x120-10000-10000")
+    _mir = tk.Text(_tw, height=4, width=50, wrap="word", state="disabled")
+    _mir.pack(fill="both", expand=True)
+    _lt = _uk.LogText(_tw, app.kit, mirror=_mir, mirror_lines=400, height=4)
+    _tw.update()
+    _lt.set_mirror_visible(4)
+    for _i in range(40):
+        _lt.insert("end", f"[INFO] [inner] Kraken level 0: {_i}% of /some/rather/long/path/to/content/file_{_i}.bank\n")
+    _tw.update()
+    _seen = _mir.dlineinfo("end-2c linestart")
+    ok("log.tail-shows-the-newest-line", _seen is not None and "file_39" in _mir.get("end-2c linestart", "end"),
+       f"newest line on screen: {_seen}")
+    _tw.destroy()
     _qi = m.GameItem.from_chain(_cpk, to="ffpfsc"); _qi.status = "Running"
     app.queue.insert(0, _qi); app.update_queue_box(); app._batch_running = True
     app._begin_job_progress(_qi)
