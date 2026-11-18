@@ -1,4 +1,4 @@
-// usage: dotnet run -- path/to/LibProsperoPkg.dll (1.2.0, d7090eb6); patched in place, .orig kept
+// usage: dotnet run -- path/to/LibProsperoPkg.dll (1.2.0, a3ee4c1a or d7090eb6); patched in place, .orig kept
 using System;
 using System.IO;
 using System.Linq;

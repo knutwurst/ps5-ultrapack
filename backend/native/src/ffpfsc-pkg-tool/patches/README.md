@@ -1,7 +1,7 @@
 # LibProsperoPkg.dll patches
 
 `ffpfsc-pkg-tool` links against drakmor's LibProsperoPkg 1.2.0, build
-`d7090eb6` (GPL-3.0-or-later). Both the pristine upstream assembly
+`a3ee4c1a` (GPL-3.0-or-later; `d7090eb6` until 2026-11-18, the patches apply to both). Both the pristine upstream assembly
 (`lib/LibProsperoPkg.dll.orig`) and the patched one the tool links against
 (`lib/LibProsperoPkg.dll`) are tracked in git, with SHA-256 sums in
 `lib/SHA256SUMS`; `lib/README.md` records the provenance and the

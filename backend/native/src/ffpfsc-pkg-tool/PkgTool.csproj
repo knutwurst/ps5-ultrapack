@@ -39,7 +39,7 @@
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
-    <!-- LibProsperoPkg 1.2.0 build d7090eb6 (GPL-3.0-or-later) is the one dependency that
+    <!-- LibProsperoPkg 1.2.0 build a3ee4c1a (GPL-3.0-or-later) is the one dependency that
          is not on NuGet. lib/ holds the pristine upstream assembly (LibProsperoPkg.dll.orig)
          and the patched one the tool links against; see lib/README.md and
          patches/README.md for the three IL patches and how to re-apply them. -->

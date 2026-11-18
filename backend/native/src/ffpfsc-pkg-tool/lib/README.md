@@ -1,10 +1,10 @@
-# lib/ — LibProsperoPkg 1.2.0 (build d7090eb6)
+# lib/ — LibProsperoPkg 1.2.0 (build a3ee4c1a)
 
 The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
 
 | File | What it is |
 |---|---|
-| `LibProsperoPkg.dll.orig` | The pristine upstream assembly, v1.2.0.0, informational version `1.2.0+d7090eb68e315e086edfd150738ffa0dcfc0cd27`, as compiled by its author. Never modified here. |
+| `LibProsperoPkg.dll.orig` | The pristine upstream assembly, v1.2.0.0, informational version `1.2.0+a3ee4c1a6c37c6689717416c4962fa544e063e2c`, as compiled by its author. Never modified here. |
 | `LibProsperoPkg.dll` | The same assembly with the IL patches below applied. This is what `PkgTool.csproj` links against and what ships inside the tool binary. |
 | `SHA256SUMS` | Sums of both files: `shasum -a 256 -c SHA256SUMS`. |
 
@@ -14,12 +14,21 @@ The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
   `../../../NOTICE.LibProsperoPkg`; how it is bundled: `../../../NOTICE.fpkg`.
 - Lineage: drakmor's fork <https://github.com/drakmor/LibProsperoPkg> of
   <https://github.com/SvenGDK/LibProsperoPKG>. The binary was taken unmodified from the
-  author's fpkg-gui 0.6.11 release (2026-10-04), which is where this build is published.
-- The build id `d7090eb6` in the assembly's informational version is **not** in any public
-  repository we know of (checked 2026-10-04: drakmor's and SvenGDK's GitHub repositories and
-  git.etawen.dev). The nearest public ancestor is etawen's `drakmor/LibProsperoPKG` branch
-  `feature/full-ppr-pkg-roundtrip`. The corresponding source has to come from the author;
-  this project only redistributes the assembly it received, with the modifications below.
+  author's fpkg-gui 0.6.12 release (files dated 2026-10-26), which the author hands out on
+  their Discord server; that is where this build is published.
+- The build id `a3ee4c1a` in the assembly's informational version is **not** in drakmor's or
+  SvenGDK's GitHub repository (checked 2026-11-18). The nearest public ancestor is etawen's
+  `drakmor/LibProsperoPKG` branch `feature/full-ppr-pkg-roundtrip`. The corresponding source
+  has to come from the author; this project only redistributes the assembly it received, with
+  the modifications below.
+- Against the previous build `d7090eb6` (fpkg-gui 0.6.11, used here 2026-10-05 to 2026-11-18)
+  the decompiled code differs in four ways: a source PlayGo set with a single chunk is kept
+  (it was dropped before because no file sat in a chunk other than 0), the package reader
+  maps CNT entry ids to corrected names (param.json, nptitle.dat, the trophy2/uds files),
+  `EntryId` gained named values for ids it already wrote, and a new `ProsperoMetadataRecovery`
+  class exists that this tool does not call.
+  The Kraken encoder and the image builders are unchanged. A package built from the
+  retail sample with both builds is byte-identical.
 - Until 2026-10-05 this folder held build `4f71489e` (from the author's a53-fpkg 0.5 release),
   with three behavioural differences that matter here: that build stamped `drm_type = 0` for
   `"standard"` Application volumes (needed an IL patch), copied a source PlayGo prepared set
@@ -27,7 +36,8 @@ The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
 
 ## Modification notice (GPL-3 section 5a)
 
-`LibProsperoPkg.dll` was modified on 2026-10-05 by this project:
+`LibProsperoPkg.dll` was modified by this project (first on 2026-10-05; all patches re-applied
+to build `a3ee4c1a` on 2026-11-18):
 
 1. `ProsperoPkgBuilder.BuildInnerTree`: the local function `FilterFakeLibraryDirectory`
    is replaced by a single `ret`, so a source's `fakelib/` directory is kept intact.

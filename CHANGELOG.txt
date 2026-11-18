@@ -3,6 +3,17 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.6.1
+────────────────────────────────────────────────────────────────────────
+
+BETTER
+
+  - The .pkg builder uses LibProsperoPkg from fpkg-gui 0.6.12 (build
+    a3ee4c1a). A game with a single PlayGo chunk keeps the chunk label
+    and languages of its own PlayGo data; the old build ignored them for
+    such games. Speed and Kraken output are the same as before.
+
+────────────────────────────────────────────────────────────────────────
   v2.6.0
 ────────────────────────────────────────────────────────────────────────
 

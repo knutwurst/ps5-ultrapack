@@ -1,17 +1,18 @@
 ffpfsc-pkg-tool bundles the following third-party components:
 
-  LibProsperoPkg 1.2.0, build d7090eb6 (net9.0)  — GPL-3.0-or-later
+  LibProsperoPkg 1.2.0, build a3ee4c1a (net9.0)  — GPL-3.0-or-later
       Copyright (C) 2026 SvenGDK; the 1.2.0 line is drakmor's fork
       (https://github.com/drakmor/LibProsperoPkg) of
       https://github.com/SvenGDK/LibProsperoPKG. The assembly was taken
-      compiled from the author's fpkg-gui 0.6.11 release (2026-10-04); the
+      compiled from the author's fpkg-gui 0.6.12 release (2026-10-26); the
       source of this particular build is not in a public repository we know
       of (see src/ffpfsc-pkg-tool/lib/README.md).
-      THE BUNDLED COPY IS MODIFIED (2026-10-05, 2026-11-08): IL patches
-      applied with the patcher in src/ffpfsc-pkg-tool/patches/CecilPatch —
+      THE BUNDLED COPY IS MODIFIED (2026-10-05, 2026-11-08, 2026-11-18): IL
+      patches applied with the patcher in src/ffpfsc-pkg-tool/patches/CecilPatch —
       FilterFakeLibraryDirectory made a no-op, the root exclusion of
-      ampr_emu.index disabled, and localized sce_sys .dds files kept in
-      the CNT.
+      ampr_emu.index disabled, localized sce_sys .dds files kept in the CNT,
+      and source/file hooks (SourceHooks) that let the tool read a packed
+      image and write the inner image straight into the package.
       What and why: src/ffpfsc-pkg-tool/patches/README.md. Pristine and
       patched assemblies with SHA-256 sums: src/ffpfsc-pkg-tool/lib/.
 
