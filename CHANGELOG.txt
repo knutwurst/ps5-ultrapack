@@ -3,6 +3,32 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.5.2
+────────────────────────────────────────────────────────────────────────
+
+IN PLACE
+
+  - New option "In place" in Add job: each result goes into the folder
+    its source is in, named from the game, and no folders are made. A
+    result that is already there is skipped without asking. Delete under
+    After the job removes the source once the job is Done.
+  - On a hard disk with no temp folder on another drive, the dialog warns
+    that reading and writing one disk at once is slow.
+
+SPACE
+
+  - A .ffpfs/.ffpfsc source is sized from the image's own directory when
+    the job is added, nothing decoded. Before, the image's file size
+    counted as the game size, far too low for a .ffpfsc.
+  - .ffpfsc to .pkg reserves temp for the game plus its largest file plus
+    the files the build never frees, measured at 1.21 times the game on a
+    sample. The output reserve follows the image's size for games that
+    barely compress.
+  - An .exfat inside a .ffpfs/.ffpfsc is unpacked in one pass: the files
+    come straight out of the volume inside the image. Before, the whole
+    volume went to temp first, about twice the game.
+
+────────────────────────────────────────────────────────────────────────
   v2.5.1
 ────────────────────────────────────────────────────────────────────────
 
