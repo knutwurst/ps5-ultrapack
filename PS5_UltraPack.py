@@ -2502,6 +2502,10 @@ class SettingsView:
         ctk.CTkCheckBox(ds, text="Keep external drives spun up during a run (bridges gaps between games)",
                          variable=self.app.keep_drives_awake_var, fg_color=ACCENT,
                          hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=(0, 4))
+        ctk.CTkCheckBox(ds, text="Build a .pkg's image in temp, then write the package to the output "
+                                 "(faster when the output is a hard disk)",
+                         variable=self.app.pkg_image_in_temp_var, fg_color=ACCENT,
+                         hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=(0, 4))
 
         ctk.CTkLabel(ds, text="Extra temp drives (pool, one path per line):",
                       text_color=MUTED, anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
@@ -9908,6 +9912,7 @@ class App:
         self.auto_organize_var = self._persisted_bool(settings, "auto_organize", True)
         # ping faster than WD IntelliPark's 8 s park timer; slower only adds load cycles
         self.keep_drives_awake_var = self._persisted_bool(settings, "keep_drives_awake", False)
+        self.pkg_image_in_temp_var = self._persisted_bool(settings, "pkg_image_in_temp", True)
         self.compression_level_var = tk.IntVar(value=self._saved_compression_level)
         self.cpu_count_var         = tk.IntVar(value=self._saved_cpu_count)
         self.verbose_var           = self._persisted_bool(settings, "verbose", False)
@@ -12606,6 +12611,29 @@ class App:
                 pass
         return fw
 
+    def _pkg_image_in_temp(self, item, cmd) -> bool:
+        """the package's image on the temp drive, the package written afterwards: the output disk never reads
+        and writes at once. Needs the temp setting, another drive than the output and room for the image"""
+        if not self.pkg_image_in_temp_var.get():
+            return False
+        temp = None
+        if "--temp-dir" in cmd:
+            temp = cmd[cmd.index("--temp-dir") + 1]
+        temp = temp or getattr(item, "_build_temp", None) or self.temp_var.get().strip()
+        out = self._job_output_dir(item)
+        name = getattr(item, "display_name", None) or item.name
+        if not temp or out is None or not pkg_image_in_temp_applies(item, temp, out):
+            return False
+        try:
+            image = estimate_output_space_needed(_build_size_of(item), True, known_packed_size(item))
+            if get_free_space(Path(temp)) < image:
+                self.log("INFO", f"{name}: not enough room on the temp drive for the package's image; it is "
+                                 f"written straight into the package on the output drive.")
+                return False
+        except Exception:
+            return False
+        return True
+
     def _organized_layout(self, item, out: Path, ext: str):
         ident = self._game_identity(item)
         if not ident:
@@ -13943,6 +13971,8 @@ class App:
                 if out_root:
                     cmd += ["--spool-fallback-dir", out_root]
             if to == "pkg":
+                if self._pkg_image_in_temp(item, cmd):
+                    cmd.append("--fpkg-image-in-temp")
                 cmd += ["--fpkg-inner", str(getattr(item, "fpkg_inner_mode", "kraken") or "kraken"),
                         "--fpkg-kraken-backend", str(getattr(item, "fpkg_kraken_backend", "builtin") or "builtin")]
                 if not getattr(item, "fpkg_retail_normalize", True):
@@ -14089,6 +14119,8 @@ class App:
             ]
             if self._consumable_extract(item):
                 cmd.append("--stage-in-place")  # our own unpacked copy, taken in as it goes
+            if self._pkg_image_in_temp(item, cmd):
+                cmd.append("--fpkg-image-in-temp")
             # only non-default retail switches go out, the backend defaults are the known-good set
             if not getattr(item, "fpkg_retail_normalize", True):
                 cmd += ["--fpkg-no-retail-normalize"]

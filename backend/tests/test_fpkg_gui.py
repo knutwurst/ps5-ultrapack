@@ -1260,6 +1260,23 @@ try:
     ok("details.space-line-is-the-shown-job", bool(_info_b) and "Elsewhere" not in _info_b
        and _info_b == app._space_text(_sb).replace("  |  ", " · "),
        f"shown={_info_b!r}")
+    # the package's image in temp: only with the setting on and temp on another drive than the output
+    _ti = m.GameItem.from_chain(_ffimg, to="pkg", output_path=str(OUT)); _ti._build_temp = str(S / "temp")
+    _real_sd = m.ultra_core.same_drive
+    try:
+        m.ultra_core.same_drive = lambda a, b: False
+        app.pkg_image_in_temp_var.set(True); m.save_settings({"pkg_image_in_temp": True})
+        _c_on = app.build_command(_ti)[0]
+        app.pkg_image_in_temp_var.set(False); m.save_settings({"pkg_image_in_temp": False})
+        _c_off = app.build_command(_ti)[0]
+        m.ultra_core.same_drive = lambda a, b: True
+        app.pkg_image_in_temp_var.set(True); m.save_settings({"pkg_image_in_temp": True})
+        _c_same = app.build_command(_ti)[0]
+    finally:
+        m.ultra_core.same_drive = _real_sd
+    ok("pkg.image-in-temp-flag", "--fpkg-image-in-temp" in _c_on and "--fpkg-image-in-temp" not in _c_off
+       and "--fpkg-image-in-temp" not in _c_same,
+       f"on={'--fpkg-image-in-temp' in _c_on} off={'--fpkg-image-in-temp' in _c_off} same={'--fpkg-image-in-temp' in _c_same}")
     # the bars the backend prints for a .pkg built in place: the Kraken bar must move after the prepared files
     _kw = m.CLIWorker(app, _xi, ["py", "cli.py", str(_ex), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
     _kw.start_time = time.time()

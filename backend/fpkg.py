@@ -230,8 +230,10 @@ def build(src_dir: Path, out_dir: Path,
           consume_source: bool = False,
           parallelism: int = 0,
           keystone: Optional[str] = None,
+          inner_in_package: bool = True,
           on_line=None) -> int:
-    """keystone: a 96-byte file that goes in as sce_sys/keystone instead of the source's"""
+    """keystone: a 96-byte file that goes in as sce_sys/keystone instead of the source's;
+    inner_in_package False builds the package's image in temp_dir and writes the package afterwards"""
     src_dir = Path(src_dir); out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     argv = [
         str(tool_path()), "build", str(src_dir), str(out_dir),
@@ -275,6 +277,8 @@ def build(src_dir: Path, out_dir: Path,
         argv += ["--parallelism", str(int(parallelism))]
     if keystone:
         argv += ["--keystone", str(keystone)]
+    if not inner_in_package:
+        argv += ["--no-inner-in-package"]
     return _run(argv, on_line=on_line)
 
 

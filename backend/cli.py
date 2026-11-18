@@ -3017,6 +3017,10 @@ def main() -> None:
                              "set is always regenerated.")
     parser.add_argument("--fpkg-no-fake-sign", action="store_true",
                         help="fPKG build: do not fake-sign raw ELFs found in the source.")
+    parser.add_argument("--fpkg-image-in-temp", action="store_true",
+                        help="fPKG: build the package's inner image in --temp-dir and write the package to the output "
+                             "afterwards, so a hard disk as output never reads and writes at once (default: the image "
+                             "is written straight into the package)")
     parser.add_argument("--fpkg-no-ampr-index", action="store_true",
                         help="fPKG: keep the source's ampr_emu.index as it is (default: when "
                              "fakelib/libSceAmpr.sprx is shipped, rebuild it over the packed files)")
@@ -3694,6 +3698,7 @@ def main() -> None:
                                  regen_playgo=bool(args.fpkg_regen_playgo),
                                  fake_sign=not args.fpkg_no_fake_sign,
                                  ampr_index=not (args.fpkg_no_ampr_index or getattr(args, "_no_ampr_index", False)),
+                                 inner_in_package=not getattr(args, "fpkg_image_in_temp", False),
                                  keystone=str(_ks) if _ks else None,
                                  on_line=_gui_line)
             finally:

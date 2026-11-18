@@ -1396,4 +1396,5 @@ GERMAN: dict[str, str] = {
     '1 source found, none of it ticked': '1 Quelle gefunden, nichts davon angehakt',
     '{n} sources found, none of them ticked': '{n} Quellen gefunden, keine davon angehakt',
     "After a folder scan: every format found, with how many. Untick a format and its sources don't become jobs. All supported files ticks everything again.": "Nach dem Scan eines Ordners: jedes gefundene Format mit seiner Anzahl. Nimm den Haken bei einem Format weg, und seine Quellen werden keine Jobs. Alle unterstützten Dateien setzt alle Haken wieder.",
+    "Build a .pkg's image in temp, then write the package to the output (faster when the output is a hard disk)": "Image einer .pkg in Temp bauen, dann das Paket auf die Ausgabe schreiben (schneller, wenn die Ausgabe eine Festplatte ist)",
 }

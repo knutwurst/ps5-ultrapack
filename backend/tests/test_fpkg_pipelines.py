@@ -589,6 +589,15 @@ def test_chain4_image_to_fpkg_oneclick(r: Runner):
     r.check("chain4.read-in-place-same-package", rcu == 0 and "in one pass" in logu and same,
             "reading in place and unpacking first give the same package",
             f"rc={rcu} a={a and a.stat().st_size} b={b and b.stat().st_size}\n{logu[-300:]}")
+    # the app's setting: the package's image built in temp, the package written afterwards; same bytes
+    pkgt = r.work / "c4_pkg_image_in_temp"
+    if pkgt.exists(): shutil.rmtree(pkgt)
+    rct, logt = r.run_cli([str(ffpath), str(pkgt), "--fpkg-build", str(ffpath), "--fpkg-image-in-temp", *common])
+    pt = next(pkgt.glob("*.pkg"), None)
+    r.check("chain4.image-in-temp", rct == 0 and pt is not None and "already in place in the package" not in logt
+            and "already in place in the package" in log and a is not None
+            and hashlib.sha256(pt.read_bytes()).digest() == hashlib.sha256(a.read_bytes()).digest(),
+            "image built in temp, package written afterwards, same bytes", f"rc={rct}\n{logt[-300:]}")
     # the inner image written into the package (default) or in temp and copied: same bytes, also when the
     # layout pass re-orders blocks; nothing of ours is left in the output folder
     builds = []

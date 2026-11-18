@@ -165,10 +165,18 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
         self.assertAlmostEqual(m._peak_factor_for(item), 1.0 + 0.61 + m.PKG_CONSUME_MARGIN)
         item.image_wraps_exfat = False
         item.size = 90 * GB                                      # the .ffpfsc on disk
+        small = m.estimate_peak_space_needed(100 * GB, m._peak_factor_for(item), False)
+        # Settings default: the package's image is built on the temp drive first, so temp holds it as well
         reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
-        self.assertEqual(reqs[TEMP], m.estimate_peak_space_needed(100 * GB, m._peak_factor_for(item), False))
+        self.assertEqual(reqs[TEMP], small + int(100 * GB * 1.05))
         # barely compressible content: the package lands near the image, not at 0.75 of the game
         self.assertEqual(reqs[OUT], int(100 * GB * 1.05))
+        m.save_settings({"pkg_image_in_temp": False})
+        try:
+            reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
+            self.assertEqual(reqs[TEMP], small)                 # image written straight into the package
+        finally:
+            m.save_settings({"pkg_image_in_temp": True})
         item.size = 50 * GB
         reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
         self.assertEqual(reqs[OUT], int(100 * GB * m.COMPRESSED_OUTPUT_RATIO))

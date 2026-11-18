@@ -523,6 +523,19 @@ def image_pkg_peak_factor(item) -> float:
     return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + (largest + kept) / content + PKG_CONSUME_MARGIN))
 
 
+def pkg_image_in_temp_applies(item, temp_dir, out_dir) -> bool:
+    """Settings: the package's image is built in temp, then the package goes to the output; only worth it, and
+    only done, when temp is another drive than the output"""
+    try:
+        if not load_settings().get("pkg_image_in_temp", True):
+            return False
+        to = getattr(item, "chain_to", None) if getattr(item, "operation", "") == "chain" else (
+            "pkg" if getattr(item, "operation", "") == "fpkg-build" else None)
+        return to == "pkg" and bool(temp_dir) and bool(out_dir) and not same_drive(Path(temp_dir), Path(out_dir))
+    except Exception:
+        return False
+
+
 def probe_container_content(item) -> int:
     """game bytes from a .pkg/.ffpfs/.ffpfsc directory, nothing decoded; raises when unreadable"""
     kind = chain_source_kind(item)
@@ -961,8 +974,11 @@ def _space_needs(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, i
     pkg_chain = (getattr(item, "operation", "") == "chain" and chain_needs_unpack(item)
                  and chain_source_kind(item) == "pkg")
     same_pad = same and (pkg_chain or not getattr(item, "_same_drive_ok", False))
-    needs = [("Temp drive (whole scratch)", temp_dir,
-              estimate_peak_space_needed(size, _peak_factor_for(item), same_pad))]
+    scratch = estimate_peak_space_needed(size, _peak_factor_for(item), same_pad)
+    if (chain_source_kind(item) in ("ffpfs", "ffpfsc") and not getattr(item, "image_wraps_exfat", False)
+            and pkg_image_in_temp_applies(item, temp_dir, out_dir)):
+        scratch += out_final          # read in place, but the package's image is built in temp first
+    needs = [("Temp drive (whole scratch)", temp_dir, scratch)]
     if not same:
         needs.append(("Output drive", out_dir, out_final))
     return needs
@@ -4552,6 +4568,7 @@ __all__ = [
     "filter_sources",
     "known_packed_size",
     "probe_container_content",
+    "pkg_image_in_temp_applies",
     "IMAGE_PEAK_FACTOR",
     "archive_set_ondisk_size",
     "archive_set_parts",
