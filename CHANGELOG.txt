@@ -26,6 +26,9 @@ FIXED
   - A .ffpfsc/.ffpfs to .pkg job no longer reserves a share of its bar for
     an unpack that the direct build skips; the queue showed 38 % while
     compression had just started.
+  - A .ffpfsc holding an .exfat got its output name from the file name:
+    reading param.json for the game's name stopped at the exFAT. It is
+    now read out of the volume inside the image.
   - The job card's Space line could name another drive than its Drives
     line: it was worked out once, before the job started and got its
     drives. It now follows the job shown, on the drives it uses.

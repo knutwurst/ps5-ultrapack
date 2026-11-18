@@ -3,6 +3,8 @@
 # Additional terms under section 7 of the GPL apply, see the NOTICE file.
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import struct
 import subprocess
@@ -342,6 +344,13 @@ class ExfatSource(unittest.TestCase):
         for rel in sizes:
             self.assertEqual((dest / rel).read_bytes(), (self.game / rel).read_bytes(), rel)
         self.assertEqual(sorted(p.suffix for p in dest.rglob("*") if p.is_file()), [".bin", ".bin", ".json"])
+        # single members too, as the app reads param.json for the output's name
+        one = self.tmp / "member"
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = self.cli.extract_pfs_members(ff, ["sce_sys/param.json"], one)
+        self.assertEqual(rc, 0)
+        self.assertEqual([p.name for p in one.rglob("*") if p.is_file()], ["param.json"])
+        self.assertEqual((one / "sce_sys" / "param.json").read_bytes(), (self.game / "sce_sys" / "param.json").read_bytes())
 
     def test_nested_image_is_unwrapped_and_removed(self):
         out = self.tmp / "out"; out.mkdir()

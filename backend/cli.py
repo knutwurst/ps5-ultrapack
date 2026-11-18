@@ -464,8 +464,9 @@ def list_game_files(image_path) -> dict:
         return list_inner_exfat(image_path)
 
 
-def _extract_inner_exfat_to(image: Path, dest: Path, overwrite: bool = False) -> bool:
-    """files of a wrapped exFAT straight into dest, the volume itself never lands on disk"""
+def _extract_inner_exfat_to(image: Path, dest: Path, overwrite: bool = False, members=None) -> bool:
+    """files of a wrapped exFAT straight into dest, the volume itself never lands on disk;
+    members limits it to those paths and what lies below them"""
     pfs, _consts = _import_mkpfs()
     opened = _open_inner_exfat(image)
     if opened is None:
@@ -474,6 +475,13 @@ def _extract_inner_exfat_to(image: Path, dest: Path, overwrite: bool = False) ->
     with fh:
         dirs, files = pfs._flatten_exfat_entries(reader.root_entries())
         files = [f for f in files if not _is_junk_name(Path(f.rel_path).name)]   # Finder files of old volumes
+        if members is not None:
+            wanted = {m.strip().strip("/") for m in members if m.strip()}
+            under = lambda rel: any(rel.strip("/") == w or rel.strip("/").startswith(w + "/") for w in wanted)
+            files = [f for f in files if under(f.rel_path)]
+            dirs = [d for d in dirs if under(d.rel_path)]
+            if not files and not dirs:
+                return False
         unsafe = [e.rel_path for e in dirs + files if _unsafe_member(e.rel_path.strip("/"))]
         if unsafe:
             raise RuntimeError(f"the exFAT names paths that would leave the destination folder: {unsafe[:4]}")
@@ -663,7 +671,13 @@ def extract_pfs_members(image_path, members, dest_dir, overwrite: bool = False) 
         return 1
     wanted = {m.strip("/") for m in asked}
     errors: list[str] = []
-    reader = _open_inner_pfs(image_path, pfs, consts)
+    try:
+        reader = _open_inner_pfs(image_path, pfs, consts)
+    except ValueError:
+        # an exFAT inside: the same members come out of the volume, read in place
+        if _extract_inner_exfat_to(image_path, dest_dir, overwrite=overwrite, members=sorted(wanted)):
+            return 0
+        raise
     with reader as fh:
         header = pfs.parse_image_header(fh)
         inodes = pfs.parse_image_inodes(fh, header)
