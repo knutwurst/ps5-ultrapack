@@ -598,6 +598,27 @@ def test_chain4_image_to_fpkg_oneclick(r: Runner):
             and "already in place in the package" in log and a is not None
             and hashlib.sha256(pt.read_bytes()).digest() == hashlib.sha256(a.read_bytes()).digest(),
             "image built in temp, package written afterwards, same bytes", f"rc={rct}\n{logt[-300:]}")
+    # both ways show the same stages and bars in the app, and every stage's bar reaches 100 %
+    def _stages(text):
+        seq, cur, top = [], None, {}
+        for ln in text.splitlines():
+            if ln.startswith("[PHASE] "):
+                cur = ln[8:].strip()
+                if not seq or seq[-1] != cur:
+                    seq.append(cur)
+            else:
+                mm = re.match(r"\[[#-]{20}\] (\d+)%", ln)
+                if mm and cur:
+                    top[cur] = max(top.get(cur, 0), int(mm.group(1)))
+        return seq, top
+    _s_pkg, _t_pkg = _stages(log)
+    _s_tmp, _t_tmp = _stages(logt)
+    _want = ["Reading Game", "Creating Temp PFS", "Compressing", "Writing Final Image"]
+    r.check("chain4.progress-same-both-ways",
+            _s_pkg == _s_tmp and all(st in _s_pkg for st in _want)
+            and all(_t_pkg.get(st) == 100 and _t_tmp.get(st) == 100 for st in _want),
+            "same stages in the same order, every bar up to 100 %, image in the package or in temp",
+            f"in package {_s_pkg} {_t_pkg}\nin temp {_s_tmp} {_t_tmp}")
     # the inner image written into the package (default) or in temp and copied: same bytes, also when the
     # layout pass re-orders blocks; nothing of ours is left in the output folder
     builds = []
