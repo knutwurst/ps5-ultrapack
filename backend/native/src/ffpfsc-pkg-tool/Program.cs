@@ -122,6 +122,7 @@ internal static partial class Program
         Console.WriteLine("                                   declares (default; that is the publisher's intent), on = set it, off = clear");
         Console.WriteLine("                                   it. A console on \"HDR when supported\" switches output modes on this bit.");
         Console.WriteLine("      --retail-normalize / --no-retail-normalize");
+        Console.WriteLine("      --upgradable-drm keep|standard   an upgradable app keeps its DRM type or becomes standard (default standard)");
         Console.WriteLine("                                   auto-upgrade a \"standard\" retail source (default ON):");
         Console.WriteLine("                                     param.json applicationDrmType stays as it is (the library stamps drm_type=16),");
         Console.WriteLine("                                     replace placeholder license.dat/info with a valid debug license,");
@@ -1333,6 +1334,8 @@ internal static partial class Program
         bool autoFakeSign = true;         // fake-sign raw ELFs in source before build (idempotent)
         bool playGoChunksExplicit = false;
         bool retailNormalize = true;  // make a standard retail source console-launchable
+        // upgradable source: standard like every other fPKG builder; the env var lets a test build pick keep
+        string upgradableDrm = (Environment.GetEnvironmentVariable("ULTRAPACK_UPGRADABLE_DRM") ?? "standard").ToLowerInvariant() is "keep" ? "keep" : "standard";
         bool regenPlayGo = false;         // force-discard a prepared PlayGo set even if it validates
         string? keystoneFile = null;      // --keystone: the save-data key of the game the saves come from
         bool amprIndex = true;            // rebuild ampr_emu.index when the AMPR emulator is shipped
@@ -1463,6 +1466,13 @@ internal static partial class Program
                 case "--retail-normalize":
                     retailNormalize = true;
                     break;
+                case "--upgradable-drm":
+                {
+                    var v = Need(args, ref i, a).ToLowerInvariant();
+                    if (v is not ("keep" or "standard")) throw new ArgumentException("--upgradable-drm needs keep or standard");
+                    upgradableDrm = v;
+                    break;
+                }
                 case "--layout-pass":
                 {
                     var v = Need(args, ref i, a).ToLowerInvariant();
@@ -1552,7 +1562,7 @@ internal static partial class Program
 
         // standard-DRM retail dumps need drm_type 16, real license entries and retail SELFs,
         // all done on the stage, never the source. what actually broke launches was PlayGo
-        bool sourceIsStandardApp = false;
+        bool sourceIsStandardApp = false, sourceIsUpgradable = false;
         try
         {
             var srcParam = Path.Combine(srcSceSys, "param.json");
@@ -1560,7 +1570,11 @@ internal static partial class Program
             {
                 using var doc = JsonDocument.Parse(File.ReadAllBytes(srcParam));
                 if (doc.RootElement.TryGetProperty("applicationDrmType", out var dt))
-                    sourceIsStandardApp = string.Equals(dt.GetString(), "standard", StringComparison.OrdinalIgnoreCase);
+                {
+                    // an upgradable app needs the same license and retail SELFs, the library only covers standard
+                    sourceIsUpgradable = string.Equals(dt.GetString(), "upgradable", StringComparison.OrdinalIgnoreCase);
+                    sourceIsStandardApp = sourceIsUpgradable || string.Equals(dt.GetString(), "standard", StringComparison.OrdinalIgnoreCase);
+                }
             }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[warn] could not read source param.json for retail-normalize check ({ex.GetType().Name})"); }
@@ -1761,7 +1775,11 @@ internal static partial class Program
                     }
                     Console.Error.WriteLine($"  [self-hdr] set retail bit (byte 0x0B: 0x10) on {selfPatched} eboot.bin/*.prx; left {selfLeft} untouched");
 
-                    RewriteStagedParamJson(srcSceSys, stagedSceSys, hdrFlag, addKernel: true, tag: "retail");
+                    string? drmTo = sourceIsUpgradable && upgradableDrm == "standard" ? "standard" : null;
+                    RewriteStagedParamJson(srcSceSys, stagedSceSys, hdrFlag, addKernel: true, tag: "retail", drmTo: drmTo);
+                    if (sourceIsUpgradable)
+                        Console.Error.WriteLine(drmTo != null ? "  [retail] applicationDrmType upgradable -> standard (--upgradable-drm standard)"
+                                                              : "  [retail] applicationDrmType upgradable kept (--upgradable-drm keep)");
                     Console.Error.WriteLine("  [retail] dropped placeholder license.dat/info; installed DebugLicenseProvider (CNT entries 0x0400/0x0401); drm_type=16 via patched LibProsperoPkg.dll");
                 }
 
@@ -1998,7 +2016,7 @@ internal static partial class Program
     }
 
     // HDR bit 29 per --hdr-flag (auto keeps the source's) plus a kernel block when missing
-    static void RewriteStagedParamJson(string srcSceSys, string stagedSceSys, string hdrFlag, bool addKernel, string tag)
+    static void RewriteStagedParamJson(string srcSceSys, string stagedSceSys, string hdrFlag, bool addKernel, string tag, string? drmTo = null)
     {
         var srcParam = Path.Combine(srcSceSys, "param.json");
         var stagedParam = Path.Combine(stagedSceSys, "param.json");
@@ -2030,7 +2048,8 @@ internal static partial class Program
         bool hasKernel = pdoc.RootElement.TryGetProperty("kernel", out _);
         bool wantKernel = addKernel && !hasKernel;
         bool addAttr = !hasAttribute && newAttr != currentAttr;
-        if (newAttr == currentAttr && !wantKernel) return;
+        if (drmTo != null && pdoc.RootElement.TryGetProperty("applicationDrmType", out var curDrm) && curDrm.GetString() == drmTo) drmTo = null;
+        if (newAttr == currentAttr && !wantKernel && drmTo == null) return;
 
         var buf = new MemoryStream();
         using (var w = new Utf8JsonWriter(buf, new JsonWriterOptions { Indented = true }))
@@ -2050,6 +2069,7 @@ internal static partial class Program
                 // keep source order; Sony puts kernel just before localizedParameters
                 if (wantKernel && !kernelWritten && prop.Name == "localizedParameters") { WriteKernel(); kernelWritten = true; }
                 if (prop.Name == "attribute") { w.WriteNumber("attribute", newAttr); attrWritten = true; }
+                else if (drmTo != null && prop.Name == "applicationDrmType") w.WriteString("applicationDrmType", drmTo);
                 else prop.WriteTo(w);
                 // Sony's order: attribute right after applicationDrmType
                 if (addAttr && !attrWritten && prop.Name == "applicationDrmType") { w.WriteNumber("attribute", newAttr); attrWritten = true; }

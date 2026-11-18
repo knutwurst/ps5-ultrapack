@@ -76,10 +76,11 @@ class Runner:
             self.results.append(TestResult(name, False, f"exception: {e}"))
             print(f"  ✗ {name}: exception {e}")
 
-    def run_cli(self, args: list[str], label: str = "") -> tuple[int, str]:
+    def run_cli(self, args: list[str], label: str = "", env: dict | None = None) -> tuple[int, str]:
         argv = [sys.executable, "-u", str(CLI), *args]
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=300,
+                                  env={**os.environ, **env} if env else None)
         except subprocess.TimeoutExpired:
             return -1, "timeout"
         out = (proc.stdout or "") + (proc.stderr or "")
@@ -358,6 +359,32 @@ def test_negative_missing_eboot(r: Runner):
             "source staged (icon0.png converted to DDS, no auto-stage fallback)",
             "staging line missing or auto-stage fallback hit: "
             + "\n".join(x for x in log.splitlines() if "[stage]" in x or "[warn]" in x or "[icon]" in x))
+
+
+def test_upgradable_gets_license(r: Runner):
+    # the library licenses only standard apps; an upgradable one went out without a license (padlock)
+    for mode, want in (("", "standard"), ("keep", "upgradable")):
+        tag = mode or "default"
+        src = r.work / f"upg_{tag}"
+        shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+        pj = src / "sce_sys" / "param.json"
+        pj.write_text(json.dumps({**json.loads(pj.read_text()), "applicationDrmType": "upgradable"}))
+        out = r.work / f"upg_{tag}_out"; out.mkdir(exist_ok=True)
+        rc, log = r.run_cli([str(src), str(out), "--fpkg-build", str(src),
+                             "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
+                             "--title-id", "PPSA99099",
+                             "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"],
+                            env={"ULTRAPACK_UPGRADABLE_DRM": mode} if mode else None)
+        lic = [x for x in log.splitlines() if "license.license." in x]
+        drm = re.search(r"param\.applicationDrmType\s+(\w+)", log)
+        r.check(f"upgradable.{tag}.license",
+                rc == 0 and len(lic) == 2 and all("[ok" in x for x in lic),
+                "license.dat and license.info in the package",
+                f"rc={rc}; " + ("\n".join(lic) or log[-300:]))
+        r.check(f"upgradable.{tag}.drm", drm is not None and drm.group(1) == want,
+                f"applicationDrmType {want}", f"got {drm.group(1) if drm else None}")
+        for d in (src, out):
+            shutil.rmtree(d, ignore_errors=True)
 
 
 def test_negative_bad_content_id(r: Runner):
@@ -1237,6 +1264,7 @@ def main():
         ("negative: no eboot.bin",          test_negative_missing_eboot),
         ("negative: no-eboot pkg fails validate", test_no_eboot_caught_by_validate),
         ("negative: bad content id",        test_negative_bad_content_id),
+        ("upgradable app gets a license",   test_upgradable_gets_license),
         ("identity: param.json wins",       test_identity_from_param_json),
         ("kraken fast preset (-4)",         test_kraken_fast_preset),
         ("validate: reject .ffpfsc",        test_validate_catches_untouched_ffpfsc),

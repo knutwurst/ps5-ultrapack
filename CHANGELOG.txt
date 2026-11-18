@@ -3,6 +3,20 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.6.1
+────────────────────────────────────────────────────────────────────────
+
+FIXED
+
+  - A game whose param.json says applicationDrmType "upgradable" got a
+    .pkg without a license, so the console showed a padlock and the
+    package failed its own checks. Such a game now gets the same retail
+    fixes as a "standard" one (debug license, retail SELF flag, kernel
+    block), and the package declares it "standard", as other fPKG
+    builders do. Checked on a console. The tool option
+    --upgradable-drm keep leaves the type as it is.
+
+────────────────────────────────────────────────────────────────────────
   v2.6.0
 ────────────────────────────────────────────────────────────────────────
 
