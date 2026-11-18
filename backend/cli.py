@@ -1508,7 +1508,8 @@ class FpkgProgress:
                 if self.file and m.group(2) == self.file.lower():
                     self.file_frac = int(m.group(1)) / 100.0
                 self._kraken_bar(); return
-            m = re.search(r"\bdata\s+(\d+)%\s*\(\d+/\d+\): (/\S+) -> ([\d,]+) bytes(?: \((?:kraken|raw)[^)]*?ratio ([\d.]+) %\))?", line, re.I)
+            # counts carry thousands separators from 1,000 files on: "(2,034/5,350)"
+            m = re.search(r"\bdata\s+(\d+)%\s*\([\d,]+/[\d,]+\): (/\S+) -> ([\d,]+) bytes(?: \((?:kraken|raw)[^)]*?ratio ([\d.]+) %\))?", line, re.I)
             if m:
                 self.lib_pct = int(m.group(1))
                 path = m.group(2)

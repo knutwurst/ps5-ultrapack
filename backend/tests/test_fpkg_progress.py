@@ -74,6 +74,13 @@ class KrakenMeter(unittest.TestCase):
         self.assertIn("80% inner image (Kraken)", self.r.bars()[-1])
         self.assertEqual(self.r.fp.done, 800_000_000)
 
+    def test_counts_with_thousands_separators(self):
+        # a game with more than 999 files: the library writes "(2,034/5,350)"
+        self.r.feed("[+00:27:02.612]  [inner]   data  35% (2,034/5,350): /dlc3/sdf/ps5/data/sdf-B-1452.sdfdata "
+                    "-> 38,335,428 bytes (Kraken, ratio 28.6 %)", dt=1.0)
+        self.assertIn("35% inner image (Kraken)", self.r.bars()[-1])
+        self.assertGreater(self.r.fp.done, 100_000_000)
+
     def test_library_percent_is_the_floor(self):
         self.r.feed("[+00:00:01.000]  [inner]   data  40% (1/3): /odd.bin -> 1 bytes (raw)", dt=1.0)
         self.assertIn("40% inner image (Kraken)", self.r.bars()[-1])

@@ -20,6 +20,9 @@ FIXED
   - A .pkg build staged in place showed Creating Temp PFS at 99 % for the
     whole compression: staging reported Reading Game as done, so the
     prepared-files bars landed on the next stage and held it there.
+  - The Kraken bar of a .pkg build stayed at 0 % for games with more than
+    999 files: the progress lines count them as "(2,034/5,350)" and the
+    meter only read plain digits.
   - A .ffpfsc/.ffpfs to .pkg job no longer reserves a share of its bar for
     an unpack that the direct build skips; the queue showed 38 % while
     compression had just started.
