@@ -802,6 +802,16 @@ def estimate_image_space_needed(extracted_size: int) -> int:
 COMPRESSED_OUTPUT_RATIO = 0.75
 
 
+def known_packed_size(item) -> int:
+    """a packed size the output will be near: the archive, or the .ffpfsc/.ffpfs a .pkg is built from"""
+    if getattr(item, "source_kind", "") == "archive":
+        return int(getattr(item, "size", 0) or 0)
+    if (getattr(item, "operation", "") == "chain" and getattr(item, "chain_to", None) == "pkg"
+            and getattr(item, "pkg_content_size", 0) and chain_source_kind(item) in ("ffpfs", "ffpfsc")):
+        return int(getattr(item, "size", 0) or 0)
+    return 0
+
+
 def estimate_output_space_needed(game_size: int, compressed: bool = True,
                                  known_packed: int = 0) -> int:
     worst = int(game_size * 1.05)
@@ -892,7 +902,7 @@ def _space_needs(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, i
     if size <= 0:
         return []
     comp  = bool(getattr(item, "_output_compressed", True))
-    known = int(getattr(item, "size", 0) or 0) if getattr(item, "source_kind", "") == "archive" else 0
+    known = known_packed_size(item)
     out_final = estimate_output_space_needed(size, comp, known)
     if getattr(item, "operation", "pack") == "copy":
         try:
@@ -4493,6 +4503,7 @@ __all__ = [
     "pkg_file_stays",
     "pkg_peak_factor",
     "image_pkg_peak_factor",
+    "known_packed_size",
     "probe_container_content",
     "IMAGE_PEAK_FACTOR",
     "archive_set_ondisk_size",

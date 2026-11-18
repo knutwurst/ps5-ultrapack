@@ -10860,7 +10860,7 @@ class App:
         out_full   = estimate_peak_space_needed(size, factor, not to_folder)   # everything on the output drive
         # split: output holds the extracted source (archives) plus the final container
         comp_out = bool(getattr(item, "_output_compressed", True))
-        known_out = int(getattr(item, "size", 0) or 0) if getattr(item, "source_kind", "") == "archive" else 0
+        known_out = known_packed_size(item)
         src_on_out = size if archive else 0
         out_split_need = int(src_on_out) + estimate_output_space_needed(size, comp_out, known_out)
         temp_free = get_free_space(temp_base_p)

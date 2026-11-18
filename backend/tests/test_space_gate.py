@@ -159,8 +159,14 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
                          (100 * GB, 100 * GB, 60 * GB, 1 * GB))
         # the build takes the unpacked files in as the package grows: game plus largest plus kept
         self.assertAlmostEqual(m._peak_factor_for(item), 1.0 + 0.61 + m.PKG_CONSUME_MARGIN)
+        item.size = 90 * GB                                      # the .ffpfsc on disk
         reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
         self.assertEqual(reqs[TEMP], m.estimate_peak_space_needed(100 * GB, m._peak_factor_for(item), False))
+        # barely compressible content: the package lands near the image, not at 0.75 of the game
+        self.assertEqual(reqs[OUT], int(100 * GB * 1.05))
+        item.size = 50 * GB
+        reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
+        self.assertEqual(reqs[OUT], int(100 * GB * m.COMPRESSED_OUTPUT_RATIO))
 
     def test_a_damaged_ffpfsc_keeps_the_container_size(self):
         self._listing([{"type": "file", "path": "eboot.bin", "size": 5 * GB}], errors=["bad inode"])
