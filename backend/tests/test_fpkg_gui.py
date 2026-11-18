@@ -1239,6 +1239,18 @@ try:
     ok("progress.refused-phase-bars-ignored",
        _dw.phase == "Creating Temp PFS" and _dw.stage_progress["Creating Temp PFS"] == 17 and _dw.speed == "32.3 MB/s",
        f"phase={_dw.phase} temp={_dw.stage_progress['Creating Temp PFS']} speed={_dw.speed}")
+    # a .ffpfsc read in place has no unpack share in the job's bar; one holding an exFAT does
+    _ffimg = S / "weights.ffpfsc"; _ffimg.write_bytes(b"\0" * 4096)
+    _wi = m.GameItem.from_chain(_ffimg, to="pkg")
+    if _wi is not None:
+        _ww = m.CLIWorker(app, _wi, ["py", "cli.py", str(_wi.path), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
+        _wd = "Extracting" not in _ww._weights and _ww._weights["Creating Temp PFS"][1] - _ww._weights["Creating Temp PFS"][0] > 45
+        _wi.image_wraps_exfat = True
+        _we = m.CLIWorker(app, _wi, ["py", "cli.py", str(_wi.path), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
+        ok("progress.pkg-from-image-has-no-unpack-share", _wd and "Extracting" in _we._weights,
+           f"direct={dict(_ww._weights)} exfat={'Extracting' in _we._weights}")
+    else:
+        ok("progress.pkg-from-image-has-no-unpack-share", False, "no .ffpfsc in the test folder")
     # the bars the backend prints for a .pkg built in place: the Kraken bar must move after the prepared files
     _kw = m.CLIWorker(app, _xi, ["py", "cli.py", str(_ex), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
     _kw.start_time = time.time()

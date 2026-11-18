@@ -2975,11 +2975,23 @@ class CLIWorker(threading.Thread):
         except (ValueError, IndexError):
             return None
 
+    def _pkg_unpacks_first(self, src, cmd) -> bool:
+        """a .ffpfs/.ffpfsc is read in place unless it holds an exFAT or gets a backport"""
+        try:
+            src = Path(str(src))
+            if not src.is_file():
+                return False
+        except (OSError, TypeError):
+            return False
+        if src.suffix.lower() in (".ffpfs", ".ffpfsc"):
+            return bool(getattr(self.item, "image_wraps_exfat", False)) or "--backport-target" in cmd
+        return True
+
     def _pick_weights(self, cmd):
         cmd = cmd or []
         if self._is_fpkg_build:
             src = self._cmd_value(cmd, "--fpkg-build")
-            unpacks = bool(src) and Path(src).is_file()
+            unpacks = bool(src) and self._pkg_unpacks_first(src, cmd)
             w = self.FPKG_BUILD_WEIGHTS
             return (w if unpacks else self._without_extract(w)), self._EXTRACT_FIRST_ORDER
         if self._is_fpkg_extract:
@@ -2994,8 +3006,8 @@ class CLIWorker(threading.Thread):
                                              "--zstd", "--zstd-unpack"))
             unpacks = src.is_file() and (changes or src.suffix.lower() not in self._CHAIN_NATIVE.get(to, set()))
             if to == "pkg":
-                # the fPKG builder unwraps an image source itself, behind the same marker
-                unpacks = src.is_file()
+                # the fPKG builder reads a .ffpfs/.ffpfsc in place; other images it unwraps behind the same marker
+                unpacks = self._pkg_unpacks_first(src, cmd)
                 w = self.FPKG_BUILD_WEIGHTS
             elif to == "folder":
                 w = self.CHAIN_FOLDER_WEIGHTS
