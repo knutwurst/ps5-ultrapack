@@ -420,6 +420,95 @@ def list_pfs_image(image_path):
     }
 
 
+def _open_inner_exfat(image_path):
+    """(reader, fh) over the exFAT a .ffpfs/.ffpfsc wraps, read in place; None when it wraps none"""
+    pfs, _consts = _import_mkpfs()
+    from mkpfs.exfat import EXFAT_SIGNATURE, ExfatReader
+    opened = pfs.open_inner_file_view(Path(image_path))
+    if opened is None:
+        return None
+    view, fh, _name = opened
+    try:
+        view.seek(0)
+        if view.read(len(EXFAT_SIGNATURE) + 3)[3:] != EXFAT_SIGNATURE:
+            fh.close()
+            return None
+        return ExfatReader(view), fh
+    except BaseException:
+        fh.close()
+        raise
+
+
+def list_inner_exfat(image_path) -> dict:
+    """files of the exFAT a .ffpfs/.ffpfsc wraps, shaped like list_pfs_image; nothing is unpacked"""
+    pfs, _consts = _import_mkpfs()
+    opened = _open_inner_exfat(image_path)
+    if opened is None:
+        raise ValueError("the image wraps no exFAT volume")
+    reader, fh = opened
+    try:
+        dirs, files = pfs._flatten_exfat_entries(reader.root_entries())
+    finally:
+        fh.close()
+    entries = [{"path": d.rel_path, "type": "dir"} for d in dirs]
+    entries += [{"path": f.rel_path, "type": "file", "size": int(f.length)} for f in files]
+    return {"root": Path(image_path).name, "entries": entries, "file_count": len(files),
+            "dir_count": len(dirs), "errors": []}
+
+
+def list_game_files(image_path) -> dict:
+    """the game's files in a .ffpfs/.ffpfsc, also through a wrapped exFAT"""
+    try:
+        return list_pfs_image(image_path)
+    except ValueError:
+        return list_inner_exfat(image_path)
+
+
+def _extract_inner_exfat_to(image: Path, dest: Path, overwrite: bool = False) -> bool:
+    """files of a wrapped exFAT straight into dest, the volume itself never lands on disk"""
+    pfs, _consts = _import_mkpfs()
+    opened = _open_inner_exfat(image)
+    if opened is None:
+        return False
+    reader, fh = opened
+    with fh:
+        dirs, files = pfs._flatten_exfat_entries(reader.root_entries())
+        files = [f for f in files if not _is_junk_name(Path(f.rel_path).name)]   # Finder files of old volumes
+        unsafe = [e.rel_path for e in dirs + files if _unsafe_member(e.rel_path.strip("/"))]
+        if unsafe:
+            raise RuntimeError(f"the exFAT names paths that would leave the destination folder: {unsafe[:4]}")
+        print(f"[INFO] Unpacking the exFAT inside {image.name} in one pass ({len(files)} files, "
+              f"the volume is not written out)...", flush=True)
+        dest.mkdir(parents=True, exist_ok=True)
+        for d in dirs:
+            (dest / Path(d.rel_path)).mkdir(parents=True, exist_ok=True)
+        total = sum(int(f.length) for f in files)
+        done, last_pct = 0, -1
+        for f in files:
+            rel = f.rel_path.strip("/")
+            out = dest / Path(rel)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tfd, tmp = tempfile.mkstemp(prefix=f".{out.name[:80]}.", suffix=".part", dir=str(out.parent))
+            _plain_mode(tmp)
+            part = Path(tmp)
+            try:
+                with os.fdopen(tfd, "wb") as o:
+                    for chunk in reader.read_file(f):
+                        o.write(chunk)
+                        done += len(chunk)
+                        pct = min(99, int(done * 100 / total)) if total else 99
+                        if pct != last_pct:
+                            last_pct = pct
+                            print(f"[####] {pct}% extract ({rel})", flush=True)
+                _place_extracted(part, out, rel, overwrite)
+            except BaseException:
+                _unlink_quiet(part)
+                raise
+    print("[####] 100% extract", flush=True)
+    print(f"[OK] Extracted {len(files)} file(s) and {len(dirs)} folder(s) to {dest}", flush=True)
+    return True
+
+
 # param.json attribute bit 29: HDR support. the console only switches the TV to HDR for these
 PARAM_HDR_BIT = 0x20000000
 
@@ -1089,6 +1178,8 @@ def _unwrap_pfs_one_pass(image: Path, dest: Path, overwrite: bool = False) -> bo
     try:
         listing = list_pfs_image(image)
     except ValueError as e:
+        if _extract_inner_exfat_to(image, dest, overwrite=overwrite):
+            return True
         print(f"[INFO] {image.name}: {e}; unpacking in two passes.", flush=True)
         return False
     except Exception as e:

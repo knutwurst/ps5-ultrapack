@@ -326,6 +326,23 @@ class ExfatSource(unittest.TestCase):
         meta = read_game_metadata(self.write(self.game, self.tmp / "Titled.exfat"))
         self.assertEqual(ultra_core.param_title(meta.param or {}), "English")
 
+    def test_an_ffpfsc_wrapping_an_exfat_unpacks_in_one_pass(self):
+        (self.game / "data").mkdir()
+        (self.game / "data" / "big.bin").write_bytes(b"A" * (3 << 20))
+        exf = self.write(self.game, self.tmp / "Game.exfat")
+        ff = self.tmp / "Game.ffpfsc"
+        r = subprocess.run([sys.executable, "-m", "mkpfs", "pack", "file", "--compress", "--compression-backend",
+                            "zlib", "--version", "PS5", "--inode-bits", "32", str(exf), str(ff)],
+                           cwd=str(REPO / "backend"), capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr[-500:])
+        sizes = {e["path"]: e["size"] for e in self.cli.list_game_files(ff)["entries"] if e["type"] == "file"}
+        self.assertEqual(sizes, {"data/big.bin": 3 << 20, "eboot.bin": 4096, "sce_sys/param.json": 24})
+        dest = self.tmp / "onepass"
+        self.assertTrue(self.cli._unwrap_pfs_one_pass(ff, dest))
+        for rel in sizes:
+            self.assertEqual((dest / rel).read_bytes(), (self.game / rel).read_bytes(), rel)
+        self.assertEqual(sorted(p.suffix for p in dest.rglob("*") if p.is_file()), [".bin", ".bin", ".json"])
+
     def test_nested_image_is_unwrapped_and_removed(self):
         out = self.tmp / "out"; out.mkdir()
         inner = self.write(self.game, out / "inner.exfat")

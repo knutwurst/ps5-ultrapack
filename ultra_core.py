@@ -536,7 +536,7 @@ def probe_container_content(item) -> int:
         doc = _fpkg.list_inner(src)
     else:
         import cli as _cli
-        doc = _cli.list_pfs_image(src)
+        doc = _cli.list_game_files(src)      # through a wrapped exFAT too
         if doc.get("errors"):
             raise ValueError(doc["errors"][0])
     files = [e for e in doc.get("entries", []) if e.get("type") == "file"]
