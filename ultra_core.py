@@ -509,6 +509,47 @@ def pkg_peak_factor(item) -> float:
     return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + (largest + kept) / content + PKG_CONSUME_MARGIN))
 
 
+def image_pkg_peak_factor(item) -> float:
+    """.ffpfsc/.ffpfs to .pkg: the tool takes in the unpacked game as the package grows"""
+    content = int(getattr(item, "pkg_content_size", 0) or 0)
+    largest = int(getattr(item, "pkg_largest_file", 0) or 0)
+    kept = int(getattr(item, "pkg_kept_bytes", 0) or 0)
+    if not content or not largest:
+        return PKG_UNPACK_PEAK_FACTOR
+    return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + (largest + kept) / content + PKG_CONSUME_MARGIN))
+
+
+def probe_container_content(item) -> int:
+    """game bytes from a .pkg/.ffpfs/.ffpfsc directory, nothing decoded; raises when unreadable"""
+    kind = chain_source_kind(item)
+    if getattr(item, "operation", "") != "chain" or kind not in ("pkg", "ffpfs", "ffpfsc"):
+        return 0
+    if getattr(item, "pkg_content_size", 0):
+        item.extracted_size = max(int(item.pkg_content_size), int(getattr(item, "extracted_size", 0) or 0))
+        return int(item.pkg_content_size)
+    backend = str(backend_base_dir())
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    src = Path(str(item.path))
+    if kind == "pkg":
+        import fpkg as _fpkg
+        doc = _fpkg.list_inner(src)
+    else:
+        import cli as _cli
+        doc = _cli.list_pfs_image(src)
+        if doc.get("errors"):
+            raise ValueError(doc["errors"][0])
+    files = [e for e in doc.get("entries", []) if e.get("type") == "file"]
+    sizes = [int(e.get("size") or 0) for e in files]
+    content = sum(sizes)
+    if content > 0:
+        item.pkg_largest_file = max(sizes, default=0)
+        item.pkg_kept_bytes = sum(int(e.get("size") or 0) for e in files if pkg_file_stays(e))
+        item.pkg_content_size = content
+        item.extracted_size = max(content, int(getattr(item, "extracted_size", 0) or 0))
+    return content
+
+
 def _peak_factor_for(item) -> float:
     try:
         if getattr(item, "patch_source", None) and load_settings().get("auto_integrate_patch", False):
@@ -516,6 +557,10 @@ def _peak_factor_for(item) -> float:
     except Exception:
         pass
     # holds the unpack and the inner image at once, same shape as a patch
+    if (getattr(item, "operation", "pack") == "chain" and getattr(item, "chain_to", None) == "pkg"
+            and chain_source_kind(item) in ("ffpfs", "ffpfsc") and getattr(item, "pkg_content_size", 0)
+            and not chain_changes(item)):
+        return image_pkg_peak_factor(item)
     if getattr(item, "operation", "pack") == "chain" and chain_needs_unpack(item):
         if chain_source_kind(item) == "pkg" and getattr(item, "pkg_content_size", 0):
             if chain_unpacks_to_folder(item):
@@ -819,7 +864,7 @@ def _space_size_of(item) -> int:
     if getattr(item, "operation", "pack") == "chain" and chain_needs_unpack(item):
         kind = chain_source_kind(item)
         container = int(getattr(item, "size", 0) or 0)
-        if size <= container and (kind == "ffpfsc" or (kind == "pkg" and not getattr(item, "pkg_content_size", 0))):
+        if size <= container and kind in ("ffpfsc", "pkg") and not getattr(item, "pkg_content_size", 0):
             return container * 2
     return size
 
@@ -4103,9 +4148,9 @@ class GameItem:
     auto_lz4_profile = None
     auto_zstd = False
     auto_zstd_level = None
-    pkg_content_size = 0    # .pkg source: bytes of its files, from the package's directory (0 = not read)
-    pkg_largest_file = 0    # .pkg source: its largest file (pass 1 peaks at the game plus this one)
-    pkg_kept_bytes = 0      # .pkg source: bytes pass 1 never frees (sce_sys, files under 1 MiB)
+    pkg_content_size = 0    # .pkg/.ffpfs/.ffpfsc source: bytes of its files, from its directory (0 = not read)
+    pkg_largest_file = 0    # same sources: the largest file (the build peaks at the game plus this one)
+    pkg_kept_bytes = 0      # same sources: bytes the build never frees (sce_sys, files under 1 MiB)
     origin_archive = None   # str: the archive this job's source was extracted from (retry restarts there)
     origin_extracted_size = 0  # that archive's extracted size, read from its headers
     kept_extract = False    # cancelled after its archive was extracted: that copy stays until the job is removed
@@ -4332,6 +4377,11 @@ class GameItem:
             obj.extracted_size = obj.size                    # the container is a floor for the unpacked size
             obj._is_disk_image = suf in DISK_IMAGE_SUFFIXES
         obj.operation          = "chain"
+        if suf in (".ffpfs", ".ffpfsc") and getattr(obj, "path", None):
+            try:
+                probe_container_content(obj)                 # a fraction of a second: only the directory is read
+            except Exception:
+                pass                                         # the space gate reads it again at start
         obj.status             = "Pending Extract" if getattr(obj, "archive_path", None) else "Queued"
         obj.chain_to           = to if to in CHAIN_TARGETS else "ffpfsc"
         obj.chain_sign         = bool(sign)
@@ -4442,6 +4492,8 @@ __all__ = [
     "PKG_CONSUME_MIN_SIZE",
     "pkg_file_stays",
     "pkg_peak_factor",
+    "image_pkg_peak_factor",
+    "probe_container_content",
     "IMAGE_PEAK_FACTOR",
     "archive_set_ondisk_size",
     "archive_set_parts",

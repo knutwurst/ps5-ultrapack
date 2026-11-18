@@ -11297,7 +11297,7 @@ class App:
                     if getattr(primary, "display_name", None):
                         item.display_name = primary.display_name
                 if kind == "pkg":
-                    self._probe_pkg_content(item)
+                    self._probe_container_content(item)
                 try:
                     if self._take_game_name(item, self._game_identity(item)):
                         self._names_dirty = True
@@ -13443,31 +13443,13 @@ class App:
             info["After"] = text[0].upper() + text[1:] + ", once the job is Done"
         return info
 
-    def _probe_pkg_content(self, item) -> int:
-        """game size from the package's own directory, nothing is decoded"""
-        if getattr(item, "operation", "") != "chain" or chain_source_kind(item) != "pkg":
-            return 0
-        if getattr(item, "pkg_content_size", 0):
-            item.extracted_size = max(int(item.pkg_content_size), int(getattr(item, "extracted_size", 0) or 0))
-            return int(item.pkg_content_size)
+    def _probe_container_content(self, item) -> int:
+        """game size from a .pkg/.ffpfs/.ffpfsc directory, nothing is decoded"""
         try:
-            backend = backend_base_dir()
-            if str(backend) not in sys.path:
-                sys.path.insert(0, str(backend))
-            import fpkg as _fpkg
-            doc = _fpkg.list_inner(Path(str(item.path)))
-            _files = [e for e in doc.get("entries", []) if e.get("type") == "file"]
-            _sizes = [int(e.get("size") or 0) for e in _files]
-            content = sum(_sizes)
-            item.pkg_largest_file = max(_sizes, default=0)
-            item.pkg_kept_bytes = sum(int(e.get("size") or 0) for e in _files if pkg_file_stays(e))
+            return probe_container_content(item)
         except Exception as e:
             self.log("WARN", f"Could not read the size of the game in {Path(str(item.path)).name}: {e}")
             return 0
-        if content > 0:
-            item.pkg_content_size = content
-            item.extracted_size = max(content, int(getattr(item, "extracted_size", 0) or 0))
-        return content
 
     def _refresh_space_for_item(self, item=None):
         if item is None:
@@ -14857,7 +14839,7 @@ class App:
             return "proceed"
         out_dir = Path(out_dir)
         item._skip_reason = ""
-        self._probe_pkg_content(item)          # a .pkg holds more than its file size
+        self._probe_container_content(item)    # a .pkg or .ffpfsc holds more than its file size
         try:
             self._resolve_extract_root(item)   # the single place that picks the build drive
         except Exception as e:
@@ -15396,7 +15378,7 @@ class App:
         if not kept or getattr(item, "operation", "pack") in ("unpack", "fake-sign", "fpkg-extract", "ps4-keystone"):
             return False
         try:
-            self._probe_pkg_content(item)
+            self._probe_container_content(item)
             self._resolve_extract_root(item)
             od = self._job_output_dir(item) or Path(self.output_var.get().strip())
             temp_dir = Path(getattr(item, "_build_temp", None) or (self.temp_var.get().strip() or str(Path.home())))

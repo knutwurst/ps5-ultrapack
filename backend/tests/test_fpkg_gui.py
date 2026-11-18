@@ -1189,7 +1189,7 @@ try:
             {"type": "file", "path": "eboot.bin", "size": 40 * _M - 1000},
             {"type": "file", "path": "small.txt", "size": 1000}]}                 # stays: small
         _si = m.GameItem.from_chain(_cpk, to="ffpfsc")
-        _got = app._probe_pkg_content(_si)
+        _got = app._probe_container_content(_si)
     finally:
         if _real_li is not None:
             _fp.list_inner = _real_li

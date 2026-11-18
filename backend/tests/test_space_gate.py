@@ -141,6 +141,35 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
         reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
         self.assertEqual(reqs[TEMP], m.estimate_peak_space_needed(140 * GB, m._peak_factor_for(item), False))
 
+    def _listing(self, entries, errors=()):
+        sys.path.insert(0, str(REPO / "backend"))
+        import cli
+        real = cli.list_pfs_image
+        cli.list_pfs_image = lambda _p: {"entries": entries, "errors": list(errors)}
+        self.addCleanup(setattr, cli, "list_pfs_image", real)
+
+    def test_a_ffpfsc_to_pkg_is_sized_from_its_own_directory(self):
+        self._listing([{"type": "dir", "path": "data"},
+                       {"type": "file", "path": "data/a.bin", "size": 60 * GB},
+                       {"type": "file", "path": "data/b.bin", "size": 20 * GB},
+                       {"type": "file", "path": "sce_sys/icon0.png", "size": 1 * GB},
+                       {"type": "file", "path": "eboot.bin", "size": 19 * GB}])
+        item = m.GameItem.from_chain(self._container(".ffpfsc", 4096), to="pkg")
+        self.assertEqual((item.extracted_size, item.pkg_content_size, item.pkg_largest_file, item.pkg_kept_bytes),
+                         (100 * GB, 100 * GB, 60 * GB, 1 * GB))
+        # the build takes the unpacked files in as the package grows: game plus largest plus kept
+        self.assertAlmostEqual(m._peak_factor_for(item), 1.0 + 0.61 + m.PKG_CONSUME_MARGIN)
+        reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
+        self.assertEqual(reqs[TEMP], m.estimate_peak_space_needed(100 * GB, m._peak_factor_for(item), False))
+
+    def test_a_damaged_ffpfsc_keeps_the_container_size(self):
+        self._listing([{"type": "file", "path": "eboot.bin", "size": 5 * GB}], errors=["bad inode"])
+        src = self._container(".ffpfsc", 4096)
+        item = m.GameItem.from_chain(src, to="pkg")
+        self.assertEqual((item.extracted_size, item.pkg_content_size), (4096, 0))
+        with self.assertRaises(ValueError):
+            m.probe_container_content(item)
+
     def test_a_pkg_whose_probe_failed_is_sized_from_the_package(self):
         src = self._container(".pkg", 4096)
         item = m.GameItem.from_chain(src, to="ffpfsc")
