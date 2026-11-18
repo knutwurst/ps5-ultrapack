@@ -97,6 +97,11 @@ using (var asm = AssemblyDefinition.ReadAssembly(dll, new ReaderParameters { Rea
     if (p6 < 0) return 3;
     applied++;
 
+    // patch 7: file hooks, so the tool can place the package's inner image straight into the package
+    int p7 = PatchFileHooks(asm.MainModule);
+    if (p7 < 0) return 3;
+    applied++;
+
     asm.Write();
 }
 Console.WriteLine($"OK: {applied} patch(es) applied to {dll}  (backup: {orig})");
@@ -200,14 +205,14 @@ static int PatchSourceHooks(ModuleDefinition module)
     {
         foreach (var ins in m.Body.Instructions)
         {
-            if (ins.OpCode == OpCodes.Callvirt && ins.Operand is MethodReference mr
+            if ((ins.OpCode == OpCodes.Callvirt || ins.OpCode == OpCodes.Call) && ins.Operand is MethodReference mr
                 && mr.DeclaringType.FullName == "System.IO.FileInfo" && mr.Name == "get_Length")
             {
                 ins.OpCode = OpCodes.Call; ins.Operand = lengthOf; lengths++;
             }
         }
     }
-    if (scan.Count == 0 || lengths < 2) { Console.Error.WriteLine($"[6] FAILED: expected FileInfo.Length in the source scan and ProsperoPs5InnerFile, found {lengths}"); return -1; }
+    if (scan.Count == 0 || lengths < 3) { Console.Error.WriteLine($"[6] FAILED: expected FileInfo.Length in the source scan and ProsperoPs5InnerFile, found {lengths}"); return -1; }
 
     // b) ProsperoPs5InnerFile.OpenRead asks the hook first
     var openRead = innerFile.Methods.FirstOrDefault(m => m.Name == "OpenRead" && m.HasBody && !m.HasParameters);
@@ -226,5 +231,104 @@ static int PatchSourceHooks(ModuleDefinition module)
         il.InsertBefore(first, cont);
     }
     Console.WriteLine($"[6] SourceHooks added: {lengths} FileInfo.Length read(s) and ProsperoPs5InnerFile.OpenRead go through it");
+    return 1;
+}
+
+static int PatchFileHooks(ModuleDefinition module)
+{
+    var hooks = module.GetType("LibProsperoPkg.Util.SourceHooks");
+    var buildIO = module.GetType("LibProsperoPkg.Util.BuildFileIO");
+    var naps = module.GetType("LibProsperoPkg.PKG.ProsperoNapsMeta");
+    var outer = module.GetType("LibProsperoPkg.PFS.ProsperoOuterPfsBuilder");
+    if (hooks == null || buildIO == null || naps == null || outer == null)
+    { Console.Error.WriteLine("[7] FAILED: SourceHooks, BuildFileIO, ProsperoNapsMeta or ProsperoOuterPfsBuilder not found"); return -1; }
+    if (hooks.Fields.Any(f => f.Name == "OpenFile")) { Console.WriteLine("[7] file hooks already in place"); return 1; }
+
+    var ts = module.TypeSystem;
+    var open = buildIO.Methods.FirstOrDefault(m => m.Name == "Open" && m.Parameters.Count == 6 && m.HasBody);
+    if (open == null) { Console.Error.WriteLine("[7] FAILED: BuildFileIO.Open(6) not found"); return -1; }
+    var fileStream = open.ReturnType;
+    var func2 = FindTypeRef(module, "System.Func`2");
+    var func3 = module.GetTypeReferences().FirstOrDefault(t => t.FullName == "System.Func`3")
+                ?? new TypeReference("System", "Func`3", module, func2.Scope);
+    if (!func3.HasGenericParameters)
+    {
+        func3.GenericParameters.Add(new GenericParameter("T1", func3));
+        func3.GenericParameters.Add(new GenericParameter("T2", func3));
+        func3.GenericParameters.Add(new GenericParameter("TResult", func3));
+    }
+    var funcOpenFile = new GenericInstanceType(func3);
+    funcOpenFile.GenericArguments.Add(ts.String); funcOpenFile.GenericArguments.Add(ts.Int32); funcOpenFile.GenericArguments.Add(fileStream);
+    var invoke = new MethodReference("Invoke", func3.GenericParameters[2], funcOpenFile) { HasThis = true };
+    invoke.Parameters.Add(new ParameterDefinition(func3.GenericParameters[0]));
+    invoke.Parameters.Add(new ParameterDefinition(func3.GenericParameters[1]));
+
+    var field = new FieldDefinition("OpenFile", FieldAttributes.Public | FieldAttributes.Static, funcOpenFile);
+    hooks.Fields.Add(field);
+
+    // public static FileStream TryOpenFile(string path, int mode): the hook's stream, or null for a normal open
+    var tryOpenFile = new MethodDefinition("TryOpenFile", MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig, fileStream);
+    tryOpenFile.Parameters.Add(new ParameterDefinition("path", ParameterAttributes.None, ts.String));
+    tryOpenFile.Parameters.Add(new ParameterDefinition("mode", ParameterAttributes.None, ts.Int32));
+    {
+        var il = tryOpenFile.Body.GetILProcessor();
+        var none = il.Create(OpCodes.Ldnull);
+        il.Append(il.Create(OpCodes.Ldsfld, field));
+        il.Append(il.Create(OpCodes.Brfalse, none));
+        il.Append(il.Create(OpCodes.Ldsfld, field));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldarg_1));
+        il.Append(il.Create(OpCodes.Callvirt, invoke));
+        il.Append(il.Create(OpCodes.Ret));
+        il.Append(none);
+        il.Append(il.Create(OpCodes.Ret));
+    }
+    hooks.Methods.Add(tryOpenFile);
+
+    // a) BuildFileIO.Open asks the hook first
+    {
+        var il = open.Body.GetILProcessor();
+        var first = open.Body.Instructions[0];
+        var cont = il.Create(OpCodes.Pop);
+        il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+        il.InsertBefore(first, il.Create(OpCodes.Ldarg_1));
+        il.InsertBefore(first, il.Create(OpCodes.Call, tryOpenFile));
+        il.InsertBefore(first, il.Create(OpCodes.Dup));
+        il.InsertBefore(first, il.Create(OpCodes.Brfalse, cont));
+        il.InsertBefore(first, il.Create(OpCodes.Ret));
+        il.InsertBefore(first, cont);
+    }
+
+    // b) the NAPS reader of the physical inner image opens it through BuildFileIO.Open too
+    int naps6 = 0;
+    foreach (var m in naps.Methods.Where(m => m.HasBody))
+    {
+        var il = m.Body.Instructions;
+        if (!il.Any(x => x.Operand is MethodReference g && g.Name == "get_PhysicalInnerImagePath")) continue;
+        foreach (var ins in il.Where(x => x.OpCode == OpCodes.Newobj && x.Operand is MethodReference c
+                                          && c.DeclaringType.FullName == "System.IO.FileStream" && c.Parameters.Count == 6).ToList())
+        {
+            ins.OpCode = OpCodes.Call; ins.Operand = open; naps6++;
+        }
+    }
+    if (naps6 != 1) { Console.Error.WriteLine($"[7] FAILED: expected one FileStream open of the physical inner image in ProsperoNapsMeta, found {naps6}"); return -1; }
+
+    // c) the outer builder sizes its source files through LengthOf
+    var lengthOf = hooks.Methods.First(m => m.Name == "LengthOf");
+    int outerLen = 0;
+    foreach (var m in outer.Methods.Where(m => m.HasBody && m.Name == "BuildForPackageToFile"))
+        foreach (var ins in m.Body.Instructions)
+            if ((ins.OpCode == OpCodes.Callvirt || ins.OpCode == OpCodes.Call) && ins.Operand is MethodReference mr
+                && mr.DeclaringType.FullName == "System.IO.FileInfo" && mr.Name == "get_Length")
+            { ins.OpCode = OpCodes.Call; ins.Operand = lengthOf; outerLen++; }
+    if (outerLen != 1)
+    {
+        var where = outer.Methods.Where(m => m.HasBody && m.Body.Instructions.Any(i => i.Operand is MethodReference r
+                        && r.DeclaringType.FullName == "System.IO.FileInfo" && r.Name == "get_Length")).Select(m => m.Name);
+        Console.Error.WriteLine($"[7] FAILED: expected one FileInfo.Length in BuildForPackageToFile, found {outerLen}; FileInfo.Length is in: {string.Join(", ", where)}");
+        return -1;
+    }
+
+    Console.WriteLine("[7] file hooks added: BuildFileIO.Open, the NAPS inner-image reader and the outer source sizes go through SourceHooks");
     return 1;
 }

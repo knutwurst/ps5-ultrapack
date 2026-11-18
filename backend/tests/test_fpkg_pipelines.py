@@ -589,6 +589,22 @@ def test_chain4_image_to_fpkg_oneclick(r: Runner):
     r.check("chain4.read-in-place-same-package", rcu == 0 and "in one pass" in logu and same,
             "reading in place and unpacking first give the same package",
             f"rc={rcu} a={a and a.stat().st_size} b={b and b.stat().st_size}\n{logu[-300:]}")
+    # the inner image written into the package (default) or in temp and copied: same bytes, also when the
+    # layout pass re-orders blocks; nothing of ours is left in the output folder
+    builds = []
+    for tag, extra in (("in-package", []), ("copied", ["--no-inner-in-package"])):
+        od = r.work / f"c4_inner_{tag}"
+        if od.exists(): shutil.rmtree(od)
+        rcx, logx = r.run_tool(["build", str(ffpath), str(od), "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
+                                "--title-id", "PPSA99099", "--mode", "kraken", "--kraken-backend", "builtin",
+                                "--deterministic", "--layout-min-savings", "0", "--temp", str(tmp), *extra])
+        p = next(od.glob("*.pkg"), None)
+        builds.append((rcx, logx, p, [x.name for x in od.iterdir() if x.suffix != ".pkg"]))
+    (rc1, log1, p1, left1), (rc2, _l2, p2, _left2) = builds
+    r.check("chain4.inner-in-package", rc1 == 0 and rc2 == 0 and p1 and p2 and "already in place in the package" in log1
+            and not left1 and hashlib.sha256(p1.read_bytes()).digest() == hashlib.sha256(p2.read_bytes()).digest(),
+            "the inner image went straight into the package, same bytes as the copy",
+            f"rc={rc1}/{rc2} left={left1}\n" + "\n".join(x for x in log1.splitlines() if "[inner]" in x)[-600:])
     r.check("chain4.level-passthrough", "level=5" in log, "--compression-level reached the builder (level=5)",
             "level not visible in builder banner")
     # the builder sees the resolved path (Windows: the long name, not PARALL~1)

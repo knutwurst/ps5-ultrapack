@@ -1336,6 +1336,7 @@ internal static partial class Program
         bool regenPlayGo = false;         // force-discard a prepared PlayGo set even if it validates
         string? keystoneFile = null;      // --keystone: the save-data key of the game the saves come from
         bool amprIndex = true;            // rebuild ampr_emu.index when the AMPR emulator is shipped
+        bool innerInPackage = true;       // the inner image is written straight into the package, no copy in temp
         string hdrFlag = "auto";  // attribute bit 29 (HDR): auto, on or off
 
         var opts = new ProsperoBuildOptions
@@ -1476,6 +1477,19 @@ internal static partial class Program
                     break;
                 case "--no-ampr-index":
                     amprIndex = false;
+                    break;
+                case "--layout-min-savings":
+                {
+                    // tests only: lower the layout pass's threshold so it re-orders even a small image
+                    var v = Need(args, ref i, a);
+                    if (!long.TryParse(v, out long bytes) || bytes < 0) throw new ArgumentException("--layout-min-savings needs bytes >= 0");
+                    opts.MinimumLayoutSavingsBytes = bytes;
+                    opts.MinimumLayoutSavingsPercent = 0;
+                    break;
+                }
+                case "--no-inner-in-package":
+                    // the library's own way: the inner image in temp, then copied into the package
+                    innerInPackage = false;
                     break;
                 case "--hdr-flag":
                     // auto keeps the source's bit 29, on sets it, off clears it
@@ -1947,7 +1961,15 @@ internal static partial class Program
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"  [consume] could not remove {rel}: {ex.Message}"); }
             }
-            result = ProsperoPackageBuilder.Build(opts, logger: Log);
+            using (var inPkg = innerInPackage && PackageFileName(opts) is string pkgFile
+                       ? new InnerInPackage(opts.OutputFolder!, pkgFile, opts.TemporaryDirectory ?? Path.GetTempPath()) : null)
+            {
+                result = ProsperoPackageBuilder.Build(opts, logger: Log);
+                if (inPkg != null && !inPkg.Adopted)
+                    Console.Error.WriteLine("  [inner] the library did not take the inner image from its place; it built it in temp as before");
+                else if (inPkg != null && inPkg.KeptBytes > 0)
+                    Console.Error.WriteLine($"  [inner] {inPkg.KeptBytes / 1048576.0:F1} MiB of re-ordered blocks were kept aside while the package was written");
+            }
         }
         catch (Exception) when (signalExit != 0)
         {

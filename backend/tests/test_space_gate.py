@@ -157,9 +157,9 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
         item = m.GameItem.from_chain(self._container(".ffpfsc", 4096), to="pkg")
         self.assertEqual((item.extracted_size, item.pkg_content_size, item.pkg_largest_file, item.pkg_kept_bytes),
                          (100 * GB, 100 * GB, 60 * GB, 1 * GB))
-        # read in place: temp holds the package's image (about the package) and the small files
+        # read in place, its image written into the package: temp holds only the small files
         self.assertFalse(item.image_wraps_exfat)
-        self.assertAlmostEqual(m._peak_factor_for(item), 0.75 + 0.01 + m.PKG_CONSUME_MARGIN)
+        self.assertAlmostEqual(m._peak_factor_for(item), 0.01 + m.PKG_CONSUME_MARGIN)
         # an exFAT inside is unpacked first and taken in as the package grows: game plus largest plus kept
         item.image_wraps_exfat = True
         self.assertAlmostEqual(m._peak_factor_for(item), 1.0 + 0.61 + m.PKG_CONSUME_MARGIN)

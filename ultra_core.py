@@ -510,7 +510,7 @@ def pkg_peak_factor(item) -> float:
 
 
 def image_pkg_peak_factor(item) -> float:
-    """.ffpfsc/.ffpfs to .pkg: read in place, temp holds the package's image and the small files;
+    """.ffpfsc/.ffpfs to .pkg: read in place, temp holds only the small files;
     an exFAT inside is unpacked first and taken in as the package grows"""
     content = int(getattr(item, "pkg_content_size", 0) or 0)
     largest = int(getattr(item, "pkg_largest_file", 0) or 0)
@@ -518,8 +518,8 @@ def image_pkg_peak_factor(item) -> float:
     if not content or not largest:
         return PKG_UNPACK_PEAK_FACTOR
     if not getattr(item, "image_wraps_exfat", False):
-        image = estimate_output_space_needed(content, True, int(getattr(item, "size", 0) or 0))
-        return max(0.3, (image + kept) / content + PKG_CONSUME_MARGIN)
+        # the package's image is written into the package itself: temp holds only the small files
+        return kept / content + PKG_CONSUME_MARGIN
     return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + (largest + kept) / content + PKG_CONSUME_MARGIN))
 
 

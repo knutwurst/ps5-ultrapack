@@ -117,3 +117,20 @@ files as empty stand-ins whose size and bytes the hooks take from the image thro
 library's own `PfsReader`/`PFSCReader`. The package is byte-identical to one built from the
 unpacked folder (checked in `test_fpkg_pipelines.py`, `chain4.read-in-place-same-package`).
 
+## Patch 7 — file hooks: the inner image straight into the package
+
+The library writes the package's inner image (`pfs_image.dat`) to a spool file in temp and then
+copies it into the package, where it starts at 0x10000. At the end both exist at once, about
+twice the package. The patcher adds `SourceHooks.OpenFile` (path, mode → `FileStream` or null)
+and makes `BuildFileIO.Open` ask it first; the NAPS reader of the physical inner image, which
+opened the spool with `new FileStream`, goes through `BuildFileIO.Open`, and the outer PFS
+builder takes its source sizes through `LengthOf`.
+
+The tool (`InnerInPackage.cs`) points the spool at a file of its own in the output folder, at
+offset 0x10000. When the library creates the package, that file is renamed into it, and the
+outer PFS writes each data block back where it already is. If the layout pass re-ordered
+blocks, a range the writer would overwrite before it was read is kept in a side file first.
+`--no-inner-in-package` restores the library's own way; `chain4.inner-in-package` in
+`test_fpkg_pipelines.py` builds both ways, with the layout pass forced to re-order, and compares
+the bytes.
+

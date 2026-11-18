@@ -44,6 +44,10 @@ The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
    `ProsperoPs5InnerFile` go through `LengthOf`, and `ProsperoPs5InnerFile.OpenRead` asks
    `TryOpen` first. With no delegate set, every read is the same as before. The tool sets them
    to build a package straight from a `.ffpfs`/`.ffpfsc` without unpacking its big files.
+5. `SourceHooks.OpenFile` (added 2026-11-18): `BuildFileIO.Open` asks this delegate first, the
+   NAPS reader of the physical inner image opens it through `BuildFileIO.Open`, and the outer
+   PFS builder sizes its source files through `LengthOf`. With no delegate set, nothing changes.
+   The tool uses it to write the package's inner image straight to its place in the package.
 (A further change, `ProsperoPackageArchive.ResolveParallelism` returning 1, was applied from
 2026-10-05 to 2026-10-06 and is gone: the crash it worked around was the tool's compressed
 single-file bundle, see `../patches/README.md`.)
