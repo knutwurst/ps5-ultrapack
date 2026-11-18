@@ -27,7 +27,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
-from multiprocessing.pool import AsyncResult
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
@@ -88,8 +87,6 @@ _NON_LOCAL_VOLUME_SOURCE_KEYWORDS: tuple[str, ...] = (
     "smb",
     "usb",
 )
-_PFSC_WORKER_SOURCE_PATH: Path | None = None
-_PFSC_WORKER_SOURCE_HANDLE: BinaryIO | None = None
 
 
 class SupportsIntQueue(Protocol):
@@ -1186,118 +1183,52 @@ def resolve_block_compression_worker_count(*, requested_cpu_count: int, file_siz
     return max(1, requested_cpu_count)
 
 
-def _init_pfsc_block_worker(*, source_path: Path) -> None:
-    """Open and cache the PFSC source file for one worker process.
-
-    Args:
-        source_path: Source file path shared by all block jobs in the worker.
-    """
-    global _PFSC_WORKER_SOURCE_HANDLE, _PFSC_WORKER_SOURCE_PATH
-    if _PFSC_WORKER_SOURCE_HANDLE is not None and source_path == _PFSC_WORKER_SOURCE_PATH:
-        return
-    if _PFSC_WORKER_SOURCE_HANDLE is not None:
-        _PFSC_WORKER_SOURCE_HANDLE.close()
-    _PFSC_WORKER_SOURCE_PATH = source_path
-    _PFSC_WORKER_SOURCE_HANDLE = source_path.open("rb")
-
-
-def _init_pfsc_block_worker_for_pool(source_path: Path) -> None:
-    """Initialize per-process PFSC worker state for a multiprocessing pool.
-
-    Args:
-        source_path: Source file path shared by all block jobs in the pool.
-    """
-    _init_pfsc_block_worker(source_path=source_path)
-    # Ensure compression backend in child process matches the parent selection.
-    with suppress(Exception):
-        comp.init_worker(comp.get_backend_name())
-
-
-def _read_pfsc_block_from_worker_handle(*, block_offset: int, logical_block_size: int) -> bytes:
-    """Read one logical PFSC block from the cached worker handle.
-
-    Args:
-        block_offset: Byte offset of the logical block inside the source file.
-        logical_block_size: Number of bytes to read for the logical block.
-
-    Returns:
-        Raw bytes read from the source file, without zero padding.
-
-    Raises:
-        RuntimeError: If the worker pool initializer did not prepare the cached handle.
-    """
-    if _PFSC_WORKER_SOURCE_HANDLE is None or _PFSC_WORKER_SOURCE_PATH is None:
-        raise RuntimeError("PFSC block worker handle is not initialized")
-    _PFSC_WORKER_SOURCE_HANDLE.seek(block_offset)
-    return _PFSC_WORKER_SOURCE_HANDLE.read(logical_block_size)
-
-
-def _iter_pfsc_block_worker_args(
+def _iter_pfsc_compressed_blocks(
     *,
+    source_path: Path,
     block_count: int,
     logical_block_size: int,
     zlib_level: int,
-) -> Iterator[tuple[int, int, int]]:
-    """Yield block worker arguments for one file in logical block order.
+    worker_count: int,
+) -> Iterator[tuple[bytes, bytes]]:
+    """Yield ``(raw_chunk, compressed_chunk)`` for every logical block of a file, in block order.
+
+    The calling thread reads the file front to back and a thread pool compresses
+    the zero-padded blocks (zlib releases the GIL, so this scales across cores
+    without worker processes). At most ``worker_count`` times the window factor
+    blocks are in flight, so memory stays flat however fast the pool runs.
 
     Args:
+        source_path: Source file path.
         block_count: Number of logical blocks in the source file.
         logical_block_size: PFSC logical block size in bytes.
-        zlib_level: Zlib compression level.
+        zlib_level: zlib compression level.
+        worker_count: Number of compression threads.
 
     Yields:
-        Tuples ``(block_offset, logical_block_size, zlib_level)`` in block order.
+        Tuples ``(raw_chunk, compressed_chunk)``; ``raw_chunk`` carries no padding.
     """
-    block_index: int
-    for block_index in range(block_count):
-        block_offset: int = block_index * logical_block_size
-        yield block_offset, logical_block_size, zlib_level
+    factor: int = DEFAULT_MKPFS_PFSC_WINDOW_FACTOR
+    with suppress(ValueError):
+        env_val = os.environ.get("MKPFS_PFSC_WINDOW_FACTOR")
+        if env_val is not None:
+            parsed = int(env_val)
+            if parsed > 0:
+                factor = parsed
+    max_in_flight: int = max(1, worker_count * factor)
 
+    def _compress(raw_chunk: bytes) -> tuple[bytes, bytes]:
+        padded_chunk: bytes = raw_chunk.ljust(logical_block_size, b"\x00")
+        return raw_chunk, comp.compress_block(padded_chunk, level=zlib_level)
 
-def _compress_pfsc_block_lengths_worker(args: tuple[int, int, int]) -> tuple[int, int]:
-    """Compress one logical block and return raw/compressed lengths.
-
-    Args:
-        args: Tuple ``(block_offset, logical_block_size, zlib_level)``.
-
-    Returns:
-        Tuple ``(raw_block_length, compressed_block_length)``.
-    """
-    block_offset: int
-    logical_block_size: int
-    zlib_level: int
-    (block_offset, logical_block_size, zlib_level) = args
-    raw_chunk: bytes = _read_pfsc_block_from_worker_handle(
-        block_offset=block_offset,
-        logical_block_size=logical_block_size,
-    )
-    padded_chunk: bytes = raw_chunk.ljust(logical_block_size, b"\x00")
-    compressed_chunk: bytes = comp.compress_block(padded_chunk, level=zlib_level)
-    return len(raw_chunk), len(compressed_chunk)
-
-
-def _compress_pfsc_block_payload_worker(
-    args: tuple[int, int, int],
-) -> tuple[bytes, bytes]:
-    """Compress one logical block and return raw/compressed payload bytes.
-
-    Args:
-        args: Tuple ``(block_offset, logical_block_size, zlib_level)``.
-
-    Returns:
-        Tuple ``(raw_chunk, compressed_chunk)``.
-    """
-    block_offset: int
-    logical_block_size: int
-    zlib_level: int
-    (block_offset, logical_block_size, zlib_level) = args
-    raw_chunk: bytes = _read_pfsc_block_from_worker_handle(
-        block_offset=block_offset,
-        logical_block_size=logical_block_size,
-    )
-    padded_chunk: bytes = raw_chunk.ljust(logical_block_size, b"\x00")
-    compressed_chunk: bytes = comp.compress_block(padded_chunk, level=zlib_level)
-    return raw_chunk, compressed_chunk
+    with source_path.open("rb") as source_file, ThreadPoolExecutor(max_workers=worker_count) as pool:
+        pending: deque[Future[tuple[bytes, bytes]]] = deque()
+        for _idx in range(block_count):
+            if len(pending) >= max_in_flight:
+                yield pending.popleft().result()
+            pending.append(pool.submit(_compress, source_file.read(logical_block_size)))
+        while pending:
+            yield pending.popleft().result()
 
 
 def _analyze_pfsc_file_storage(
@@ -1318,7 +1249,7 @@ def _analyze_pfsc_file_storage(
         min_file_gain: Minimum whole-file gain percent required to store PFSC.
         zlib_level: zlib compression level.
         logical_block_size: PFSC logical block size.
-        block_worker_count: Number of worker processes to use for block-level
+        block_worker_count: Number of threads to use for block-level
             compression of this file.
         progress_callback: Optional callback receiving processed raw byte deltas.
 
@@ -1359,35 +1290,31 @@ def _analyze_pfsc_file_storage(
                 if progress_callback is not None:
                     progress_callback(len(chunk))
     else:
-        worker_args_iter: Iterator[tuple[int, int, int]] = _iter_pfsc_block_worker_args(
+        raw_chunk: bytes
+        compressed_chunk: bytes
+        for raw_chunk, compressed_chunk in _iter_pfsc_compressed_blocks(
+            source_path=abs_path,
             block_count=block_count,
             logical_block_size=logical_block_size,
             zlib_level=zlib_level,
-        )
-        with mp.Pool(
-            processes=effective_block_workers,
-            initializer=_init_pfsc_block_worker_for_pool,
-            initargs=(abs_path,),
-        ) as pool:
-            results_iter = pool.imap(_compress_pfsc_block_lengths_worker, worker_args_iter, chunksize=1)
-            raw_block_len: int
-            compressed_block_len: int
-            for raw_block_len, compressed_block_len in results_iter:
-                all_compressed_size += compressed_block_len
-                padded_block_len: int = logical_block_size
-                gain_pct: float = ((padded_block_len - compressed_block_len) / padded_block_len) * 100.0
-                if _should_store_pfsc_block_compressed(
-                    compressed_block_size=compressed_block_len,
-                    logical_block_size=logical_block_size,
-                    gain_pct=gain_pct,
-                    threshold_gain=threshold_gain,
-                ):
-                    chosen_payload_size += compressed_block_len
-                    compressed_blocks += 1
-                else:
-                    chosen_payload_size += padded_block_len
-                if progress_callback is not None:
-                    progress_callback(raw_block_len)
+            worker_count=effective_block_workers,
+        ):
+            compressed_block_len: int = len(compressed_chunk)
+            all_compressed_size += compressed_block_len
+            padded_block_len: int = logical_block_size
+            gain_pct: float = ((padded_block_len - compressed_block_len) / padded_block_len) * 100.0
+            if _should_store_pfsc_block_compressed(
+                compressed_block_size=compressed_block_len,
+                logical_block_size=logical_block_size,
+                gain_pct=gain_pct,
+                threshold_gain=threshold_gain,
+            ):
+                chosen_payload_size += compressed_block_len
+                compressed_blocks += 1
+            else:
+                chosen_payload_size += padded_block_len
+            if progress_callback is not None:
+                progress_callback(len(raw_chunk))
 
     encoded_payload_size: int = header_size + chosen_payload_size
     hypothetical_all_compressed_size: int = header_size + all_compressed_size
@@ -1574,7 +1501,7 @@ def _encode_pfsc_into_handle(
         min_file_gain: Minimum whole-file gain percent required to store PFSC.
         zlib_level: zlib compression level.
         logical_block_size: PFSC logical block size.
-        block_worker_count: Number of worker processes to use for block-level
+        block_worker_count: Number of threads to use for block-level
             compression of this file.
         progress_callback: Optional callback receiving processed raw byte deltas.
 
@@ -1618,12 +1545,6 @@ def _encode_pfsc_into_handle(
                 if progress_callback is not None:
                     progress_callback(len(chunk))
     else:
-        worker_args_iter: Iterator[tuple[int, int, int]] = _iter_pfsc_block_worker_args(
-            block_count=block_count,
-            logical_block_size=logical_block_size,
-            zlib_level=zlib_level,
-        )
-
         def _write_block_result(result: tuple[bytes, bytes]) -> None:
             nonlocal all_compressed_size, compressed_blocks
             raw_chunk, compressed_chunk = result
@@ -1644,30 +1565,14 @@ def _encode_pfsc_into_handle(
             if progress_callback is not None:
                 progress_callback(len(raw_chunk))
 
-        # Bound in-flight work to ``max_in_flight`` blocks and write results in
-        # submit order. An unbounded ``imap`` lets a fast compressor pool outrun
-        # the single writer and buffer finished blocks without limit, which OOMs
-        # on large, highly-compressible inputs; this window keeps memory flat.
-        factor: int = DEFAULT_MKPFS_PFSC_WINDOW_FACTOR
-        with suppress(ValueError):
-            env_val = os.environ.get("MKPFS_PFSC_WINDOW_FACTOR")
-            if env_val is not None:
-                parsed = int(env_val)
-                if parsed > 0:
-                    factor = parsed
-        max_in_flight: int = max(1, effective_block_workers * factor)
-        with mp.Pool(
-            processes=effective_block_workers,
-            initializer=_init_pfsc_block_worker_for_pool,
-            initargs=(source_path,),
-        ) as pool:
-            pending: deque[AsyncResult[tuple[bytes, bytes]]] = deque()
-            for worker_args in worker_args_iter:
-                if len(pending) >= max_in_flight:
-                    _write_block_result(pending.popleft().get())
-                pending.append(pool.apply_async(_compress_pfsc_block_payload_worker, (worker_args,)))
-            while pending:
-                _write_block_result(pending.popleft().get())
+        for result in _iter_pfsc_compressed_blocks(
+            source_path=source_path,
+            block_count=block_count,
+            logical_block_size=logical_block_size,
+            zlib_level=zlib_level,
+            worker_count=effective_block_workers,
+        ):
+            _write_block_result(result)
 
     encoded_payload_size: int = offsets[-1]
     hypothetical_all_compressed_size: int = header_size + all_compressed_size
@@ -1718,7 +1623,7 @@ def _encode_pfsc_file_to_spool(
         min_file_gain: Minimum whole-file gain percent required to store PFSC.
         zlib_level: zlib compression level.
         logical_block_size: PFSC logical block size.
-        block_worker_count: Number of worker processes to use for block-level
+        block_worker_count: Number of threads to use for block-level
             compression of this file.
         progress_callback: Optional callback receiving processed raw byte deltas.
 
