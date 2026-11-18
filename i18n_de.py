@@ -1385,4 +1385,9 @@ GERMAN: dict[str, str] = {
     '1 archive of PS4 packages': '1 Archiv mit PS4-Paketen',
     '{n} archives of PS4 packages': '{n} Archive mit PS4-Paketen',
     'reading {name} · {time}': 'liest {name} · {time}',
+    'In place': 'In place',
+    'next to each source, named from the game; no folders are made': 'neben jeder Quelle, nach dem Spiel benannt; es entstehen keine Ordner',
+    'next to each source': 'neben jeder Quelle',
+    "The source is on a hard disk. Reading it and writing the result there at the same time is slow. Set a temp folder on another drive, ideally an SSD, in Settings › Folders: the unpack and the build then run there.": "Die Quelle liegt auf einer Festplatte. Gleichzeitig von ihr zu lesen und das Ergebnis dorthin zu schreiben ist langsam. Lege in Einstellungen › Ordner einen Temp-Ordner auf einem anderen Laufwerk an, am besten auf einer SSD: Entpacken und Bauen laufen dann dort.",
+    "In place: each result goes into the folder its source is in, named from the game's own metadata, and no folders are made. A result that is already there is skipped. To remove the source once the job is Done, pick Delete under After the job.": "In place: Jedes Ergebnis landet im Ordner seiner Quelle, benannt nach den Metadaten des Spiels, und es entstehen keine Ordner. Liegt das Ergebnis schon dort, wird der Job übersprungen. Soll die Quelle weg, sobald der Job fertig ist, wähle unter Nach dem Job Löschen.",
 }

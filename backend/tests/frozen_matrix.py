@@ -182,6 +182,21 @@ if PKG:
     run(".pkg validate", ["--fpkg-validate", PKG], lambda rc, o: (rc == 0, f"rc={rc}"))
 if XFFPFSC:
     run("exFAT .ffpfsc -> folder", [XFFPFSC, out("x2f"), "--to", "folder", *common], same_game(W / "x2f"))
+    run("exFAT .ffpfsc -> .pkg", [XFFPFSC, out("x2p"), "--to", "pkg", *common], made(W / "x2p", "*.pkg"))
+if FFPFSC:
+    # In place: the output folder is the source's own folder; the package lands beside it, the source stays
+    ip = out("inplace")
+    ip_src = ip / FFPFSC.name
+    shutil.copy2(FFPFSC, ip_src)
+    ip_sha = hashlib.sha256(ip_src.read_bytes()).hexdigest()
+
+    def beside(rc, o):
+        pkgs = sorted(ip.glob("*.pkg"))
+        kept = ip_src.is_file() and hashlib.sha256(ip_src.read_bytes()).hexdigest() == ip_sha
+        dirs = [d.name for d in ip.iterdir() if d.is_dir()]
+        return (rc == 0 and len(pkgs) == 1 and kept and not dirs,
+                f"rc={rc} pkgs={[x.name for x in pkgs]} source kept={kept} folders left={dirs}")
+    run("in place: .ffpfsc -> .pkg beside it", [ip_src, ip, "--to", "pkg", *common], beside)
 
 # an .exfat source, written by MkPFS's own writer
 from mkpfs.exfat_writer import write_exfat_image

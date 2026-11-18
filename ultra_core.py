@@ -4158,6 +4158,7 @@ class GameItem:
     auto_lz4_profile = None
     auto_zstd = False
     auto_zstd_level = None
+    in_place_output = False  # In place: the result goes next to its source, named from the game
     pkg_content_size = 0    # .pkg/.ffpfs/.ffpfsc source: bytes of its files, from its directory (0 = not read)
     pkg_largest_file = 0    # same sources: the largest file (the build peaks at the game plus this one)
     pkg_kept_bytes = 0      # same sources: bytes the build never frees (sce_sys, files under 1 MiB)

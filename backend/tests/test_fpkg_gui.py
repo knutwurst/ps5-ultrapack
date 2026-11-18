@@ -266,6 +266,35 @@ try:
        " ".join(map(str, _cz[-12:])))
     if qz is not None:
         app.queue.remove(qz)
+    # In place: next to each source, named from the game, no folders; a result already there is skipped
+    _ipd = S / "inplace_src"
+    if _ipd.exists(): shutil.rmtree(_ipd)
+    _ipd.mkdir(); _ipg = _ipd / "Game"; shutil.copytree(HBT, _ipg)
+    di = m.JobDialog(app, init_src=str(_ipg), init_to="ffpfsc"); root.update()
+    di.out_var.set(""); di.inplace_var.set(True); root.update()
+    _ipdis = di._out_entry.cget("state") == "disabled" and di._organize_cb.cget("state") == "disabled"
+    di.to_var.set(m.JobDialog._TARGET_LABEL["organize"]); root.update()
+    _iporg = di._inplace_cb.cget("state") == "disabled"
+    di.to_var.set(m.JobDialog._TARGET_LABEL["ffpfsc"]); root.update()
+    n0 = len(app.queue); di._add(); settle()
+    qi = app.queue[-1] if len(app.queue) > n0 else None
+    _ci = [str(a) for a in (app.build_command(qi)[0] if qi else [])]
+    _ipout = Path(next((a for a in _ci if a.endswith(".ffpfsc")), ""))
+    ok("inplace.dialog-and-job", _ipdis and _iporg and qi is not None and qi.in_place_output
+       and Path(str(qi.output_path)) == _ipd and _ipout.parent == _ipd and "[" in _ipout.name
+       and m.load_settings().get("in_place_output") is True
+       and m.load_settings().get("rescan_template", {}).get("in_place") is True,
+       f"disabled={_ipdis} organize={_iporg} out={_ipout}")
+    _late_new = app._late_output_check(qi) if qi else None
+    if qi is not None:
+        _ipout.write_bytes(b"x"); qi._output_checked = False
+    _late_taken = app._late_output_check(qi) if qi else None
+    ok("inplace.result-already-there-is-skipped", _late_new == "proceed" and _late_taken == "skip",
+       f"{_late_new} {_late_taken}")
+    if qi is not None:
+        app.queue.remove(qi)
+    m.save_settings({"in_place_output": False})
+    shutil.rmtree(_ipd, ignore_errors=True)
     _fz = m.GameItem.from_chain(HBT, to="folder", output_path=str(OUT), zstd=True, zstd_level=5)
     _cf = app.build_command(_fz)[0]
     _dest = next((a for a in _cf if str(a).endswith("[zstd]")), "")

@@ -4352,6 +4352,9 @@ class JobDialog(EmbeddedDialog):
                   "fastest from USB. .pkg: installable package.",
         "saveto": "Where the result lands. With auto-organize it gets its own folder there, named "
                   "from the game.",
+        "inplace": "In place: each result goes into the folder its source is in, named from the game's own "
+                   "metadata, and no folders are made. A result that is already there is skipped. To remove "
+                   "the source once the job is Done, pick Delete under After the job.",
         "organize": "Names the folder and the file from the game's own metadata: "
                     "<Title> [TID] [vX.Y.Z]/<Title> [TID] [vX.Y] [fwN.NN], with the firmware the "
                     "game needs read from its eboot.bin (a backport lowers it to the target). Long names are shortened to "
@@ -4477,6 +4480,10 @@ class JobDialog(EmbeddedDialog):
         self._ps4_n = self._ps5_n = 0
         _org = getattr(item, "auto_organize", None) if item else None
         self.organize_var = tk.BooleanVar(value=bool(app.auto_organize_var.get()) if _org is None else bool(_org))
+        _ip = getattr(item, "in_place_output", None) if item else None
+        self.inplace_var = tk.BooleanVar(value=bool(load_settings().get("in_place_output", False)) if _ip is None
+                                         else bool(_ip))
+        self._inplace_probed: set = set()
         _aj = _after_job_module()
         _af = getattr(item, "after_source", None) if item else app.after_source_var.get()
         self.after_var = tk.StringVar(value=_af if _af in _aj.ACTIONS else _aj.KEEP)
@@ -4525,7 +4532,7 @@ class JobDialog(EmbeddedDialog):
         for v in (self.ps4_out_var, self.ps4_to_var, self.sign_var, self.patch_on_var, self.patch_var, self.backport_on_var,
                   self.backport_target_var, self.to_var, self.out_var,
                   self.organize_var, self.after_var, self.lz4_var, self.lz4_profile_var, self.lz4_mode_var,
-                  self.zstd_var, self.zstd_mode_var, self.zstd_level_var):
+                  self.zstd_var, self.zstd_mode_var, self.zstd_level_var, self.inplace_var):
             v.trace_add("write", lambda *_: self._refresh())
         self.bind("<Return>", lambda e: self._add())
         self.bind("<Escape>", lambda e: self.destroy())
@@ -4786,6 +4793,17 @@ class JobDialog(EmbeddedDialog):
         self._out_btn.pack(side="left", padx=(6, 0))
         self._bind_help(self._HELP["saveto"], fin)
         self._fin = fin
+        ipr = self._inplace_row = ctk.CTkFrame(orow, fg_color=PANEL); ipr.pack(fill="x", padx=10, pady=(2, 2))
+        ctk.CTkLabel(ipr, text="", width=100).pack(side="left")
+        self._inplace_cb = ctk.CTkCheckBox(ipr, text="In place", variable=self.inplace_var, checkbox_width=18,
+                                           checkbox_height=18, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                           text_color=WHITE, font=ctk.CTkFont(size=12))
+        self._inplace_cb.pack(side="left")
+        ctk.CTkLabel(ipr, text="next to each source, named from the game; no folders are made", text_color=MUTED,
+                     font=ctk.CTkFont(size=12)).pack(side="left", padx=(10, 0))
+        self._bind_help(self._HELP["inplace"], ipr)
+        self._inplace_warn = ctk.CTkLabel(orow, text="", text_color=YELLOW, font=ctk.CTkFont(size=12), anchor="w",
+                                          justify="left", wraplength=620)
         # PS4 packages in a mixed folder get their own target and folder
         pb4 = self._ps4_box = ctk.CTkFrame(orow, fg_color=PANEL)
         self._ps4_head_var = TextVar(value="")
@@ -5815,6 +5833,46 @@ class JobDialog(EmbeddedDialog):
                             "beside the output."))
         return " ".join(parts)
 
+    def _beside_possible(self, to: str) -> bool:
+        """In place needs a conversion: not for Organize, PS4 packages or a folder changed where it is"""
+        return self._kind not in ("ps4", "none") and to != ORGANIZE_TARGET and not self._in_place(to)
+
+    def _beside(self, to: str) -> bool:
+        return bool(self.inplace_var.get()) and self._beside_possible(to)
+
+    def _inplace_hdd_note(self) -> str:
+        """reading and writing one hard disk at once is slow; a temp folder elsewhere takes the unpack"""
+        raw = (self.src_var.get() or "").strip()
+        if not raw:
+            return ""
+        p = Path(raw)
+        where = p if p.is_dir() else p.parent
+        dt = drive_type_cached(where)
+        if dt == "Unknown":
+            key = str(where)
+            if key not in self._inplace_probed:
+                self._inplace_probed.add(key)
+
+                def probe():
+                    get_drive_type(where)
+                    try:
+                        self.after(0, self._refresh)
+                    except Exception:
+                        pass
+                threading.Thread(target=probe, daemon=True).start()
+            return ""
+        if dt != "HDD":
+            return ""
+        temp = (self.app.temp_var.get() or "").strip()
+        try:
+            if temp and Path(temp).exists() and not same_drive(Path(temp), where):
+                return ""
+        except Exception:
+            pass
+        return ("The source is on a hard disk. Reading it and writing the result there at the same time is "
+                "slow. Set a temp folder on another drive, ideally an SSD, in Settings › Folders: the unpack "
+                "and the build then run there.")
+
     def _in_place(self, to: str) -> bool:
         """folder output changes game folders where they are"""
         if to != "folder":
@@ -6006,11 +6064,23 @@ class JobDialog(EmbeddedDialog):
                           {"pkg": "sorted as it is into '<Title> [CUSA…] [vX]', with its updates and DLC",
                            "folder": "the package's files in a folder"}.get(to, ""))
         in_place = self._in_place(to)
+        beside = self._beside(to)
         for w in (self._out_entry, self._out_btn):
             try:
-                w.configure(state="disabled" if in_place else "normal")
+                w.configure(state="disabled" if in_place or beside else "normal")
             except Exception:
                 pass
+        try:
+            self._inplace_cb.configure(state="normal" if self._beside_possible(to) else "disabled")
+            self._organize_cb.configure(state="disabled" if beside else "normal")
+            warn = self._inplace_hdd_note() if beside else ""
+            self._inplace_warn.configure(text=tr(warn) if warn else "")
+            if warn and not self._inplace_warn.winfo_manager():
+                self._inplace_warn.pack(fill="x", padx=(120, 10), pady=(0, 4), after=self._inplace_row)
+            elif not warn:
+                self._inplace_warn.pack_forget()
+        except Exception:
+            pass
         # an in-place change writes into the source, so no after-job action
         try:
             aj = _after_job_module()
@@ -6071,11 +6141,13 @@ class JobDialog(EmbeddedDialog):
         out = (self.out_var.get() or "").strip()
         if p is None or self._kind in ("none", "folder-unknown", "file-unknown"):
             dest = ""
-        elif ok and not in_place and not out:
+        elif ok and not in_place and not beside and not out:
             ok = False
             dest = "Choose an output folder"
         elif in_place:
             dest = f"in {p}" if p else ""
+        elif beside:
+            dest = tr("next to each source")
         else:
             dest = f"→ {out}"
             if self._kind == "parent" and self._mixed():
@@ -6264,8 +6336,9 @@ class JobDialog(EmbeddedDialog):
                                            "a .ffpfs/.ffpfsc or a .pkg.", parent=self); return
         to = self._to_key()
         in_place = self._in_place(to)
+        beside = self._beside(to)
         out = (self.out_var.get() or "").strip()
-        if not in_place and not out:
+        if not in_place and not beside and not out:
             messagebox.showerror("Output", "Choose an output folder for this job.", parent=self); return
         patch = self.patch_var.get().strip() if self.patch_on_var.get() else ""
         if self.patch_on_var.get() and not (patch and Path(patch).exists()):
@@ -6336,7 +6409,8 @@ class JobDialog(EmbeddedDialog):
                "last_source": str(p),
                "last_source_dir": str(p if p.is_dir() else p.parent),
                # what Rescan reuses on new sources; no patch, a patch belongs to one game
-               "rescan_template": {"to": to, "output": out, "sign": bool(self.sign_var.get()),
+               "in_place_output": bool(self.inplace_var.get()),
+               "rescan_template": {"to": to, "output": out, "sign": bool(self.sign_var.get()), "in_place": beside,
                                    "backport_target": target,
                                    "organize": organize, "ff_level": ff_level,
                                    "after_source": after, "after_move_to": after_dir or None,
@@ -6360,9 +6434,10 @@ class JobDialog(EmbeddedDialog):
                 pass
         elif to == "ffpfsc":
             self.app.compression_level_var.set(ff_level)
-        if out:
+        if out and not beside:
             self.app.output_var.set(out)
-        self.app.auto_organize_var.set(organize)
+        if not beside:
+            self.app.auto_organize_var.set(organize)
 
         sources = (self._parent_todo() if self._kind == "parent"
                    else self._games if self._kind == "folder" else [p])
@@ -6404,6 +6479,8 @@ class JobDialog(EmbeddedDialog):
             it = ((app._ps4_route(s, ps4_out, passwords, ps4_to) if routed else None)
                   or (app._auto_item_for(s, table, build, output_path=out or None, passwords=passwords) if auto
                       else build(s, to)))
+            if beside and getattr(it, "content_kind", "") != "ps4":
+                app._place_beside(it, s)
             if auto:  # in case the unpacked content picks another output
                 it.auto_sign, it.auto_lz4 = sign_on, lz4_on
                 it.auto_lz4_profile = lz4_profile or None
@@ -11633,6 +11710,7 @@ class App:
         extra.after_move_to = getattr(tpl, "after_move_to", None)
         extra.source_root = getattr(tpl, "source_root", None)
         extra.output_path = getattr(tpl, "output_path", None)
+        extra.in_place_output = bool(getattr(tpl, "in_place_output", False))
         extra.output_compressed = extra.chain_to != "ffpfs"
         extra.compression_level = getattr(tpl, "compression_level", None)
         if getattr(tpl, "auto_organize", None) is not None:
@@ -11851,6 +11929,14 @@ class App:
             save_settings({"recent_outputs": rec})
         except Exception:
             pass
+
+    @staticmethod
+    def _place_beside(it, src) -> None:
+        """In place: the result goes into the source's folder, named from the game, no folders made"""
+        it.output_path = str(Path(src).parent)
+        it.in_place_output = True
+        it.auto_organize = True         # the name comes from the game's metadata, the folder is left out
+        it.bundle_subfolder = None
 
     def _ps4_route(self, src, output_path=None, passwords=None, to: str = "pkg"):
         """the PS4 job for src, or None when it is not PS4 (the dialog's job applies)"""
@@ -12440,6 +12526,8 @@ class App:
             return None, None
         ident = dict(ident, fw=self._job_fw(item, ident.get("fw", "")))
         folder, fname = organized_names(ident, ext, item)
+        if getattr(item, "in_place_output", False):
+            return out, fname
         return out / (getattr(item, "organize_folder", None) or folder), fname
 
     _FW_TAG = re.compile(r"\s*\[fw[\d.x]+\]$", re.I)
@@ -12495,7 +12583,7 @@ class App:
             return out
         ext = "." + to
         unread_archive = bool(getattr(item, "archive_path", None)) and not getattr(item, "path", None)
-        sub = getattr(item, "bundle_subfolder", None)
+        sub = None if getattr(item, "in_place_output", False) else getattr(item, "bundle_subfolder", None)
         if self._auto_organize_on(item) and self._game_identity(item):
             base, name = self._organized_layout(item, out, ext)
             if base is not None:
@@ -12593,8 +12681,8 @@ class App:
             it._replace_output = False
             it._keep_both = False
             it._output_checked = False
-            if self._output_policy:
-                continue
+            if self._output_policy or getattr(it, "in_place_output", False):
+                continue                          # in place: a result already there is skipped, never asked
             try:
                 target = self._predicted_output(it)
             except Exception:
@@ -12647,6 +12735,10 @@ class App:
         hit = self._existing_output(target, item)
         if hit is None:
             return "proceed"
+        if getattr(item, "in_place_output", False):
+            self.log("INFO", f"{getattr(item, 'display_name', None) or item.name}: {hit.name} is already "
+                             f"there, nothing to do.")
+            return "skip"
         rule = self._output_rule()
         choice = (getattr(self, "_output_policy", None) or (None if rule == "ask" else rule)
                   or self._ask_existing_outputs([(item, hit)]))
@@ -13606,7 +13698,7 @@ class App:
         self._cmd_uncompressed = (op == "pack") and src_pfs_family and not _comp
         out_ext = ".ffpfs" if self._cmd_uncompressed else ".ffpfsc"
         explicit_file = out.suffix.lower() in (".ffpfsc", ".ffpfs")
-        sub = getattr(item, "bundle_subfolder", None)
+        sub = None if getattr(item, "in_place_output", False) else getattr(item, "bundle_subfolder", None)
         if op == "pack" and not explicit_file:
             # auto-organize, else a bundle mirrors its folder (never INTO the source), else straight in
             base = out
@@ -15072,7 +15164,7 @@ class App:
         cleanup = tpl.get("after_source") in ("trash", "move", "delete")
         # with a clean-up chosen, known games are queued anyway so their sources get cleaned up
         known_paths, known_tids = self._known_signatures(include_history=not cleanup)
-        out_root = None if cleanup else ((tpl.get("output") or "").strip() or None)
+        out_root = None if cleanup or tpl.get("in_place") else ((tpl.get("output") or "").strip() or None)
         self.log("INFO", f"Rescan: looking for new sources in {folder}…")
         self.status_update("Scanning", f"Rescan: reading {folder}…", "Scanning Files",
                            0, 0, "00:00", " - ", " - ", side=True)
@@ -15119,6 +15211,7 @@ class App:
         after = tpl.get("after_source") if tpl.get("after_source") in _after_job_module().ACTIONS else "keep"
         after_dir = tpl.get("after_move_to") or None
         root = str(tpl.get("_rescan_root") or "") or None
+        beside = bool(tpl.get("in_place")) and to != ORGANIZE_TARGET
 
         table = auto_actions((load_settings() or {}).get("auto_actions")) if to == AUTO_TARGET else None
         passwords = self._candidate_passwords() if to == AUTO_TARGET else None
@@ -15141,6 +15234,8 @@ class App:
                 it.auto_sign = sign
             else:
                 it = build(src, to)
+            if beside and getattr(it, "content_kind", "") != "ps4":
+                self._place_beside(it, src)
             it.after_source, it.after_move_to = after, after_dir
             it.source_root = root
             return it
