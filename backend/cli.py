@@ -1635,10 +1635,31 @@ def _fpkg_param_title(d: dict) -> str:
     return param_title(d)
 
 
+def _image_builds_in_place(src: Path, args):
+    """None when the image is unpacked first, else whether it holds zstd packs"""
+    if not (src.is_file() and src.suffix.lower() in (".ffpfs", ".ffpfsc")):
+        return None
+    if getattr(args, "backport_target", None) or os.environ.get("PS5_ULTRAPACK_UNPACK_IMAGES") == "1":
+        return None
+    try:
+        listing = list_pfs_image(src)
+    except Exception:
+        return None                       # an exFAT inside: unpacked in one pass instead
+    if listing.get("errors"):
+        return None
+    return any(str(e.get("path", "")).lower().endswith("ampr_zstd.index") for e in listing.get("entries", []))
+
+
 def _resolve_fpkg_identity(build_src: Path, args) -> dict:
     pj = Path(build_src) / "sce_sys" / "param.json"
     d: dict = {}
-    if pj.is_file():
+    if Path(build_src).is_file():
+        try:
+            d = _read_param_json(Path(build_src)) or {}
+        except Exception as e:
+            print(f"[WARN] Could not read the param.json in {Path(build_src).name}: {e} - using the passed identity.",
+                  flush=True)
+    elif pj.is_file():
         try:
             loaded = json.loads(pj.read_text(encoding="utf-8-sig", errors="replace"))
             d = loaded if isinstance(loaded, dict) else {}
@@ -3504,9 +3525,18 @@ def main() -> None:
             if not src.exists():
                 print(f"[ERROR] fPKG source not found: {src}", flush=True); sys.exit(1)
 
-            # a packed image is unwrapped to scratch on the fPKG temp drive first, removed after
+            # a .ffpfs/.ffpfsc the tool reads in place; other images are unwrapped to scratch first
             staged = None
-            if src.is_file() and src.suffix.lower() in _PFS_IMAGE_SUFFIXES | {".exfat", ".ffpkg"}:
+            direct = _image_builds_in_place(src, args)
+            if direct is not None:
+                build_src = src
+                if direct:
+                    args._no_ampr_index = True
+                    print("[INFO] The game holds zstd packs, so its ampr_emu.index stays as it is: it lists "
+                          "the packed files, which a rebuild from the folder would lose.", flush=True)
+                print(f"[INFO] Building straight from {src.name}: only its small files are written out, the "
+                      f"rest is read from the image as the package takes it in.", flush=True)
+            elif src.is_file() and src.suffix.lower() in _PFS_IMAGE_SUFFIXES | {".exfat", ".ffpkg"}:
                 _phase("Extracting")
                 staged = Path(tempfile.mkdtemp(prefix="tmp", dir=str(fpkg_temp)))
                 print(f"[INFO] Unwrapping {src.name} -> {staged} before building the fPKG...", flush=True)

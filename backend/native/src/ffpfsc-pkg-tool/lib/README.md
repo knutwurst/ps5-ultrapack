@@ -38,6 +38,12 @@ The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
    `EndsWith(".dds", StringComparison.Ordinal)` of the generic `sce_sys` loop is replaced by
    `"\0"`, so localized icons and backgrounds (`icon0_NN.dds`, `pic1_NN.dds`) go into the CNT
    instead of being dropped; `icon0`/`pic0`/`pic1`/`pic2.dds` still come from their own table.
+4. New type `LibProsperoPkg.Util.SourceHooks` (added 2026-11-18) with two public static
+   delegates, `Open` and `Length`, and the methods `LengthOf(FileInfo)` and `TryOpen(string)`.
+   The `FileInfo.Length` reads in the source scan of `BuildInnerTree` and in
+   `ProsperoPs5InnerFile` go through `LengthOf`, and `ProsperoPs5InnerFile.OpenRead` asks
+   `TryOpen` first. With no delegate set, every read is the same as before. The tool sets them
+   to build a package straight from a `.ffpfs`/`.ffpfsc` without unpacking its big files.
 (A further change, `ProsperoPackageArchive.ResolveParallelism` returning 1, was applied from
 2026-10-05 to 2026-10-06 and is gone: the crash it worked around was the tool's compressed
 single-file bundle, see `../patches/README.md`.)

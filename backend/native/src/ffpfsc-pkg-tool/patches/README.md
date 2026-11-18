@@ -100,3 +100,20 @@ are already in `emitted` and are not written twice.
 - Keystone generation. Upstream keeps a present `sce_sys/keystone` and only
   generates one when missing — which is correct: the keystone is the
   save-data key, and a regenerated one makes every existing save unreadable.
+
+## Patch 6 — SourceHooks: build from an image without unpacking it
+
+A `.ffpfs`/`.ffpfsc` used to be unpacked in full before a package could be built from it,
+which needs the whole game in temp. The patcher adds a small public static class
+`LibProsperoPkg.Util.SourceHooks` with two delegates, `Open` (path → stream or null) and
+`Length` (path → size or -1). It routes the `FileInfo.Length` reads of the source scan
+(`BuildInnerTree`'s `Populate`) and of `ProsperoPs5InnerFile` through `LengthOf`, and makes
+`ProsperoPs5InnerFile.OpenRead` try `Open` before it opens the file. With no delegate set the
+library behaves exactly as before.
+
+The tool (`SourceImage.cs`) writes the image's small and special files to a stub folder
+(`sce_sys`, `sce_module`, `fakelib*`, executables, anything under 1 MiB) and leaves the big
+files as empty stand-ins whose size and bytes the hooks take from the image through the
+library's own `PfsReader`/`PFSCReader`. The package is byte-identical to one built from the
+unpacked folder (checked in `test_fpkg_pipelines.py`, `chain4.read-in-place-same-package`).
+

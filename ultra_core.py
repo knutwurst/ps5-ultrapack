@@ -510,12 +510,16 @@ def pkg_peak_factor(item) -> float:
 
 
 def image_pkg_peak_factor(item) -> float:
-    """.ffpfsc/.ffpfs to .pkg: the tool takes in the unpacked game as the package grows"""
+    """.ffpfsc/.ffpfs to .pkg: read in place, temp holds the package's image and the small files;
+    an exFAT inside is unpacked first and taken in as the package grows"""
     content = int(getattr(item, "pkg_content_size", 0) or 0)
     largest = int(getattr(item, "pkg_largest_file", 0) or 0)
     kept = int(getattr(item, "pkg_kept_bytes", 0) or 0)
     if not content or not largest:
         return PKG_UNPACK_PEAK_FACTOR
+    if not getattr(item, "image_wraps_exfat", False):
+        image = estimate_output_space_needed(content, True, int(getattr(item, "size", 0) or 0))
+        return max(0.3, (image + kept) / content + PKG_CONSUME_MARGIN)
     return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + (largest + kept) / content + PKG_CONSUME_MARGIN))
 
 
@@ -536,7 +540,12 @@ def probe_container_content(item) -> int:
         doc = _fpkg.list_inner(src)
     else:
         import cli as _cli
-        doc = _cli.list_game_files(src)      # through a wrapped exFAT too
+        try:
+            doc = _cli.list_pfs_image(src)
+            item.image_wraps_exfat = False
+        except ValueError:
+            doc = _cli.list_inner_exfat(src)     # an exFAT inside: unpacked before the build
+            item.image_wraps_exfat = True
         if doc.get("errors"):
             raise ValueError(doc["errors"][0])
     files = [e for e in doc.get("entries", []) if e.get("type") == "file"]
@@ -4158,6 +4167,7 @@ class GameItem:
     auto_lz4_profile = None
     auto_zstd = False
     auto_zstd_level = None
+    image_wraps_exfat = False  # .ffpfs/.ffpfsc source holding an exFAT, unpacked before a .pkg build
     in_place_output = False  # In place: the result goes next to its source, named from the game
     pkg_content_size = 0    # .pkg/.ffpfs/.ffpfsc source: bytes of its files, from its directory (0 = not read)
     pkg_largest_file = 0    # same sources: the largest file (the build peaks at the game plus this one)

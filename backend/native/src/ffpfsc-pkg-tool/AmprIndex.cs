@@ -177,7 +177,7 @@ internal static class AmprIndex
             var keyStr = Convert.ToHexString(key);
             if (!seen.Add(keyStr)) continue;   // case-insensitive collision: keep the first
             long mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-            rows.Add(new Row(fi.Length, mtime, indexed, key));
+            rows.Add(new Row(LibProsperoPkg.Util.SourceHooks.LengthOf(fi), mtime, indexed, key));   // a stand-in has the size of its file in the image
         }
         foreach (var d in dirs) Walk(root, d, rows, seen, output, tmp, packageView);
     }

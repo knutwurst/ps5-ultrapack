@@ -157,8 +157,13 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
         item = m.GameItem.from_chain(self._container(".ffpfsc", 4096), to="pkg")
         self.assertEqual((item.extracted_size, item.pkg_content_size, item.pkg_largest_file, item.pkg_kept_bytes),
                          (100 * GB, 100 * GB, 60 * GB, 1 * GB))
-        # the build takes the unpacked files in as the package grows: game plus largest plus kept
+        # read in place: temp holds the package's image (about the package) and the small files
+        self.assertFalse(item.image_wraps_exfat)
+        self.assertAlmostEqual(m._peak_factor_for(item), 0.75 + 0.01 + m.PKG_CONSUME_MARGIN)
+        # an exFAT inside is unpacked first and taken in as the package grows: game plus largest plus kept
+        item.image_wraps_exfat = True
         self.assertAlmostEqual(m._peak_factor_for(item), 1.0 + 0.61 + m.PKG_CONSUME_MARGIN)
+        item.image_wraps_exfat = False
         item.size = 90 * GB                                      # the .ffpfsc on disk
         reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
         self.assertEqual(reqs[TEMP], m.estimate_peak_space_needed(100 * GB, m._peak_factor_for(item), False))

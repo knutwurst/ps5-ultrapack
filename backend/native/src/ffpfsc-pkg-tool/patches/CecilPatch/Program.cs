@@ -91,7 +91,140 @@ using (var asm = AssemblyDefinition.ReadAssembly(dll, new ReaderParameters { Rea
     }
     applied++;
 
+    // patch 6: SourceHooks, so the tool can hand over game files read straight from an image;
+    // with no hook set the library reads its files exactly as before
+    int p6 = PatchSourceHooks(asm.MainModule);
+    if (p6 < 0) return 3;
+    applied++;
+
     asm.Write();
 }
 Console.WriteLine($"OK: {applied} patch(es) applied to {dll}  (backup: {orig})");
 return 0;
+
+static TypeReference FindTypeRef(ModuleDefinition module, string fullName)
+    => module.GetTypeReferences().FirstOrDefault(t => t.FullName == fullName)
+       ?? throw new InvalidOperationException($"{fullName} is not referenced by the assembly");
+
+static MethodReference FindMemberRef(ModuleDefinition module, string declaringType, string name)
+    => module.GetMemberReferences().OfType<MethodReference>()
+           .FirstOrDefault(m => m.DeclaringType.FullName == declaringType && m.Name == name && !m.HasParameters)
+       ?? throw new InvalidOperationException($"{declaringType}::{name} is not referenced by the assembly");
+
+static int PatchSourceHooks(ModuleDefinition module)
+{
+    const string Ns = "LibProsperoPkg.Util", Name = "SourceHooks";
+    var innerFile = module.GetType("LibProsperoPkg.PFS.ProsperoPs5InnerFile");
+    var builder = module.GetType("LibProsperoPkg.PKG.ProsperoPkgBuilder");
+    if (innerFile == null || builder == null) { Console.Error.WriteLine("[6] FAILED: ProsperoPs5InnerFile or ProsperoPkgBuilder not found"); return -1; }
+    if (module.GetType(Ns + "." + Name) != null) { Console.WriteLine("[6] SourceHooks already in place"); return 1; }
+
+    var ts = module.TypeSystem;
+    var fileInfo = FindTypeRef(module, "System.IO.FileInfo");
+    var stream = FindTypeRef(module, "System.IO.Stream");
+    var func2 = FindTypeRef(module, "System.Func`2");
+    var getLength = FindMemberRef(module, "System.IO.FileInfo", "get_Length");
+    var getFullName = FindMemberRef(module, "System.IO.FileSystemInfo", "get_FullName");
+
+    GenericInstanceType Func(TypeReference a, TypeReference r)
+    {
+        var g = new GenericInstanceType(func2); g.GenericArguments.Add(a); g.GenericArguments.Add(r); return g;
+    }
+    if (!func2.HasGenericParameters)
+    {
+        func2.GenericParameters.Add(new GenericParameter("T", func2));
+        func2.GenericParameters.Add(new GenericParameter("TResult", func2));
+    }
+    MethodReference Invoke(GenericInstanceType f)
+    {
+        var m = new MethodReference("Invoke", func2.GenericParameters[1], f) { HasThis = true };
+        m.Parameters.Add(new ParameterDefinition(func2.GenericParameters[0]));
+        return m;
+    }
+    var funcOpen = Func(ts.String, stream);
+    var funcLength = Func(ts.String, ts.Int64);
+
+    var hooks = new TypeDefinition(Ns, Name,
+        TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, ts.Object);
+    var openField = new FieldDefinition("Open", FieldAttributes.Public | FieldAttributes.Static, funcOpen);
+    var lengthField = new FieldDefinition("Length", FieldAttributes.Public | FieldAttributes.Static, funcLength);
+    hooks.Fields.Add(openField); hooks.Fields.Add(lengthField);
+
+    // public static long LengthOf(FileInfo f): the hook's length when it knows the path, else f.Length
+    var lengthOf = new MethodDefinition("LengthOf", MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig, ts.Int64);
+    lengthOf.Parameters.Add(new ParameterDefinition("file", ParameterAttributes.None, fileInfo));
+    lengthOf.Body.Variables.Add(new VariableDefinition(ts.Int64));
+    {
+        var il = lengthOf.Body.GetILProcessor();
+        var fallback = il.Create(OpCodes.Ldarg_0);
+        il.Append(il.Create(OpCodes.Ldsfld, lengthField));
+        il.Append(il.Create(OpCodes.Brfalse, fallback));
+        il.Append(il.Create(OpCodes.Ldsfld, lengthField));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Callvirt, getFullName));
+        il.Append(il.Create(OpCodes.Callvirt, Invoke(funcLength)));
+        il.Append(il.Create(OpCodes.Stloc_0));
+        il.Append(il.Create(OpCodes.Ldloc_0));
+        il.Append(il.Create(OpCodes.Ldc_I8, 0L));
+        il.Append(il.Create(OpCodes.Blt, fallback));
+        il.Append(il.Create(OpCodes.Ldloc_0));
+        il.Append(il.Create(OpCodes.Ret));
+        il.Append(fallback);
+        il.Append(il.Create(OpCodes.Callvirt, getLength));
+        il.Append(il.Create(OpCodes.Ret));
+    }
+    hooks.Methods.Add(lengthOf);
+
+    // public static Stream TryOpen(string path): the hook's stream, or null for a normal open
+    var tryOpen = new MethodDefinition("TryOpen", MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig, stream);
+    tryOpen.Parameters.Add(new ParameterDefinition("path", ParameterAttributes.None, ts.String));
+    {
+        var il = tryOpen.Body.GetILProcessor();
+        var none = il.Create(OpCodes.Ldnull);
+        il.Append(il.Create(OpCodes.Ldsfld, openField));
+        il.Append(il.Create(OpCodes.Brfalse, none));
+        il.Append(il.Create(OpCodes.Ldsfld, openField));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Callvirt, Invoke(funcOpen)));
+        il.Append(il.Create(OpCodes.Ret));
+        il.Append(none);
+        il.Append(il.Create(OpCodes.Ret));
+    }
+    hooks.Methods.Add(tryOpen);
+    module.Types.Add(hooks);
+
+    // a) every FileInfo.Length in the source scan and in ProsperoPs5InnerFile goes through LengthOf
+    int lengths = 0;
+    var scan = builder.Methods.Where(m => m.HasBody && m.Name.Contains("Populate")).ToList();
+    foreach (var m in scan.Concat(innerFile.Methods.Where(m => m.HasBody)))
+    {
+        foreach (var ins in m.Body.Instructions)
+        {
+            if (ins.OpCode == OpCodes.Callvirt && ins.Operand is MethodReference mr
+                && mr.DeclaringType.FullName == "System.IO.FileInfo" && mr.Name == "get_Length")
+            {
+                ins.OpCode = OpCodes.Call; ins.Operand = lengthOf; lengths++;
+            }
+        }
+    }
+    if (scan.Count == 0 || lengths < 2) { Console.Error.WriteLine($"[6] FAILED: expected FileInfo.Length in the source scan and ProsperoPs5InnerFile, found {lengths}"); return -1; }
+
+    // b) ProsperoPs5InnerFile.OpenRead asks the hook first
+    var openRead = innerFile.Methods.FirstOrDefault(m => m.Name == "OpenRead" && m.HasBody && !m.HasParameters);
+    var getSource = innerFile.Methods.FirstOrDefault(m => m.Name == "get_SourcePath");
+    if (openRead == null || getSource == null) { Console.Error.WriteLine("[6] FAILED: ProsperoPs5InnerFile.OpenRead or SourcePath not found"); return -1; }
+    {
+        var il = openRead.Body.GetILProcessor();
+        var first = openRead.Body.Instructions[0];
+        var cont = il.Create(OpCodes.Pop);
+        il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+        il.InsertBefore(first, il.Create(OpCodes.Call, getSource));
+        il.InsertBefore(first, il.Create(OpCodes.Call, tryOpen));
+        il.InsertBefore(first, il.Create(OpCodes.Dup));
+        il.InsertBefore(first, il.Create(OpCodes.Brfalse, cont));
+        il.InsertBefore(first, il.Create(OpCodes.Ret));
+        il.InsertBefore(first, cont);
+    }
+    Console.WriteLine($"[6] SourceHooks added: {lengths} FileInfo.Length read(s) and ProsperoPs5InnerFile.OpenRead go through it");
+    return 1;
+}

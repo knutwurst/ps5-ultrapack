@@ -554,23 +554,41 @@ def test_chain4_image_to_fpkg_oneclick(r: Runner):
     for d in (ff, pkgd, tmp, ext):
         if d.exists(): shutil.rmtree(d)
         d.mkdir(parents=True)
-    rc, log = r.run_cli([str(hbt), str(ff), "--pack", "--overwrite"])
+    # one file above the 1 MiB line, so the image build reads it through a stand-in
+    game = r.work / "c4_game"
+    if game.exists(): shutil.rmtree(game)
+    shutil.copytree(hbt, game)
+    (game / "data").mkdir(exist_ok=True)
+    (game / "data" / "big.bin").write_bytes(hashlib.sha256(b"seed").digest() * (3 * 32768))
+    rc, log = r.run_cli([str(game), str(ff), "--pack", "--overwrite"])
     ffpath = next(ff.glob("*.ffpfsc"), None)
     if not r.check("chain4.pack", rc == 0 and ffpath is not None, "seed .ffpfsc built", log[-300:]):
         return
-    rc, log = r.run_cli([str(ffpath), str(pkgd),
-                         "--fpkg-build", str(ffpath),
-                         "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
-                         "--title-id", "PPSA99099", "--fpkg-title", "HomebrewTest",
-                         "--fpkg-inner", "kraken", "--fpkg-kraken-backend", "builtin",
-                         "--compression-level", "5", "--temp-dir", str(tmp)])
-    r.check("chain4.image-to-fpkg.rc", rc == 0, "image unwrapped + fPKG built in one job", log[-400:])
-    r.check("chain4.unwrap-phase", "[PHASE] Extracting" in log, "GUI phase marker for the unwrap emitted",
-            "no [PHASE] Extracting marker")
-    r.check("chain4.one-pass-unwrap", "in one pass" in log and "Unwrapping nested image" not in log
-            and "staged in place" in log,
-            "the container was unpacked straight into files and the package built in that copy",
-            "\n".join(x for x in log.splitlines() if "Unpacking" in x or "Unwrapping" in x or "[stage]" in x))
+    common = ["--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
+              "--title-id", "PPSA99099", "--fpkg-title", "HomebrewTest",
+              "--fpkg-inner", "kraken", "--fpkg-kraken-backend", "builtin", "--fpkg-deterministic",
+              "--compression-level", "5", "--temp-dir", str(tmp)]
+    rc, log = r.run_cli([str(ffpath), str(pkgd), "--fpkg-build", str(ffpath), *common])
+    r.check("chain4.image-to-fpkg.rc", rc == 0, "fPKG built straight from the image in one job", log[-400:])
+    r.check("chain4.read-in-place", "Building straight from" in log and "[source]" in log
+            and "1 (0.00 GB) read from the image" in log and "in one pass" not in log,
+            "only small files were written out, the rest read from the image",
+            "\n".join(x for x in log.splitlines() if "Unpacking" in x or "[source]" in x or "straight" in x))
+    # the same package as unpacking first, byte for byte
+    pkgu = r.work / "c4_pkg_unpacked"
+    if pkgu.exists(): shutil.rmtree(pkgu)
+    env_prev = os.environ.get("PS5_ULTRAPACK_UNPACK_IMAGES")
+    os.environ["PS5_ULTRAPACK_UNPACK_IMAGES"] = "1"
+    try:
+        rcu, logu = r.run_cli([str(ffpath), str(pkgu), "--fpkg-build", str(ffpath), *common])
+    finally:
+        if env_prev is None: os.environ.pop("PS5_ULTRAPACK_UNPACK_IMAGES", None)
+        else: os.environ["PS5_ULTRAPACK_UNPACK_IMAGES"] = env_prev
+    a, b = next(pkgd.glob("*.pkg"), None), next(pkgu.glob("*.pkg"), None)
+    same = a is not None and b is not None and hashlib.sha256(a.read_bytes()).digest() == hashlib.sha256(b.read_bytes()).digest()
+    r.check("chain4.read-in-place-same-package", rcu == 0 and "in one pass" in logu and same,
+            "reading in place and unpacking first give the same package",
+            f"rc={rcu} a={a and a.stat().st_size} b={b and b.stat().st_size}\n{logu[-300:]}")
     r.check("chain4.level-passthrough", "level=5" in log, "--compression-level reached the builder (level=5)",
             "level not visible in builder banner")
     # the builder sees the resolved path (Windows: the long name, not PARALL~1)
@@ -587,7 +605,8 @@ def test_chain4_image_to_fpkg_oneclick(r: Runner):
     r.check("chain4.validate", rc == 0, "validator green", "\n".join(x for x in log.splitlines() if "[FAIL]" in x))
     rc, log = r.run_cli(["placeholder", str(ext), "--fpkg-extract", str(pkg)])
     r.check("chain4.extract-back", rc == 0 and (ext / "README.md").is_file()
-            and sha(ext / "README.md") == sha(hbt / "README.md"),
+            and sha(ext / "README.md") == sha(hbt / "README.md")
+            and (ext / "data" / "big.bin").is_file() and sha(ext / "data" / "big.bin") == sha(game / "data" / "big.bin"),
             "content survived ffpfsc → fPKG → folder byte-identical", log[-300:])
     r.check("chain4.extract-complete-marker", "[OK] Extraction complete:" in log,
             "GUI output marker for extract emitted", "missing marker")

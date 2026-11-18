@@ -1301,7 +1301,33 @@ internal static partial class Program
         }
     }
 
-        static int CmdBuild(string[] args)
+    // a .ffpfs/.ffpfsc source is read in place: only small and special files are written out
+    static int CmdBuild(string[] args)
+    {
+        if (args.Length < 3 || !SourceImage.IsImage(args[1])) return CmdBuildFolder(args);
+        string temp = Path.GetTempPath();
+        for (int i = 3; i < args.Length - 1; i++) if (args[i] == "--temp") temp = args[i + 1];
+        var stub = Path.Combine(temp, "ffpfsc-src-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        SourceImage? img = null;
+        try
+        {
+            img = new SourceImage(args[1], stub);
+            Console.Error.WriteLine($"  [source] {Path.GetFileName(args[1])} is read in place: {img.Written} file(s) written out, "
+                                    + $"{img.StandIns} ({img.StandInBytes / 1073741824.0:F2} GB) read from the image as the package takes them in");
+            var a = args.ToList();
+            a[1] = img.Root;
+            if (!a.Contains("--stage-in-place")) a.Add("--stage-in-place");
+            if (!a.Contains("--consume-source")) a.Add("--consume-source");
+            return CmdBuildFolder(a.ToArray());
+        }
+        finally
+        {
+            img?.Dispose();
+            try { if (Directory.Exists(stub)) Directory.Delete(stub, true); } catch { }
+        }
+    }
+
+    static int CmdBuildFolder(string[] args)
     {
         if (args.Length < 3) return Bad("build needs <src-dir> <out-dir>");
         bool autoFakeSign = true;         // fake-sign raw ELFs in source before build (idempotent)
@@ -1580,7 +1606,7 @@ internal static partial class Program
                 throw new InvalidDataException($"eboot.bin is {new FileInfo(ebootSrc).Length} bytes — truncated or empty; nothing was built.");
             foreach (var m in Directory.EnumerateFiles(effectiveSource, "*", SearchOption.AllDirectories)
                          .Where(f => f.EndsWith(".prx", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".sprx", StringComparison.OrdinalIgnoreCase))
-                         .Where(f => { try { return new FileInfo(f).Length == 0; } catch { return false; } }))
+                         .Where(f => { try { return LibProsperoPkg.Util.SourceHooks.LengthOf(new FileInfo(f)) == 0; } catch { return false; } }))
                 Console.Error.WriteLine($"[warn] {Path.GetRelativePath(effectiveSource, m).Replace('\\', '/')} is an empty file (truncated copy?); a game that loads it will crash");
 
             // a regenerated keystone makes every existing save look corrupt; the library keeps a present one
