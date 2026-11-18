@@ -13616,7 +13616,7 @@ class App:
             if out_dir:
                 bits.append(tr("writes to {v} ({out_dir})", v=_drive_name(out_dir), out_dir=out_dir))
             info["Drives"] = ", ".join(bits)
-        space = (self.temp_space_var.get() or "").strip()
+        space = (self._space_text(item) or "").strip()   # this job, its current drives
         if space and not space.endswith(" -"):
             info["Space"] = space.replace("  |  ", " · ")
         aj = _after_job_module()
@@ -13639,35 +13639,36 @@ class App:
     def _refresh_space_for_item(self, item=None):
         if item is None:
             item = self._shown_or_next()
+        self.temp_space_var.set(self._space_text(item))
+
+    def _space_text(self, item) -> str:
+        """the space line for this job, on the drives its plan uses right now"""
         if item is None or getattr(item, "size", 0) == 0:
-            self.temp_space_var.set("Temp Needed: - ")
-            return
+            return ("Temp Needed: - ")
         if getattr(item, "operation", "pack") == "copy":
             out_dir = self._job_output_dir(item)
             tp = self.temp_var.get().strip()
             try:
                 needs = _space_requirements(item, Path(tp) if tp else out_dir, out_dir) if out_dir else []
                 if not needs:
-                    self.temp_space_var.set("Same drive: renamed or cloned, no extra space")
+                    return ("Same drive: renamed or cloned, no extra space")
                 else:
                     ok = all(get_free_space(d) >= n for _l, d, n in needs)
-                    self.temp_space_var.set("  |  ".join(tr("{label}: ~{need}, {free} free", label=tr(label), need=format_size(n),
+                    return ("  |  ".join(tr("{label}: ~{need}, {free} free", label=tr(label), need=format_size(n),
                                                             free=format_size(get_free_space(d))) for label, d, n in needs)
                                             + "  |  " + tr("fits" if ok else "LOW, may not fit"))
             except Exception:
-                self.temp_space_var.set(tr("Needs: ~{size}", size=format_size(_build_size_of(item))))
-            return
+                return (tr("Needs: ~{size}", size=format_size(_build_size_of(item))))
         if getattr(item, "operation", "pack") == "unpack":
             try:
                 op = self.output_var.get().strip()
                 out_dir = Path(op) if op else None
                 out_free = get_free_space(out_dir) if out_dir else 0
-                self.temp_space_var.set(
+                return (
                     tr("Extract Needs: ~{size}+  |  Out Free: {free}", size=format_size(item.size), free=format_size(out_free))
                 )
             except Exception:
-                self.temp_space_var.set(tr("Extract Needs: ~{size}+", size=format_size(item.size)))
-            return
+                return (tr("Extract Needs: ~{size}+", size=format_size(item.size)))
         out_dir = self._job_output_dir(item)
         if out_dir is not None and getattr(item, "operation", "pack") in ("chain", "pack", "fpkg-build", "patch"):
             # same numbers the space gate checks at start, on the drives the router picks
@@ -13684,12 +13685,11 @@ class App:
                              "Output drive (copy on the same drive)": "Copy"}
                     # needs on the same drive share one row, labels joined by +
                     _lab = lambda label: " + ".join(dict.fromkeys(tr(short.get(x, x)) for x in label.split(" + ")))
-                    self.temp_space_var.set(
+                    return (
                         "  |  ".join(tr("{label} on {drive} ~{need}, {free} free", label=_lab(label),
                                         drive=_drive_colon(Path(str(d))), need=format_size(n),
                                         free=format_size(get_free_space(d))) for label, d, n in needs)
                         + "  |  " + tr("fits" if ok else "LOW, may not fit"))
-                    return
             except Exception:
                 pass
         try:
@@ -13697,8 +13697,7 @@ class App:
             temp_dir = Path(tp) if tp else None
             out_dir  = self._job_output_dir(item)
             if temp_dir is None:
-                self.temp_space_var.set(tr("Peak Needed: ~{size}", size=format_size(int(_build_size_of(item) * _peak_factor_for(item)))))
-                return
+                return (tr("Peak Needed: ~{size}", size=format_size(int(_build_size_of(item) * _peak_factor_for(item)))))
             same   = same_drive(temp_dir, out_dir) if out_dir else True
             size   = _build_size_of(item)
             factor = _peak_factor_for(item)
@@ -13714,11 +13713,11 @@ class App:
             # fits if the SSD holds the image (the spool goes to the output drive) or the output holds it all
             ok = (size > 0 and free >= image_need) or (out_dir is not None and out_free >= out_full)
             flag = tr("fits" if ok else "LOW, may not fit")
-            self.temp_space_var.set(tr("{label}: ~{need}  |  Temp Free: {free}  |  Out Free: {out_free}  |  {flag}",
+            return (tr("{label}: ~{need}  |  Temp Free: {free}  |  Out Free: {out_free}  |  {flag}",
                                        label=tr(need_label), need=format_size(image_need), free=format_size(free),
                                        out_free=format_size(out_free), flag=flag))
         except Exception:
-            self.temp_space_var.set(tr("Peak Needed: ~{size}", size=format_size(item.size * 2.2)))
+            return (tr("Peak Needed: ~{size}", size=format_size(item.size * 2.2)))
 
     def _update_format_label(self):
         comp = self.output_compressed_var.get()

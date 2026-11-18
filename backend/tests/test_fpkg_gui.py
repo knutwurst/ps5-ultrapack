@@ -1251,6 +1251,15 @@ try:
            f"direct={dict(_ww._weights)} exfat={'Extracting' in _we._weights}")
     else:
         ok("progress.pkg-from-image-has-no-unpack-share", False, "no .ffpfsc in the test folder")
+    # the details' space line belongs to the job shown, not to whichever job the shared line was last made for
+    _sb = m.GameItem.from_chain(HBT, to="ffpfsc", output_path=str(OUT))
+    _was_space = app.temp_space_var.get()
+    app.temp_space_var.set("Unpack and image on Elsewhere: ~9.99 GB, 1 GB free  |  LOW, may not fit")
+    _info_b = app._card_info_text(_sb).get("Space", "")
+    app.temp_space_var.set(_was_space)
+    ok("details.space-line-is-the-shown-job", bool(_info_b) and "Elsewhere" not in _info_b
+       and _info_b == app._space_text(_sb).replace("  |  ", " · "),
+       f"shown={_info_b!r}")
     # the bars the backend prints for a .pkg built in place: the Kraken bar must move after the prepared files
     _kw = m.CLIWorker(app, _xi, ["py", "cli.py", str(_ex), str(OUT), "--to", "pkg"], _pcwd, _pout, _ptmp)
     _kw.start_time = time.time()
@@ -3287,11 +3296,13 @@ try:
        f"unpack={_pdrv.startswith('unpacks on')} builds={'builds on' in _pdrv} drive={f' on {m._drive_colon(OUT)} ~' in _pspace} "
        f"fits={_pspace.endswith('fits')} untouched={not hasattr(_pa, '_build_temp')} "
        f"quiet={not any(x.startswith('Auto:') for x in _plogs)} space={_pspace[-60:]!r}")
-    _keep = [(v, v.get()) for v in (app.temp_space_var, app.saved_var, app.ratio_var, app.rating_var)]
-    app.temp_space_var.set("Temp Needed: - ")
-    for _v, _was in _keep[1:]:
+    _keep = [(v, v.get()) for v in (app.saved_var, app.ratio_var, app.rating_var)]
+    _real_space = app._space_text
+    app._space_text = lambda _it: "Temp Needed: - "        # the line a job without a size gets
+    for _v, _was in _keep:
         _v.set(_was.split(":", 1)[0] + ": - ")
     _phinfo, _plast = app._card_info_text(_pa), app.last_result_var.get()
+    app._space_text = _real_space
     for _v, _was in _keep:
         _v.set(_was)
     ok("details.placeholders-hidden", "Space" not in _phinfo and _plast.startswith("Totals"),

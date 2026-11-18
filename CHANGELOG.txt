@@ -26,6 +26,9 @@ FIXED
   - A .ffpfsc/.ffpfs to .pkg job no longer reserves a share of its bar for
     an unpack that the direct build skips; the queue showed 38 % while
     compression had just started.
+  - The job card's Space line could name another drive than its Drives
+    line: it was worked out once, before the job started and got its
+    drives. It now follows the job shown, on the drives it uses.
   - The log on the job card follows the newest line when long lines wrap
     instead of showing older ones.
   - Formats a folder scan didn't find have no tick, Auto-organize is
