@@ -1602,6 +1602,38 @@ def plan_releases(root: Path, sources, *, passwords=None, pkg_role=None, log_fn=
     return jobs, addons
 
 
+# the formats a folder scan can find, in the order the filter shows them
+SOURCE_FORMATS = ("folder", "ffpfsc", "ffpfs", "exfat", "pkg", "zip", "rar", "7z")
+SOURCE_FORMAT_LABELS = {"folder": "Folders", "ffpfsc": ".ffpfsc", "ffpfs": ".ffpfs", "exfat": ".exfat",
+                        "pkg": ".pkg", "zip": "ZIP", "rar": "RAR", "7z": "7z"}
+
+
+def source_format(p) -> str:
+    """the filter's format of a found source; a RAR set counts by its first part"""
+    p = Path(p)
+    try:
+        if p.is_dir():
+            return "folder"
+    except OSError:
+        return "folder"
+    name = p.name.lower()
+    suf = p.suffix.lower()
+    if suf in (".exfat", ".ffpkg"):
+        return "exfat"
+    if suf in (".ffpfsc", ".ffpfs", ".pkg"):
+        return suf[1:]
+    if suf == ".zip":
+        return "zip"
+    if suf == ".7z" or re.search(r"\.7z\.\d{3}$", name):
+        return "7z"
+    return "rar"
+
+
+def filter_sources(sources, formats_off) -> list:
+    off = set(formats_off or ())
+    return [s for s in sources if source_format(s) not in off] if off else list(sources)
+
+
 def find_job_sources(root: Path, max_depth: int = 6, *, progress=None, stop=None) -> list[Path]:
     """game folders, containers and archives (a RAR set once); after stop() the list is incomplete"""
     found: list[Path] = []
@@ -4514,6 +4546,10 @@ __all__ = [
     "pkg_file_stays",
     "pkg_peak_factor",
     "image_pkg_peak_factor",
+    "SOURCE_FORMATS",
+    "SOURCE_FORMAT_LABELS",
+    "source_format",
+    "filter_sources",
     "known_packed_size",
     "probe_container_content",
     "IMAGE_PEAK_FACTOR",

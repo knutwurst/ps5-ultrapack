@@ -295,6 +295,44 @@ try:
         app.queue.remove(qi)
     m.save_settings({"in_place_output": False})
     shutil.rmtree(_ipd, ignore_errors=True)
+    # format filter after a folder scan: counts per format, unticked formats don't become jobs
+    _fd = S / "fmt_src"
+    if _fd.exists(): shutil.rmtree(_fd)
+    _fd.mkdir(); shutil.copytree(HBT, _fd / "Game")
+    for _n in ("A.ffpfsc", "B.ffpfsc"):
+        (_fd / _n).write_bytes(b"\0" * 4096)
+    with zipfile.ZipFile(_fd / "addon.zip", "w") as _z:
+        _z.writestr("readme.txt", "an add-on")
+    dfm = m.JobDialog(app, init_src=str(_fd), init_to="ffpfs"); root.update()
+    pump(lambda: dfm._kind == "parent" and not dfm._reading, 60)
+    _txt = {f: dfm._fmt_cbs[f].cget("text") for f in ("folder", "ffpfsc", "zip", "rar")}
+    _shown = bool(dfm._fmt_row.winfo_manager()) and dfm._fmt_cbs["rar"].cget("state") == "disabled"
+    root.update_idletasks()
+    _fits = dfm._fmt_row.winfo_reqwidth() <= dfm._fmt_row.master.winfo_width() + 2
+    print(f"... filter row width {dfm._fmt_row.winfo_reqwidth()} of {dfm._fmt_row.master.winfo_width()}", file=sys.stderr, flush=True)
+    _n_all = len(dfm._games)
+    dfm._fmt_vars["folder"].set(False); dfm._fmt_vars["zip"].set(False); dfm._formats_changed(); root.update()
+    _only = sorted(Path(g).name for g in dfm._games)
+    _detect = dfm.detect_var.get()
+    dfm.out_var.set(str(OUT)); root.update()
+    n0 = len(app.queue); dfm._add(); settle()
+    _added = app.queue[n0:]
+    _tpl = m.load_settings().get("rescan_template", {})
+    ok("filter.formats-after-scan", _shown and _fits and _n_all == 4 and _txt["ffpfsc"].endswith("2") and _txt["folder"].endswith("1")
+       and _txt["zip"].endswith("1") and _only == ["A.ffpfsc", "B.ffpfsc"] and "2 of 4" in _detect
+       and len(_added) == 2 and _tpl.get("formats_off") == ["folder", "zip"],
+       f"texts={_txt} shown={_shown} fits={_fits} all={_n_all} only={_only} detect={_detect!r} added={len(_added)} tpl={_tpl.get('formats_off')}")
+    for _it in _added:
+        app.queue.remove(_it)
+    dfm2 = m.JobDialog(app, init_src=str(_fd), init_to="ffpfs"); root.update()
+    pump(lambda: dfm2._kind == "parent" and not dfm2._reading, 60)
+    _fresh = all(v.get() for v in dfm2._fmt_vars.values()) and len(dfm2._games) == 4
+    dfm2._fmt_vars["ffpfsc"].set(False); dfm2._formats_changed(); _less = len(dfm2._games)
+    dfm2._formats_all(); root.update()
+    ok("filter.all-supported-files", _fresh and _less == 2 and len(dfm2._games) == 4,
+       f"fresh={_fresh} less={_less} after={len(dfm2._games)}")
+    dfm2.destroy(); root.update()
+    shutil.rmtree(_fd, ignore_errors=True)
     _fz = m.GameItem.from_chain(HBT, to="folder", output_path=str(OUT), zstd=True, zstd_level=5)
     _cf = app.build_command(_fz)[0]
     _dest = next((a for a in _cf if str(a).endswith("[zstd]")), "")

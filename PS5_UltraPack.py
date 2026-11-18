@@ -4352,6 +4352,8 @@ class JobDialog(EmbeddedDialog):
                   "fastest from USB. .pkg: installable package.",
         "saveto": "Where the result lands. With auto-organize it gets its own folder there, named "
                   "from the game.",
+        "include": "After a folder scan: every format found, with how many. Untick a format and its sources "
+                   "don't become jobs. All supported files ticks everything again.",
         "inplace": "In place: each result goes into the folder its source is in, named from the game's own "
                    "metadata, and no folders are made. A result that is already there is skipped. To remove "
                    "the source once the job is Done, pick Delete under After the job.",
@@ -4478,6 +4480,9 @@ class JobDialog(EmbeddedDialog):
         self.ps4_out_var = tk.StringVar(value=self._out_default["ps4"])
         self.ps4_to_var = tk.StringVar(value="pkg")
         self._ps4_n = self._ps5_n = 0
+        self._scanned: list = []           # everything a folder scan found; _games is what the filter lets through
+        self._fmt_off: set = set()         # formats the user unticked; read by the archive check too
+        self._fmt_vars = {f: tk.BooleanVar(value=True) for f in SOURCE_FORMATS}
         _org = getattr(item, "auto_organize", None) if item else None
         self.organize_var = tk.BooleanVar(value=bool(app.auto_organize_var.get()) if _org is None else bool(_org))
         _ip = getattr(item, "in_place_output", None) if item else None
@@ -4598,7 +4603,7 @@ class JobDialog(EmbeddedDialog):
                        command=self._pick_file, border_width=1, border_color=BTN_BORDER).pack(side="left", padx=(6, 0))
         ctk.CTkButton(sinner, text="Folder…", width=88, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
                        command=self._pick_folder, border_width=1, border_color=BTN_BORDER).pack(side="left", padx=(6, 0))
-        dline = ctk.CTkFrame(srow, fg_color=PANEL); dline.pack(fill="x", padx=10, pady=(0, 8))
+        dline = self._src_detect_line = ctk.CTkFrame(srow, fg_color=PANEL); dline.pack(fill="x", padx=10, pady=(0, 8))
         ctk.CTkLabel(dline, textvariable=self.detect_var, text_color=MUTED, font=ctk.CTkFont(size=12),
                       wraplength=560, justify="left").pack(side="left")
         self._look_btn = ctk.CTkButton(dline, text="Look inside…", width=120, height=24, fg_color="transparent",
@@ -4606,6 +4611,26 @@ class JobDialog(EmbeddedDialog):
                                        command=self._look_inside)
         self._bind_help(self._HELP["source"], sinner)
         self._bind_help(self._HELP["look"], self._look_btn)
+        # after a folder scan: one tick per format found, with its count; untick to leave a format out
+        fr = self._fmt_row = ctk.CTkFrame(srow, fg_color=PANEL)
+        fr_top = ctk.CTkFrame(fr, fg_color=PANEL); fr_top.pack(fill="x")
+        fr_arc = ctk.CTkFrame(fr, fg_color=PANEL); fr_arc.pack(fill="x", pady=(4, 0))
+        ctk.CTkLabel(fr_top, text="Include:", text_color=MUTED, width=70, anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        ctk.CTkLabel(fr_arc, text="", width=70).pack(side="left")
+        self._fmt_cbs = {}
+        for f in SOURCE_FORMATS:      # images and folders on top, archives below
+            cb = ctk.CTkCheckBox(fr_arc if f in ("zip", "rar", "7z") else fr_top, text=SOURCE_FORMAT_LABELS[f],
+                                 variable=self._fmt_vars[f], width=96, checkbox_width=16, checkbox_height=16,
+                                 fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=WHITE,
+                                 font=ctk.CTkFont(size=12), command=self._formats_changed)
+            cb.pack(side="left", padx=(0, 8))
+            self._fmt_cbs[f] = cb
+        self._fmt_all_btn = ctk.CTkButton(fr_arc, text="All supported files", width=130, height=22, fg_color="transparent",
+                                          hover_color=CARD2, text_color=ACCENT, font=ctk.CTkFont(size=12),
+                                          command=self._formats_all)
+        self._fmt_all_btn.pack(side="left", padx=(8, 0))
+        self._bind_help(self._HELP["include"], fr)
 
         # options sit inside their own box, so they stay under their checkbox
         crow = self._crow = self._group("2", "Change the content", "optional · applied in this order")
@@ -5242,6 +5267,9 @@ class JobDialog(EmbeddedDialog):
             for a in archives:
                 if stop():
                     return
+                if source_format(a) in self._fmt_off:     # unticked: not a job, so no PS4 check
+                    count[0] += 1
+                    continue
                 try:
                     if ArchiveExtractor.ps4_archive_info(a, pw) is not None:
                         found.add(str(a))
@@ -5259,9 +5287,7 @@ class JobDialog(EmbeddedDialog):
                 self.after(120, poll); return
             self._reading = ""
             self._ps4_set |= box["v"]
-            self._ps4_n = len(self._ps4_set)
-            self._ps5_n = len(self._games) - self._ps4_n
-            self.detect_var.set(self._parent_text())
+            self._apply_formats()
             self._refresh()
         threading.Thread(target=work, daemon=True).start()
         self.after(120, poll)
@@ -5484,6 +5510,10 @@ class JobDialog(EmbeddedDialog):
         self._ps4_info = None
         self._ps4_n = self._ps5_n = 0
         self._ps4_set = set()
+        self._scanned, self._fmt_off = [], set()
+        for v in self._fmt_vars.values():
+            v.set(True)
+        self._fmt_row.pack_forget()
         self._ks_default = None
         self.ks_state_var.set("")
         self._ps5_rows = None
@@ -5762,18 +5792,54 @@ class JobDialog(EmbeddedDialog):
             self._kind = "folder-unknown"
             self.detect_var.set("No game folder, archive, disk image, .ffpfs, .ffpfsc or .pkg in this folder")
             return
-        self._kind, self._games = "parent", sources
+        self._kind = "parent"
+        self._scanned = list(sources)
         self._ps4_set = set(ps4)
-        self._ps4_n = len(self._ps4_set)
-        self._ps5_n = len(sources) - self._ps4_n
         self._parent_label = ("Dropped items" if bool(self._dropped) and p == self._dropped_root
                               else self._KIND_LABEL["parent"])
-        self.detect_var.set(self._parent_text())
+        self._apply_formats()
+        self._show_fmt_row()
         self._probe_parent_archives(sources, p)
 
+    def _show_fmt_row(self) -> None:
+        counts = {f: 0 for f in SOURCE_FORMATS}
+        for s in self._scanned:
+            counts[source_format(s)] = counts.get(source_format(s), 0) + 1
+        for f, cb in self._fmt_cbs.items():
+            n = counts.get(f, 0)
+            cb.configure(text=f"{tr(SOURCE_FORMAT_LABELS[f])}  {n}", state="normal" if n else "disabled")
+        if not self._fmt_row.winfo_manager():
+            self._fmt_row.pack(fill="x", padx=10, pady=(0, 8), after=self._src_detect_line)
+
+    def _apply_formats(self) -> None:
+        """_games is the scan minus the unticked formats; the PS4 counts follow it"""
+        self._fmt_off = {f for f, v in self._fmt_vars.items() if not v.get()}
+        self._games = filter_sources(self._scanned, self._fmt_off)
+        self._ps4_n = sum(1 for g in self._games if str(g) in self._ps4_set)
+        self._ps5_n = len(self._games) - self._ps4_n
+        if self._games:
+            self.detect_var.set(self._parent_text())
+        else:
+            self.detect_var.set(plural(len(self._scanned), "1 source found, none of it ticked",
+                                       "{n} sources found, none of them ticked"))
+
+    def _formats_changed(self) -> None:
+        if self._kind != "parent" or not self._scanned:
+            return
+        self._apply_formats()
+        self._refresh()
+
+    def _formats_all(self) -> None:
+        for v in self._fmt_vars.values():
+            v.set(True)
+        self._formats_changed()
+
     def _parent_text(self) -> str:
-        return tr("{parent} · {v} - one job each", parent=tr(self._parent_label),
+        text = tr("{parent} · {v} - one job each", parent=tr(self._parent_label),
                   v=self._describe_sources(self._games, self._ps4_set))
+        if len(self._games) < len(self._scanned):
+            text += " · " + tr("{n} of {total} found", n=len(self._games), total=len(self._scanned))
+        return text
 
     @staticmethod
     def _describe_sources(sources: list[Path], ps4: set | None = None) -> str:
@@ -6411,6 +6477,7 @@ class JobDialog(EmbeddedDialog):
                # what Rescan reuses on new sources; no patch, a patch belongs to one game
                "in_place_output": bool(self.inplace_var.get()),
                "rescan_template": {"to": to, "output": out, "sign": bool(self.sign_var.get()), "in_place": beside,
+                                   "formats_off": sorted(self._fmt_off) if self._kind == "parent" else [],
                                    "backport_target": target,
                                    "organize": organize, "ff_level": ff_level,
                                    "after_source": after, "after_move_to": after_dir or None,
@@ -15173,7 +15240,7 @@ class App:
 
         def work():
             try:
-                found = find_job_sources(folder)
+                found = filter_sources(find_job_sources(folder), tpl.get("formats_off") or ())
             except Exception as e:
                 self.scan_q.put(("rescan-error", str(e)))
                 return

@@ -15,6 +15,13 @@ IN PLACE
   - On a hard disk with no temp folder on another drive, the dialog warns
     that reading and writing one disk at once is slow.
 
+FORMAT FILTER
+
+  - After a folder scan, Add job shows every format it found with its
+    count (Folders, .ffpfsc, .ffpfs, .exfat, .pkg, ZIP, RAR, 7z). Untick a
+    format and its sources don't become jobs; "All supported files" ticks
+    everything again. Rescan keeps the filter.
+
 SPACE
 
   - A .ffpfs/.ffpfsc source is sized from the image's own directory when
