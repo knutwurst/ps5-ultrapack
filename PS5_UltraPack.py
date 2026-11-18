@@ -6356,6 +6356,7 @@ class JobDialog(EmbeddedDialog):
             it = self.app._ps4_item_for(p, output_path=out, info=getattr(self, "_ps4_info", None))
         it.after_source, it.after_move_to = after, after_dir or None
         it.source_root = str(p.parent if p.is_file() else p)
+        it.added_file = (getattr(self.edit_item, "added_file", False) if self.edit_item is not None else p.is_file())
         if self.edit_item is not None:
             try:
                 self.app.queue[self.app.queue.index(self.edit_item)] = it
@@ -6399,6 +6400,7 @@ class JobDialog(EmbeddedDialog):
                   or app._organize_item_for(s, output_path=out))
             it.after_source, it.after_move_to = after, after_dir or None
             it.source_root = root
+            it.added_file = (getattr(self.edit_item, "added_file", False) if self.edit_item is not None else p.is_file())
             return it
 
         if self.edit_item is None:
@@ -6584,6 +6586,7 @@ class JobDialog(EmbeddedDialog):
                 it.auto_zstd, it.auto_zstd_level = zstd_on, zstd_level
             it.after_source, it.after_move_to = after, after_dir or None
             it.source_root = root
+            it.added_file = (getattr(self.edit_item, "added_file", False) if self.edit_item is not None else p.is_file())
             return it
 
         self._remember_outputs(out)
@@ -8048,6 +8051,7 @@ class Ps5RepairView:
             it = GameItem.from_chain(s, to="folder", output_path=out)
             it.auto_organize = organize
             it.source_root = str(s.parent)
+            it.added_file = True
             return it
         self.app._add_jobs_async([p], make)
         self.app._show_view("queue")
@@ -8083,6 +8087,7 @@ class Ps5RepairView:
             it.fpkg_keystone = ks.hex().upper() if ks is not None else None
             it.auto_organize = organize
             it.source_root = str(s.parent)
+            it.added_file = True
             if param:
                 it.display_name = param_title(param) or None
             return it
@@ -8356,6 +8361,7 @@ class LookInsideView:
                 return GameItem.from_fpkg_extract(s, output_path=dest)
             it = GameItem.from_chain(s, to="folder", output_path=dest)
             it.source_root = str(s.parent)
+            it.added_file = True
             return it
         self.app._add_jobs_async([src], make)
         self.status_var.set(tr("Queued: unpack {name} into {dest}. Start runs it.", name=src.name, dest=dest))
@@ -11809,6 +11815,7 @@ class App:
         extra.source_root = getattr(tpl, "source_root", None)
         extra.output_path = getattr(tpl, "output_path", None)
         extra.in_place_output = bool(getattr(tpl, "in_place_output", False))
+        extra.added_file = bool(getattr(tpl, "added_file", False))
         extra.output_compressed = extra.chain_to != "ffpfs"
         extra.compression_level = getattr(tpl, "compression_level", None)
         if getattr(tpl, "auto_organize", None) is not None:
@@ -15993,7 +16000,9 @@ class App:
         game, patch = self._after_game_sources(item), self._after_patch_sources(item)
         keep_dirs = self._after_protected(item, dest)
         rel = None
-        if game:
+        in_place = bool(getattr(item, "in_place_output", False))
+        # in place the folder holds the output, a single added file leaves its folder alone: only the file goes
+        if game and not in_place and not getattr(item, "added_file", False):
             title = re.sub(r"\s*\[[^\]]*\]", "", str(getattr(item, "archive_title", "") or
                                                     getattr(item, "display_name", "") or "")).strip()
             if getattr(item, "bundle_release", None):
@@ -16013,7 +16022,7 @@ class App:
             targets += [s for s in self._download_extras(item) if s.parent == Path(rel).parent and s.exists()]
         item._after_info = {"release": rel, "whole": whole, "keep_dirs": keep_dirs}
         return act, targets, dest, aj.refusal(targets, output=out, dest=dest, protected=self._app_folders(),
-                                              others=others)
+                                              others=others, beside_ok=in_place)
 
     def _bundle_release(self, item, game, keep_dirs):
         """only when every game part sits directly in it and it is none of our or the job's folders"""

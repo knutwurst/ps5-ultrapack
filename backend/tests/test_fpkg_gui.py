@@ -1670,6 +1670,26 @@ try:
     _wv = _fake_worker(_outf); _wv.validate_failed = True
     ok("after.failed-checklist-stays", "checklist" in str(app._after_job_plan(_j1, _wv)[3]), "")
     ok("after.missing-output-stays", "not found" in str(app._after_job_plan(_j1, _fake_worker(_aout / "no.pkg"))[3]), "")
+    # In place: the .pkg lands next to its .ffpfsc; Delete takes the image only, never the folder
+    _ipd = S / "after_inplace" / "Game [PPSA00001] [v01.000.000]"; (_ipd / "Addon").mkdir(parents=True, exist_ok=True)
+    _ipsrc = _ipd / "Game [PPSA00001] [v01.000].ffpfsc"; _ipsrc.write_bytes(b"F" * 64)
+    _ipout = _ipd / "Game [PPSA00001] [v01.000].pkg"; _ipout.write_bytes(b"P" * 64)
+    _jip = m.GameItem.from_chain(_ipsrc, to="pkg"); _jip.after_source = "delete"; _jip.in_place_output = True
+    app.queue[:] = [_jip]
+    for _act in ("delete", "trash"):
+        _jip.after_source = _act
+        _pl = app._after_job_plan(_jip, _fake_worker(_ipout))
+        ok(f"after.in-place-{_act}-takes-the-image", _pl[1] == [_ipsrc] and _pl[3] is None, str(_pl))
+    # a single added file: Trash and Move take that file, never the game's folder around it
+    _sfd = S / "after_single" / "Game [PPSA00002]"; _sfd.mkdir(parents=True, exist_ok=True)
+    _sf = _sfd / "Game [PPSA00002] [v01.000].ffpfsc"; _sf.write_bytes(b"F" * 64)
+    for _flag, _want in ((False, [_sfd]), (True, [_sf])):
+        _jsf = m.GameItem.from_chain(_sf, to="pkg"); _jsf.after_source = "trash"; _jsf.added_file = _flag
+        _jsf.source_root = str(_sfd.parent)
+        app.queue[:] = [_jsf]
+        _pl = app._after_job_plan(_jsf, _fake_worker(_outf))
+        ok(f"after.single-file-{'file' if _flag else 'folder-scan'}", _pl[1] == _want and _pl[3] is None, str(_pl))
+    app.queue[:] = [_j1]
     _j0 = m.GameItem.from_chain(_g1, to="ffpfsc")  # after_source None, like an old saved queue
     ok("after.older-jobs-keep", app._after_job_plan(_j0, _fake_worker(_outf))[0] == "keep", "")
     _jm = m.GameItem.from_chain(_g1, to="ffpfsc"); _jm.after_source = "move"

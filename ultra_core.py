@@ -4217,6 +4217,7 @@ class GameItem:
     auto_zstd_level = None
     image_wraps_exfat = False  # .ffpfs/.ffpfsc source holding an exFAT, unpacked before a .pkg build
     in_place_output = False  # In place: the result goes next to its source, named from the game
+    added_file = False      # the user added this one file: After the job takes the file, never its folder
     pkg_content_size = 0    # .pkg/.ffpfs/.ffpfsc source: bytes of its files, from its directory (0 = not read)
     pkg_largest_file = 0    # same sources: the largest file (the build peaks at the game plus this one)
     pkg_kept_bytes = 0      # same sources: bytes the build never frees (sce_sys, files under 1 MiB)

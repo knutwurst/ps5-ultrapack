@@ -15,6 +15,12 @@ FIXED
     block), and the package declares it "standard", as other fPKG
     builders do. Checked on a console. The tool option
     --upgradable-drm keep leaves the type as it is.
+  - In place with Delete or Trash after the job kept the source: a safety
+    check refused any source sitting next to its output. Now exactly the
+    source file goes; its folder and everything else in it stay.
+  - A single file added on its own (not found by a folder scan) took its
+    whole folder along with Trash or Move when the folder was named after
+    the game. Now only that file goes and the folder stays.
 
 ────────────────────────────────────────────────────────────────────────
   v2.6.0

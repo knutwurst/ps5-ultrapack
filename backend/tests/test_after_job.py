@@ -65,6 +65,15 @@ class RefusalTests(Base):
         dl = self.file("lib/Downloads/Other.ffpfsc")
         self.assertIsNone(aj.refusal([dl], output=self.tmp / "lib" / "Other.pkg"))
 
+    def test_in_place_source_file_beside_its_output_goes(self):
+        lib = self.file("lib/Game [PPSA00001]/Game.ffpfsc")
+        out = lib.parent / "Game.pkg"
+        out.write_bytes(b"P")
+        self.assertIsNone(aj.refusal([lib], output=out, beside_ok=True))
+        # never the folder itself, never the output
+        self.assertIsNotNone(aj.refusal([lib.parent], output=out, beside_ok=True))
+        self.assertIsNotNone(aj.refusal([out], output=out, beside_ok=True))
+
     def test_same_file_as_output_stays(self):
         g = self.file("lib/Game.ffpfsc")
         self.assertIsNotNone(aj.refusal([g], output=g))

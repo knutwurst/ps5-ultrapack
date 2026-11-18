@@ -68,8 +68,9 @@ def size_of(paths: Iterable[Path]) -> int:
 
 
 def refusal(sources: list, *, output=None, dest=None, protected: Iterable = (),
-            others: Iterable = ()) -> Optional[str]:
-    """Why *sources* must stay where they are, or None when the action may run."""
+            others: Iterable = (), beside_ok: bool = False) -> Optional[str]:
+    """Why *sources* must stay where they are, or None when the action may run.
+    beside_ok: an In place job, its output was meant to sit next to the source"""
     if not sources:
         return "the job has no source on disk"
     home = _real(Path.home())
@@ -87,7 +88,7 @@ def refusal(sources: list, *, output=None, dest=None, protected: Iterable = (),
             return f"{r} holds the home folder"
         if out is not None and (_within(out, r) or _within(r, out)):
             return f"{r.name} holds the job's output" if _within(out, r) else f"{r.name} is inside the job's output"
-        if out is not None and not out.is_dir() and r.parent == out.parent:
+        if out is not None and not out.is_dir() and r.parent == out.parent and not (beside_ok and r.is_file()):
             return f"{r.name} sits in the folder the job wrote to, next to its output"
         if dst is not None and _within(dst, r):
             return f"the destination folder is inside {r.name}"
