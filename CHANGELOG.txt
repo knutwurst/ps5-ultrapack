@@ -37,7 +37,8 @@ SPACE
     package is byte for byte the same as before.
   - Packing to .ffpfsc compresses big files on threads instead of worker
     processes: the same bytes, far less memory (85 MB instead of 645 MB
-    on a 1.2 GB image) and about 13 % faster.
+    on a 1.2 GB image) and faster: 28 % on a game made of big files,
+    7 % on a sample with mostly small ones.
 
 ────────────────────────────────────────────────────────────────────────
   v2.5.1
