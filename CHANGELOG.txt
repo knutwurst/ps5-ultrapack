@@ -36,9 +36,8 @@ SPACE
     instead of 2.4 GB, with 0.2 GB instead of 1.4 GB in temp. The
     package is byte for byte the same as before.
   - Packing to .ffpfsc compresses big files on threads instead of worker
-    processes: the same bytes, far less memory (85 MB instead of 645 MB
-    on a 1.2 GB image) and faster: 28 % on a game made of big files,
-    7 % on a sample with mostly small ones.
+    processes: the same bytes, up to 70 % faster and up to 85 % less
+    memory.
 
 ────────────────────────────────────────────────────────────────────────
   v2.5.1
