@@ -18,6 +18,11 @@ LIBRARY CHECK
     length); everything else is compressed as usual. Nothing is unpacked
     first. If that route fails or its result fails validation, the job
     unpacks the package and builds the normal way.
+  - The in-place reader of a package failed on packages where the
+    library had packed tiny files into a shared block ("NAPS range ...
+    has only ... decoded bytes"), so such rebuilds fell back to the slow
+    route. A range our span reader cannot cover now goes to the
+    library's own range decoder.
   - "Rebuild broken" queues a rebuild for each broken game package. The
     new package is checked where it was built and only then replaces
     the old one under its own name (--replace-source); a package that

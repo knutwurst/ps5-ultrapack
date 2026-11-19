@@ -327,8 +327,8 @@ internal sealed class NapsBlockReader : IMemoryReader
             Buffer.BlockCopy(data, (int)(from - span.UncompressedOffset), result, (int)(from - offset), n);
             decoded += n;
         }
-        if (decoded != length)
-            throw new InvalidDataException($"NAPS range [0x{offset:x},+0x{length:x}) has only 0x{decoded:x} decoded bytes.");
+        // small files packed into a shared block (continuations) have no span of their own: the library reads those
+        if (decoded != length) return ProsperoNapsImage.DecompressRange(_pfsImage, _layout, offset, length);
         return result;
     }
 

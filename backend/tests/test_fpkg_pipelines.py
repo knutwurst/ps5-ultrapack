@@ -555,6 +555,46 @@ def test_rebuild_replaces_source_only_when_checked(r: Runner):
     shutil.rmtree(lib, ignore_errors=True)
 
 
+def test_pkg_rebuild_with_packed_small_files(r: Runner):
+    # the library packs tiny files into shared blocks (continuations): the in-place reader of the .pkg
+    # route must read those too, not fall back to unpacking, and every file must come out the same
+    import random as _random
+    src = r.work / "packed_src"; shutil.rmtree(src, ignore_errors=True)
+    shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    rnd = _random.Random(1)
+    (src / "small").mkdir()
+    for i in range(300):
+        (src / "small" / f"s{i:03d}.bin").write_bytes(bytes(rnd.getrandbits(8) for _ in range(64)) * 64)
+    (src / "big.bin").write_bytes(os.urandom(1 << 20) * 3)
+    a = r.work / "packed_a"; b = r.work / "packed_b"
+    for d in (a, b):
+        shutil.rmtree(d, ignore_errors=True); d.mkdir()
+    ids = ["--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099"]
+    rc, log = r.run_tool(["build", str(src), str(a), *ids, "--mode", "kraken", "--kraken-backend", "builtin"])
+    old = next(a.glob("*.pkg"), None)
+    if not r.check("packed.build", rc == 0 and old is not None, "built", log[-300:]):
+        return
+    rc, log = r.run_cli([str(old), str(b), "--to", "pkg", "--rebuild", "--copy-mode", "keep",
+                         "--fpkg-inner", "kraken", "--fpkg-kraken-backend", "builtin"])
+    new = next(b.glob("*.pkg"), None)
+    r.check("packed.read-in-place", rc == 0 and new is not None and "Rebuilding straight" in log
+            and "unpacking it and building the normal way" not in log, "no fallback to unpacking", log[-400:])
+    if new is None:
+        return
+    xa, xb = r.work / "packed_xa", r.work / "packed_xb"
+    for pkg, d in ((old, xa), (new, xb)):
+        shutil.rmtree(d, ignore_errors=True)
+        r.run_tool(["extract-inner", str(pkg), str(d)])
+    def tree(d):
+        return {p.relative_to(d).as_posix(): sha(p) for p in d.rglob("*")
+                if p.is_file() and not p.relative_to(d).as_posix().startswith("sce_sys/")}
+    ta, tb = tree(xa), tree(xb)
+    r.check("packed.same-contents", ta == tb and len(ta) > 300, f"{len(ta)} files, every byte the same",
+            f"{len(ta)} vs {len(tb)}; differ: {[k for k in ta if ta.get(k) != tb.get(k)][:5]}")
+    for d in (src, a, b, xa, xb):
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_planted_junk_never_reaches_an_output(r: Runner):
     # any drive, any OS: OS junk planted in the source must not show up in any result of any route
     sys.path.insert(0, str(REPO))
@@ -1588,6 +1628,7 @@ def main():
         ("title id mismatch warns",         test_title_id_mismatch_warns),
         ("sidecars never in the package",   test_sidecars_never_in_the_package),
         ("rebuild replaces only when checked", test_rebuild_replaces_source_only_when_checked),
+        ("pkg rebuild, packed small files", test_pkg_rebuild_with_packed_small_files),
         ("planted junk never in an output", test_planted_junk_never_reaches_an_output),
         ("exFAT stage builds clean",        test_exfat_stage_builds_clean),
         ("identity: param.json wins",       test_identity_from_param_json),
