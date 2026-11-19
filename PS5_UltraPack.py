@@ -8300,6 +8300,8 @@ class LibraryCheckView:
             return tr("Rebuild: {why}", why=why)
         if r["state"] == "problem" and not r.get("game"):
             return tr("Add-on, not rebuilt here: {why}", why=why)
+        if r["state"] == "problem" and r.get("update"):
+            return tr("Update package, not rebuilt here: {why}", why=why)
         return tr("Problem a rebuild cannot fix: {why}", why=why)
 
     def _rel(self, p: str) -> str:
@@ -16250,6 +16252,8 @@ class App:
         if act not in aj.ACTIONS or act == aj.KEEP:
             return aj.KEEP, [], None, None
         ps4 = getattr(item, "content_kind", "") in ("ps4", ORGANIZE_TARGET)   # library jobs (see _ps4_copy_mode)
+        if getattr(item, "replace_source", False):
+            return aj.KEEP, [], None, None          # the new package took the source's place: nothing else goes
         if getattr(item, "operation", "") in ("fake-sign", "copy", "ps4-keystone") and not ps4:
             return aj.KEEP, [], None, None          # these work on the source themselves
         if ps4 and act == aj.DELETE and not getattr(item, "origin_archive", None):

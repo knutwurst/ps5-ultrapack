@@ -1422,4 +1422,5 @@ GERMAN: dict[str, str] = {
     "Library check: 1 package queued for a rebuild.": "Bibliothek prüfen: 1 Paket zum Neubau eingereiht.",
     "Library check: {n} packages queued for a rebuild.": "Bibliothek prüfen: {n} Pakete zum Neubau eingereiht.",
     "1 package checked: {ok} fine, {bad} to rebuild, {other} with problems a rebuild cannot fix.": "1 Paket geprüft: {ok} in Ordnung, {bad} neu zu bauen, {other} mit Problemen, die ein Neubau nicht behebt.",
+    "Update package, not rebuilt here: {why}": "Update-Paket, wird hier nicht neu gebaut: {why}",
 }

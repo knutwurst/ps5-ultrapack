@@ -519,6 +519,8 @@ def test_rebuild_replaces_source_only_when_checked(r: Runner):
     if not r.check("replace.setup", rc == 0 and old is not None, "package built", log[-300:]):
         return
     named = old.with_name("My Game.pkg"); old.rename(named)     # a name of the user's own choosing stays
+    decoy = old                         # another file of the user's under the name the new package gets
+    decoy.write_bytes(b"users own file")
     args = [str(named), str(lib), "--to", "pkg", "--rebuild", "--replace-source", "--copy-mode", "keep",
             "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"]
     before = sha(named)
@@ -530,15 +532,17 @@ def test_rebuild_replaces_source_only_when_checked(r: Runner):
         proc = subprocess.run([sys.executable, "-u", str(CLI), *args], capture_output=True, text=True, timeout=300,
                               env={**os.environ, "FFPFSC_PKG_TOOL": str(wrap)})
         log = (proc.stdout or "") + (proc.stderr or "")
-        others = sorted(p.name for p in lib.glob("*.pkg") if p != named)
+        others = sorted(p.name for p in lib.glob("*.pkg") if p not in (named, decoy))
         r.check("replace.failed-check-keeps-the-old", sha(named) == before and "stays as it was" in log
-                and proc.returncode != 0, f"old untouched, new beside it: {others}", f"rc={proc.returncode}; {log[-400:]}")
+                and proc.returncode != 0 and decoy.read_bytes() == b"users own file",
+                f"old and the same-named file untouched, new beside it: {others}", f"rc={proc.returncode}; {log[-400:]}")
         for p in lib.glob("*.pkg"):
-            if p != named:
+            if p not in (named, decoy):
                 p.unlink()
     rc, log = r.run_cli(args)
-    left = sorted(p.name for p in lib.glob("*.pkg"))
-    r.check("replace.checked-then-replaced", rc == 0 and left == ["My Game.pkg"] and "replaced My Game.pkg" in log,
+    left = sorted(p.name for p in lib.glob("*.pkg") if p != decoy)
+    r.check("replace.checked-then-replaced", rc == 0 and left == ["My Game.pkg"] and "replaced My Game.pkg" in log
+            and decoy.read_bytes() == b"users own file",
             "same name, one package", f"rc={rc}; {left}; {log[-400:]}")
     rc2, vlog = r.run_tool(["validate", str(named)])
     r.check("replace.result-valid", rc2 == 0, "validate 0 failed", vlog[-300:])

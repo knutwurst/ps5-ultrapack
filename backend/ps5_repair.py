@@ -526,5 +526,7 @@ def verdict(info: dict, console_fw: str | None = None) -> dict:
     reasons = [f"{r['check']}: {r['text']}" for r in bad]
     if not bad:
         return {"state": "ok", "game": game, "reasons": [], "rows": rows}
-    fixable = game and all(r["fix"] in (FIX_REBUILD, FIX_PLAYGO, FIX_TROPHY) for r in bad)
-    return {"state": "rebuild" if fixable else "problem", "game": game, "reasons": reasons, "rows": rows}
+    update = is_update(info)              # a patch package is checked only, never rebuilt as a game
+    fixable = game and not update and all(r["fix"] in (FIX_REBUILD, FIX_PLAYGO, FIX_TROPHY) for r in bad)
+    return {"state": "rebuild" if fixable else "problem", "game": game, "update": update, "reasons": reasons,
+            "rows": rows}

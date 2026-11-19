@@ -2122,8 +2122,16 @@ def _place_built_pkg(pkg: Path, out_dir: Path, args) -> Path:
             args._replaced_checked = True
             print(f"[INFO] The new package passed every check and replaced {src.name}.", flush=True)
             return src
+        # never over anything: the failed one goes beside the source under a name nothing else has
+        stem, n = f"{src.stem} (failed check)", 1
+        dest = src.with_name(stem + ".pkg")
+        while os.path.lexists(dest):
+            n += 1
+            dest = src.with_name(f"{stem} {n}.pkg")
+        _rename_retrying(pkg, dest)
         print(f"[WARN] The new package failed {len(failed) or '?'} check(s) ({'; '.join(failed[:4])}); "
-              f"{src.name} stays as it was.", flush=True)
+              f"{src.name} stays as it was, the new one is {dest.name}.", flush=True)
+        return dest
 
     def free() -> Path:
         stem, n = dest.stem, 2
