@@ -8302,6 +8302,8 @@ class LibraryCheckView:
             return tr("Add-on, not rebuilt here: {why}", why=why)
         if r["state"] == "problem" and r.get("update"):
             return tr("Update package, not rebuilt here: {why}", why=why)
+        if r["state"] == "error":
+            return tr("Could not check it: {why}", why=why)
         return tr("Problem a rebuild cannot fix: {why}", why=why)
 
     def _rel(self, p: str) -> str:
