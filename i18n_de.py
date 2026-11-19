@@ -1425,4 +1425,5 @@ GERMAN: dict[str, str] = {
     "Update package, not rebuilt here: {why}": "Update-Paket, wird hier nicht neu gebaut: {why}",
     "Could not check it: {why}": "Konnte nicht geprüft werden: {why}",
     "{name} is there but did not pass the check ({why}); the source stays": "{name} ist schon da, hat aber die Prüfung nicht bestanden ({why}); die Quelle bleibt",
+    "Writing the final {ext} output file…": "Finale {ext}-Ausgabedatei wird geschrieben…",
 }

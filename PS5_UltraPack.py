@@ -3423,6 +3423,11 @@ class CLIWorker(threading.Thread):
         "Cleaning Up", "Complete",
     ]
 
+    def _final_write_text(self) -> str:
+        ext = ".pkg" if self._is_fpkg or self._chain_to() == "pkg" else (
+            ".exfat" if self._chain_to() == "exfat" else ".ffpfsc")
+        return tr("Writing the final {ext} output file…", ext=ext)
+
     def _set_stage(self, stage, pct, label="", eta=" - ", force=False):
         # no going back: Writing PFS image after compression would snap back to Temp PFS
         order = getattr(self, "_stage_order", self._STAGE_ORDER)
@@ -3696,7 +3701,7 @@ class CLIWorker(threading.Thread):
             if stage == "Compressing" and pct >= 100:
                 self._set_stage("Compressing", 100, label, eta)
                 # a silent final write would leave the display stuck on Compressing
-                self._set_stage("Writing Final Image", 0, "Writing final .ffpfsc output file…", " - ")
+                self._set_stage("Writing Final Image", 0, self._final_write_text(), " - ")
                 return
 
             self._set_stage(stage, pct, label, eta)
@@ -3716,10 +3721,12 @@ class CLIWorker(threading.Thread):
         if "writing pfs image to" in lower:
             # start at 0 so the write bars own the percent, max() in _set_stage would pin 5
             self._set_stage("Creating Temp PFS", 0, "Building PFS image…")
-        elif ".ffpfsc" in lower and self.stage_progress.get("Compressing", 0) > 0:
+        elif (".ffpfsc" in lower and not self._is_fpkg and self._chain_to() not in ("pkg", "exfat")
+              and self.stage_progress.get("Compressing", 0) > 0):
+            # mkpfs names its output: a .pkg or .exfat job only mentions a .ffpfsc as its source
             self._set_stage("Writing Final Image",
                             max(5, self.stage_progress.get("Writing Final Image", 0)),
-                            "Writing final .ffpfsc output file…")
+                            self._final_write_text())
         elif "successfully wrote" in lower or "pfs creation complete" in lower:
             if self.stage_progress.get("Compressing", 0) == 0:
                 self._set_stage("Creating Temp PFS", 100, line)

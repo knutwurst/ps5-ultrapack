@@ -71,6 +71,9 @@ FIXED
     Thumbs.db and the rest of the shared list; IL patch 8), so such files
     are never read and nothing gets deleted. The package check fails a
     package that holds any (inner.junk).
+  - A .pkg build showed "Writing final .ffpfsc output file" in its last
+    stage: the text was fixed, and any log line naming a .ffpfsc (the
+    source) set it. The stage now names the format the job writes.
   - The speed and time left of a .pkg build's Kraken pass counted only
     the one file the package library names per percent step. A game of
     many small files showed a fraction of its real speed and hours

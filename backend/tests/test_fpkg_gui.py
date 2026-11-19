@@ -1670,6 +1670,13 @@ try:
     _wv = _fake_worker(_outf); _wv.validate_failed = True
     ok("after.failed-checklist-stays", "checklist" in str(app._after_job_plan(_j1, _wv)[3]), "")
     ok("after.missing-output-stays", "not found" in str(app._after_job_plan(_j1, _fake_worker(_aout / "no.pkg"))[3]), "")
+    # the last stage names the format the job really writes, never .ffpfsc for a .pkg
+    _fw = m.CLIWorker.__new__(m.CLIWorker)
+    _fw.item = m.GameItem.from_chain(_g1, to="pkg"); _fw.operation = "chain"; _fw._is_fpkg = True
+    _fw2 = m.CLIWorker.__new__(m.CLIWorker)
+    _fw2.item = m.GameItem.from_chain(_g1, to="ffpfsc"); _fw2.operation = "chain"; _fw2._is_fpkg = False
+    ok("stage.final-write-names-the-format", ".pkg" in _fw._final_write_text()
+       and ".ffpfsc" in _fw2._final_write_text(), f"{_fw._final_write_text()} | {_fw2._final_write_text()}")
     # In place writes its one file: the add-ons beside the game are never copied out
     _ipb = S / "after_inplace_bundle" / "Game [PPSA00003] [v01.000.000]"; (_ipb / "Addon").mkdir(parents=True, exist_ok=True)
     (_ipb / "Addon" / "UP0000-PPSA00003_00-DLCDLCDLCDLCDLC0.pkg").write_bytes(b"D" * 64)
