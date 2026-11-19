@@ -25,6 +25,15 @@ FIXED
     The package keeps the game's own values.
   - The job report no longer opens with an error section when the only
     match was the check summary "0 failed".
+  - The Python reader reads a folder block by block: a zeroed rest of a
+    block (Sony's and LibOrbisPkg's layout) no longer ends the folder
+    early. It reads the old layout, the new one and that one alike.
+  - A .pkg built straight from an image checks that the package library
+    reads as many files in it as this app does. If not, the tool stops
+    before it builds anything and the build starts again from an
+    unpacked copy, so a misread folder can never drop files silently.
+  - The raw log of a failed job is kept in failed_logs in the app's
+    folder (the newest 30); the job's Error row names the file.
   - In place copied the add-ons from the game's folder (an Addon folder,
     for example) into it a second time, sorted and renamed. In place now
     writes its one file and nothing else: add-ons stay where they are,

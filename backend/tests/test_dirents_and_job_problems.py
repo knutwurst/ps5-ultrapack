@@ -60,6 +60,42 @@ class DirectoryBlobTest(unittest.TestCase):
             block_walk(old, BS)
 
 
+def gap_layout(ents, bs: int) -> bytes:
+    """LibOrbisPkg's PFSBuilder: a block ends with zeros once the next entry might not fit"""
+    out = bytearray()
+    for e in ents:
+        raw = e.to_bytes()
+        out += raw
+        if len(out) % bs > bs - 280:
+            out += b"\x00" * (bs - len(out) % bs)
+    return bytes(out)
+
+
+class ReaderLayoutsTest(unittest.TestCase):
+    """the Python reader takes all three layouts a directory can have"""
+    ents = [pfs.Dirent(i + 10, 2, f"asset_texture_variant_{i:05d}.bin") for i in range(5000)]
+    want = [e.name for e in ents]
+
+    def parse(self, blob):
+        parsed, errors = pfs.parse_image_dirents(blob, strict=True, block_size=BS)
+        self.assertEqual(errors, [])
+        return [d.name for d in parsed]
+
+    def test_new_layout(self):
+        self.assertEqual(self.parse(pfs.directory_blob(self.ents, BS)), self.want)
+
+    def test_old_layout(self):
+        self.assertEqual(self.parse(b"".join(e.to_bytes() for e in self.ents)), self.want)
+
+    def test_gap_layout(self):
+        blob = gap_layout(self.ents, BS)
+        self.assertEqual(block_walk(blob, BS), self.want)       # what the libraries see
+        self.assertEqual(self.parse(blob), self.want)
+        self.assertFalse(pfs.dirents_cross_blocks(blob, BS))
+        # without the block size it stops at the first gap: what the reader did before
+        self.assertLess(len(pfs.parse_image_dirents(blob)[0]), len(self.want))
+
+
 class JobProblemsTest(unittest.TestCase):
     def test_specific_error_beats_the_wrapper(self):
         lines = ["[error] EndOfStreamException: Unable to read beyond the end of the stream.",
@@ -100,6 +136,21 @@ class InPlaceSidecarTest(unittest.TestCase):
             self.assertEqual(ultra_core.strip_written_clutter(out, own_only=True), 1)
             self.assertTrue((Path(td) / "._Game [PPSA00001]").exists())
             self.assertFalse((game / "._Game.pkg").exists())
+
+
+class FailedLogTest(unittest.TestCase):
+    def test_kept_and_capped(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as td:
+            raw = Path(td) / "raw.log"; raw.write_text("[error] boom\n")
+            with mock.patch.object(ultra_core, "RAW_LOG_FILE", raw), \
+                 mock.patch.object(ultra_core, "FAILED_LOGS_DIR", Path(td) / "failed"), \
+                 mock.patch.object(ultra_core, "FAILED_LOGS_KEPT", 3):
+                paths = [ultra_core.keep_failed_log(f"Game {i}/x") for i in range(5)]
+                self.assertTrue(Path(paths[-1]).read_text().startswith("[error] boom"))
+                self.assertEqual(len(list((Path(td) / "failed").glob("*.log"))), 3)
+                self.assertNotIn("/x", Path(paths[-1]).name)
 
 
 if __name__ == "__main__":

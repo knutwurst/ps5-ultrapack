@@ -13593,8 +13593,11 @@ class App:
             status += tr("; the archive cannot be read: {archive_problem}", archive_problem=item.archive_problem)
         info["Status"] = status
         err = str(getattr(item, "error_detail", "") or "").strip()
-        if err and status.startswith("Failed"):
-            info["Error"] = err
+        if status.startswith("Failed"):
+            kept = str(getattr(item, "failed_log", "") or "")
+            lines = ([err] if err else []) + ([tr("Log: {path}", path=kept)] if kept else [])
+            if lines:
+                info["Error"] = "\n".join(lines)
         warn = str(getattr(item, "warning_detail", "") or "").strip()
         if warn:
             info["Warning"] = warn
@@ -17369,6 +17372,9 @@ class App:
             if completed_item is not None:
                 # the copy lacks files only after a failed run that took some in
                 completed_item.source_taken_in = bool(not success and self._run_took_files(self.worker))
+            if completed_item is not None and not success and not self.cancel_requested:
+                completed_item.failed_log = keep_failed_log(
+                    getattr(completed_item, "display_name", None) or completed_item.name) or ""
 
             if success:
                 self._batch_done += 1

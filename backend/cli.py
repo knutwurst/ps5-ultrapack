@@ -1664,6 +1664,7 @@ def _image_builds_in_place(src: Path, args):
         return None                       # an exFAT inside: unpacked in one pass instead
     if listing.get("errors"):
         return None
+    args._image_files = int(listing.get("file_count") or 0)
     if _image_dirs_cross_blocks(src):
         print(f"[INFO] {src.name} was packed before 2.6.2: some of its folders are stored in a way the package "
               f"builder cannot read directly, so it is unpacked first.", flush=True)
@@ -3721,6 +3722,8 @@ def main() -> None:
                                  ampr_index=not (args.fpkg_no_ampr_index or getattr(args, "_no_ampr_index", False)),
                                  inner_in_package=not getattr(args, "fpkg_image_in_temp", False),
                                  keystone=str(_ks) if _ks else None,
+                                 expect_files=(getattr(args, "_image_files", None)
+                                               if staged is None and build_src.is_file() else None),
                                  on_line=_gui_line)
             finally:
                 shutil.rmtree(build_temp, ignore_errors=True)
@@ -3729,6 +3732,13 @@ def main() -> None:
                     print(f"[INFO] Removed unwrap scratch {staged}", flush=True)
             keep_stage = False
             try:
+                if rc == 5 and staged is None and build_src.is_file():
+                    # the library read another file list than the image holds: nothing was built, unpack first
+                    print(f"[WARN] The package builder read {build_src.name} differently from this app; "
+                          f"building again from an unpacked copy.", flush=True)
+                    again = ([sys.executable, "--backend-internal", *sys.argv[1:]] if getattr(sys, "frozen", False)
+                             else [sys.executable, "-u", *sys.argv])
+                    sys.exit(subprocess.call(again, env={**os.environ, "PS5_ULTRAPACK_UNPACK_IMAGES": "1"}))
                 if rc != 0:
                     print(f"\n[ERROR] fPKG build failed (rc={rc}).", flush=True); sys.exit(1)
                 made = sorted(stage_out.glob("*.pkg"), key=lambda x: x.stat().st_mtime)

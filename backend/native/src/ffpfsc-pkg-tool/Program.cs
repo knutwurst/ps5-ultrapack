@@ -1308,12 +1308,27 @@ internal static partial class Program
     {
         if (args.Length < 3 || !SourceImage.IsImage(args[1])) return CmdBuildFolder(args);
         string temp = Path.GetTempPath();
+        long expectFiles = -1;            // the files our own reader lists in the image
+        var rest = new List<string>();
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--expect-files" && i + 1 < args.Length) { expectFiles = long.Parse(args[++i]); continue; }
+            rest.Add(args[i]);
+        }
+        args = rest.ToArray();
         for (int i = 3; i < args.Length - 1; i++) if (args[i] == "--temp") temp = args[i + 1];
         var stub = Path.Combine(temp, "ffpfsc-src-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         SourceImage? img = null;
         try
         {
             img = new SourceImage(args[1], stub);
+            if (expectFiles >= 0 && img.Listed != expectFiles)
+            {
+                // a misread folder would leave files out of the package without a word: stop before building
+                Console.Error.WriteLine($"[error] the package library reads {img.Listed} files in {Path.GetFileName(args[1])}, "
+                                        + $"the image holds {expectFiles}; nothing was built");
+                return 5;
+            }
             Console.Error.WriteLine($"  [source] {Path.GetFileName(args[1])} is read in place: {img.Written} file(s) written out, "
                                     + $"{img.StandIns} ({img.StandInBytes / 1073741824.0:F2} GB) read from the image as the package takes them in");
             var a = args.ToList();

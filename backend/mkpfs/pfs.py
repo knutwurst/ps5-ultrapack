@@ -5281,13 +5281,20 @@ def resolve_signed_inode_blocks(
     return blocks
 
 
-def parse_image_dirents(blob: bytes, strict: bool = False) -> tuple[list[ParsedDirent], list[str]]:
+def parse_image_dirents(blob: bytes, strict: bool = False,
+                        block_size: int = 0) -> tuple[list[ParsedDirent], list[str]]:
+    """block_size: a directory payload; a zeroed rest of a block then means "go on in the next
+    block" (Sony and LibOrbisPkg leave one), not the end. Entries across a block boundary (our
+    packer before 2.6.2) and a last entry that takes up the rest of its block read too."""
     dirents: list[ParsedDirent] = []
     errors: list[str] = []
     offset = 0
     while offset + 16 <= len(blob):
         inode_number, type_code, name_len, ent_size = struct.unpack_from("<Iiii", blob, offset)
         if inode_number == 0 and type_code == 0 and name_len == 0 and ent_size == 0:
+            if block_size > 0 and offset % block_size:
+                offset = (offset // block_size + 1) * block_size   # the rest of this block is padding
+                continue
             break
 
         if ent_size < 17 or (ent_size % 8) != 0:
@@ -5327,6 +5334,9 @@ def dirents_cross_blocks(blob: bytes, block_size: int) -> bool:
     while offset + 16 <= len(blob):
         ent_size = struct.unpack_from("<i", blob, offset + 12)[0]
         if ent_size <= 0:
+            if offset % block_size:              # a zeroed rest of a block: go on in the next one
+                offset = (offset // block_size + 1) * block_size
+                continue
             break
         if offset // block_size != (offset + ent_size - 1) // block_size:
             return True
@@ -5624,7 +5634,7 @@ def build_tree_from_uroot(
             return
 
         payload = read_image_inode_payload(fh, header, inode, ekpfs=ekpfs, new_crypt=new_crypt)
-        entries, parse_errors = parse_image_dirents(payload, strict=True)
+        entries, parse_errors = parse_image_dirents(payload, strict=True, block_size=header.block_size)
         dirents_by_inode[dir_inode_num] = entries
         for e in parse_errors:
             errors.append(f"inode {dir_inode_num}: {e}")

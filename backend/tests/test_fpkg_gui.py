@@ -1689,6 +1689,9 @@ try:
     _ci = app._card_info_text(_je)
     ok("card.error-row", _ci.get("Error") == _je.error_detail, str(_ci.get("Error")))
     ok("card.warning-row", _ci.get("Warning") == _je.warning_detail, str(_ci.get("Warning")))
+    _je.failed_log = "/tmp/x.log"
+    ok("card.error-row-log", app._card_info_text(_je).get("Error", "").endswith("/tmp/x.log"),
+       str(app._card_info_text(_je).get("Error")))
     _je.status = "Done"
     _ci = app._card_info_text(_je)
     ok("card.error-only-when-failed", "Error" not in _ci and _ci.get("Warning"), str(_ci))

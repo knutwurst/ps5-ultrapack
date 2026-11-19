@@ -427,6 +427,34 @@ def test_big_folder_image_to_pkg(r: Runner):
         r.check(f"bigdir.{tag}.pkg", rc == 0 and route and next(pk.glob("*.pkg"), None) is not None,
                 "unpacked first, package built" if old else "read directly, package built",
                 f"rc={rc}; " + log[-400:])
+        if not old and img is not None:
+            # the library's file list must match ours: one file off stops the tool before it builds,
+            # and the build starts again from an unpacked copy
+            wrap = r.work / "miscount_tool.py"
+            wrap.write_text("import os, sys\nargs = sys.argv[1:]\n"
+                            "if '--expect-files' in args:\n    i = args.index('--expect-files')\n"
+                            "    args[i + 1] = str(int(args[i + 1]) + 1)\n"
+                            "os.execv(%r, [%r] + args)\n" % (str(TOOL), str(TOOL)))
+            shim = r.work / "miscount_tool"
+            shim.write_text(f"#!/bin/sh\nexec {sys.executable!s} {wrap!s} \"$@\"\n"); shim.chmod(0o755)
+            pk5 = r.work / "bigdir_stop_pkg"; shutil.rmtree(pk5, ignore_errors=True); pk5.mkdir()
+            rc5, log5 = r.run_tool(["build", str(img), str(pk5), "--expect-files", "1",
+                                    "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099"])
+            r.check("bigdir.count-mismatch-stops", rc5 == 5 and "nothing was built" in log5
+                    and not any(pk5.iterdir()), "tool exit 5, nothing written", f"rc={rc5}; {log5[-300:]}")
+            shutil.rmtree(pk5, ignore_errors=True)
+            if os.name != "nt":
+                pk2 = r.work / "bigdir_miscount_pkg"; shutil.rmtree(pk2, ignore_errors=True); pk2.mkdir()
+                proc = subprocess.run([sys.executable, "-u", str(CLI), str(img), str(pk2), "--fpkg-build", str(img),
+                                       "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+                                       "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"],
+                                      capture_output=True, text=True, timeout=300,
+                                      env={**os.environ, "FFPFSC_PKG_TOOL": str(shim)})
+                log6 = (proc.stdout or "") + (proc.stderr or "")
+                r.check("bigdir.count-mismatch-unpacks", proc.returncode == 0 and "building again from an unpacked copy"
+                        in log6 and "Unwrapping" in log6 and next(pk2.glob("*.pkg"), None) is not None,
+                        "rebuilt from an unpacked copy", f"rc={proc.returncode}; {log6[-400:]}")
+                shutil.rmtree(pk2, ignore_errors=True)
         for d in (ff, pk):
             shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(src, ignore_errors=True)

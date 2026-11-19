@@ -1844,6 +1844,27 @@ def job_problems(lines) -> tuple[str, str]:
     return " ".join(error.split())[:400], " ".join("; ".join(dict.fromkeys(warns)).split())[:400]
 
 
+FAILED_LOGS_DIR = APP_DIR / "failed_logs"
+FAILED_LOGS_KEPT = 30
+
+
+def keep_failed_log(name: str) -> str:
+    """a copy of the raw log of a failed job (the raw log only ever holds the latest job); the newest 30 stay"""
+    try:
+        if not RAW_LOG_FILE.is_file():
+            return ""
+        FAILED_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        safe = re.sub(r"[^\w\[\]() .-]+", "_", str(name or "job"))[:80].strip() or "job"
+        dst = FAILED_LOGS_DIR / f"{time.strftime('%Y-%m-%d %H-%M-%S')} {safe}.log"
+        shutil.copyfile(RAW_LOG_FILE, dst)
+        logs = sorted(FAILED_LOGS_DIR.glob("*.log"), key=lambda q: q.stat().st_mtime)
+        for old in logs[:-FAILED_LOGS_KEPT]:
+            old.unlink(missing_ok=True)
+        return str(dst)
+    except OSError:
+        return ""
+
+
 def smart_error_from_log() -> str:
     if not RAW_LOG_FILE.exists():
         return ""
@@ -4262,6 +4283,7 @@ class GameItem:
     in_place_output = False  # In place: the result goes next to its source, named from the game
     error_detail = ""       # the error line a failed job ended on, shown on its card
     warning_detail = ""     # what the package check warned about, shown on the card
+    failed_log = ""         # where the raw log of the last failed run was kept
     added_file = False      # the user added this one file: After the job takes the file, never its folder
     pkg_content_size = 0    # .pkg/.ffpfs/.ffpfsc source: bytes of its files, from its directory (0 = not read)
     pkg_largest_file = 0    # same sources: the largest file (the build peaks at the game plus this one)
@@ -4663,6 +4685,8 @@ __all__ = [
     "_ERROR_PATTERNS",
     "smart_error_from_log",
     "job_problems",
+    "keep_failed_log",
+    "FAILED_LOGS_DIR",
     "image_unpacks_first",
     "is_problem_line",
     "get_backend_python_command",

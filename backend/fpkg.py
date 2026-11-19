@@ -231,6 +231,7 @@ def build(src_dir: Path, out_dir: Path,
           parallelism: int = 0,
           keystone: Optional[str] = None,
           inner_in_package: bool = True,
+          expect_files: Optional[int] = None,
           on_line=None) -> int:
     """keystone: a 96-byte file that goes in as sce_sys/keystone instead of the source's;
     inner_in_package False builds the package's image in temp_dir and writes the package afterwards"""
@@ -252,6 +253,8 @@ def build(src_dir: Path, out_dir: Path,
         argv += ["--deterministic"]
     if temp_dir:
         argv += ["--temp", str(temp_dir)]
+    if expect_files is not None:       # an image read in place: the tool checks its file list against ours
+        argv += ["--expect-files", str(int(expect_files))]
     if level is not None:
         argv += ["--level", str(int(level))]
     if not retail_normalize:

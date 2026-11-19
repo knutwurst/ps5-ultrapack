@@ -609,6 +609,7 @@ GERMAN: dict[str, str] = {
     "→  no output folder set": "→  kein Ausgabeordner gesetzt",
     "Status": "Status",
     "Warning": "Warnung",
+    "Log: {path}": "Log: {path}",
     "Source": "Quelle",
     "Changes": "Änderungen",
     "Compression": "Kompression",

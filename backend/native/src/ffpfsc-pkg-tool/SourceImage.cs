@@ -27,6 +27,7 @@ internal sealed class SourceImage : IDisposable
     public int Written { get; private set; }
     public int StandIns => _standIns.Count;
     public long StandInBytes { get; private set; }
+    public long Listed { get; private set; }     // every file the library reads in the image
 
     public static bool IsImage(string path)
         => File.Exists(path) && (path.EndsWith(".ffpfsc", StringComparison.OrdinalIgnoreCase)
@@ -39,6 +40,7 @@ internal sealed class SourceImage : IDisposable
         using (var open = OpenInner(_image))
         {
             var files = open.Inner.GetAllFiles().ToList();
+            Listed = files.Count;
             _rootInImage = GameRoot(files.Select(f => Rel(f.FullName)).ToList());
             Directory.CreateDirectory(Root);
             foreach (var f in files.OrderBy(f => f.FullName, StringComparer.Ordinal))
