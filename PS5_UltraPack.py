@@ -8123,6 +8123,244 @@ class Ps5RepairView:
         app._show_view("queue")
 
 
+class LibraryCheckView:
+    """Checks every .pkg below a folder in place; defects become rebuild jobs that replace them once checked."""
+    MARK = {"ok": "✓", "rebuild": "✗", "problem": "!", "error": "!", "wait": "·"}
+
+    def __init__(self, parent, app):
+        self.app = app
+        kit = app.kit
+        self._q = queue.Queue()
+        self._busy = False
+        self._stop = threading.Event()
+        self._results: list[dict] = []        # {path, state, game, reasons, rows}
+        v = self.frame = kit.frame(parent)
+        v.grid_columnconfigure(0, weight=1)
+        v.grid_rowconfigure(4, weight=1)
+        head, _btns = app._column_header(v, "Library check", subtitle="Checks every PS5 package in a folder and "
+                                         "rebuilds the broken ones. A rebuilt package replaces the old one only "
+                                         "after it passed every check.")
+        head.grid(row=0, column=0, sticky="ew", padx=(18, 14), pady=(18, 12))
+        kit.rule(v).grid(row=1, column=0, sticky="ew")
+        row = ctk.CTkFrame(v, fg_color="transparent")
+        row.grid(row=2, column=0, sticky="ew", padx=18, pady=(12, 4))
+        self.root_var = tk.StringVar(value=str(load_settings().get("library_check_root") or app.output_var.get() or ""))
+        self._root_entry = ctk.CTkEntry(row, textvariable=self.root_var, fg_color=CARD2, text_color=WHITE)
+        self._root_entry.pack(side="left", fill="x", expand=True)
+        self._root_entry.bind("<Return>", lambda _e: (self.scan(), "break")[1])
+        ctk.CTkButton(row, text="Choose…", width=90, fg_color=BTN, hover_color=BTN_HOVER, text_color=WHITE,
+                      border_width=1, border_color=BTN_BORDER, command=self._pick).pack(side="left", padx=(6, 0))
+        self.scan_btn = ctk.CTkButton(row, text="Check", width=90, fg_color=BTN, hover_color=BTN_HOVER,
+                                      text_color=WHITE, border_width=1, border_color=BTN_BORDER, command=self._scan_or_stop)
+        self.scan_btn.pack(side="left", padx=(6, 0))
+        self.status_var = TextVar(value="Pick a folder and press Check. Packages are only read.")
+        ctk.CTkLabel(v, textvariable=self.status_var, text_color=MUTED, anchor="w", justify="left",
+                     wraplength=900).grid(row=3, column=0, sticky="ew", padx=18, pady=(2, 6))
+        _pal = style_tree(v, "Lib.Treeview", self.app.kit)
+        tframe = ctk.CTkFrame(v, fg_color=PANEL, corner_radius=8)
+        tframe.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 6))
+        self.tree = ttk.Treeview(tframe, columns=("pkg", "result"), style="Lib.Treeview", selectmode="browse")
+        for col, text, w in (("#0", "", 34), ("pkg", "Package", 330), ("result", "Result", 560)):
+            self.tree.heading(col, text=tr(text), anchor="w")
+            self.tree.column(col, width=round(w * ui_kit.SCALE), minwidth=round((30 if col == "#0" else 80) * ui_kit.SCALE),
+                             stretch=col != "#0", anchor="w")
+
+        def _tags(pal):
+            for st, key in (("rebuild", "danger"), ("problem", "warning"), ("error", "warning"), ("ok", "muted"),
+                            ("wait", "muted")):
+                self.tree.tag_configure(st, foreground=pal[key])
+        _tags(_pal)
+        watch_tree_theme(self.tree, "Lib.Treeview", self.app.kit, _tags)
+        vsb = ThinScrollbar(tframe, self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
+        vsb.pack(side="right", fill="y", pady=6)
+        fit_columns(self.tree)
+        bottom = ctk.CTkFrame(v, fg_color="transparent")
+        bottom.grid(row=5, column=0, sticky="ew", padx=18, pady=(0, 14))
+        self.only_bad_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(bottom, text="Show only packages with problems", variable=self.only_bad_var, fg_color=ACCENT,
+                        hover_color=ACCENT_HOVER, text_color=MUTED, checkbox_width=16, checkbox_height=16,
+                        command=self._render).pack(side="left")
+        self.rebuild_btn = ctk.CTkButton(bottom, text="Rebuild broken", width=160, fg_color=ACCENT,
+                                         hover_color=ACCENT_HOVER, text_color=ON_ACCENT, command=self.rebuild,
+                                         state="disabled")
+        self.rebuild_btn.pack(side="right")
+        self._refresh_buttons()
+
+    def on_show(self):
+        if not self.root_var.get().strip():
+            self.root_var.set(str(self.app.output_var.get() or ""))
+        self._refresh_buttons()
+
+    def _pick(self):
+        d = filedialog.askdirectory(title="Library check - the folder with your packages", parent=self.app.root,
+                                    initialdir=self.root_var.get() or str(self.app.output_var.get() or Path.home()))
+        if d:
+            self.root_var.set(d)
+            self.scan()
+
+    def _broken(self) -> list[dict]:
+        return [r for r in self._results if r["state"] == "rebuild"]
+
+    def _refresh_buttons(self):
+        n = len(self._broken())
+        self.scan_btn.configure(text=tr("Stop") if self._busy else tr("Check"))
+        self.rebuild_btn.configure(text=tr("Rebuild broken ({n})", n=n) if n else tr("Rebuild broken"),
+                                   state="normal" if n and not self._busy else "disabled")
+
+    def _scan_or_stop(self):
+        if self._busy:
+            self._stop.set()
+            self.status_var.set("Stopping after this package…")
+        else:
+            self.scan()
+
+    def scan(self):
+        root = Path((self.root_var.get() or "").strip())
+        if self._busy or not root.is_dir():
+            if not root.is_dir():
+                self.status_var.set("This folder does not exist.")
+            return
+        save_settings({"library_check_root": str(root)})
+        self._busy = True
+        self._stop.clear()
+        self._results = []
+        self._render()
+        self._refresh_buttons()
+        self.status_var.set("Looking for packages…")
+        fw = _ps5_console_fw()
+        scratch = None                            # examine() writes only a few small files
+
+        def work():
+            m = _ps5_repair_module()
+            try:
+                pkgs = m.library_packages(root)
+            except Exception as e:
+                self._q.put(("done", str(e)))
+                return
+            self._q.put(("total", len(pkgs)))
+            for p in pkgs:
+                if self._stop.is_set():
+                    break
+                try:
+                    info = m.examine(p, scratch=scratch)
+                    res = m.verdict(info, fw)
+                except Exception as e:
+                    res = {"state": "error", "game": False, "reasons": [str(e)], "rows": []}
+                res["path"] = str(p)
+                self._q.put(("one", res))
+            self._q.put(("done", ""))
+        threading.Thread(target=work, daemon=True).start()
+        self.frame.after(100, self._poll)
+
+    def _poll(self):
+        done = False
+        try:
+            while True:
+                kind, val = self._q.get_nowait()
+                if kind == "total":
+                    self._total = val
+                elif kind == "one":
+                    self._results.append(val)
+                    self._insert(val)
+                elif kind == "done":
+                    done = True
+                    if val:
+                        self.app.log("ERROR", tr("Library check: {e}", e=val))
+        except queue.Empty:
+            pass
+        self.status_var.set(self._status_text(done))
+        if done:
+            self._busy = False
+            self._write_report()
+            self._refresh_buttons()
+        else:
+            self.frame.after(200, self._poll)
+
+    def _status_text(self, done: bool) -> str:
+        n = len(self._results)
+        total = getattr(self, "_total", 0)
+        bad = len(self._broken())
+        other = sum(1 for r in self._results if r["state"] in ("problem", "error"))
+        if not done:
+            return tr("Checked {n} of {total} packages…", n=n, total=total)
+        if not n:
+            return tr("No PS5 packages found in this folder.")
+        text = plural(n, "1 package checked: {ok} fine, {bad} to rebuild, {other} with problems a rebuild cannot fix.",
+                      "{n} packages checked: {ok} fine, {bad} to rebuild, {other} with problems a rebuild cannot fix.",
+                      ok=n - bad - other, bad=bad, other=other)
+        return text + " " + tr("Report: {path}", path=str(self._report_path()))
+
+    def _label(self, r: dict) -> str:
+        if r["state"] == "ok":
+            return tr("Fine")
+        why = "; ".join(r["reasons"][:3]) + (" …" if len(r["reasons"]) > 3 else "")
+        if r["state"] == "rebuild":
+            return tr("Rebuild: {why}", why=why)
+        if r["state"] == "problem" and not r.get("game"):
+            return tr("Add-on, not rebuilt here: {why}", why=why)
+        return tr("Problem a rebuild cannot fix: {why}", why=why)
+
+    def _rel(self, p: str) -> str:
+        root = (self.root_var.get() or "").strip().rstrip("/\\")
+        return p[len(root):].lstrip("/\\") if root and p.startswith(root) else p
+
+    def _insert(self, r: dict):
+        if self.only_bad_var.get() and r["state"] == "ok":
+            return
+        self.tree.insert("", "end", text=self.MARK.get(r["state"], "·"), tags=(r["state"],),
+                         values=(self._rel(r["path"]), self._label(r)))
+
+    def _render(self):
+        self.tree.delete(*self.tree.get_children())
+        for r in self._results:
+            self._insert(r)
+
+    def _report_path(self) -> Path:
+        return Path(APP_DIR) / "library_check.txt"
+
+    def _write_report(self):
+        lines = [f"{APP_NAME} library check, {time.strftime('%Y-%m-%d %H:%M')}",
+                 f"Folder: {self.root_var.get().strip()}", ""]
+        for r in self._results:
+            lines.append(f"[{r['state'].upper():7}] {r['path']}")
+            lines += [f"          {x}" for x in r["reasons"]]
+        try:
+            self._report_path().write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    def rebuild(self):
+        broken = self._broken()
+        if not broken or self._busy:
+            return
+        app = self.app
+        organize = False
+        level = app._pkg_level_default()
+
+        def make(s):                        # runs on the add worker: no Tk here
+            r = next((x for x in broken if x["path"] == str(s)), {"rows": []})
+            fixes = {row["fix"] for row in r["rows"] if row["level"] == "fail"}
+            params = {"content_id": "", "title_id": "", "title": "", "version": "01.000.000", "inner": "kraken",
+                      "backend": "builtin", "level": level, "dll": "", "retail_normalize": True,
+                      "hdr_flag": "auto", "regen_playgo": "playgo" in fixes, "fake_sign": True,
+                      "backport_target": None, "backport_libs": ""}
+            it = GameItem.from_chain(s, to="pkg", output_path=str(Path(s).parent))
+            app._apply_fpkg_params(it, params)
+            it.chain_rebuild = it.ps5_repair = True
+            it.replace_source = True
+            it.ps5_trophies = "trophy" in fixes
+            it.auto_organize = organize
+            it.source_root = str(Path(s).parent)
+            it.added_file = True
+            return it
+        app._add_jobs_async([Path(r["path"]) for r in broken], make)
+        app.log("INFO", plural(len(broken), "Library check: 1 package queued for a rebuild.",
+                               "Library check: {n} packages queued for a rebuild."))
+        app._show_view("queue")
+
+
 class LookInsideView:
     def __init__(self, parent, app):
         self.app = app
@@ -8858,6 +9096,8 @@ class App:
                                     "Keystone, version and updates of a PS4 game package")
         self._nav["ps5repair"] = nav(side, "PS5 PKG Tools", "package", lambda: self._show_view("ps5repair"),
                                      "Check a PS5 package and build a fixed copy")
+        self._nav["library"] = nav(side, "Library check", "check-circle", lambda: self._show_view("library"),
+                                   "Check every PS5 package in a folder and rebuild the broken ones")
         nav(side, "Clean temp", "broom", self.clear_temp_files, "Delete leftovers in the temp folder")
         bottom = kit.frame(side, bg="sidebar")
         bottom.pack(side="bottom", fill="x", pady=(0, 10))
@@ -8887,6 +9127,11 @@ class App:
         if name == "ps5repair" and "ps5repair" not in self._views:
             self._ps5_view = Ps5RepairView(self._views_parent, self)
             self._views["ps5repair"] = self._ps5_view.frame
+        if name == "library" and "library" not in self._views:
+            self._library_view = LibraryCheckView(self._views_parent, self)
+            self._views["library"] = self._library_view.frame
+        if name == "library":
+            self._library_view.on_show()
         if name == "organize":
             self._organize_view.on_show()
         if name == "keystone":
@@ -9721,6 +9966,7 @@ class App:
         fm.add_command(label="Organize…", command=lambda: self._show_view("organize"))
         fm.add_command(label="PS4 PKG Tools…", command=lambda: self._show_view("keystone"))
         fm.add_command(label="PS5 PKG Tools…", command=lambda: self._show_view("ps5repair"))
+        fm.add_command(label="Library Check…", command=lambda: self._show_view("library"))
         fm.add_separator()
         fm.add_command(label="Start Queue", accelerator=ACCEL["start"], command=guard(self.start))
         fm.add_command(label="Pause After This Job", command=self.toggle_pause)
@@ -12779,8 +13025,10 @@ class App:
         return False
 
     def _existing_output(self, target: Path, item=None) -> Path | None:
-        """a PS5 PKG Tools rebuild next to its own source is no conflict"""
+        """a PS5 PKG Tools rebuild next to its own source is no conflict, nor a library check's replacement"""
         try:
+            if item is not None and getattr(item, "replace_source", False):
+                return None                  # takes its source's place itself, once checked
             if item is not None and getattr(item, "ps5_repair", False) and self._is_own_source(item, target):
                 return None
             if target.exists():
@@ -13956,6 +14204,8 @@ class App:
                 cmd.append("--stage-in-place")      # our own unpacked copy: taken in as it goes
             if getattr(item, "chain_rebuild", False) and not _resuming:
                 cmd.append("--rebuild")
+            if getattr(item, "replace_source", False) and not _resuming:
+                cmd.append("--replace-source")
             if getattr(item, "ps5_standalone", False) and not _resuming:
                 cmd.append("--ps5-standalone")
             if getattr(item, "ps5_trophies", False) and not _resuming:

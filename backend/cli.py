@@ -2077,9 +2077,25 @@ def _drop_scratch_holder(holder: Path) -> None:
 
 
 def _place_built_pkg(pkg: Path, out_dir: Path, args) -> Path:
-    """replaces an older package of that name, never the job's own source (that gets a (2))"""
+    """replaces an older package of that name, never the job's own source (that gets a (2));
+    --replace-source: the source itself, once the new one passed validate where it was built"""
     dest = out_dir / pkg.name
     sources = [s for s in (getattr(args, "_chain_src", None), getattr(args, "fpkg_build", None)) if s]
+    src = Path(getattr(args, "_chain_src", "") or "")
+    if getattr(args, "replace_source", False) and src.suffix.lower() == ".pkg" and src.is_file():
+        import fpkg as _fpkg
+        failed: list[str] = []
+        print(f"[INFO] Checking the new package before it replaces {src.name}...", flush=True)
+        rc = _fpkg.validate(pkg, temp_dir=str(pkg.parent),
+                            on_line=lambda l: (failed.append(" ".join(l.split("[FAIL]", 1)[1].split()))
+                                               if "[FAIL]" in l else None, print(l, flush=True)))
+        if rc == 0:
+            _rename_retrying(pkg, src, replace=True)
+            args._replaced_checked = True
+            print(f"[INFO] The new package passed every check and replaced {src.name}.", flush=True)
+            return src
+        print(f"[WARN] The new package failed {len(failed) or '?'} check(s) ({'; '.join(failed[:4])}); "
+              f"{src.name} stays as it was.", flush=True)
 
     def free() -> Path:
         stem, n = dest.stem, 2
@@ -3077,6 +3093,9 @@ def main() -> None:
     parser.add_argument("--rebuild", dest="chain_rebuild", action="store_true",
                         help="CHAIN: build the output again even when the source already has that format and "
                              "nothing changes in it (repairs a package: images, licence, PlayGo, keystone).")
+    parser.add_argument("--replace-source", dest="replace_source", action="store_true",
+                        help="CHAIN .pkg rebuild: the new package takes the source's place under its name, but only "
+                             "after it passed every check in the scratch folder; a failed one never touches it.")
     parser.add_argument("--ps5-standalone", dest="ps5_standalone", action="store_true",
                         help="CHAIN: a standalone game: clear param.json's update URL (versionFileUri), the patch "
                              "markers (originContentVersion, targetContentVersion) and addcont.serviceIdForSharing. "
@@ -3777,7 +3796,9 @@ def main() -> None:
                     failed_checks.append(" ".join(l.split("[FAIL]", 1)[1].split()))
                 _gui_line(l)
             try:
-                if built:
+                if built and getattr(args, "_replaced_checked", False):
+                    pass                    # checked before it replaced the source
+                elif built:
                     print(f"\n[INFO] Auto-validating: {built[-1].name}", flush=True)
                     _fpkg_progress._set_phase("Verifying Output")
                     validate_rc = _fpkg.validate(built[-1], temp_dir=str(fpkg_temp), on_line=_validate_line)

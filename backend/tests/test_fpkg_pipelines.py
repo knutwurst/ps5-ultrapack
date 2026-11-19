@@ -507,6 +507,44 @@ def _junk_in(names):
     return [n for n in names if any(_uc.is_fs_junk_name(part) for part in n.split("/"))]
 
 
+def test_rebuild_replaces_source_only_when_checked(r: Runner):
+    # the library scan rebuilds a package in place: the new one takes the old one's name only after
+    # validate passed; a failed check leaves the old package byte for byte as it was
+    src = fetch_hbt(r.work / "hbt")
+    lib = r.work / "replace_lib"; shutil.rmtree(lib, ignore_errors=True); lib.mkdir()
+    rc, log = r.run_cli([str(src), str(lib), "--fpkg-build", str(src), "--content-id",
+                         "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+                         "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+    old = next(lib.glob("*.pkg"), None)
+    if not r.check("replace.setup", rc == 0 and old is not None, "package built", log[-300:]):
+        return
+    named = old.with_name("My Game.pkg"); old.rename(named)     # a name of the user's own choosing stays
+    args = [str(named), str(lib), "--to", "pkg", "--rebuild", "--replace-source", "--copy-mode", "keep",
+            "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"]
+    before = sha(named)
+    if os.name != "nt":
+        wrap = r.work / "failing_validate.sh"
+        wrap.write_text(f'#!/bin/sh\nif [ "$1" = validate ]; then echo "  [FAIL]  inner.junk  forced"; exit 1; fi\n'
+                        f'exec "{TOOL}" "$@"\n')
+        wrap.chmod(0o755)
+        proc = subprocess.run([sys.executable, "-u", str(CLI), *args], capture_output=True, text=True, timeout=300,
+                              env={**os.environ, "FFPFSC_PKG_TOOL": str(wrap)})
+        log = (proc.stdout or "") + (proc.stderr or "")
+        others = sorted(p.name for p in lib.glob("*.pkg") if p != named)
+        r.check("replace.failed-check-keeps-the-old", sha(named) == before and "stays as it was" in log
+                and proc.returncode != 0, f"old untouched, new beside it: {others}", f"rc={proc.returncode}; {log[-400:]}")
+        for p in lib.glob("*.pkg"):
+            if p != named:
+                p.unlink()
+    rc, log = r.run_cli(args)
+    left = sorted(p.name for p in lib.glob("*.pkg"))
+    r.check("replace.checked-then-replaced", rc == 0 and left == ["My Game.pkg"] and "replaced My Game.pkg" in log,
+            "same name, one package", f"rc={rc}; {left}; {log[-400:]}")
+    rc2, vlog = r.run_tool(["validate", str(named)])
+    r.check("replace.result-valid", rc2 == 0, "validate 0 failed", vlog[-300:])
+    shutil.rmtree(lib, ignore_errors=True)
+
+
 def test_planted_junk_never_reaches_an_output(r: Runner):
     # any drive, any OS: OS junk planted in the source must not show up in any result of any route
     sys.path.insert(0, str(REPO))
@@ -1477,6 +1515,7 @@ def main():
         ("big folder: image to .pkg",       test_big_folder_image_to_pkg),
         ("title id mismatch warns",         test_title_id_mismatch_warns),
         ("sidecars never in the package",   test_sidecars_never_in_the_package),
+        ("rebuild replaces only when checked", test_rebuild_replaces_source_only_when_checked),
         ("planted junk never in an output", test_planted_junk_never_reaches_an_output),
         ("exFAT stage builds clean",        test_exfat_stage_builds_clean),
         ("identity: param.json wins",       test_identity_from_param_json),

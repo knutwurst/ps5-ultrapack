@@ -2993,6 +2993,30 @@ try:
         shutil.rmtree(_kd.parent, ignore_errors=True)
         for _f in (_kb0, _ku0):
             _f.unlink(missing_ok=True)
+    # Library check: a folder scan reads every package; broken ones become jobs that replace them once checked
+    _lp = next((S / "c1_pkg").glob("*.pkg"), None)
+    if _lp is not None:
+        _ld = S / "lib_check" / "Game [PPSA99099]"; shutil.rmtree(_ld.parent, ignore_errors=True); _ld.mkdir(parents=True)
+        shutil.copyfile(_lp, _ld / _lp.name); (_ld / ("._" + _lp.name)).write_bytes(b"x" * 64)
+        app._show_view("library"); root.update()
+        _lv = app._library_view
+        _lv.root_var.set(str(_ld.parent)); _lv.scan()
+        pump(lambda: not _lv._busy, timeout=120.0); root.update()
+        ok("library.scan-reads-packages", [Path(r["path"]).name for r in _lv._results] == [_lp.name]
+           and _lv._results[0]["state"] == "ok" and "1 packages checked" not in _lv.status_var.get(),
+           f"{[(Path(r['path']).name, r['state'], r['reasons']) for r in _lv._results]} {_lv.status_var.get()}")
+        _lv._results[0]["state"] = "rebuild"; _lv._results[0]["reasons"] = ["inner.junk: 3 OS junk file(s)"]
+        _lv._results[0]["rows"] = [{"check": "inner.junk", "level": "fail", "fix": "rebuild", "text": "x"}]
+        _lv._render(); _lv._refresh_buttons()
+        _n0 = len(app.queue); _lv.rebuild(); settle()
+        _li = app.queue[_n0] if len(app.queue) > _n0 else None
+        _lcmd = app.build_command(_li)[0] if _li is not None else []
+        ok("library.rebuild-job", _li is not None and _li.replace_source and "--replace-source" in _lcmd
+           and "--rebuild" in _lcmd and Path(_li.output_path) == _ld and app._view == "queue",
+           f"{_li and (_li.replace_source, _li.output_path)} {_lcmd[-12:]}")
+        if _li is not None:
+            app.queue.remove(_li)
+        shutil.rmtree(_ld.parent, ignore_errors=True)
     # the test package was built without a keystone, so it has the default one
     _p5 = next((S / "c1_pkg").glob("*.pkg"), None)
     if _p5 is not None:

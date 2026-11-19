@@ -6,6 +6,17 @@
   v2.6.2
 ────────────────────────────────────────────────────────────────────────
 
+LIBRARY CHECK
+
+  - New tool "Library check": checks every PS5 package below a folder in
+    place (the full package check, OS junk included) and lists each one
+    as fine, to rebuild, or with a problem a rebuild cannot fix. The
+    report is saved as library_check.txt in the app's folder.
+  - "Rebuild broken" queues a rebuild for each broken game package. The
+    new package is checked where it was built and only then replaces
+    the old one under its own name (--replace-source); a package that
+    fails a check never touches the old one.
+
 FIXED
 
   - The packer wrote the entries of a folder bigger than one 64 KiB block

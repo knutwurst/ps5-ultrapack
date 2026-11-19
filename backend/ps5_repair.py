@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import struct
 import tempfile
@@ -144,6 +145,8 @@ def fix_for(check: str, level: str, message: str) -> str | None:
     if check == "magic" and "CNT" in message:
         return FIX_REBUILD
     if check == "eboot.magic" and "raw ELF" in message:
+        return FIX_REBUILD
+    if check == "inner.junk":              # the rebuild never reads OS junk (library patch 8)
         return FIX_REBUILD
     return None
 
@@ -493,3 +496,31 @@ def summary(rows: list[dict]) -> dict:
     out["fixes"] = {r["fix"] for r in bad if r["fix"]}
     out["unfixable"] = sum(1 for r in bad if not r["fix"])
     return out
+
+
+# a library scan: every package below a folder, checked in place, nothing written
+SCAN_SKIP_DIRS = ("_ultrapack_temp", "_ultrapack_inner", "_ffpfsc_temp", "_ffpfsc_inner")
+
+
+def library_packages(root) -> list[Path]:
+    """every .pkg below root, OS junk and our own scratch folders left out"""
+    from mkpfs.utils import is_ignored_name
+    found = []
+    for dp, dns, fns in os.walk(root):
+        dns[:] = sorted(d for d in dns if not is_ignored_name(d) and d not in SCAN_SKIP_DIRS)
+        found += [Path(dp) / f for f in sorted(fns) if f.lower().endswith(".pkg") and not is_ignored_name(f)]
+    return found
+
+
+def verdict(info: dict, console_fw: str | None = None) -> dict:
+    """{'state': ok|rebuild|problem|error, 'game': bool, 'reasons': [...], 'rows': [...]} for one package"""
+    if info.get("error") and not info.get("results"):
+        return {"state": "error", "game": False, "reasons": [info["error"]], "rows": []}
+    rows = findings(info, console_fw)
+    game = int((info.get("ident") or {}).get("content_type") or 0) == 32
+    bad = [r for r in rows if r["level"] == "fail"]
+    reasons = [f"{r['check']}: {r['text']}" for r in bad]
+    if not bad:
+        return {"state": "ok", "game": game, "reasons": [], "rows": rows}
+    fixable = game and all(r["fix"] in (FIX_REBUILD, FIX_PLAYGO, FIX_TROPHY) for r in bad)
+    return {"state": "rebuild" if fixable else "problem", "game": game, "reasons": reasons, "rows": rows}
