@@ -28,6 +28,7 @@ internal sealed class SourceImage : IDisposable
     public int StandIns => _standIns.Count;
     public long StandInBytes { get; private set; }
     public long Listed { get; private set; }     // every file the library reads in the image
+    public long Compressed { get; private set; } // files stored PFSC-compressed inside the game's PFS
 
     public static bool IsImage(string path)
         => File.Exists(path) && (path.EndsWith(".ffpfsc", StringComparison.OrdinalIgnoreCase)
@@ -41,6 +42,8 @@ internal sealed class SourceImage : IDisposable
         {
             var files = open.Inner.GetAllFiles().ToList();
             Listed = files.Count;
+            // GetView hands out stored bytes: such files would land in the package still compressed
+            Compressed = files.LongCount(f => f.flags.HasFlag(InodeFlags.compressed));
             _rootInImage = GameRoot(files.Select(f => Rel(f.FullName)).ToList());
             Directory.CreateDirectory(Root);
             foreach (var f in files.OrderBy(f => f.FullName, StringComparer.Ordinal))

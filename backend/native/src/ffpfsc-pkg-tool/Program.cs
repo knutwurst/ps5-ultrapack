@@ -1340,6 +1340,12 @@ internal static partial class Program
                                         + $"the image holds {expectFiles}; nothing was built");
                 return 5;
             }
+            if (img.Compressed > 0)
+            {
+                Console.Error.WriteLine($"[error] {img.Compressed} file(s) in {Path.GetFileName(args[1])} are compressed one by one, "
+                                        + "the image has to be unpacked first; nothing was built");
+                return 5;
+            }
             Console.Error.WriteLine($"  [source] {Path.GetFileName(args[1])} is read in place: {img.Written} file(s) written out, "
                                     + $"{img.StandIns} ({img.StandInBytes / 1073741824.0:F2} GB) read from the image as the package takes them in");
             var a = args.ToList();
@@ -1372,6 +1378,12 @@ internal static partial class Program
             rest.Add(args[i]);
         }
         args = rest.ToArray();
+        // which old blocks are still cached depends on thread timing: a reproducible build compresses every block
+        if (reuse && args.Contains("--deterministic"))
+        {
+            reuse = false;
+            Console.Error.WriteLine("  [source] --deterministic: no Kraken blocks reused, every block is compressed again");
+        }
         var stub = Path.Combine(temp, "pkg-src-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         PkgSource? src = null;
         try

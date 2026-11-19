@@ -196,7 +196,7 @@ internal sealed class PkgSource : IDisposable
 
     readonly record struct BlockKey(ulong A, ulong B, ulong C, ulong D, int Length);
 
-    sealed record Entry(byte[]? Payload, bool Multi, int First, int Flags, long Seq = 0);
+    sealed record Entry(byte[]? Payload, bool Multi, int First, int Flags, long Seq = 0, int Span = 0);
 
     static BlockKey KeyOf(ReadOnlySpan<byte> data)
     {
@@ -240,8 +240,13 @@ internal sealed class PkgSource : IDisposable
         var key = KeyOf(data);
         lock (_gate)
         {
-            if (_blocks.TryGetValue(key, out var prev)) _heldBytes -= Cost(prev);
-            e = e with { Seq = ++_seq };
+            // the same bytes stored twice in other forms: the earlier span wins, whichever thread came first
+            if (_blocks.TryGetValue(key, out var prev))
+            {
+                if (prev.Span <= span.Index) return;
+                _heldBytes -= Cost(prev);
+            }
+            e = e with { Seq = ++_seq, Span = span.Index };
             _blocks[key] = e;
             _heldBytes += Cost(e);
             _order.Enqueue((key, e.Seq));

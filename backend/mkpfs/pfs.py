@@ -36,7 +36,7 @@ from . import compression as comp
 from . import consts
 from .exfat import EXFAT_SIGNATURE, ExfatEntry, ExfatError, ExfatReader
 from .exfat_writer import iter_exfat_image
-from .gather import gather_files_scandir
+from .gather import gather_tree_scandir
 from .logging import info, warning
 from .pbar import Progress
 from .utils import (
@@ -799,13 +799,9 @@ def _build_time() -> int:
     return int(fixed) if fixed.isdigit() else int(time.time())
 
 
-def _generate_safe_single_file_fallback_stem() -> str:
-    """Return a random safe fallback stem for single-file inner names.
-
-    Returns:
-        Uppercase hexadecimal fallback stem trimmed to 15 characters.
-    """
-    return uuid.uuid4().hex.upper()[:15]
+def _generate_safe_single_file_fallback_stem(source_name: str) -> str:
+    """the same source name always gives the same 15 hex digits, so the image stays reproducible"""
+    return hashlib.sha256(source_name.encode("utf-8", "surrogatepass")).hexdigest().upper()[:15]
 
 
 def _extract_preferred_title_id(*, file_stem: str) -> str | None:
@@ -870,7 +866,7 @@ def resolve_single_file_inner_name(*, source_name: str, rename_inner_image: bool
 
         safe_stem = "".join(collapsed_chars)[:15]
         if not safe_stem:
-            safe_stem = _generate_safe_single_file_fallback_stem()
+            safe_stem = _generate_safe_single_file_fallback_stem(source_name)
 
     return f"{safe_stem}{extension}"
 
@@ -2689,12 +2685,12 @@ def scan_source_tree(root: Path, progress: Progress) -> tuple[dict[str, DirNode]
     progress.status("\nDiscovering files...")
     # Exclude OS-generated metadata (.DS_Store, ._*, Thumbs.db, __MACOSX, ...) so it
     # never ends up in the image.
-    abs_files = gather_files_scandir(root)
+    abs_files, abs_dirs = gather_tree_scandir(root)
     abs_files.sort(key=lambda p: p.relative_to(root).as_posix().lower())
 
     # Validate filenames before compression work begins; non-ASCII names are unsupported.
     non_ascii_paths: list[str] = []
-    for abs_path in abs_files:
+    for abs_path in abs_files + abs_dirs:
         rel_path: Path = abs_path.relative_to(root)
         rel_str: str = rel_path.as_posix()
         for part in rel_path.parts:
@@ -2753,6 +2749,16 @@ def scan_source_tree(root: Path, progress: Progress) -> tuple[dict[str, DirNode]
         files[rel] = file_node
         dirs[parent].children_files.append(rel)
         progress.step("scan", i, total, bytes_processed=total_bytes)
+
+    # folders without any file get their entry too: an empty folder the game ships stays
+    for abs_dir in sorted(abs_dirs, key=lambda p: p.relative_to(root).as_posix().lower()):
+        curr = ""
+        for part in abs_dir.relative_to(root).parts:
+            next_rel = f"{curr}/{part}" if curr else part
+            if next_rel not in dirs:
+                dirs[next_rel] = DirNode(rel_dir=next_rel, name=part, parent_rel_dir=curr)
+                dirs[curr].children_dirs.append(next_rel)
+            curr = next_rel
 
     for d in dirs.values():
         d.children_dirs.sort(key=str.lower)
@@ -5296,6 +5302,9 @@ def parse_image_dirents(blob: bytes, strict: bool = False,
     errors: list[str] = []
     offset = 0
     while offset + 16 <= len(blob):
+        if block_size > 0 and _zero_block_tail(blob, offset, block_size):
+            offset = (offset // block_size + 1) * block_size       # under 16 zero bytes left: next block
+            continue
         inode_number, type_code, name_len, ent_size = struct.unpack_from("<Iiii", blob, offset)
         if inode_number == 0 and type_code == 0 and name_len == 0 and ent_size == 0:
             if block_size > 0 and offset % block_size:
@@ -5333,11 +5342,21 @@ def parse_image_dirents(blob: bytes, strict: bool = False,
     return dirents, errors
 
 
+def _zero_block_tail(blob: bytes, offset: int, block_size: int) -> bool:
+    """too little room left in this block for an entry header, and only zeros there: padding.
+    An entry of the old layout that starts there has a nonzero inode and type."""
+    rest = block_size - offset % block_size
+    return rest < 16 and not any(blob[offset:offset + rest])
+
+
 def dirents_cross_blocks(blob: bytes, block_size: int) -> bool:
     """whether an entry of this directory payload runs across a block boundary (images packed
     before 2.7.0); readers that walk a directory block by block misread those"""
     offset = 0
     while offset + 16 <= len(blob):
+        if _zero_block_tail(blob, offset, block_size):
+            offset = (offset // block_size + 1) * block_size
+            continue
         ent_size = struct.unpack_from("<i", blob, offset + 12)[0]
         if ent_size <= 0:
             if offset % block_size:              # a zeroed rest of a block: go on in the next one

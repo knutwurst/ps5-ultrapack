@@ -647,6 +647,26 @@ def test_source_never_lost(r: Runner):
                           capture_output=True, text=True, timeout=300, env=e)
     r.check("safety.unchecked-build-fails", proc.returncode != 0, f"rc={proc.returncode}: the job counts as failed",
             ((proc.stdout or "") + (proc.stderr or ""))[-300:])
+    # an older package of the same name in the output stays until the new one passed its check
+    older = next(out2.glob("*.pkg"), None)
+    if older is not None and "(failed check)" in older.name:
+        older.unlink(); older = None
+    if older is None:
+        r.run_cli([str(src), str(out2), "--fpkg-build", str(src), *ids])
+        older = next(out2.glob("*.pkg"), None)
+    if r.check("safety.older-output.setup", older is not None, "an older output is there", ""):
+        old_sha = sha(older)
+        proc = subprocess.run([sys.executable, "-u", str(CLI), str(src), str(out2), "--fpkg-build", str(src), *ids],
+                              capture_output=True, text=True, timeout=300, env=e)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        r.check("safety.older-output-kept", proc.returncode != 0 and older.is_file() and sha(older) == old_sha
+                and "stays as it was" in out, f"rc={proc.returncode}, {older.name} unchanged", out[-400:])
+        for p in out2.glob("*(failed check)*.pkg"):
+            p.unlink()
+        rc, log = r.run_cli([str(src), str(out2), "--fpkg-build", str(src), *ids])
+        r.check("safety.older-output-replaced-when-checked",
+                rc == 0 and sorted(p.name for p in out2.glob("*.pkg")) == [older.name] and "passed every check" in log,
+                "a checked package replaces it", f"rc={rc}; {log[-300:]}")
     shutil.rmtree(lib, ignore_errors=True); shutil.rmtree(out2, ignore_errors=True)
 
 
@@ -665,6 +685,7 @@ def test_roundtrip_byte_for_byte(r: Runner):
     (d / "mixed.bin").write_bytes((rnd.randbytes(4096) + bytes(4096)) * 600)
     deep = src.joinpath(*[f"level{i}" for i in range(8)]); deep.mkdir(parents=True)
     (deep / ("n" * 200 + ".dat")).write_bytes(rnd.randbytes(5000))
+    (src / "empty_dir" / "nested_empty").mkdir(parents=True)        # folders a game ships empty stay
     many = src / "many"; many.mkdir()
     for i in range(2500):
         (many / f"asset_{i:05d}_{'q' * (i % 37)}.bin").write_bytes(rnd.randbytes(rnd.randint(0, 3000)))
@@ -692,6 +713,8 @@ def test_roundtrip_byte_for_byte(r: Runner):
     r.run_cli([str(imgs[0]), str(up), "--unpack", "--overwrite"])
     roots = [p.parent for p in up.rglob("sce_sys") if p.is_dir()]
     got = tree(roots[0]) if roots else {}
+    r.check("roundtrip.empty-folders", bool(roots) and (roots[0] / "empty_dir" / "nested_empty").is_dir(),
+            "empty folders packed and unpacked", "empty_dir/nested_empty missing")
     r.check("roundtrip.ffpfsc-unpack", got == want, f"{len(got)} files, every byte the same",
             f"missing {sorted(set(want) - set(got))[:3]} extra {sorted(set(got) - set(want))[:3]} "
             f"differ {[k for k in want if k in got and got[k] != want[k]][:3]}")
@@ -720,8 +743,28 @@ def test_roundtrip_byte_for_byte(r: Runner):
     got = pkg_tree(pkgs[0])
     r.check("roundtrip.pkg-contents", got == want, f"{len(got)} files, every byte the same",
             f"missing {sorted(set(want) - set(got))[:3]} differ {[k for k in want if k in got and got[k] != want[k]][:3]}")
+    # an image whose files are compressed one by one (mkpfs without --no-compress, other tools): the package
+    # builder would take the stored bytes, so the app unpacks it first
+    pf = r.work / "rt_perfile"; shutil.rmtree(pf, ignore_errors=True); pf.mkdir()
+    pfimg = pf / "perfile.ffpfs"
+    subprocess.run([sys.executable, "-m", "mkpfs", "pack", "folder", "--raw", "--no-ampr-index",
+                    "--no-adjust-output-file-extension", "--version", "PS5", "--inode-bits", "32",
+                    "--block-size", "65536", str(src), str(pfimg)], cwd=str(BACKEND), capture_output=True, timeout=600)
+    if r.check("roundtrip.perfile-image", pfimg.is_file(), "per-file compressed image made", ""):
+        rc5, log5 = r.run_tool(["build", str(pfimg), str(pf),
+                                "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099"])
+        r.check("roundtrip.perfile-tool-stops", rc5 == 5 and "compressed one by one" in log5
+                and not list(pf.glob("*.pkg")), "the tool builds nothing from it", f"rc={rc5}; {log5[-300:]}")
+        po = pf / "out"; po.mkdir()
+        rc, log = r.run_cli([str(pfimg), str(po), "--fpkg-build", str(pfimg), *ids])
+        pp = next(po.glob("*.pkg"), None)
+        got = pkg_tree(pp) if pp else {}
+        r.check("roundtrip.perfile-unpacked-first", rc == 0 and "cannot take" in log and got == want,
+                f"unpacked first, {len(got)} files, every byte the same",
+                f"rc={rc} differ {[k for k in want if got.get(k) != want[k]][:3]}; {log[-300:]}")
+    shutil.rmtree(pf, ignore_errors=True)
     re_out = r.work / "rt_re"; shutil.rmtree(re_out, ignore_errors=True); re_out.mkdir()
-    rc, log = r.run_cli([str(pkgs[0]), str(re_out), "--to", "pkg", "--rebuild", "--copy-mode", "keep", *ids[4:]])
+    rc, log = r.run_cli([str(pkgs[0]), str(re_out), "--to", "pkg", "--rebuild", "--copy-mode", "keep", *ids[4:-1]])
     rebuilt = next(re_out.glob("*.pkg"), None)
     got = pkg_tree(rebuilt) if rebuilt else {}
     r.check("roundtrip.pkg-rebuild-contents", "Rebuilding straight" in log and got == want,
@@ -1288,7 +1331,7 @@ def test_deterministic_build(r: Runner):
 
 def test_pkg_rebuild_reuses_blocks(r: Runner):
     # a .pkg rebuild reads the old package in place and hands its Kraken blocks back to the encoder:
-    # the result must be the package the unpack route builds, byte for byte
+    # every file comes out the same; a --deterministic one reuses nothing and is the unpack route's package
     import random
     rnd = random.Random(7)
     words = [bytes(rnd.choice(b"abcdefghijklmnopqrstuvwxyz") for _ in range(rnd.randint(2, 9))) for _ in range(800)]
@@ -1307,11 +1350,19 @@ def test_pkg_rebuild_reuses_blocks(r: Runner):
     if not r.check("reuse.old-package", rc == 0 and pkg is not None, "built", log[-300:]):
         return
 
-    def rebuild(name, env=None):
+    def rebuild(name, env=None, det=True):
         out = r.work / name; shutil.rmtree(out, ignore_errors=True); out.mkdir()
         rc, log = r.run_cli([str(pkg), str(out), "--to", "pkg", "--rebuild", "--copy-mode", "keep",
-                             "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin", "--fpkg-deterministic"], env=env)
+                             "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"]
+                            + (["--fpkg-deterministic"] if det else []), env=env)
         return rc, log, next(out.glob("*.pkg"), None)
+
+    def data_files(p):
+        x = r.work / "reuse_x"; shutil.rmtree(x, ignore_errors=True)
+        r.run_tool(["extract-inner", str(p), str(x)])
+        got = {q.relative_to(x).as_posix(): sha(q) for q in (x / "data").rglob("*") if q.is_file()}
+        shutil.rmtree(x, ignore_errors=True)
+        return got
 
     def names(p):
         # the builder regenerates the PlayGo ranges for each image, so only their names count
@@ -1319,7 +1370,8 @@ def test_pkg_rebuild_reuses_blocks(r: Runner):
         return sorted((e["path"], None if e["path"].startswith("sce_sys/playgo-") else e.get("size"))
                       for e in json.loads(listing).get("entries", [])) if rc == 0 else None
 
-    rc_r, log_r, p_reuse = rebuild("reuse_direct")
+    rc_r, log_r, p_reuse = rebuild("reuse_direct", det=False)
+    rc_d, log_d, p_det = rebuild("reuse_det")
     rc_n, log_n, p_normal = rebuild("reuse_normal", {"PS5_ULTRAPACK_UNPACK_PKG": "1"})
     if not r.check("reuse.both-routes", rc_r == 0 and rc_n == 0 and p_reuse and p_normal, "both rebuilt",
                    f"rc={rc_r}/{rc_n}; {(log_r + log_n)[-400:]}"):
@@ -1331,8 +1383,13 @@ def test_pkg_rebuild_reuses_blocks(r: Runner):
             "\n".join(x for x in log_r.splitlines() if "[reuse]" in x or "[INFO]" in x)[:500])
     r.check("reuse.normal-route", "Rebuilding straight" not in log_n and "[reuse]" not in log_n,
             "the unpack route ran", log_n[-300:])
-    r.check("reuse.same-package", sha(p_reuse) == sha(p_normal), "block reuse gives the unpack route's bytes",
-            f"{sha(p_reuse)[:16]} vs {sha(p_normal)[:16]}")
+    want = {q.relative_to(src).as_posix(): sha(q) for q in (src / "data").rglob("*") if q.is_file()}
+    got = data_files(p_reuse)
+    r.check("reuse.same-files", got == want, f"{len(got)} files, every byte the same after reuse",
+            f"differ {[k for k in want if got.get(k) != want[k]]}")
+    r.check("reuse.deterministic-reuses-nothing", rc_d == 0 and p_det is not None and "no Kraken blocks reused" in log_d
+            and sha(p_det) == sha(p_normal), "read in place, every block compressed: the unpack route's bytes",
+            f"rc={rc_d}; {sha(p_det)[:16] if p_det else None} vs {sha(p_normal)[:16]}")
     rc, out = r.run_tool(["validate", str(p_reuse), "--json"])
     rep = json.loads(out[out.index("{"):]) if "{" in out else {}
     r.check("reuse.validates", rep.get("fail") == 0 and rep.get("pass", 0) > 0, f"{rep.get('pass')} passed, 0 failed",
@@ -1344,7 +1401,7 @@ def test_pkg_rebuild_reuses_blocks(r: Runner):
     r.check("reuse.falls-back", rc_f == 0 and p_fall is not None and "unpacking it and building the normal way" in log_f
             and sha(p_fall) == sha(p_normal), "failed in place, rebuilt from the unpacked copy",
             f"rc={rc_f}; {log_f[-400:]}")
-    for d in (src, old, r.work / "reuse_direct", r.work / "reuse_normal", r.work / "reuse_fallback"):
+    for d in (src, old, r.work / "reuse_direct", r.work / "reuse_det", r.work / "reuse_normal", r.work / "reuse_fallback"):
         shutil.rmtree(d, ignore_errors=True)
 
 

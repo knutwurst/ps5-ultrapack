@@ -2108,58 +2108,27 @@ def _drop_scratch_holder(holder: Path) -> None:
 
 def _place_built_pkg(pkg: Path, out_dir: Path, args) -> Path:
     """replaces an older package of that name, never the job's own source (that gets a (2));
-    --replace-source: the source itself, once the new one passed validate where it was built"""
+    anything it replaces goes only once the new one passed validate where it was built
+    (--replace-source: the source itself, which also needs the Library check's verdict)"""
     dest = out_dir / pkg.name
     sources = [s for s in (getattr(args, "_chain_src", None), getattr(args, "fpkg_build", None)) if s]
     src = Path(getattr(args, "_chain_src", "") or "")
-    if getattr(args, "replace_source", False) and src.suffix.lower() == ".pkg" and src.is_file():
-        import fpkg as _fpkg
-        failed: list[str] = []
-        print(f"[INFO] Checking the new package before it replaces {src.name}...", flush=True)
-        try:
-            rc = _fpkg.validate(pkg, temp_dir=str(pkg.parent),
-                                on_line=lambda l: (failed.append(" ".join(l.split("[FAIL]", 1)[1].split()))
-                                                   if "[FAIL]" in l else None, print(l, flush=True)))
-        except Exception as e:              # a check that did not run is no pass
-            rc = 1
-            failed.append(f"the check could not run: {e}")
-        if rc == 0:
-            # the Library check's own rating too (trophies, AMPR index, junk): only a package it calls fine
-            try:
-                import ps5_repair as _p5r
-                v = _p5r.verdict(_p5r.examine(pkg, scratch=str(pkg.parent)))
-                if v["state"] != "ok":
-                    rc = 1
-                    failed += v["reasons"] or [v["state"]]
-            except Exception as e:
-                rc = 1
-                failed.append(f"the library check could not read it: {e}")
-        if rc == 0:
-            _rename_retrying(pkg, src, replace=True)
-            args._replaced_checked = True
-            print(f"[INFO] The new package passed every check and replaced {src.name}.", flush=True)
-            return src
-        # never over anything: the failed one goes beside the source under a name nothing else has
-        stem, n = f"{src.stem} (failed check)", 1
-        dest = src.with_name(stem + ".pkg")
-        while os.path.lexists(dest):
-            n += 1
-            dest = src.with_name(f"{stem} {n}.pkg")
-        _rename_retrying(pkg, dest)
-        args._replace_refused = failed or ["a check failed"]
-        print(f"[WARN] The new package failed {len(failed) or '?'} check(s) ({'; '.join(failed[:4])}); "
-              f"{src.name} stays as it was, the new one is {dest.name}.", flush=True)
-        return dest
 
     def free() -> Path:
         stem, n = dest.stem, 2
         while os.path.lexists(out_dir / f"{stem} ({n}).pkg"):
             n += 1
         return out_dir / f"{stem} ({n}).pkg"
+
+    if getattr(args, "replace_source", False) and src.suffix.lower() == ".pkg" and src.is_file():
+        return _replace_checked(pkg, src, args, with_verdict=True)
     if os.path.lexists(dest) and (dest.is_dir() or any(_is_same_file(Path(s), dest) for s in sources)):
         new = free()
         print(f"[INFO] {dest.name} is the source of this job or a folder: the new package is {new.name}", flush=True)
         dest = new
+    if dest.is_file() and not dest.is_symlink():
+        # an older package of that name stays until the new one passed its check
+        return _replace_checked(pkg, dest, args, with_verdict=False)
     try:
         _rename_retrying(pkg, dest, replace=True)
     except PermissionError:
@@ -2168,6 +2137,58 @@ def _place_built_pkg(pkg: Path, out_dir: Path, args) -> Path:
         print(f"[WARN] {dest.name} could not be replaced; the new package is {new.name}", flush=True)
         _rename_retrying(pkg, new, replace=True)
         dest = new
+    return dest
+
+
+def _replace_checked(pkg: Path, old: Path, args, with_verdict: bool) -> Path:
+    """validates pkg in its build folder, then renames it over old; a failed one goes beside old
+    under a name nothing else has and the job fails (args._replace_refused)"""
+    import fpkg as _fpkg
+    failed: list[str] = []
+    print(f"[INFO] Checking the new package before it replaces {old.name}...", flush=True)
+    try:
+        rc = _fpkg.validate(pkg, temp_dir=str(pkg.parent),
+                            on_line=lambda l: (failed.append(" ".join(l.split("[FAIL]", 1)[1].split()))
+                                               if "[FAIL]" in l else None, print(l, flush=True)))
+    except Exception as e:              # a check that did not run is no pass
+        rc = 1
+        failed.append(f"the check could not run: {e}")
+    if rc == 0 and with_verdict:
+        # the Library check's own rating too (trophies, AMPR index, junk): only a package it calls fine
+        try:
+            import ps5_repair as _p5r
+            v = _p5r.verdict(_p5r.examine(pkg, scratch=str(pkg.parent)))
+            if v["state"] != "ok":
+                rc = 1
+                failed += v["reasons"] or [v["state"]]
+        except Exception as e:
+            rc = 1
+            failed.append(f"the library check could not read it: {e}")
+    if rc == 0:
+        try:
+            _rename_retrying(pkg, old, replace=True)
+        except PermissionError:
+            # Windows: the old one is open or read-only, so the checked new one goes beside it
+            stem, n = old.stem, 2
+            while os.path.lexists(old.with_name(f"{stem} ({n}).pkg")):
+                n += 1
+            beside = old.with_name(f"{stem} ({n}).pkg")
+            print(f"[WARN] {old.name} could not be replaced; the new package is {beside.name}", flush=True)
+            _rename_retrying(pkg, beside)
+            old = beside
+        args._replaced_checked = True
+        print(f"[INFO] The new package passed every check and replaced {old.name}.", flush=True)
+        return old
+    # never over anything: the failed one goes beside the old one under a name nothing else has
+    stem, n = f"{old.stem} (failed check)", 1
+    dest = old.with_name(stem + ".pkg")
+    while os.path.lexists(dest):
+        n += 1
+        dest = old.with_name(f"{stem} {n}.pkg")
+    _rename_retrying(pkg, dest)
+    args._replace_refused = failed or ["a check failed"]
+    print(f"[WARN] The new package failed {len(failed) or '?'} check(s) ({'; '.join(failed[:4])}); "
+          f"{old.name} stays as it was, the new one is {dest.name}.", flush=True)
     return dest
 
 
@@ -3826,7 +3847,7 @@ def main() -> None:
             try:
                 if rc == 5 and staged is None and build_src.is_file() and not pkg_direct:
                     # the library read another file list than the image holds: nothing was built, unpack first
-                    print(f"[WARN] The package builder read {build_src.name} differently from this app; "
+                    print(f"[WARN] The package builder cannot take {build_src.name} as it is; "
                           f"building again from an unpacked copy.", flush=True)
                     _rerun_unpacked("PS5_ULTRAPACK_UNPACK_IMAGES")
                 if pkg_direct and rc not in (0, 130, 143):

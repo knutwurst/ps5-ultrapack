@@ -49,6 +49,24 @@ FIXED
   - A failed job shows the error it ended on in its own Error row,
     instead of only "Backend exited with code 1". Warnings of the package
     check show in a Warning row and in the job report.
+  - A package that already sat in the output under the new one's name was
+    replaced before the new one was checked; a new one that failed its
+    check took the old one with it. The new package is now checked where
+    it was built and replaces the old one only after it passed; a failed
+    one goes beside it as "(failed check)".
+  - An image whose files are compressed one by one (made by mkpfs without
+    --no-compress or by another tool) gave a package with those files
+    still compressed. Such an image is now unpacked first.
+  - The packer left out empty folders; they are packed now. A folder it
+    cannot read stops the pack with an error instead of being skipped.
+  - The image reader stopped at a block that ends in fewer than 16 zero
+    bytes (another packer's layout); it now goes on in the next block.
+  - Packing the same input twice gives the same image even when the
+    file's name has no letters or digits (the inner name was random).
+  - With --deterministic a .pkg rebuild reuses no Kraken blocks, since
+    which blocks are still cached depends on thread timing. The same
+    data stored twice in other forms now always resolves to the earlier
+    block.
   - A title id that differs from the one in the content id (an upgrade
     edition does this) is a warning naming both ids, not a failed check.
     The package keeps the game's own values.

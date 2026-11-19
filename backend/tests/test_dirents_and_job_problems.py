@@ -131,6 +131,29 @@ class PaddingPropertyTest(unittest.TestCase):
         self.assertEqual(block_walk(blob, BS), [e.name for e in ents])
 
 
+    def test_tail_too_short_for_a_header(self):
+        # another packer leaves 8 zero bytes at the block end: the reader goes on in the next block
+        head = [pfs.Dirent(i + 3, 2, "b" * 40 + f"{i:07d}") for i in range(1023)]      # 64 bytes each
+        head.append(pfs.Dirent(5000, 2, "c" * 32 + "0000007"))                          # 56 bytes
+        tail = [pfs.Dirent(6000 + i, 2, f"next_{i:03d}") for i in range(30)]
+        first = b"".join(e.to_bytes() for e in head)
+        self.assertEqual(len(first), BS - 8)
+        blob = first + bytes(8) + b"".join(e.to_bytes() for e in tail)
+        want = [e.name for e in head + tail]
+        parsed, errors = pfs.parse_image_dirents(blob, strict=True, block_size=BS)
+        self.assertEqual((errors, [d.name for d in parsed]), ([], want))
+        self.assertFalse(pfs.dirents_cross_blocks(blob, BS))
+        self.assertEqual(block_walk(blob, BS), want)
+
+
+class SingleFileNameTest(unittest.TestCase):
+    def test_fallback_name_is_stable(self):
+        a = pfs.resolve_single_file_inner_name(source_name="!!!.ffpfs")
+        self.assertEqual(a, pfs.resolve_single_file_inner_name(source_name="!!!.ffpfs"))
+        self.assertNotEqual(a, pfs.resolve_single_file_inner_name(source_name="???.ffpfs"))
+        self.assertTrue(a.endswith(".ffpfs") and len(a) == 15 + 6)
+
+
 class JobProblemsTest(unittest.TestCase):
     def test_specific_error_beats_the_wrapper(self):
         lines = ["[error] EndOfStreamException: Unable to read beyond the end of the stream.",
