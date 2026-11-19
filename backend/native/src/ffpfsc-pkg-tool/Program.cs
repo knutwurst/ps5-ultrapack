@@ -1361,11 +1361,12 @@ internal static partial class Program
         string temp = Path.GetTempPath();
         string passcode = new string('0', 32);
         bool reuse = true;
+        long expectFiles = -1;            // the files the caller's listing of the package holds
         var rest = new List<string>();
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--no-block-reuse") { reuse = false; continue; }
-            if (args[i] == "--expect-files" && i + 1 < args.Length) { i++; continue; }
+            if (args[i] == "--expect-files" && i + 1 < args.Length) { expectFiles = long.Parse(args[++i]); continue; }
             if (i >= 3 && args[i] == "--temp" && i + 1 < args.Length) temp = args[i + 1];
             if (i >= 3 && args[i] == "--passcode" && i + 1 < args.Length) passcode = args[i + 1];
             rest.Add(args[i]);
@@ -1379,6 +1380,12 @@ internal static partial class Program
             if (Environment.GetEnvironmentVariable("ULTRAPACK_TEST_PKG_SOURCE_FAIL") == "1")
                 throw new InvalidDataException("reading the package in place failed (test)");
             src = new PkgSource(args[1], passcode, stub, reuse, LiftCntSceSys);
+            if (expectFiles >= 0 && src.Listed != expectFiles)
+            {
+                Console.Error.WriteLine($"[error] the package reader lists {src.Listed} files in {Path.GetFileName(args[1])}, "
+                                        + $"the caller's listing holds {expectFiles}; nothing was built");
+                return 5;
+            }
             Console.Error.WriteLine($"  [source] {Path.GetFileName(args[1])} is read in place: {src.Written} file(s) written out, "
                                     + $"{src.StandIns} ({src.StandInBytes / 1073741824.0:F2} GB) read from the package as the new one takes them in; "
                                     + (reuse ? "Kraken blocks of unchanged data are reused" : "every block is compressed again"));

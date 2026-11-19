@@ -1693,6 +1693,8 @@ def _pkg_rebuilds_in_place(src: Path, args):
     paths = [str(e.get("path", "")) for e in listing.get("entries", []) if e.get("type") == "file"]
     if "sce_sys/param.json" not in paths:
         return None
+    # the tool checks its own count against this: files of the inner image only, not the CNT's sce_sys copies
+    args._image_files = sum(1 for e in listing.get("entries", []) if e.get("type") == "file" and e.get("source") == "pfs")
     return any(p.lower().endswith("ampr_zstd.index") for p in paths)
 
 
@@ -2117,6 +2119,17 @@ def _place_built_pkg(pkg: Path, out_dir: Path, args) -> Path:
         rc = _fpkg.validate(pkg, temp_dir=str(pkg.parent),
                             on_line=lambda l: (failed.append(" ".join(l.split("[FAIL]", 1)[1].split()))
                                                if "[FAIL]" in l else None, print(l, flush=True)))
+        if rc == 0:
+            # the Library check's own rating too (trophies, AMPR index, junk): only a package it calls fine
+            try:
+                import ps5_repair as _p5r
+                v = _p5r.verdict(_p5r.examine(pkg, scratch=str(pkg.parent)))
+                if v["state"] != "ok":
+                    rc = 1
+                    failed += v["reasons"] or [v["state"]]
+            except Exception as e:
+                rc = 1
+                failed.append(f"the library check could not read it: {e}")
         if rc == 0:
             _rename_retrying(pkg, src, replace=True)
             args._replaced_checked = True

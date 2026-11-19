@@ -138,6 +138,32 @@ class InPlaceSidecarTest(unittest.TestCase):
             self.assertFalse((game / "._Game.pkg").exists())
 
 
+class LibraryVerdictTest(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(HERE.parent))
+        import ps5_repair
+        self.m = ps5_repair
+
+    def row(self, check, level, msg="x"):
+        return {"Check": check, "Level": level, "Message": msg}
+
+    def test_half_read_package_is_never_fine(self):
+        info = {"ident": {"content_type": 32}, "results": [self.row("header", "pass")], "error": "listing failed"}
+        self.assertEqual(self.m.verdict(info)["state"], "error")
+
+    def test_junk_only_game_is_rebuilt_addon_without_eboot_is_fine(self):
+        game = {"ident": {"content_type": 32}, "results": [self.row("inner.junk", "fail", "3 OS junk file(s)")]}
+        self.assertEqual(self.m.verdict(game)["state"], "rebuild")
+        addon = {"ident": {"content_type": 33}, "results": [self.row("inner.eboot", "pass")]}
+        self.assertEqual(self.m.verdict(addon)["state"], "ok")
+
+    def test_update_package_is_never_rebuilt(self):
+        upd = {"ident": {"content_type": 32, "package_type": "patch"},
+               "results": [self.row("inner.junk", "fail", "3 OS junk file(s)")]}
+        v = self.m.verdict(upd)
+        self.assertEqual((v["state"], v["update"]), ("problem", True))
+
+
 class FailedLogTest(unittest.TestCase):
     def test_kept_and_capped(self):
         import tempfile

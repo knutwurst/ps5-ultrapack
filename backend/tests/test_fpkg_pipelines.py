@@ -518,6 +518,12 @@ def test_rebuild_replaces_source_only_when_checked(r: Runner):
     old = next(lib.glob("*.pkg"), None)
     if not r.check("replace.setup", rc == 0 and old is not None, "package built", log[-300:]):
         return
+    stop = r.work / "replace_stop"; shutil.rmtree(stop, ignore_errors=True); stop.mkdir()
+    rc5, log5 = r.run_tool(["build", str(old), str(stop), "--expect-files", "1",
+                            "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099"])
+    r.check("replace.pkg-route-count-stops", rc5 == 5 and "nothing was built" in log5 and not any(stop.iterdir()),
+            "a .pkg source with a wrong file count builds nothing", f"rc={rc5}; {log5[-300:]}")
+    shutil.rmtree(stop, ignore_errors=True)
     named = old.with_name("My Game.pkg"); old.rename(named)     # a name of the user's own choosing stays
     decoy = old                         # another file of the user's under the name the new package gets
     decoy.write_bytes(b"users own file")

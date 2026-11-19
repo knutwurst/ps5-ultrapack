@@ -40,6 +40,7 @@ internal sealed class PkgSource : IDisposable
     public int Written { get; private set; }
     public int StandIns => _standIns.Count;
     public long StandInBytes { get; private set; }
+    public long Listed { get; private set; }     // every file the reader sees, junk included
     public long Reused => Interlocked.Read(ref _reused);
     public long KeptStored => Interlocked.Read(ref _keptStored);
     public long Encoded => Interlocked.Read(ref _encoded);
@@ -66,7 +67,9 @@ internal sealed class PkgSource : IDisposable
                 var rel = Safe(_img.RelativePath(d));
                 if (!FsJunk.PathHasJunk(rel)) Directory.CreateDirectory(Target(rel));
             }
-            foreach (var f in _img.Pfs.GetAllFiles().OrderBy(f => _img.RelativePath(f), StringComparer.Ordinal))
+            var all = _img.Pfs.GetAllFiles().OrderBy(f => _img.RelativePath(f), StringComparer.Ordinal).ToList();
+            Listed = all.Count;
+            foreach (var f in all)
             {
                 var rel = Safe(_img.RelativePath(f));
                 if (FsJunk.PathHasJunk(rel)) continue;

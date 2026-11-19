@@ -518,7 +518,7 @@ def library_packages(root) -> list[Path]:
 
 def verdict(info: dict, console_fw: str | None = None) -> dict:
     """{'state': ok|rebuild|problem|error, 'game': bool, 'reasons': [...], 'rows': [...]} for one package"""
-    if info.get("error") and not info.get("results"):
+    if info.get("error"):                 # a check that did not run is no pass: never rated fine
         return {"state": "error", "game": False, "reasons": [info["error"]], "rows": []}
     rows = findings(info, console_fw)
     game = int((info.get("ident") or {}).get("content_type") or 0) == 32
