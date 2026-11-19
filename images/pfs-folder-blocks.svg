@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="460" viewBox="0 0 680 460" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Folder entries and block boundaries in a PFS image</title>
+<rect x="0" y="0" width="680" height="460" rx="12" fill="#ffffff"/>
+<g font-size="14" font-weight="600" fill="#1f2328">
+<text x="40" y="40">Older .ffpfsc (up to 2.6.1): entries written straight on</text>
+<text x="40" y="182">How the package builder reads it: every block from its start</text>
+<text x="40" y="310">New .ffpfsc (2.6.2): no entry crosses a block boundary</text>
+</g>
+<g fill="#f6f8fa" stroke="#8c959f" stroke-width="0.8">
+<rect x="40" y="54" width="600" height="50" rx="4"/>
+<rect x="40" y="196" width="600" height="50" rx="4"/>
+<rect x="40" y="324" width="600" height="50" rx="4"/>
+</g>
+<g fill="#d0d7de" stroke="#6e7781" stroke-width="0.6">
+<rect x="46" y="62" width="50" height="34" rx="4"/><rect x="102" y="62" width="50" height="34" rx="4"/>
+<rect x="158" y="62" width="50" height="34" rx="4"/><rect x="214" y="62" width="50" height="34" rx="4"/>
+<rect x="270" y="62" width="50" height="34" rx="4"/><rect x="382" y="62" width="50" height="34" rx="4"/>
+<rect x="438" y="62" width="50" height="34" rx="4"/><rect x="494" y="62" width="50" height="34" rx="4"/>
+<rect x="550" y="62" width="50" height="34" rx="4"/>
+<rect x="46" y="204" width="50" height="34" rx="4"/><rect x="102" y="204" width="50" height="34" rx="4"/>
+<rect x="158" y="204" width="50" height="34" rx="4"/><rect x="214" y="204" width="50" height="34" rx="4"/>
+<rect x="270" y="204" width="50" height="34" rx="4"/>
+</g>
+<g fill="#d0d7de" stroke="#6e7781" stroke-width="0.6" opacity="0.3">
+<rect x="382" y="204" width="50" height="34" rx="4"/><rect x="438" y="204" width="50" height="34" rx="4"/>
+<rect x="494" y="204" width="50" height="34" rx="4"/><rect x="550" y="204" width="50" height="34" rx="4"/>
+</g>
+<g fill="#ffd8d3" stroke="#cf222e" stroke-width="1.2">
+<rect x="326" y="62" width="50" height="34" rx="4"/>
+<rect x="344" y="204" width="32" height="34" rx="4"/>
+</g>
+<text x="360" y="227" font-size="15" font-weight="600" fill="#a40e26" text-anchor="middle">?</text>
+<g fill="#b5ead8" stroke="#1a7f64" stroke-width="0.6">
+<rect x="46" y="332" width="50" height="34" rx="4"/><rect x="102" y="332" width="50" height="34" rx="4"/>
+<rect x="158" y="332" width="50" height="34" rx="4"/><rect x="214" y="332" width="50" height="34" rx="4"/>
+<rect x="270" y="332" width="66" height="34" rx="4" stroke-width="1.2"/>
+<rect x="344" y="332" width="50" height="34" rx="4"/><rect x="400" y="332" width="50" height="34" rx="4"/>
+<rect x="456" y="332" width="50" height="34" rx="4"/><rect x="512" y="332" width="50" height="34" rx="4"/>
+<rect x="568" y="332" width="50" height="34" rx="4"/>
+</g>
+<g stroke="#57606a" stroke-width="1.5" stroke-dasharray="4 3">
+<line x1="340" y1="46" x2="340" y2="112"/><line x1="340" y1="188" x2="340" y2="254"/><line x1="340" y1="316" x2="340" y2="382"/>
+</g>
+<g font-size="12" fill="#57606a" text-anchor="middle">
+<text x="190" y="124">Block 1 (64 KiB)</text>
+<text x="490" y="124">Block 2 (64 KiB)</text>
+<text x="340" y="144">The red entry starts in block 1 and ends in block 2</text>
+<text x="340" y="272">Block 2 starts with the tail of an entry: garbage, the build stops</text>
+<text x="340" y="400">The last entry fills block 1 to its end,</text>
+<text x="340" y="418">the next one starts at the beginning of block 2</text>
+</g>
+</svg>
