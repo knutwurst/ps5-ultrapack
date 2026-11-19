@@ -37,7 +37,7 @@ The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
 ## Modification notice (GPL-3 section 5a)
 
 `LibProsperoPkg.dll` was modified by this project (first on 2026-10-05; all patches re-applied
-to build `a3ee4c1a` on 2026-11-18):
+to build `a3ee4c1a` on 2026-11-18, patch 8 added on 2026-11-19):
 
 1. `ProsperoPkgBuilder.BuildInnerTree`: the local function `FilterFakeLibraryDirectory`
    is replaced by a single `ret`, so a source's `fakelib/` directory is kept intact.
@@ -58,6 +58,10 @@ to build `a3ee4c1a` on 2026-11-18):
    NAPS reader of the physical inner image opens it through `BuildFileIO.Open`, and the outer
    PFS builder sizes its source files through `LengthOf`. With no delegate set, nothing changes.
    The tool uses it to write the package's inner image straight to its place in the package.
+6. `ProsperoPkgBuilder.BuildInnerTree`, local function `Populate` (added 2026-11-19): the walk
+   over the source folder skips OS junk: `._*` and the names in `FsJunk.cs` (`.DS_Store`,
+   `Thumbs.db`, `desktop.ini`, `.Trashes` ...), checked by the new `SourceHooks.IsJunk`. macOS
+   leaves a `._` file on exFAT next to every file it writes, and those used to go into the package.
 (A further change, `ProsperoPackageArchive.ResolveParallelism` returning 1, was applied from
 2026-10-05 to 2026-10-06 and is gone: the crash it worked around was the tool's compressed
 single-file bundle, see `../patches/README.md`.)

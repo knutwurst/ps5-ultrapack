@@ -54,9 +54,10 @@ class OneList(unittest.TestCase):
         self.assertEqual(set(cli._JUNK_NAMES), set(mk_utils.IGNORED_NAMES))
         self.assertEqual(set(cli._JUNK_NAMES), {n.lower() for n in ultra_core.FS_JUNK_NAMES})
         self.assertEqual(set(cli._JUNK_NAMES), set(after_job._JUNK_NAMES))
-        cs = (ROOT / "backend/native/src/ffpfsc-pkg-tool/FsJunk.cs").read_text(encoding="utf-8")
-        for n in cli._JUNK_NAMES:
-            self.assertIn('"' + n.replace("\r", "\\r") + '"', cs, n)
+        for src in ("FsJunk.cs", "patches/CecilPatch/Program.cs"):    # the tool, and the library's own walk
+            cs = (ROOT / "backend/native/src/ffpfsc-pkg-tool" / src).read_text(encoding="utf-8")
+            for n in cli._JUNK_NAMES:
+                self.assertIn('"' + n.replace("\r", "\\r") + '"', cs, f"{src}: {n}")
         globbed = {g.lower() for g in cli._JUNK_GLOBS} | {g.lower() for g in ultra_core._COPYTREE_JUNK_GLOBS}
         self.assertTrue(set(cli._JUNK_NAMES) <= globbed, set(cli._JUNK_NAMES) - globbed)
 

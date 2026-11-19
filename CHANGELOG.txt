@@ -38,8 +38,10 @@ FIXED
     sidecars: macOS leaves one next to every file and folder the tool
     writes there, and the package library reads the stage itself. A
     direct build from an image had one per file (thousands, 4 KiB each).
-    The tool now removes junk files from its stage right before the
-    library reads it.
+    The package library's source walk now skips OS junk (._*, .DS_Store,
+    Thumbs.db and the rest of the shared list; IL patch 8), so such files
+    are never read and nothing gets deleted. The package check fails a
+    package that holds any (inner.junk).
   - The speed and time left of a .pkg build's Kraken pass counted only
     the one file the package library names per percent step. A game of
     many small files showed a fraction of its real speed and hours

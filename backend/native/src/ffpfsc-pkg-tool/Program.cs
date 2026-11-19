@@ -822,6 +822,11 @@ internal static partial class Program
             using var img = new InnerImage(pkg, passcode, cacheBlockSize: 4 << 20, cacheBlocks: 8);
             var files = img.Pfs.GetAllFiles().ToList();
             Ok("inner.pfs", $"{files.Count:N0} file(s) in the inner PFS");
+            // OS junk (._ sidecars, .DS_Store, Thumbs.db ...) has no place in a game; files and folders alike
+            var junk = files.Select(f => SafeRelative(img.RelativePath(f)))
+                            .Where(r => FsJunk.PathHasJunk(r)).ToList();
+            if (junk.Count == 0) Ok("inner.junk", "no OS junk files (._*, .DS_Store, Thumbs.db, ...)");
+            else Fail("inner.junk", $"{junk.Count:N0} OS junk file(s) in the package, e.g. {string.Join(", ", junk.Take(3))}");
             var eboot = files.FirstOrDefault(f => SafeRelative(img.RelativePath(f)) == "eboot.bin");
             if (eboot == null)
                 Fail("inner.eboot", "eboot.bin not present in inner PFS");
@@ -1904,10 +1909,7 @@ internal static partial class Program
                     }
                 }
 
-                // the library reads the stage itself: macOS leaves ._ sidecars on exFAT for every file
-                // written above (signing, param.json, images), and those would go into the package
-                int swept = SweepJunkFiles(autoStage);
-                if (swept > 0) Console.Error.WriteLine($"  [stage] removed {swept} macOS sidecar/junk file(s) before the build");
+                // ._ sidecars macOS leaves on exFAT stay where they are: the patched library never reads them (patch 8)
                 opts.SourceFolder = autoStage;
             }
         }
@@ -2304,18 +2306,6 @@ internal static partial class Program
     {
         try { using var d = JsonDocument.Parse(b); return d.RootElement.ValueKind == JsonValueKind.Object || d.RootElement.ValueKind == JsonValueKind.Array; }
         catch { return false; }
-    }
-
-    // our stage only: junk files (._ sidecars, .DS_Store) never belong in a package
-    static int SweepJunkFiles(string stage)
-    {
-        int n = 0;
-        foreach (var f in Directory.EnumerateFiles(stage, "*", SearchOption.AllDirectories).ToList())
-        {
-            if (!FsJunk.IsJunkName(Path.GetFileName(f))) continue;
-            try { File.Delete(f); n++; } catch (IOException) { } catch (UnauthorizedAccessException) { }
-        }
-        return n;
     }
 
     // only eboot.bin/.elf/.prx/.sprx get sniffed, no point reading huge blobs

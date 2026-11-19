@@ -102,6 +102,12 @@ using (var asm = AssemblyDefinition.ReadAssembly(dll, new ReaderParameters { Rea
     if (p7 < 0) return 3;
     applied++;
 
+    // patch 8: the source walk skips macOS "._" sidecars and .DS_Store; on exFAT macOS writes one next to
+    // every file the tool touches, and without this they went into the package
+    int p8 = PatchSkipJunk(asm.MainModule);
+    if (p8 < 0) return 3;
+    applied++;
+
     asm.Write();
 }
 Console.WriteLine($"OK: {applied} patch(es) applied to {dll}  (backup: {orig})");
@@ -330,5 +336,75 @@ static int PatchFileHooks(ModuleDefinition module)
     }
 
     Console.WriteLine("[7] file hooks added: BuildFileIO.Open, the NAPS inner-image reader and the outer source sizes go through SourceHooks");
+    return 1;
+}
+
+static int PatchSkipJunk(ModuleDefinition module)
+{
+    var builder = module.GetType("LibProsperoPkg.PKG.ProsperoPkgBuilder");
+    var hooks = module.GetType("LibProsperoPkg.Util.SourceHooks");
+    var walk = builder?.Methods.Concat(builder.NestedTypes.SelectMany(t => t.Methods))
+        .FirstOrDefault(m => m.HasBody && m.Name.Contains("Populate") && m.Body.Instructions.Any(
+            x => x.Operand is MethodReference r && r.Name == "EnumerateFileSystemInfos"));
+    if (walk == null || hooks == null) { Console.Error.WriteLine("[8] FAILED: the source walk (Populate over EnumerateFileSystemInfos) or SourceHooks not found"); return -1; }
+    if (hooks.Methods.Any(m => m.Name == "IsJunk")) { Console.WriteLine($"[8] {walk.Name} already skips OS junk"); return 1; }
+    var refs = module.GetMemberReferences().OfType<MethodReference>().ToList();
+    var startsWith = refs.FirstOrDefault(m => m.DeclaringType.FullName == "System.String" && m.Name == "StartsWith" && m.HasThis
+        && m.Parameters.Count == 2 && m.Parameters[1].ParameterType.FullName == "System.StringComparison");
+    var equals = refs.FirstOrDefault(m => m.DeclaringType.FullName == "System.String" && m.Name == "Equals" && !m.HasThis
+        && m.Parameters.Count == 3 && m.Parameters[2].ParameterType.FullName == "System.StringComparison");
+    var getName = refs.FirstOrDefault(m => m.DeclaringType.FullName == "System.IO.FileSystemInfo" && m.Name == "get_Name");
+    if (startsWith == null || equals == null || getName == null)
+    { Console.Error.WriteLine("[8] FAILED: String.StartsWith/Equals(StringComparison) or FileSystemInfo.Name not referenced"); return -1; }
+
+    // same list as ffpfsc-pkg-tool/FsJunk.cs, ultra_core.py, cli.py and mkpfs/utils.py (a test keeps them equal)
+    string[] JunkNames =
+    {
+        ".ds_store", ".localized", ".lsoverride", ".apdisk", ".volumeicon.icns", "icon\r",
+        "thumbs.db", "ehthumbs.db", "desktop.ini",
+        "__macosx", ".spotlight-v100", ".trashes", ".fseventsd", ".temporaryitems",
+        ".documentrevisions-v100", ".appledouble", "$recycle.bin", "system volume information",
+    };
+    // public static bool IsJunk(string name): the same list as FsJunk.cs and the Python side
+    var ts = module.TypeSystem;
+    var isJunk = new MethodDefinition("IsJunk", MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig, ts.Boolean);
+    isJunk.Parameters.Add(new ParameterDefinition("name", ParameterAttributes.None, ts.String));
+    {
+        var j = isJunk.Body.GetILProcessor();
+        var yes = j.Create(OpCodes.Ldc_I4_1);
+        j.Append(j.Create(OpCodes.Ldarg_0)); j.Append(j.Create(OpCodes.Ldstr, "._"));
+        j.Append(j.Create(OpCodes.Ldc_I4, 4)); j.Append(j.Create(OpCodes.Callvirt, startsWith));
+        j.Append(j.Create(OpCodes.Brtrue, yes));
+        foreach (var junk in JunkNames)
+        {
+            j.Append(j.Create(OpCodes.Ldarg_0)); j.Append(j.Create(OpCodes.Ldstr, junk));
+            j.Append(j.Create(OpCodes.Ldc_I4, 5)); j.Append(j.Create(OpCodes.Call, equals));
+            j.Append(j.Create(OpCodes.Brtrue, yes));
+        }
+        j.Append(j.Create(OpCodes.Ldc_I4_0)); j.Append(j.Create(OpCodes.Ret));
+        j.Append(yes); j.Append(j.Create(OpCodes.Ret));
+    }
+    hooks.Methods.Add(isJunk);
+
+    var il = walk.Body.Instructions;
+    int cur = Enumerable.Range(0, il.Count - 1).FirstOrDefault(i => il[i].Operand is MethodReference r && r.Name == "get_Current"
+        && r.DeclaringType.FullName.Contains("FileSystemInfo") && il[i + 1].OpCode.Code is Code.Stloc or Code.Stloc_S
+            or Code.Stloc_0 or Code.Stloc_1 or Code.Stloc_2 or Code.Stloc_3);
+    int next = Enumerable.Range(1, il.Count - 1).FirstOrDefault(i => il[i].Operand is MethodReference r && r.Name == "MoveNext");
+    if (cur <= 0 || next <= cur) { Console.Error.WriteLine("[8] FAILED: foreach over the file system entries not recognised"); return -1; }
+    var store = il[cur + 1];
+    VariableDefinition item = store.OpCode.Code switch
+    {
+        Code.Stloc_0 => walk.Body.Variables[0], Code.Stloc_1 => walk.Body.Variables[1],
+        Code.Stloc_2 => walk.Body.Variables[2], Code.Stloc_3 => walk.Body.Variables[3],
+        _ => (VariableDefinition)store.Operand,
+    };
+    var loopTest = il[next - 1];                 // ldloc enumerator; callvirt MoveNext: where "continue" goes
+    var p = walk.Body.GetILProcessor();
+    var at = store;
+    void Add(Instruction x) { p.InsertAfter(at, x); at = x; }
+    Add(p.Create(OpCodes.Ldloc, item)); Add(p.Create(OpCodes.Callvirt, getName));
+    Add(p.Create(OpCodes.Call, isJunk)); Add(p.Create(OpCodes.Brtrue, loopTest));
+    Console.WriteLine($"[8] {walk.Name} skips OS junk (._*, .DS_Store and {JunkNames.Length - 1} more names)");
     return 1;
 }

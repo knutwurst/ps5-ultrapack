@@ -134,3 +134,15 @@ blocks, a range the writer would overwrite before it was read is kept in a side 
 `test_fpkg_pipelines.py` builds both ways, with the layout pass forced to re-order, and compares
 the bytes.
 
+## Patch 8 — the source walk never reads macOS sidecars
+
+On exFAT (the usual temp SSD) macOS stores extended attributes in a `._<name>` file next to
+every file and folder it writes. The tool writes into its stage (signing, `param.json`,
+images), and for a build straight from an image it writes the whole stand-in tree there, so
+the stage filled up with `._` files. The library reads the stage with its own walk
+(`BuildInnerTree`, local function `Populate`) and took them into the package: a direct build
+had one per file. The patcher adds `SourceHooks.IsJunk(name)` (`._*` ordinal, and the names of
+`FsJunk.cs` in any case: `.DS_Store`, `Thumbs.db`, `desktop.ini`, `.Trashes` ...) and puts a call
+at the top of that `foreach`: such an entry is skipped. Nothing is deleted; the files are just
+never read. `validate` fails a package that holds any of them (`inner.junk`). `sidecars never in the package` in `test_fpkg_pipelines.py` builds a stage that holds such
+files and lists the package.
