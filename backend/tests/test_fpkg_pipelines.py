@@ -498,6 +498,104 @@ def test_sidecars_never_in_the_package(r: Runner):
     shutil.rmtree(src, ignore_errors=True); shutil.rmtree(out, ignore_errors=True)
 
 
+JUNK_PLANTED = ("._eboot.bin", "sce_sys/._param.json", "data/._f000.bin", "data/.DS_Store", "data/Thumbs.db",
+                "data/desktop.ini", "._data")
+
+
+def _junk_in(names):
+    import ultra_core as _uc
+    return [n for n in names if any(_uc.is_fs_junk_name(part) for part in n.split("/"))]
+
+
+def test_planted_junk_never_reaches_an_output(r: Runner):
+    # any drive, any OS: OS junk planted in the source must not show up in any result of any route
+    sys.path.insert(0, str(REPO))
+    src = r.work / "planted_src"; shutil.rmtree(src, ignore_errors=True)
+    shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    (src / "data").mkdir(exist_ok=True)
+    (src / "data" / "f000.bin").write_bytes(b"x" * 100)
+    for rel in JUNK_PLANTED:
+        (src / rel).write_bytes(b"\x00\x05\x16\x07" + b"\x00" * 60)
+    ids = ["--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+           "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"]
+
+    def pkg_names(pkg):
+        rc, listing = r.run_tool(["list-inner", str(pkg)])
+        return [e["path"] for e in json.loads(listing).get("entries", [])] if rc == 0 else None
+
+    out = r.work / "planted_pkg"; shutil.rmtree(out, ignore_errors=True); out.mkdir()
+    rc, log = r.run_cli([str(src), str(out), "--fpkg-build", str(src), *ids])
+    pkg = next(out.glob("*.pkg"), None); names = pkg_names(pkg) if pkg else None
+    r.check("planted.folder-to-pkg", rc == 0 and names and not _junk_in(names), f"{len(names or [])} entries, no junk",
+            f"rc={rc}; junk={_junk_in(names or [])}")
+    ff = r.work / "planted_ff"; shutil.rmtree(ff, ignore_errors=True); ff.mkdir()
+    rc, log = r.run_cli([str(src), str(ff), "--pack", "--overwrite"])
+    img = next(ff.glob("*.ffpfsc"), None)
+    import cli as _cli
+    inner = [e["path"] for e in _cli.list_pfs_image(img)["entries"] if e.get("type") == "file"] if img else None
+    r.check("planted.folder-to-ffpfsc", rc == 0 and inner and not _junk_in(inner), f"{len(inner or [])} files, no junk",
+            f"rc={rc}; junk={_junk_in(inner or [])}")
+    if img is not None:
+        out2 = r.work / "planted_img_pkg"; shutil.rmtree(out2, ignore_errors=True); out2.mkdir()
+        rc, log = r.run_cli([str(img), str(out2), "--fpkg-build", str(img), *ids])
+        p2 = next(out2.glob("*.pkg"), None); n2 = pkg_names(p2) if p2 else None
+        r.check("planted.ffpfsc-to-pkg", rc == 0 and n2 and not _junk_in(n2), f"{len(n2 or [])} entries, no junk",
+                f"rc={rc}; junk={_junk_in(n2 or [])}")
+    if pkg is not None:
+        out3 = r.work / "planted_rebuild"; shutil.rmtree(out3, ignore_errors=True); out3.mkdir()
+        rc, log = r.run_cli([str(pkg), str(out3), "--to", "pkg", "--rebuild", "--copy-mode", "keep",
+                             "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+        p3 = next(out3.glob("*.pkg"), None); n3 = pkg_names(p3) if p3 else None
+        r.check("planted.pkg-to-pkg", rc == 0 and n3 and not _junk_in(n3), f"{len(n3 or [])} entries, no junk",
+                f"rc={rc}; junk={_junk_in(n3 or [])}; {log[-300:]}")
+    for d in (src, out, ff, r.work / "planted_img_pkg", r.work / "planted_rebuild"):
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_exfat_stage_builds_clean(r: Runner):
+    # the user's temp and game drives are exFAT: macOS writes a ._ file next to everything there.
+    # Every build route runs on a real exFAT volume and the package must hold no OS junk
+    if sys.platform != "darwin":
+        r.check("exfat.skipped", True, "macOS only (hdiutil)"); return
+    vol = r.work / "exfat_vol"; dmg = r.work / "exfat.dmg"
+    shutil.rmtree(vol, ignore_errors=True); dmg.unlink(missing_ok=True)
+    made = subprocess.run(["hdiutil", "create", "-size", "300m", "-fs", "ExFAT", "-volname", "UPTEST", "-quiet",
+                           "-o", str(dmg)], capture_output=True, text=True)
+    vol.mkdir()
+    att = subprocess.run(["hdiutil", "attach", str(dmg), "-nobrowse", "-mountpoint", str(vol), "-quiet"],
+                         capture_output=True, text=True)
+    if not r.check("exfat.volume", made.returncode == 0 and att.returncode == 0, "exFAT image mounted",
+                   (made.stderr or "") + (att.stderr or "")):
+        return
+    try:
+        src = vol / "game"; temp = vol / "temp"; ff = vol / "ff"; temp.mkdir(); ff.mkdir()
+        shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+        for i in range(40):
+            (src / "data" / f"f{i:03d}.bin").parent.mkdir(exist_ok=True)
+            (src / "data" / f"f{i:03d}.bin").write_bytes(b"x" * (i + 1))
+        subprocess.run(["xattr", "-w", "com.ultrapack.test", "1", str(src / "eboot.bin")], capture_output=True)
+        r.check("exfat.sidecars-appear", any(p.name.startswith("._") for p in src.rglob("*")),
+                "macOS wrote ._ files on the volume", "no ._ files: the test would prove nothing")
+        rc, log = r.run_cli([str(src), str(ff), "--pack", "--overwrite", "--temp-dir", str(temp)])
+        img = next((p for p in ff.glob("*.ffpfsc") if not p.name.startswith("._")), None)
+        r.check("exfat.pack", rc == 0 and img is not None, img.name if img else "", log[-300:])
+        routes = [("folder", src)] + ([("image", img)] if img else [])
+        for tag, source in routes:
+            out = vol / f"pkg_{tag}"; out.mkdir()
+            rc, log = r.run_cli([str(source), str(out), "--fpkg-build", str(source), "--temp-dir", str(temp),
+                                 "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+                                 "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+            pkg = next((p for p in out.glob("*.pkg") if not p.name.startswith("._")), None)
+            lrc, listing = r.run_tool(["list-inner", str(pkg)]) if pkg else (1, "")
+            names = [e["path"] for e in json.loads(listing).get("entries", [])] if lrc == 0 else []
+            junk = [n for n in names if n.rsplit("/", 1)[-1].startswith("._") or n.endswith(".DS_Store")]
+            r.check(f"exfat.{tag}.clean", rc == 0 and names and not junk and "inner.junk" in log,
+                    f"{len(names)} entries, no OS junk, checked by validate", f"rc={rc}; junk={junk[:5]}; {log[-300:]}")
+    finally:
+        subprocess.run(["hdiutil", "detach", str(vol), "-force", "-quiet"], capture_output=True)
+        dmg.unlink(missing_ok=True); shutil.rmtree(vol, ignore_errors=True)
+
+
 def test_negative_bad_content_id(r: Runner):
     src = make_synth_folder(r.work / "neg_bad_cid")
     out = r.work / "neg_bad_cid_out"; out.mkdir(exist_ok=True)
@@ -1379,6 +1477,8 @@ def main():
         ("big folder: image to .pkg",       test_big_folder_image_to_pkg),
         ("title id mismatch warns",         test_title_id_mismatch_warns),
         ("sidecars never in the package",   test_sidecars_never_in_the_package),
+        ("planted junk never in an output", test_planted_junk_never_reaches_an_output),
+        ("exFAT stage builds clean",        test_exfat_stage_builds_clean),
         ("identity: param.json wins",       test_identity_from_param_json),
         ("kraken fast preset (-4)",         test_kraken_fast_preset),
         ("validate: reject .ffpfsc",        test_validate_catches_untouched_ffpfsc),
