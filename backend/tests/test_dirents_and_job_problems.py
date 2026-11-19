@@ -96,6 +96,41 @@ class ReaderLayoutsTest(unittest.TestCase):
         self.assertLess(len(pfs.parse_image_dirents(blob)[0]), len(self.want))
 
 
+class PaddingPropertyTest(unittest.TestCase):
+    """random folders, names up to 255 chars, many sizes: every layout reads back complete"""
+    def test_random_folders(self):
+        import random
+        rnd = random.Random(7)
+        for case in range(300):
+            n = rnd.choice([1, 2, 50, 700, 1800, 2500, 4000, rnd.randint(1, 6000)])
+            maxlen = rnd.choice([8, 24, 64, 255])
+            ents = [pfs.Dirent(i + 3, rnd.choice([2, 3]), f"{i:05d}" + "x" * rnd.randint(0, maxlen - 5))
+                    for i in range(n)]
+            want = [e.name for e in ents]
+            blob = pfs.directory_blob(ents, BS)
+            self.assertFalse(pfs.dirents_cross_blocks(blob, BS), case)
+            self.assertEqual(block_walk(blob, BS), want, case)
+            for bsz in (BS, 0):                         # block aware and plain stream
+                parsed, errors = pfs.parse_image_dirents(blob, strict=True, block_size=bsz)
+                self.assertEqual((errors, [d.name for d in parsed]), ([], want), (case, bsz))
+            # every block starts with an entry, and no entry is longer than the rest of its block
+            off = 0
+            while off < len(blob):
+                es = struct.unpack_from("<i", blob, off + 12)[0]
+                self.assertGreater(es, 0)
+                self.assertLessEqual(off % BS + es, BS)
+                off += es
+
+    def test_exact_fit_at_the_block_end(self):
+        # names chosen so the entries fill a block to the byte: no padding entry, the next one starts the block
+        name = "a" * (64 - 17)                         # ent_size 64
+        ents = [pfs.Dirent(i + 3, 2, name[:-5] + f"{i:05d}") for i in range(BS // 64 + 3)]
+        blob = pfs.directory_blob(ents, BS)
+        self.assertEqual(struct.unpack_from("<i", blob, BS - 64 + 12)[0], 64)
+        self.assertEqual(struct.unpack_from("<I", blob, BS)[0], ents[BS // 64].inode_number)
+        self.assertEqual(block_walk(blob, BS), [e.name for e in ents])
+
+
 class JobProblemsTest(unittest.TestCase):
     def test_specific_error_beats_the_wrapper(self):
         lines = ["[error] EndOfStreamException: Unable to read beyond the end of the stream.",

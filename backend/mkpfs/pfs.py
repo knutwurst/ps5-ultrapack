@@ -793,6 +793,12 @@ class FileNode:
     inode: Inode | None = None
 
 
+def _build_time() -> int:
+    """the timestamp the inodes get: SOURCE_DATE_EPOCH when set, so the same input gives the same image"""
+    fixed = os.environ.get("SOURCE_DATE_EPOCH", "").strip()
+    return int(fixed) if fixed.isdigit() else int(time.time())
+
+
 def _generate_safe_single_file_fallback_stem() -> str:
     """Return a random safe fallback stem for single-file inner names.
 
@@ -3430,7 +3436,7 @@ def build_pfs(
                     bytes_processed=total_bytes_processed,
                 )
 
-    now: int = int(time.time())
+    now: int = _build_time()
     inodes: list[Inode] = []
 
     super_root_inode = Inode(
@@ -4103,7 +4109,7 @@ def build_pfs_stream_single_file(
         raise BuildError(f"source file does not exist: {source_file}")
     resolved_inner_file_name: str = inner_file_name if inner_file_name is not None else source_file.name
     raw_size: int = source_file.stat().st_size
-    now: int = int(time.time())
+    now: int = _build_time()
     resolved_ekpfs: bytes = resolve_ekpfs_key(ekpfs=ekpfs)
     seed: bytes = consts.ZERO_PFS_SEED
 
@@ -4493,7 +4499,7 @@ def build_pfs_stream_from_exfat(
     progress: Progress = Progress(enabled=True)
     if not source_root.is_dir():
         raise BuildError(f"source must be an existing directory: {source_root}")
-    now: int = int(time.time())
+    now: int = _build_time()
     resolved_ekpfs: bytes = resolve_ekpfs_key(ekpfs=ekpfs)
     seed: bytes = consts.ZERO_PFS_SEED
     inner_name: str = f"{default_image_basename(source_root)}.exfat"

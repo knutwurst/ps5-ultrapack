@@ -74,6 +74,10 @@ FIXED
   - A .pkg build showed "Writing final .ffpfsc output file" in its last
     stage: the text was fixed, and any log line naming a .ffpfsc (the
     source) set it. The stage now names the format the job writes.
+  - .ffpfsc images are reproducible: with SOURCE_DATE_EPOCH set, the
+    packer stamps that time instead of the current one, and the same
+    input gives the same bytes (the .pkg builder already had
+    --fpkg-deterministic).
   - The speed and time left of a .pkg build's Kraken pass counted only
     the one file the package library names per percent step. A game of
     many small files showed a fraction of its real speed and hours

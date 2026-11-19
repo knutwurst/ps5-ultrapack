@@ -650,6 +650,87 @@ def test_source_never_lost(r: Runner):
     shutil.rmtree(lib, ignore_errors=True); shutil.rmtree(out2, ignore_errors=True)
 
 
+def test_roundtrip_byte_for_byte(r: Runner):
+    # the conversions must never change a game file: folder -> .ffpfsc -> folder, .ffpfsc -> .pkg -> folder and
+    # .pkg -> .pkg -> folder give back every byte outside sce_sys; packing twice gives the same image
+    import random as _random
+    rnd = _random.Random(11)
+    src = r.work / "rt_src"; shutil.rmtree(src, ignore_errors=True)
+    shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    d = src / "data"; d.mkdir()
+    (d / "empty.bin").write_bytes(b"")
+    for n in (1, 65535, 65536, 65537, 262143, 262144, 262145, 1048575, 1048576, 1048577):
+        (d / f"rand_{n}.bin").write_bytes(rnd.randbytes(n))
+        (d / f"zero_{n}.bin").write_bytes(bytes(n))
+    (d / "mixed.bin").write_bytes((rnd.randbytes(4096) + bytes(4096)) * 600)
+    deep = src.joinpath(*[f"level{i}" for i in range(8)]); deep.mkdir(parents=True)
+    (deep / ("n" * 200 + ".dat")).write_bytes(rnd.randbytes(5000))
+    many = src / "many"; many.mkdir()
+    for i in range(2500):
+        (many / f"asset_{i:05d}_{'q' * (i % 37)}.bin").write_bytes(rnd.randbytes(rnd.randint(0, 3000)))
+
+    def tree(root, skip_sys=True):
+        out = {}
+        for p in root.rglob("*"):
+            rel = p.relative_to(root).as_posix()
+            if p.is_file() and not (skip_sys and rel.startswith("sce_sys/")):
+                out[rel] = sha(p)
+        return out
+    want = tree(src)
+    ids = ["--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+           "--fpkg-inner", "kraken", "--fpkg-kraken-backend", "builtin", "--fpkg-deterministic"]
+    imgs = []
+    for tag in ("a", "b"):
+        ff = r.work / f"rt_ff_{tag}"; shutil.rmtree(ff, ignore_errors=True); ff.mkdir()
+        rc, log = r.run_cli([str(src), str(ff), "--pack", "--overwrite"], env={"SOURCE_DATE_EPOCH": "1700000000"})
+        imgs.append(next(ff.glob("*.ffpfsc"), None))
+    if not r.check("roundtrip.pack", all(imgs), "packed twice", log[-300:]):
+        return
+    r.check("roundtrip.pack-deterministic", sha(imgs[0]) == sha(imgs[1]), "the same image both times",
+            f"{sha(imgs[0])[:16]} vs {sha(imgs[1])[:16]}")
+    up = r.work / "rt_up"; shutil.rmtree(up, ignore_errors=True); up.mkdir()
+    r.run_cli([str(imgs[0]), str(up), "--unpack", "--overwrite"])
+    roots = [p.parent for p in up.rglob("sce_sys") if p.is_dir()]
+    got = tree(roots[0]) if roots else {}
+    r.check("roundtrip.ffpfsc-unpack", got == want, f"{len(got)} files, every byte the same",
+            f"missing {sorted(set(want) - set(got))[:3]} extra {sorted(set(got) - set(want))[:3]} "
+            f"differ {[k for k in want if k in got and got[k] != want[k]][:3]}")
+
+    # a raw ELF is fake-signed on purpose (the console runs only a SELF): that one file may change, into a SELF
+    raw_elf = {rel for rel in want if (src / rel).read_bytes()[:4] == b"\x7fELF"}
+
+    def pkg_tree(pkg):
+        x = r.work / f"rt_x_{pkg.stem}"; shutil.rmtree(x, ignore_errors=True)
+        r.run_tool(["extract-inner", str(pkg), str(x)])
+        t = tree(x)
+        for rel in raw_elf:
+            if rel in t and (x / rel).read_bytes()[:4] == b"\x54\x14\xf5\xee":
+                t[rel] = want[rel]          # signed as intended
+        shutil.rmtree(x, ignore_errors=True)
+        return t
+    pkgs = []
+    for tag in ("a", "b"):
+        o = r.work / f"rt_pkg_{tag}"; shutil.rmtree(o, ignore_errors=True); o.mkdir()
+        rc, log = r.run_cli([str(imgs[0]), str(o), "--fpkg-build", str(imgs[0]), *ids])
+        pkgs.append(next(o.glob("*.pkg"), None))
+    if not r.check("roundtrip.pkg-built", all(pkgs), "built twice from the image", log[-300:]):
+        return
+    r.check("roundtrip.pkg-deterministic", sha(pkgs[0]) == sha(pkgs[1]), "the same package both times",
+            f"{sha(pkgs[0])[:16]} vs {sha(pkgs[1])[:16]}")
+    got = pkg_tree(pkgs[0])
+    r.check("roundtrip.pkg-contents", got == want, f"{len(got)} files, every byte the same",
+            f"missing {sorted(set(want) - set(got))[:3]} differ {[k for k in want if k in got and got[k] != want[k]][:3]}")
+    re_out = r.work / "rt_re"; shutil.rmtree(re_out, ignore_errors=True); re_out.mkdir()
+    rc, log = r.run_cli([str(pkgs[0]), str(re_out), "--to", "pkg", "--rebuild", "--copy-mode", "keep", *ids[4:]])
+    rebuilt = next(re_out.glob("*.pkg"), None)
+    got = pkg_tree(rebuilt) if rebuilt else {}
+    r.check("roundtrip.pkg-rebuild-contents", "Rebuilding straight" in log and got == want,
+            f"{len(got)} files after the in-place rebuild, every byte the same",
+            f"rc={rc} missing {sorted(set(want) - set(got))[:3]} differ {[k for k in want if k in got and got[k] != want[k]][:3]}")
+    for p in [src, up, re_out] + [r.work / f"rt_ff_{t}" for t in "ab"] + [r.work / f"rt_pkg_{t}" for t in "ab"]:
+        shutil.rmtree(p, ignore_errors=True)
+
+
 def test_planted_junk_never_reaches_an_output(r: Runner):
     # any drive, any OS: OS junk planted in the source must not show up in any result of any route
     sys.path.insert(0, str(REPO))
@@ -1685,6 +1766,7 @@ def main():
         ("rebuild replaces only when checked", test_rebuild_replaces_source_only_when_checked),
         ("pkg rebuild, packed small files", test_pkg_rebuild_with_packed_small_files),
         ("source never lost",               test_source_never_lost),
+        ("roundtrip byte for byte",         test_roundtrip_byte_for_byte),
         ("planted junk never in an output", test_planted_junk_never_reaches_an_output),
         ("exFAT stage builds clean",        test_exfat_stage_builds_clean),
         ("identity: param.json wins",       test_identity_from_param_json),
