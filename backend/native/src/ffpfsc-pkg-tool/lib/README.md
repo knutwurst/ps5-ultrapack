@@ -37,7 +37,7 @@ The one dependency of `ffpfsc-pkg-tool` that is not a NuGet package.
 ## Modification notice (GPL-3 section 5a)
 
 `LibProsperoPkg.dll` was modified by this project (first on 2026-10-05; all patches re-applied
-to build `a3ee4c1a` on 2026-11-18, patch 8 added on 2026-11-19):
+to build `a3ee4c1a` on 2026-11-18, patches 8 and 9 added on 2026-11-19):
 
 1. `ProsperoPkgBuilder.BuildInnerTree`: the local function `FilterFakeLibraryDirectory`
    is replaced by a single `ret`, so a source's `fakelib/` directory is kept intact.
@@ -62,6 +62,12 @@ to build `a3ee4c1a` on 2026-11-18, patch 8 added on 2026-11-19):
    over the source folder skips OS junk: `._*` and the names in `FsJunk.cs` (`.DS_Store`,
    `Thumbs.db`, `desktop.ini`, `.Trashes` ...), checked by the new `SourceHooks.IsJunk`. macOS
    leaves a `._` file on exFAT next to every file it writes, and those used to go into the package.
+7. `ProsperoPs5InnerImageAssembler.CompressToStream`, local function `EncodeKraken` (added
+   2026-11-19): it first asks the new `SourceHooks.TryReuse`, which calls the new public delegate
+   `SourceHooks.ReuseBlock` (type `SourceHooks.KrakenReuse`). The delegate can hand back an already
+   compressed block for the exact bytes the encoder was given, or say the block is stored raw.
+   With no delegate set, every block is encoded as before. The tool uses it to rebuild a package
+   from an old one without compressing unchanged data again.
 (A further change, `ProsperoPackageArchive.ResolveParallelism` returning 1, was applied from
 2026-10-05 to 2026-10-06 and is gone: the crash it worked around was the tool's compressed
 single-file bundle, see `../patches/README.md`.)

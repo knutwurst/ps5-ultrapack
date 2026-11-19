@@ -1675,6 +1675,34 @@ def _image_builds_in_place(src: Path, args):
     return any(str(e.get("path", "")).lower().endswith("ampr_zstd.index") for e in listing.get("entries", []))
 
 
+def _pkg_rebuilds_in_place(src: Path, args):
+    """None when the package is unpacked first, else whether it holds zstd packs"""
+    if not (src.is_file() and src.suffix.lower() == ".pkg"):
+        return None
+    if getattr(args, "backport_target", None) or os.environ.get("PS5_ULTRAPACK_UNPACK_PKG") == "1":
+        return None
+    try:
+        import fpkg as _fpkg
+        if _fpkg.is_ps4(src):
+            return None
+        listing = _fpkg.list_inner(src, passcode=args.fpkg_passcode)
+    except Exception:
+        return None                       # anything odd: the unpack route reads it
+    if listing.get("errors"):
+        return None
+    paths = [str(e.get("path", "")) for e in listing.get("entries", []) if e.get("type") == "file"]
+    if "sce_sys/param.json" not in paths:
+        return None
+    return any(p.lower().endswith("ampr_zstd.index") for p in paths)
+
+
+def _rerun_unpacked(env_key: str) -> None:
+    """runs this job again with the source unpacked first, and exits with its code"""
+    again = ([sys.executable, "--backend-internal", *sys.argv[1:]] if getattr(sys, "frozen", False)
+             else [sys.executable, "-u", *sys.argv])
+    sys.exit(subprocess.call(again, env={**os.environ, env_key: "1"}))
+
+
 def _image_dirs_cross_blocks(src: Path) -> bool:
     """an image whose large folders have entries across block boundaries (packed before 2.6.2)"""
     pfs, consts = _import_mkpfs()
@@ -3445,7 +3473,13 @@ def main() -> None:
                 print(f"[ERROR] {e}", flush=True); sys.exit(1)
             finally:
                 shutil.rmtree(probe, ignore_errors=True)
-        if wanted or rebuild or kind not in native.get(to, set()):
+        # a plain .pkg rebuild reads the old package in place and takes over its Kraken blocks
+        zstd_pkg = _pkg_rebuilds_in_place(src, args) if (kind == "pkg" and to == "pkg" and rebuild
+                                                          and not wanted) else None
+        if zstd_pkg is not None:
+            args._pkg_direct = True
+            args._pkg_zstd = zstd_pkg
+        elif wanted or rebuild or kind not in native.get(to, set()):
             try:
                 root, owned = _chain_materialize(src, scratch_root, args)
                 if owned is None and any(getattr(args, a, False) for a in ("chain_lz4", "chain_lz4_unpack",
@@ -3593,7 +3627,17 @@ def main() -> None:
             # a .ffpfs/.ffpfsc the tool reads in place; other images are unwrapped to scratch first
             staged = None
             direct = _image_builds_in_place(src, args)
-            if direct is not None:
+            pkg_direct = (getattr(args, "_pkg_direct", False) and src.is_file() and src.suffix.lower() == ".pkg")
+            if pkg_direct:
+                build_src = src
+                if getattr(args, "_pkg_zstd", False):
+                    args._no_ampr_index = True
+                    print("[INFO] The game holds zstd packs, so its ampr_emu.index stays as it is: it lists "
+                          "the packed files, which a rebuild from the folder would lose.", flush=True)
+                print(f"[INFO] Rebuilding straight from {src.name}: nothing is unpacked, and every Kraken block "
+                      f"whose data is unchanged is taken over from it instead of being compressed again. "
+                      f"If that fails, the package is unpacked and built the normal way.", flush=True)
+            elif direct is not None:
                 build_src = src
                 if direct:
                     args._no_ampr_index = True
@@ -3754,13 +3798,16 @@ def main() -> None:
                     print(f"[INFO] Removed unwrap scratch {staged}", flush=True)
             keep_stage = False
             try:
-                if rc == 5 and staged is None and build_src.is_file():
+                if rc == 5 and staged is None and build_src.is_file() and not pkg_direct:
                     # the library read another file list than the image holds: nothing was built, unpack first
                     print(f"[WARN] The package builder read {build_src.name} differently from this app; "
                           f"building again from an unpacked copy.", flush=True)
-                    again = ([sys.executable, "--backend-internal", *sys.argv[1:]] if getattr(sys, "frozen", False)
-                             else [sys.executable, "-u", *sys.argv])
-                    sys.exit(subprocess.call(again, env={**os.environ, "PS5_ULTRAPACK_UNPACK_IMAGES": "1"}))
+                    _rerun_unpacked("PS5_ULTRAPACK_UNPACK_IMAGES")
+                if pkg_direct and rc not in (0, 130, 143):
+                    print(f"[WARN] Rebuilding straight from {build_src.name} failed (rc={rc}); "
+                          f"unpacking it and building the normal way.", flush=True)
+                    shutil.rmtree(stage_out, ignore_errors=True)
+                    _rerun_unpacked("PS5_ULTRAPACK_UNPACK_PKG")
                 if rc != 0:
                     print(f"\n[ERROR] fPKG build failed (rc={rc}).", flush=True); sys.exit(1)
                 made = sorted(stage_out.glob("*.pkg"), key=lambda x: x.stat().st_mtime)
@@ -3804,6 +3851,12 @@ def main() -> None:
                     validate_rc = _fpkg.validate(built[-1], temp_dir=str(fpkg_temp), on_line=_validate_line)
             except Exception as ve:
                 print(f"[warn] Auto-validate skipped: {ve}", flush=True)
+            if validate_rc and pkg_direct and built:
+                # never a broken package: this one goes, the normal route builds it again
+                print(f"[WARN] The package rebuilt straight from {src.name} failed validation; "
+                      f"unpacking it and building the normal way.", flush=True)
+                built[-1].unlink(missing_ok=True)
+                _rerun_unpacked("PS5_ULTRAPACK_UNPACK_PKG")
             if validate_rc:
                 detail = "; ".join(failed_checks[:8]) or f"the validator returned {validate_rc}"
                 print(f"[ERROR] The package failed validation ({len(failed_checks) or '?'} check(s)): {detail}. "

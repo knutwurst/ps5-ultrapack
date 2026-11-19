@@ -19,6 +19,9 @@ we wrote:
   as one (22 of 22 builds, 2026-10-06).
 - `InnerImage.cs` — random access into the inner PFS for `list-inner` and
   `extract-inner --members` (see below).
+- `PkgSource.cs` — `build <old.pkg> <out-dir>` reads a PS5 package in place instead of unpacking
+  it, and hands the Kraken blocks of unchanged data back to the encoder (IL patch 9, see
+  `patches/README.md`); `--no-block-reuse` compresses everything again.
 - `Ps4.cs` — `ps4-list` and `ps4-extract` for PS4 packages (title ids CUSA…), read with the
   vendored LibOrbisPkg in `../LibOrbisPkg/` (LGPL-3). Only fake packages open (the library's fake
   keyset recovers their PFS key); the package-header entries (param.sfo, icon0.png, …) are listed

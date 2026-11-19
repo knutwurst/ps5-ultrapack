@@ -12,6 +12,12 @@ LIBRARY CHECK
     place (the full package check, OS junk included) and lists each one
     as fine, to rebuild, or with a problem a rebuild cannot fix. The
     report is saved as library_check.txt in the app's folder.
+  - A .pkg rebuilt from a .pkg is read in place and its Kraken blocks are
+    taken over (IL patch 9, SourceHooks.ReuseBlock): a block is reused
+    only when what it decodes to matches the encoder's input (SHA-256 and
+    length); everything else is compressed as usual. Nothing is unpacked
+    first. If that route fails or its result fails validation, the job
+    unpacks the package and builds the normal way.
   - "Rebuild broken" queues a rebuild for each broken game package. The
     new package is checked where it was built and only then replaces
     the old one under its own name (--replace-source); a package that

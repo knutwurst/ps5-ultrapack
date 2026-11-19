@@ -146,3 +146,32 @@ had one per file. The patcher adds `SourceHooks.IsJunk(name)` (`._*` ordinal, an
 at the top of that `foreach`: such an entry is skipped. Nothing is deleted; the files are just
 never read. `validate` fails a package that holds any of them (`inner.junk`). `sidecars never in the package` in `test_fpkg_pipelines.py` builds a stage that holds such
 files and lists the package.
+
+## Patch 9 — a rebuild takes over the Kraken blocks of the old package
+
+Rebuilding a package (for example to drop OS junk an older build took in) used to unpack it and
+compress every block again. Kraken is most of the build time, and the old package already holds
+a compressed block for nearly every 256 KiB of the new one. The patcher adds the public delegate
+`SourceHooks.KrakenReuse` (`byte[] (ReadOnlySpan<byte> input, int level, out bool multiChunk,
+out int firstChunkSize, out int boundaryFlags)`), the field `SourceHooks.ReuseBlock` and the
+internal `SourceHooks.TryReuse`, and puts a call to `TryReuse` at the top of the local function
+`EncodeKraken` in `ProsperoPs5InnerImageAssembler.CompressToStream`. The hook returns null to let
+the encoder run, an empty array to store the block raw (what the encoder's `null` means), or a
+payload, which becomes an `EncodedBlock` through its `(payload, multiChunk, firstChunkSize,
+boundaryFlags)` constructor. With no delegate set the encoder runs as before.
+
+The tool (`PkgSource.cs`) builds from the old `.pkg` like `SourceImage.cs` does from an image: the
+tree `extract-inner` would write, with the big files as stand-ins. Each NAPS span it decodes for
+the library is kept under the SHA-256 and length of its decoded bytes, together with its stored
+bytes; the hook hashes the block the encoder gets and hands back the stored one only when both
+match, so a block is only ever replaced by one that decodes to exactly its bytes. `multiChunk`
+is "more than 128 KiB", `firstChunkSize` is the span's even-chunk length, and the boundary flags
+are rebuilt per half (verbatim when the half's stored length equals its plain length, else LZ or
+bare entropy from the span's even/odd mode, plus the sub-literal bit); a span whose rebuilt flags
+would not give back its own NAPS modes, or that is shuffled, is not reused. A stored span means
+the encoder refused that block, so it is stored again (unless the package holds no Kraken block
+at all, i.e. it was built uncompressed). The built-in encoder is deterministic, so a rebuild at
+the old package's level gives the same bytes as compressing again (`pkg rebuild reuses Kraken
+blocks` in `test_fpkg_pipelines.py`). A package built at another level keeps its old blocks:
+valid, with that level's sizes.
+

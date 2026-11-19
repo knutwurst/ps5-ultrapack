@@ -1100,6 +1100,68 @@ def test_deterministic_build(r: Runner):
             f"workers-line={'workers=4' in (out_c or '')}")
 
 
+def test_pkg_rebuild_reuses_blocks(r: Runner):
+    # a .pkg rebuild reads the old package in place and hands its Kraken blocks back to the encoder:
+    # the result must be the package the unpack route builds, byte for byte
+    import random
+    rnd = random.Random(7)
+    words = [bytes(rnd.choice(b"abcdefghijklmnopqrstuvwxyz") for _ in range(rnd.randint(2, 9))) for _ in range(800)]
+    text = b" ".join(rnd.choice(words) for _ in range(700_000))
+    src = r.work / "reuse_src"; shutil.rmtree(src, ignore_errors=True)
+    shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    for rel, blob in (("data/text.bin", text[:3_000_123]), ("data/random.bin", os.urandom(2_500_017)),
+                      ("data/zeros.bin", bytes(1 << 20)), ("data/sub/mixed.bin", os.urandom(700_000) + text[:900_001]),
+                      ("data/text_copy.bin", text[:3_000_123]), ("data/small.bin", text[:200_000])):
+        (src / rel).parent.mkdir(parents=True, exist_ok=True); (src / rel).write_bytes(blob)
+    ids = ["--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+           "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin", "--fpkg-deterministic"]
+    old = r.work / "reuse_old"; shutil.rmtree(old, ignore_errors=True); old.mkdir()
+    rc, log = r.run_cli([str(src), str(old), "--fpkg-build", str(src), *ids])
+    pkg = next(old.glob("*.pkg"), None)
+    if not r.check("reuse.old-package", rc == 0 and pkg is not None, "built", log[-300:]):
+        return
+
+    def rebuild(name, env=None):
+        out = r.work / name; shutil.rmtree(out, ignore_errors=True); out.mkdir()
+        rc, log = r.run_cli([str(pkg), str(out), "--to", "pkg", "--rebuild", "--copy-mode", "keep",
+                             "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin", "--fpkg-deterministic"], env=env)
+        return rc, log, next(out.glob("*.pkg"), None)
+
+    def names(p):
+        # the builder regenerates the PlayGo ranges for each image, so only their names count
+        rc, listing = r.run_tool(["list-inner", str(p)])
+        return sorted((e["path"], None if e["path"].startswith("sce_sys/playgo-") else e.get("size"))
+                      for e in json.loads(listing).get("entries", [])) if rc == 0 else None
+
+    rc_r, log_r, p_reuse = rebuild("reuse_direct")
+    rc_n, log_n, p_normal = rebuild("reuse_normal", {"PS5_ULTRAPACK_UNPACK_PKG": "1"})
+    if not r.check("reuse.both-routes", rc_r == 0 and rc_n == 0 and p_reuse and p_normal, "both rebuilt",
+                   f"rc={rc_r}/{rc_n}; {(log_r + log_n)[-400:]}"):
+        return
+    m = re.search(r"\[reuse\] (\d+) Kraken block\(s\) taken from the old package, (\d+) kept stored, (\d+) compressed again", log_r)
+    r.check("reuse.direct-route", "[INFO] Rebuilding straight from" in log_r and m is not None and int(m.group(1)) > 0
+            and int(m.group(2)) > 0 and "Unpacking" not in log_r,
+            f"read in place: {m.group(1)} blocks taken over, {m.group(2)} kept stored, {m.group(3)} compressed" if m else "",
+            "\n".join(x for x in log_r.splitlines() if "[reuse]" in x or "[INFO]" in x)[:500])
+    r.check("reuse.normal-route", "Rebuilding straight" not in log_n and "[reuse]" not in log_n,
+            "the unpack route ran", log_n[-300:])
+    r.check("reuse.same-package", sha(p_reuse) == sha(p_normal), "block reuse gives the unpack route's bytes",
+            f"{sha(p_reuse)[:16]} vs {sha(p_normal)[:16]}")
+    rc, out = r.run_tool(["validate", str(p_reuse), "--json"])
+    rep = json.loads(out[out.index("{"):]) if "{" in out else {}
+    r.check("reuse.validates", rep.get("fail") == 0 and rep.get("pass", 0) > 0, f"{rep.get('pass')} passed, 0 failed",
+            out[-300:])
+    r.check("reuse.same-tree", names(p_reuse) == names(pkg), "the same files and sizes as the old package",
+            f"{names(p_reuse)} vs {names(pkg)}")
+    # any error on the direct route: the app unpacks and builds the normal way
+    rc_f, log_f, p_fall = rebuild("reuse_fallback", {"ULTRAPACK_TEST_PKG_SOURCE_FAIL": "1"})
+    r.check("reuse.falls-back", rc_f == 0 and p_fall is not None and "unpacking it and building the normal way" in log_f
+            and sha(p_fall) == sha(p_normal), "failed in place, rebuilt from the unpacked copy",
+            f"rc={rc_f}; {log_f[-400:]}")
+    for d in (src, old, r.work / "reuse_direct", r.work / "reuse_normal", r.work / "reuse_fallback"):
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_stage_in_place_matches_copy(r: Runner):
     hbt = fetch_hbt(r.work / "hbt")
     src_a, src_b = r.work / "sip_src_a", r.work / "sip_src_b"
@@ -1528,6 +1590,7 @@ def main():
         ("ps4: archive to library",         test_ps4_archive_to_library),
         ("organize: real containers",       test_organize_real),
         ("stage in place = copy mode",      test_stage_in_place_matches_copy),
+        ("pkg rebuild reuses Kraken blocks", test_pkg_rebuild_reuses_blocks),
         ("list-inner + selective extract",  test_list_and_selective_extract),
         ("ampr index rebuilt in staging",   test_ampr_index_rebuilt),
         ("publishing rules in staging",     test_publishing_rules),

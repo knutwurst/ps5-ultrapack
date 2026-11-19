@@ -33,6 +33,9 @@ internal sealed class InnerImage : IDisposable
     public PfsReader Pfs { get; }
     public int RangeCalls => _blocks.RangeCalls;
     public long RangeBytes => _blocks.RangeBytes;
+    public NapsLayoutDocument Layout => _layout;
+    public ProsperoNapsPlan Plan => _plan;
+    readonly object _storedGate = new();
 
     public InnerImage(string packagePath, string passcode, int cacheBlockSize = 1 << 20, int cacheBlocks = 32)
     {
@@ -198,6 +201,20 @@ internal sealed class InnerImage : IDisposable
         }
     }
 
+    // the bytes of one span as pfs_image.dat holds them; several threads may ask
+    public byte[] ReadStored(ProsperoNapsSpan span)
+    {
+        if (span.StoredOffset < 0 || span.CompressedLength < 0 || span.StoredOffset + span.CompressedLength > _pfsImage.Length)
+            throw new InvalidDataException($"NAPS span {span.Index} lies outside pfs_image.dat.");
+        var buf = new byte[span.CompressedLength];
+        lock (_storedGate)
+        {
+            _pfsImage.Position = span.StoredOffset;
+            _pfsImage.ReadExactly(buf);
+        }
+        return buf;
+    }
+
     public void Dispose()
     {
         _pfsImage?.Dispose();
@@ -235,6 +252,39 @@ internal sealed class NapsBlockReader : IMemoryReader
     }
 
     public static bool UsesSpanDecoder => s_decodeSpan != null;
+
+    // decodes one span from its stored bytes, deshuffled, with the library's own decoder
+    public static byte[] DecodeStored(NapsLayoutDocument layout, ProsperoNapsSpan span, byte[] stored)
+    {
+        if (s_decodeSpan == null) throw new NotSupportedException("the library's NAPS span decoder is not available");
+        return s_decodeSpan(new OneSpanStream(stored, span.StoredOffset), layout, span);
+    }
+
+    // a stream that holds only the bytes of one span, at their offset in pfs_image.dat
+    sealed class OneSpanStream : Stream
+    {
+        readonly byte[] _b; readonly long _at; long _pos;
+        public OneSpanStream(byte[] b, long at) { _b = b; _at = at; }
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => _at + _b.Length;
+        public override long Position { get => _pos; set => _pos = value; }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            long rel = _pos - _at;
+            if (rel < 0) throw new InvalidDataException("read before the span");
+            int n = (int)Math.Max(0, Math.Min(count, _b.Length - rel));
+            Buffer.BlockCopy(_b, (int)rel, buffer, offset, n);
+            _pos += n;
+            return n;
+        }
+        public override long Seek(long offset, SeekOrigin origin)
+            => _pos = origin switch { SeekOrigin.Begin => offset, SeekOrigin.Current => _pos + offset, _ => Length + offset };
+        public override void Flush() { }
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
 
     public int RangeCalls { get; private set; }
     public long RangeBytes { get; private set; }
