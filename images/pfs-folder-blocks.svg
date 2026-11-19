@@ -2,9 +2,9 @@
 <title>Folder entries and block boundaries in a PFS image</title>
 <rect x="0" y="0" width="680" height="460" rx="12" fill="#ffffff"/>
 <g font-size="14" font-weight="600" fill="#1f2328">
-<text x="40" y="40">Older .ffpfsc (up to 2.6.1): entries written straight on</text>
+<text x="40" y="40">Older .ffpfsc (up to 2.6.x): entries written straight on</text>
 <text x="40" y="182">How the package builder reads it: every block from its start</text>
-<text x="40" y="310">New .ffpfsc (2.6.2): no entry crosses a block boundary</text>
+<text x="40" y="310">New .ffpfsc (2.7.0): no entry crosses a block boundary</text>
 </g>
 <g fill="#f6f8fa" stroke="#8c959f" stroke-width="0.8">
 <rect x="40" y="54" width="600" height="50" rx="4"/>

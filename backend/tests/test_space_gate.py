@@ -163,7 +163,7 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
         # read in place, its image written into the package: temp holds only the small files
         self.assertFalse(item.image_wraps_exfat)
         self.assertAlmostEqual(m._peak_factor_for(item), 0.01 + m.PKG_CONSUME_MARGIN)
-        # folders packed before 2.6.2 the package builder can't read: unpacked first like an exFAT
+        # folders packed before 2.7.0 the package builder can't read: unpacked first like an exFAT
         item.image_old_dirs = True
         self.assertAlmostEqual(m._peak_factor_for(item), 1.0 + 0.61 + m.PKG_CONSUME_MARGIN)
         item.image_old_dirs = False

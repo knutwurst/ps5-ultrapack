@@ -423,7 +423,7 @@ def test_big_folder_image_to_pkg(r: Runner):
         rc, log = r.run_cli([str(img), str(pk), "--fpkg-build", str(img),
                              "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
                              "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
-        route = "packed before 2.6.2" in log and "Unwrapping" in log if old else "Building straight from" in log
+        route = "packed before 2.7.0" in log and "Unwrapping" in log if old else "Building straight from" in log
         r.check(f"bigdir.{tag}.pkg", rc == 0 and route and next(pk.glob("*.pkg"), None) is not None,
                 "unpacked first, package built" if old else "read directly, package built",
                 f"rc={rc}; " + log[-400:])

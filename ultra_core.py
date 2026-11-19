@@ -510,7 +510,7 @@ def pkg_peak_factor(item) -> float:
 
 
 def image_unpacks_first(item) -> bool:
-    """a .ffpfs/.ffpfsc the .pkg build unpacks: an exFAT inside, or folders packed before 2.6.2"""
+    """a .ffpfs/.ffpfsc the .pkg build unpacks: an exFAT inside, or folders packed before 2.7.0"""
     return bool(getattr(item, "image_wraps_exfat", False) or getattr(item, "image_old_dirs", False))
 
 
@@ -565,7 +565,7 @@ def probe_container_content(item) -> int:
         try:
             doc = _cli.list_pfs_image(src)
             item.image_wraps_exfat = False
-            # packed before 2.6.2 with folders the package builder can't read directly: unpacked first
+            # packed before 2.7.0 with folders the package builder can't read directly: unpacked first
             item.image_old_dirs = bool(_cli._image_dirs_cross_blocks(src))
         except ValueError:
             doc = _cli.list_inner_exfat(src)     # an exFAT inside: unpacked before the build
@@ -4309,7 +4309,7 @@ class GameItem:
     auto_zstd = False
     auto_zstd_level = None
     image_wraps_exfat = False  # .ffpfs/.ffpfsc source holding an exFAT, unpacked before a .pkg build
-    image_old_dirs = None   # .ffpfs/.ffpfsc packed before 2.6.2 with folders over one block: unpacked too (None: not read)
+    image_old_dirs = None   # .ffpfs/.ffpfsc packed before 2.7.0 with folders over one block: unpacked too (None: not read)
     in_place_output = False  # In place: the result goes next to its source, named from the game
     error_detail = ""       # the error line a failed job ended on, shown on its card
     warning_detail = ""     # what the package check warned about, shown on the card

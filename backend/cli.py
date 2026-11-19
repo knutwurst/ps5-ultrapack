@@ -1669,7 +1669,7 @@ def _image_builds_in_place(src: Path, args):
         return None
     args._image_files = int(listing.get("file_count") or 0)
     if _image_dirs_cross_blocks(src):
-        print(f"[INFO] {src.name} was packed before 2.6.2: some of its folders are stored in a way the package "
+        print(f"[INFO] {src.name} was packed before 2.7.0: some of its folders are stored in a way the package "
               f"builder cannot read directly, so it is unpacked first.", flush=True)
         return None
     return any(str(e.get("path", "")).lower().endswith("ampr_zstd.index") for e in listing.get("entries", []))
@@ -1706,7 +1706,7 @@ def _rerun_unpacked(env_key: str) -> None:
 
 
 def _image_dirs_cross_blocks(src: Path) -> bool:
-    """an image whose large folders have entries across block boundaries (packed before 2.6.2)"""
+    """an image whose large folders have entries across block boundaries (packed before 2.7.0)"""
     pfs, consts = _import_mkpfs()
     try:
         with _open_inner_pfs(src, pfs, consts) as fh:

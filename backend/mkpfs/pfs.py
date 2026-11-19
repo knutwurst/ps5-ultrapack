@@ -5285,7 +5285,7 @@ def parse_image_dirents(blob: bytes, strict: bool = False,
                         block_size: int = 0) -> tuple[list[ParsedDirent], list[str]]:
     """block_size: a directory payload; a zeroed rest of a block then means "go on in the next
     block" (Sony and LibOrbisPkg leave one), not the end. Entries across a block boundary (our
-    packer before 2.6.2) and a last entry that takes up the rest of its block read too."""
+    packer before 2.7.0) and a last entry that takes up the rest of its block read too."""
     dirents: list[ParsedDirent] = []
     errors: list[str] = []
     offset = 0
@@ -5329,7 +5329,7 @@ def parse_image_dirents(blob: bytes, strict: bool = False,
 
 def dirents_cross_blocks(blob: bytes, block_size: int) -> bool:
     """whether an entry of this directory payload runs across a block boundary (images packed
-    before 2.6.2); readers that walk a directory block by block misread those"""
+    before 2.7.0); readers that walk a directory block by block misread those"""
     offset = 0
     while offset + 16 <= len(blob):
         ent_size = struct.unpack_from("<i", blob, offset + 12)[0]
