@@ -831,7 +831,9 @@ internal static partial class Program
             if (junk.Count == 0) Ok("inner.junk", "no OS junk files (._*, .DS_Store, Thumbs.db, ...)");
             else Fail("inner.junk", $"{junk.Count:N0} OS junk file(s) in the package, e.g. {string.Join(", ", junk.Take(3))}");
             var eboot = files.FirstOrDefault(f => SafeRelative(img.RelativePath(f)) == "eboot.bin");
-            if (eboot == null)
+            if (eboot == null && h.ContentType != 0x20)
+                Ok("inner.eboot", "an add-on needs no eboot.bin");        // 0x20 = application
+            else if (eboot == null)
                 Fail("inner.eboot", "eboot.bin not present in inner PFS");
             else if (eboot.size < 64)
                 Fail("eboot.size", $"{eboot.size} bytes — truncated or empty, cannot start");

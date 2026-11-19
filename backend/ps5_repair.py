@@ -352,6 +352,10 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
             out["error"] = out["error"] or f"the image cannot be listed: {e}"
             return out
         out["files"] = sum(1 for e in entries if e.get("type") == "file")
+        # OS junk (._trophy00.ucp and the like) is never a game file: no check reads it
+        from mkpfs.utils import is_ignored_name
+        entries = [e for e in entries
+                   if not any(is_ignored_name(part) for part in str(e.get("path", "")).split("/") if part)]
         lower = {str(e.get("path", "")).lower(): e for e in entries}
         out["ucp"] = []
         for path in sorted(p for p in lower if p.endswith(".ucp") and p.startswith(UCP_DIRS)):
