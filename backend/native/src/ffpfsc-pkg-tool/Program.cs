@@ -795,7 +795,8 @@ internal static partial class Program
                     {
                         var v = tid.GetString() ?? "";
                         if (v == headerTid) Ok("param.titleId", $"{v} matches the content id");
-                        else Fail("param.titleId", $"'{v}' != content id title '{headerTid}'");
+                        // the game's own data can do this (an upgrade edition): kept as it is, but flagged
+                        else Warn("param.titleId", $"title id {v} differs from {headerTid} in the content id; kept as the game's data has it");
                     }
                     else Fail("param.titleId", "param.json has no titleId");
                     if (root.TryGetProperty("applicationDrmType", out var drm))

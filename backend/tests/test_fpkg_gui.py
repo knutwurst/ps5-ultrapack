@@ -1670,6 +1670,16 @@ try:
     _wv = _fake_worker(_outf); _wv.validate_failed = True
     ok("after.failed-checklist-stays", "checklist" in str(app._after_job_plan(_j1, _wv)[3]), "")
     ok("after.missing-output-stays", "not found" in str(app._after_job_plan(_j1, _fake_worker(_aout / "no.pkg"))[3]), "")
+    # a failed job names its error, a package check's warning stays on the card
+    _je = m.GameItem.from_chain(_g1, to="pkg"); _je.status = "Failed"; _je.status_note = "Backend exited with code 1."
+    _je.error_detail = "EndOfStreamException: Unable to read beyond the end of the stream."
+    _je.warning_detail = "param.titleId: title id PPSA00002 differs from PPSA00001 in the content id"
+    _ci = app._card_info_text(_je)
+    ok("card.error-row", _ci.get("Error") == _je.error_detail, str(_ci.get("Error")))
+    ok("card.warning-row", _ci.get("Warning") == _je.warning_detail, str(_ci.get("Warning")))
+    _je.status = "Done"
+    _ci = app._card_info_text(_je)
+    ok("card.error-only-when-failed", "Error" not in _ci and _ci.get("Warning"), str(_ci))
     # In place: the .pkg lands next to its .ffpfsc; Delete takes the image only, never the folder
     _ipd = S / "after_inplace" / "Game [PPSA00001] [v01.000.000]"; (_ipd / "Addon").mkdir(parents=True, exist_ok=True)
     _ipsrc = _ipd / "Game [PPSA00001] [v01.000].ffpfsc"; _ipsrc.write_bytes(b"F" * 64)

@@ -1664,7 +1664,28 @@ def _image_builds_in_place(src: Path, args):
         return None                       # an exFAT inside: unpacked in one pass instead
     if listing.get("errors"):
         return None
+    if _image_dirs_cross_blocks(src):
+        print(f"[INFO] {src.name} was packed before 2.6.2: some of its folders are stored in a way the package "
+              f"builder cannot read directly, so it is unpacked first.", flush=True)
+        return None
     return any(str(e.get("path", "")).lower().endswith("ampr_zstd.index") for e in listing.get("entries", []))
+
+
+def _image_dirs_cross_blocks(src: Path) -> bool:
+    """an image whose large folders have entries across block boundaries (packed before 2.6.2)"""
+    pfs, consts = _import_mkpfs()
+    try:
+        with _open_inner_pfs(src, pfs, consts) as fh:
+            header = pfs.parse_image_header(fh)
+            # only folders over one block can be affected: no tree walk needed
+            for inode in pfs.parse_image_inodes(fh, header):
+                if not inode.is_dir or inode.size <= header.block_size:
+                    continue
+                if pfs.dirents_cross_blocks(pfs.read_image_inode_payload(fh, header, inode), header.block_size):
+                    return True
+    except Exception:
+        return True                       # unsure: the unpack route reads it with our own reader
+    return False
 
 
 def _resolve_fpkg_identity(build_src: Path, args) -> dict:

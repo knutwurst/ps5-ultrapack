@@ -2988,7 +2988,7 @@ class CLIWorker(threading.Thread):
         except (OSError, TypeError):
             return False
         if src.suffix.lower() in (".ffpfs", ".ffpfsc"):
-            return bool(getattr(self.item, "image_wraps_exfat", False)) or "--backport-target" in cmd
+            return image_unpacks_first(self.item) or "--backport-target" in cmd
         return True
 
     def _pick_weights(self, cmd):
@@ -3106,6 +3106,11 @@ class CLIWorker(threading.Thread):
         from collections import deque as _deque
         _raw_lines: _deque[str] = _deque()
         _raw_errors: list[str]  = []
+        _problems = _deque(maxlen=400)         # tagged lines for the card's Error and Warning rows
+        try:
+            self.item.error_detail = self.item.warning_detail = ""
+        except Exception:
+            pass
         _raw_buf_bytes          = 0
 
         def _raw_append(text: str):
@@ -3210,8 +3215,10 @@ class CLIWorker(threading.Thread):
                 clean = line.rstrip("\r\n")
                 _raw_append(clean + "\n")
                 upper_c = clean.upper()
-                if re.search(r'\bERROR\b|\bFAILED\b', upper_c):
+                if re.search(r'\bERROR\b|\bFAILED\b', upper_c) and not re.search(r'\b0 FAILED\b', upper_c):
                     _raw_errors.append(clean + "\n")
+                if is_problem_line(clean):
+                    _problems.append(clean)
                 self._handle_line(clean)
 
                 t = time.time()
@@ -3222,6 +3229,12 @@ class CLIWorker(threading.Thread):
             code = self.proc.wait() if self.proc else 1
 
             _flush_raw_log()
+            try:
+                _err, _warn = job_problems(_problems)
+                self.item.warning_detail = _warn
+                self.item.error_detail = _err if code != 0 else ""
+            except Exception:
+                pass
 
             if self.app.cancel_requested:
                 self.app.finish(False, "Cancelled by user.", self.last_cmd_str)
@@ -4213,6 +4226,9 @@ class CLIWorker(threading.Thread):
                  f"{tr('Output')}: {self.output_path or tr('Unknown')}",
                  f"{tr('Original size')}: {format_size(self.item.size)}",
                  f"{tr('Output size')}: {format_size(self.final_size)}"]
+        for label, attr in (("Error", "error_detail"), ("Warning", "warning_detail")):
+            if getattr(self.item, attr, ""):
+                lines.append(f"{tr(label)}: {getattr(self.item, attr)}")
         if compressing:
             rating, recommendation = compression_rating(pct)
             lines += [f"{tr('Space saved')}: {format_size(saved)} ({pct:.2f}%)",
@@ -9215,8 +9231,8 @@ class App:
         for r, key in enumerate(self._CARD_INFO_KEYS):
             var = TextVar(value="")
             k = kit.label(info, bg=B, fg="faint", font=kit.fonts.small, text=key, anchor="nw")
-            v = kit.label(info, bg=B, fg="muted", font=kit.fonts.small, textvariable=var, anchor="nw",
-                          justify="left")
+            v = kit.label(info, bg=B, fg={"Error": "danger", "Warning": "warning"}.get(key, "muted"),
+                          font=kit.fonts.small, textvariable=var, anchor="nw", justify="left")
             k.grid(row=r, column=0, sticky="nw", padx=(0, 16), pady=(0, 5))
             v.grid(row=r, column=1, sticky="ew", pady=(0, 5))
             self._card_info_rows[key] = (var, k, v)
@@ -13534,7 +13550,7 @@ class App:
         except Exception:
             pass
 
-    _CARD_INFO_KEYS = ("Status", "Source", "Changes", "Compression", "Drives", "Space", "After")
+    _CARD_INFO_KEYS = ("Status", "Error", "Warning", "Source", "Changes", "Compression", "Drives", "Space", "After")
 
     def _sync_retry_btn(self, item) -> None:
         try:
@@ -13573,6 +13589,12 @@ class App:
         if getattr(item, "archive_problem", "") and getattr(item, "archive_path", None):
             status += tr("; the archive cannot be read: {archive_problem}", archive_problem=item.archive_problem)
         info["Status"] = status
+        err = str(getattr(item, "error_detail", "") or "").strip()
+        if err and status.startswith("Failed"):
+            info["Error"] = err
+        warn = str(getattr(item, "warning_detail", "") or "").strip()
+        if warn:
+            info["Warning"] = warn
         src = getattr(item, "archive_path", None) or getattr(item, "path", None)
         if src:
             info["Source"] = str(src)

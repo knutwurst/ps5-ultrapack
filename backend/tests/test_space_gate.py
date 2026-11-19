@@ -147,6 +147,9 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
         real = cli.list_pfs_image
         cli.list_pfs_image = lambda _p: {"entries": entries, "errors": list(errors)}
         self.addCleanup(setattr, cli, "list_pfs_image", real)
+        real_dirs = cli._image_dirs_cross_blocks
+        cli._image_dirs_cross_blocks = lambda _p: False      # a fake container: its folders are fine
+        self.addCleanup(setattr, cli, "_image_dirs_cross_blocks", real_dirs)
 
     def test_a_ffpfsc_to_pkg_is_sized_from_its_own_directory(self):
         self._listing([{"type": "dir", "path": "data"},
@@ -160,6 +163,10 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
         # read in place, its image written into the package: temp holds only the small files
         self.assertFalse(item.image_wraps_exfat)
         self.assertAlmostEqual(m._peak_factor_for(item), 0.01 + m.PKG_CONSUME_MARGIN)
+        # folders packed before 2.6.2 the package builder can't read: unpacked first like an exFAT
+        item.image_old_dirs = True
+        self.assertAlmostEqual(m._peak_factor_for(item), 1.0 + 0.61 + m.PKG_CONSUME_MARGIN)
+        item.image_old_dirs = False
         # an exFAT inside is unpacked first and taken in as the package grows: game plus largest plus kept
         item.image_wraps_exfat = True
         self.assertAlmostEqual(m._peak_factor_for(item), 1.0 + 0.61 + m.PKG_CONSUME_MARGIN)

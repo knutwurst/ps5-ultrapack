@@ -3,6 +3,30 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.6.2
+────────────────────────────────────────────────────────────────────────
+
+FIXED
+
+  - The packer wrote the entries of a folder bigger than one 64 KiB block
+    straight on, so an entry could run across a block boundary. Readers
+    that walk a folder block by block, the package library among them,
+    failed on such images (EndOfStreamException, or "a path that leaves
+    the game folder"). A full block now ends with its last entry taking
+    the rest of it, so no entry crosses a boundary.
+  - A .pkg built from an .ffpfsc packed the old way is unpacked first, as
+    before 2.5.2; images without such folders are still read in place.
+    The space plan counts the unpack for them.
+  - A failed job shows the error it ended on in its own Error row,
+    instead of only "Backend exited with code 1". Warnings of the package
+    check show in a Warning row and in the job report.
+  - A title id that differs from the one in the content id (an upgrade
+    edition does this) is a warning naming both ids, not a failed check.
+    The package keeps the game's own values.
+  - The job report no longer opens with an error section when the only
+    match was the check summary "0 failed".
+
+────────────────────────────────────────────────────────────────────────
   v2.6.1
 ────────────────────────────────────────────────────────────────────────
 

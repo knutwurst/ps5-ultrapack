@@ -608,6 +608,7 @@ GERMAN: dict[str, str] = {
     "{n} jobs  ·  {size}": "{n} Jobs  ·  {size}",
     "→  no output folder set": "→  kein Ausgabeordner gesetzt",
     "Status": "Status",
+    "Warning": "Warnung",
     "Source": "Quelle",
     "Changes": "Änderungen",
     "Compression": "Kompression",

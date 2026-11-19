@@ -387,6 +387,68 @@ def test_upgradable_gets_license(r: Runner):
             shutil.rmtree(d, ignore_errors=True)
 
 
+def test_big_folder_image_to_pkg(r: Runner):
+    # a folder over one 64 KiB block: entries stay inside their block, so the package builder reads the
+    # image directly; an image packed the old way (entries across blocks) is unpacked first
+    src = r.work / "bigdir_src"
+    shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    many = src / "data" / "many"; many.mkdir(parents=True)
+    for i in range(3000):
+        (many / f"asset_texture_variant_{i:05d}.bin").write_bytes(b"x" * (i % 7 + 1))
+    # the packer runs in child processes: a sitecustomize puts the old layout into every one of them
+    hook = r.work / "old_packer"; hook.mkdir(exist_ok=True)
+    (hook / "sitecustomize.py").write_text(
+        "import sys\nsys.path.insert(0, %r)\nimport mkpfs.pfs as p\n"
+        "p.directory_blob = lambda d, bs: b''.join(e.to_bytes() for e in d)\n" % str(BACKEND))
+    sys.path.insert(0, str(BACKEND))
+    import cli as _cli
+    for tag, old in (("new", False), ("old", True)):
+        ff = r.work / f"bigdir_{tag}_ff"; pk = r.work / f"bigdir_{tag}_pkg"
+        for d in (ff, pk):
+            shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True)
+        args = [str(src), str(ff), "--pack", "--overwrite"]
+        if old:
+            env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(hook), os.environ.get("PYTHONPATH", "")])}
+            proc = subprocess.run([sys.executable, "-u", str(CLI), *args], capture_output=True, text=True,
+                                  timeout=300, env=env)
+            rc, log = proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+        else:
+            rc, log = r.run_cli(args)
+        img = next(ff.glob("*.ffpfsc"), None)
+        if not r.check(f"bigdir.{tag}.pack", rc == 0 and img is not None, img.name if img else "", log[-300:]):
+            continue
+        crosses = _cli._image_dirs_cross_blocks(img)
+        r.check(f"bigdir.{tag}.layout", crosses == old,
+                "entries across blocks (old packer)" if old else "every entry inside its block", f"crosses={crosses}")
+        rc, log = r.run_cli([str(img), str(pk), "--fpkg-build", str(img),
+                             "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+                             "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+        route = "packed before 2.6.2" in log and "Unwrapping" in log if old else "Building straight from" in log
+        r.check(f"bigdir.{tag}.pkg", rc == 0 and route and next(pk.glob("*.pkg"), None) is not None,
+                "unpacked first, package built" if old else "read directly, package built",
+                f"rc={rc}; " + log[-400:])
+        for d in (ff, pk):
+            shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(src, ignore_errors=True)
+
+
+def test_title_id_mismatch_warns(r: Runner):
+    # an upgrade edition carries another title id in its content id: kept, but the check warns
+    src = r.work / "tid_src"; out = r.work / "tid_out"
+    shutil.rmtree(src, ignore_errors=True); shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    out.mkdir(exist_ok=True)
+    pj = src / "sce_sys" / "param.json"
+    pj.write_text(json.dumps({**json.loads(pj.read_text()), "titleId": "PPSA99098",
+                              "contentId": "UP9000-PPSA99099_00-PROSPERO00000000"}))
+    rc, log = r.run_cli([str(src), str(out), "--fpkg-build", str(src),
+                         "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+                         "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+    warn = [x for x in log.splitlines() if "[WARN]" in x and "param.titleId" in x]
+    r.check("title-id.mismatch-warns", rc == 0 and len(warn) == 1 and "PPSA99098" in warn[0] and "PPSA99099" in warn[0],
+            warn[0].strip() if warn else "", f"rc={rc}; " + "\n".join(x for x in log.splitlines() if "titleId" in x)[-400:])
+    shutil.rmtree(src, ignore_errors=True); shutil.rmtree(out, ignore_errors=True)
+
+
 def test_negative_bad_content_id(r: Runner):
     src = make_synth_folder(r.work / "neg_bad_cid")
     out = r.work / "neg_bad_cid_out"; out.mkdir(exist_ok=True)
@@ -1265,6 +1327,8 @@ def main():
         ("negative: no-eboot pkg fails validate", test_no_eboot_caught_by_validate),
         ("negative: bad content id",        test_negative_bad_content_id),
         ("upgradable app gets a license",   test_upgradable_gets_license),
+        ("big folder: image to .pkg",       test_big_folder_image_to_pkg),
+        ("title id mismatch warns",         test_title_id_mismatch_warns),
         ("identity: param.json wins",       test_identity_from_param_json),
         ("kraken fast preset (-4)",         test_kraken_fast_preset),
         ("validate: reject .ffpfsc",        test_validate_catches_untouched_ffpfsc),

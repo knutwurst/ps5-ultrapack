@@ -659,6 +659,22 @@ class Dirent:
         return bytes(out)
 
 
+def directory_blob(dirents: list[Dirent], block_size: int) -> bytes:
+    """A directory's entries, none across a block boundary: the last entry of a full block
+    takes up the rest of it. Readers that walk a directory block by block need that."""
+    out = bytearray()
+    last = -1                                    # offset of the previous entry
+    for ent in dirents:
+        raw = ent.to_bytes()
+        room = block_size - (len(out) % block_size)
+        if len(raw) > room and last >= 0 and room < block_size:
+            struct.pack_into("<i", out, last + 12, len(out) + room - last)
+            out += b"\x00" * room
+        last = len(out)
+        out += raw
+    return bytes(out)
+
+
 @dataclass
 class Inode:
     number: int
@@ -3597,10 +3613,10 @@ def build_pfs(
     all_nodes_data: list[tuple[Inode, int, bool, bytes | None, Path | None]] = []
 
     # Root directory first, then nested dirs, then files.
-    root_blob = b"".join(d.to_bytes() for d in dirs[""].dirents)
+    root_blob = directory_blob(dirs[""].dirents, block_size)
     all_nodes_data.append((dirs[""].inode, len(root_blob), True, root_blob, None))
     for d in non_root_dirs:
-        blob = b"".join(ent.to_bytes() for ent in d.dirents)
+        blob = directory_blob(d.dirents, block_size)
         all_nodes_data.append((d.inode, len(blob), True, blob, None))
     for f in file_nodes_sorted:
         if f.stored_source_path is None:
@@ -5302,6 +5318,20 @@ def parse_image_dirents(blob: bytes, strict: bool = False) -> tuple[list[ParsedD
         offset += ent_size
 
     return dirents, errors
+
+
+def dirents_cross_blocks(blob: bytes, block_size: int) -> bool:
+    """whether an entry of this directory payload runs across a block boundary (images packed
+    before 2.6.2); readers that walk a directory block by block misread those"""
+    offset = 0
+    while offset + 16 <= len(blob):
+        ent_size = struct.unpack_from("<i", blob, offset + 12)[0]
+        if ent_size <= 0:
+            break
+        if offset // block_size != (offset + ent_size - 1) // block_size:
+            return True
+        offset += ent_size
+    return False
 
 
 def read_image_inode_payload(

@@ -509,6 +509,11 @@ def pkg_peak_factor(item) -> float:
     return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + (largest + kept) / content + PKG_CONSUME_MARGIN))
 
 
+def image_unpacks_first(item) -> bool:
+    """a .ffpfs/.ffpfsc the .pkg build unpacks: an exFAT inside, or folders packed before 2.6.2"""
+    return bool(getattr(item, "image_wraps_exfat", False) or getattr(item, "image_old_dirs", False))
+
+
 def image_pkg_peak_factor(item) -> float:
     """.ffpfsc/.ffpfs to .pkg: read in place, temp holds only the small files;
     an exFAT inside is unpacked first and taken in as the package grows"""
@@ -517,7 +522,7 @@ def image_pkg_peak_factor(item) -> float:
     kept = int(getattr(item, "pkg_kept_bytes", 0) or 0)
     if not content or not largest:
         return PKG_UNPACK_PEAK_FACTOR
-    if not getattr(item, "image_wraps_exfat", False):
+    if not image_unpacks_first(item):
         # the package's image is written into the package itself: temp holds only the small files
         return kept / content + PKG_CONSUME_MARGIN
     return min(PKG_UNPACK_PEAK_FACTOR, max(1.2, 1.0 + (largest + kept) / content + PKG_CONSUME_MARGIN))
@@ -541,13 +546,17 @@ def probe_container_content(item) -> int:
     kind = chain_source_kind(item)
     if getattr(item, "operation", "") != "chain" or kind not in ("pkg", "ffpfs", "ffpfsc"):
         return 0
-    if getattr(item, "pkg_content_size", 0):
-        item.extracted_size = max(int(item.pkg_content_size), int(getattr(item, "extracted_size", 0) or 0))
-        return int(item.pkg_content_size)
     backend = str(backend_base_dir())
     if backend not in sys.path:
         sys.path.insert(0, backend)
     src = Path(str(item.path))
+    if getattr(item, "pkg_content_size", 0):
+        if (kind in ("ffpfs", "ffpfsc") and getattr(item, "image_old_dirs", None) is None
+                and not getattr(item, "image_wraps_exfat", False)):
+            import cli as _cli               # a job read by an older version: check its folders once
+            item.image_old_dirs = bool(_cli._image_dirs_cross_blocks(src))
+        item.extracted_size = max(int(item.pkg_content_size), int(getattr(item, "extracted_size", 0) or 0))
+        return int(item.pkg_content_size)
     if kind == "pkg":
         import fpkg as _fpkg
         doc = _fpkg.list_inner(src)
@@ -556,6 +565,8 @@ def probe_container_content(item) -> int:
         try:
             doc = _cli.list_pfs_image(src)
             item.image_wraps_exfat = False
+            # packed before 2.6.2 with folders the package builder can't read directly: unpacked first
+            item.image_old_dirs = bool(_cli._image_dirs_cross_blocks(src))
         except ValueError:
             doc = _cli.list_inner_exfat(src)     # an exFAT inside: unpacked before the build
             item.image_wraps_exfat = True
@@ -975,7 +986,7 @@ def _space_needs(item, temp_dir: Path, out_dir: Path) -> list[tuple[str, Path, i
                  and chain_source_kind(item) == "pkg")
     same_pad = same and (pkg_chain or not getattr(item, "_same_drive_ok", False))
     scratch = estimate_peak_space_needed(size, _peak_factor_for(item), same_pad)
-    if (chain_source_kind(item) in ("ffpfs", "ffpfsc") and not getattr(item, "image_wraps_exfat", False)
+    if (chain_source_kind(item) in ("ffpfs", "ffpfsc") and not image_unpacks_first(item)
             and pkg_image_in_temp_applies(item, temp_dir, out_dir)):
         scratch += out_final          # read in place, but the package's image is built in temp first
     needs = [("Temp drive (whole scratch)", temp_dir, scratch)]
@@ -1801,6 +1812,36 @@ _ERROR_PATTERNS: list[tuple[str, str]] = [
     ("calledprocesserror",
      "A backend subprocess failed - check the raw log for details."),
 ]
+
+
+_PROBLEM_TAG = re.compile(r"^\s*\[(ERROR|error|FAIL|WARN)\]\s*")
+_CHECK_LINE = re.compile(r"^\s{2}\[(FAIL|WARN)\]\s{2}(\S+)\s+(.*)$")
+# wrappers that only repeat that something failed; the line before them says what
+_GENERIC_ERRORS = ("build failed (rc=", "the package failed validation", "failed its checks",
+                   "queue finished", "backend exited", "fpkg build failed")
+
+
+def is_problem_line(line: str) -> bool:
+    return bool(_PROBLEM_TAG.match(line))
+
+
+def job_problems(lines) -> tuple[str, str]:
+    """(why a job failed, what its package check warned about), from the backend's tagged lines"""
+    fails, warns, errors = [], [], []
+    for raw in lines:
+        line = raw.rstrip()
+        m = _CHECK_LINE.match(line)
+        if m:
+            (fails if m.group(1) == "FAIL" else warns).append(f"{m.group(2)}: {m.group(3).strip()}")
+            continue
+        m = _PROBLEM_TAG.match(line)
+        if m and m.group(1) in ("ERROR", "error"):
+            text = _PROBLEM_TAG.sub("", _PROBLEM_TAG.sub("", line)).strip()
+            if text:
+                errors.append(text)
+    specific = [e for e in errors if not any(g in e.lower() for g in _GENERIC_ERRORS)]
+    error = "; ".join(fails) if fails else (specific[0] if specific else (errors[-1] if errors else ""))
+    return " ".join(error.split())[:400], " ".join("; ".join(dict.fromkeys(warns)).split())[:400]
 
 
 def smart_error_from_log() -> str:
@@ -4216,7 +4257,10 @@ class GameItem:
     auto_zstd = False
     auto_zstd_level = None
     image_wraps_exfat = False  # .ffpfs/.ffpfsc source holding an exFAT, unpacked before a .pkg build
+    image_old_dirs = None   # .ffpfs/.ffpfsc packed before 2.6.2 with folders over one block: unpacked too (None: not read)
     in_place_output = False  # In place: the result goes next to its source, named from the game
+    error_detail = ""       # the error line a failed job ended on, shown on its card
+    warning_detail = ""     # what the package check warned about, shown on the card
     added_file = False      # the user added this one file: After the job takes the file, never its folder
     pkg_content_size = 0    # .pkg/.ffpfs/.ffpfsc source: bytes of its files, from its directory (0 = not read)
     pkg_largest_file = 0    # same sources: the largest file (the build peaks at the game plus this one)
@@ -4617,6 +4661,9 @@ __all__ = [
     "validate_game_structure",
     "_ERROR_PATTERNS",
     "smart_error_from_log",
+    "job_problems",
+    "image_unpacks_first",
+    "is_problem_line",
     "get_backend_python_command",
     "backend_base_dir",
     "folder_size",
