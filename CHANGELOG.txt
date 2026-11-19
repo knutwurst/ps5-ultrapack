@@ -34,6 +34,12 @@ FIXED
     unpacked copy, so a misread folder can never drop files silently.
   - The raw log of a failed job is kept in failed_logs in the app's
     folder (the newest 30); the job's Error row names the file.
+  - The speed and time left of a .pkg build's Kraken pass counted only
+    the one file the package library names per percent step. A game of
+    many small files showed a fraction of its real speed and hours
+    left; the library's byte percent is now the floor. A game with
+    223,000 files read 8 MB/s and 2.5 hours left where 44 MB/s and
+    11 minutes were true.
   - In place copied the add-ons from the game's folder (an Addon folder,
     for example) into it a second time, sorted and renamed. In place now
     writes its one file and nothing else: add-ons stay where they are,

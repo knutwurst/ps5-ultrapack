@@ -85,6 +85,14 @@ class KrakenMeter(unittest.TestCase):
         self.r.feed("[+00:00:01.000]  [inner]   data  40% (1/3): /odd.bin -> 1 bytes (raw)", dt=1.0)
         self.assertIn("40% inner image (Kraken)", self.r.bars()[-1])
 
+    def test_many_small_files_speed_follows_the_library_percent(self):
+        # thousands of small files: the library names one file per 5 %, the rest pass silently;
+        # the speed came from those few named files only and showed a quarter of the real rate
+        self.r.feed("[+00:01:40.000]  [inner]   data  10% (2,000/30,000): /a/f1999.bin -> 50,000 bytes "
+                    "(Kraken, ratio 50.0 %)", dt=100.0)
+        bar = self.r.bars()[-1]
+        self.assertIn("10% inner image (Kraken) @ 1.0 MB/s ETA 900s", bar)
+
     def test_inner_complete_and_outer_pass(self):
         self.r.feed("[+00:10:00.000] [stage 1/5] Inner image complete: 900,000,000 bytes in 00:10:00.")
         self.assertIn("100% inner image (Kraken)", self.r.bars()[-1])

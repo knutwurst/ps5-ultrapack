@@ -1481,7 +1481,10 @@ class FpkgProgress:
 
     def _kraken_bar(self):
         in_flight = self.file_size * self.file_frac if self.file else 0
-        got = self.done + in_flight
+        # the library names one small file per percent step, the rest pass silently: its byte
+        # percent is the floor, or a game of small files reads at a fraction of its real speed
+        floor = self.total * self.lib_pct / 100 if self.total else 0
+        got = max(self.done, floor) + in_flight
         pct = int(got * 100 / self.total) if self.total else 0
         pct = max(pct, self.lib_pct)
         elapsed = (self._clock() - self.t0) if self.t0 is not None else None
