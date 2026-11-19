@@ -94,6 +94,9 @@ internal static partial class Program
         Console.WriteLine("      Diagnostic checklist: header magic + fields, CNT wrap, PFS bounds,");
         Console.WriteLine("      required sce_sys entries, param.json coherence, eboot fake-self magic.");
         Console.WriteLine("  build         <src-dir> <out-dir>");
+        Console.WriteLine("      <src-dir> may also be a .ffpfs/.ffpfsc or a PS5 .pkg, read in place. From a .pkg the");
+        Console.WriteLine("      Kraken blocks of unchanged data are taken over instead of compressed again");
+        Console.WriteLine("      --no-block-reuse             from a .pkg: compress every block again");
         Console.WriteLine("      --content-id <36-char>       (required)");
         Console.WriteLine("      --title-id   <9-char>        (required, e.g. PPSA00000)");
         Console.WriteLine("      --title      <text>          (written to param.json if generated)");
@@ -1311,6 +1314,7 @@ internal static partial class Program
     // a .ffpfs/.ffpfsc source is read in place: only small and special files are written out
     static int CmdBuild(string[] args)
     {
+        if (args.Length >= 3 && PkgSource.IsPackage(args[1])) return CmdBuildFromPackage(args);
         if (args.Length < 3 || !SourceImage.IsImage(args[1])) return CmdBuildFolder(args);
         string temp = Path.GetTempPath();
         long expectFiles = -1;            // the files our own reader lists in the image
@@ -1345,6 +1349,50 @@ internal static partial class Program
         finally
         {
             img?.Dispose();
+            try { if (Directory.Exists(stub)) Directory.Delete(stub, true); } catch { }
+        }
+    }
+
+    // a PS5 .pkg is read in place like an image, and its Kraken blocks go back to the encoder
+    static int CmdBuildFromPackage(string[] args)
+    {
+        string temp = Path.GetTempPath();
+        string passcode = new string('0', 32);
+        bool reuse = true;
+        var rest = new List<string>();
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--no-block-reuse") { reuse = false; continue; }
+            if (args[i] == "--expect-files" && i + 1 < args.Length) { i++; continue; }
+            if (i >= 3 && args[i] == "--temp" && i + 1 < args.Length) temp = args[i + 1];
+            if (i >= 3 && args[i] == "--passcode" && i + 1 < args.Length) passcode = args[i + 1];
+            rest.Add(args[i]);
+        }
+        args = rest.ToArray();
+        var stub = Path.Combine(temp, "pkg-src-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        PkgSource? src = null;
+        try
+        {
+            // lets the pipeline tests prove the app falls back to the unpack route
+            if (Environment.GetEnvironmentVariable("ULTRAPACK_TEST_PKG_SOURCE_FAIL") == "1")
+                throw new InvalidDataException("reading the package in place failed (test)");
+            src = new PkgSource(args[1], passcode, stub, reuse, LiftCntSceSys);
+            Console.Error.WriteLine($"  [source] {Path.GetFileName(args[1])} is read in place: {src.Written} file(s) written out, "
+                                    + $"{src.StandIns} ({src.StandInBytes / 1073741824.0:F2} GB) read from the package as the new one takes them in; "
+                                    + (reuse ? "Kraken blocks of unchanged data are reused" : "every block is compressed again"));
+            var a = args.ToList();
+            a[1] = src.Root;
+            if (!a.Contains("--stage-in-place")) a.Add("--stage-in-place");
+            if (!a.Contains("--consume-source")) a.Add("--consume-source");
+            int rc = CmdBuildFolder(a.ToArray());
+            if (reuse)
+                Console.Error.WriteLine($"  [reuse] {src.Reused} Kraken block(s) taken from the old package, {src.KeptStored} kept stored, "
+                                        + $"{src.Encoded} compressed again" + (src.Unusable > 0 ? $", {src.Unusable} not reusable" : ""));
+            return rc;
+        }
+        finally
+        {
+            src?.Dispose();
             try { if (Directory.Exists(stub)) Directory.Delete(stub, true); } catch { }
         }
     }
