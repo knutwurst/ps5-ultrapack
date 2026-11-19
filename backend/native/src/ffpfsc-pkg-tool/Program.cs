@@ -1904,6 +1904,10 @@ internal static partial class Program
                     }
                 }
 
+                // the library reads the stage itself: macOS leaves ._ sidecars on exFAT for every file
+                // written above (signing, param.json, images), and those would go into the package
+                int swept = SweepJunkFiles(autoStage);
+                if (swept > 0) Console.Error.WriteLine($"  [stage] removed {swept} macOS sidecar/junk file(s) before the build");
                 opts.SourceFolder = autoStage;
             }
         }
@@ -2300,6 +2304,18 @@ internal static partial class Program
     {
         try { using var d = JsonDocument.Parse(b); return d.RootElement.ValueKind == JsonValueKind.Object || d.RootElement.ValueKind == JsonValueKind.Array; }
         catch { return false; }
+    }
+
+    // our stage only: junk files (._ sidecars, .DS_Store) never belong in a package
+    static int SweepJunkFiles(string stage)
+    {
+        int n = 0;
+        foreach (var f in Directory.EnumerateFiles(stage, "*", SearchOption.AllDirectories).ToList())
+        {
+            if (!FsJunk.IsJunkName(Path.GetFileName(f))) continue;
+            try { File.Delete(f); n++; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+        return n;
     }
 
     // only eboot.bin/.elf/.prx/.sprx get sniffed, no point reading huge blobs

@@ -477,6 +477,27 @@ def test_title_id_mismatch_warns(r: Runner):
     shutil.rmtree(src, ignore_errors=True); shutil.rmtree(out, ignore_errors=True)
 
 
+def test_sidecars_never_in_the_package(r: Runner):
+    # on exFAT macOS leaves ._ files next to everything the tool writes in its stage; the library
+    # reads the stage itself, so they went into the package (seen in a real build)
+    src = r.work / "sidecar_src"; out = r.work / "sidecar_out"
+    shutil.rmtree(src, ignore_errors=True); shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    shutil.rmtree(out, ignore_errors=True); out.mkdir()
+    for rel in ("._eboot.bin", "sce_sys/._param.json", "sce_sys/._icon0.png", ".DS_Store"):
+        (src / rel).write_bytes(b"\x00\x05\x16\x07" + b"\x00" * 60)
+    rc, log = r.run_tool(["build", str(src), str(out), "--stage-in-place",
+                          "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+                          "--mode", "none", "--kraken-backend", "builtin"])
+    pkg = next(out.glob("*.pkg"), None)
+    if not r.check("sidecars.build", rc == 0 and pkg is not None, "built", f"rc={rc}; {log[-300:]}"):
+        return
+    rc, listing = r.run_tool(["list-inner", str(pkg)])
+    names = [e["path"] for e in json.loads(listing).get("entries", [])] if rc == 0 else []
+    junk = [n for n in names if n.rsplit("/", 1)[-1].startswith("._") or n.endswith(".DS_Store")]
+    r.check("sidecars.not-in-package", rc == 0 and names and not junk, f"{len(names)} entries, no junk", str(junk))
+    shutil.rmtree(src, ignore_errors=True); shutil.rmtree(out, ignore_errors=True)
+
+
 def test_negative_bad_content_id(r: Runner):
     src = make_synth_folder(r.work / "neg_bad_cid")
     out = r.work / "neg_bad_cid_out"; out.mkdir(exist_ok=True)
@@ -1357,6 +1378,7 @@ def main():
         ("upgradable app gets a license",   test_upgradable_gets_license),
         ("big folder: image to .pkg",       test_big_folder_image_to_pkg),
         ("title id mismatch warns",         test_title_id_mismatch_warns),
+        ("sidecars never in the package",   test_sidecars_never_in_the_package),
         ("identity: param.json wins",       test_identity_from_param_json),
         ("kraken fast preset (-4)",         test_kraken_fast_preset),
         ("validate: reject .ffpfsc",        test_validate_catches_untouched_ffpfsc),
