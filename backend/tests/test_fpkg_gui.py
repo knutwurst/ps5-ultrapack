@@ -1719,7 +1719,16 @@ try:
     ok("after.older-jobs-keep", app._after_job_plan(_j0, _fake_worker(_outf))[0] == "keep", "")
     _jm = m.GameItem.from_chain(_g1, to="ffpfsc"); _jm.after_source = "move"
     ok("after.move-needs-a-folder", "no destination" in str(app._after_job_plan(_jm, _fake_worker(_outf))[3]), "")
-    _gs = _src_game("GS"); _hit = _aout / "GS.ffpfsc"; _hit.write_bytes(b"P" * 64); _dn = S / "after_done2"
+    _real_img = next((S / "c2_ffpfsc").glob("*.ffpfsc"))     # a real image: only a checked output may cost a source
+    # a broken output that is there never costs its source
+    _gb = _src_game("GB"); _bad = _aout / "GB.ffpfsc"; _bad.write_bytes(b"P" * 64)
+    _jb = m.GameItem.from_chain(_gb, to="ffpfsc", output_path=str(_aout)); _jb.after_source = "delete"
+    app.queue[:] = [_jb]; _resb = []
+    app._settle_existing(_jb, _bad, then=_resb.append)
+    pump(lambda: bool(_resb), timeout=20.0)
+    ok("after.broken-existing-output-keeps-source", _resb == [False] and _jb.status == "Skipped" and _gb.is_dir()
+       and "did not pass the check" in _jb.status_note, f"{_resb} {_jb.status} {_jb.status_note!r}")
+    _gs = _src_game("GS"); _hit = _aout / "GS.ffpfsc"; shutil.copyfile(_real_img, _hit); _dn = S / "after_done2"
     _js = m.GameItem.from_chain(_gs, to="ffpfsc", output_path=str(_aout))
     _js.after_source, _js.after_move_to = "move", str(_dn)
     app.queue[:] = [_js]; _res = []
@@ -1736,7 +1745,7 @@ try:
     _jj2 = m.GameItem.from_chain(_gj, to="pkg")            # still needs the same source
     app.queue[:] = [_jj, _jj2]; _res3 = []
     app._settle_existing(_jj, _hit, then=_res3.append)
-    pump(lambda: bool(_res3), timeout=5.0)
+    pump(lambda: bool(_res3), timeout=20.0)
     ok("after.existing-output-refused-stays-skipped", _res3 == [False] and _jj.status == "Skipped" and _gj.is_dir()
        and "another job" in _jj.status_note, f"{_res3} {_jj.status} {_jj.status_note!r}")
     _rs = S / "after_src" / "Grow"; _rs.mkdir(parents=True, exist_ok=True)
@@ -1764,7 +1773,7 @@ try:
            and "missing" in _ra.status_note, f"{_go2} {_ra.status} {_ra.status_note!r}")
     finally:
         m.ArchiveExtractor.probe_header_state = _real_probe
-    _rr = S / "rel_root"; _rd = S / "rel_done"; _rhit = _aout / "Rel.ffpfsc"; _rhit.write_bytes(b"P" * 64)
+    _rr = S / "rel_root"; _rd = S / "rel_done"; _rhit = _aout / "Rel.ffpfsc"; shutil.copyfile(_real_img, _rhit)
     def _set(folder, base, n=2):
         d = _rr / folder; d.mkdir(parents=True, exist_ok=True)
         ps = [d / (f"{base}.part{i}.rar" if n > 1 else f"{base}.rar") for i in range(1, n + 1)]

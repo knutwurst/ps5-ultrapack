@@ -23,6 +23,13 @@ LIBRARY CHECK
     has only ... decoded bytes"), so such rebuilds fell back to the slow
     route. A range our span reader cannot cover now goes to the
     library's own range decoder.
+  - A source is never removed on the strength of an unchecked package:
+    a build whose package check could not run fails instead of counting
+    as done; a replacement the Library check refuses fails the job; and
+    an output that is already there must pass the full check before its
+    source is deleted, moved or trashed (a broken one leaves it where it
+    is). The in-place reader also serves big files that start inside a
+    packed block through the library's decoder.
   - "Rebuild broken" queues a rebuild for each broken game package. The
     new package is checked where it was built and only then replaces
     the old one under its own name (--replace-source); a package that

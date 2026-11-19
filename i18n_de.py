@@ -1424,4 +1424,5 @@ GERMAN: dict[str, str] = {
     "1 package checked: {ok} fine, {bad} to rebuild, {other} with problems a rebuild cannot fix.": "1 Paket geprüft: {ok} in Ordnung, {bad} neu zu bauen, {other} mit Problemen, die ein Neubau nicht behebt.",
     "Update package, not rebuilt here: {why}": "Update-Paket, wird hier nicht neu gebaut: {why}",
     "Could not check it: {why}": "Konnte nicht geprüft werden: {why}",
+    "{name} is there but did not pass the check ({why}); the source stays": "{name} ist schon da, hat aber die Prüfung nicht bestanden ({why}); die Quelle bleibt",
 }

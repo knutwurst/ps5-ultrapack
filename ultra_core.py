@@ -1865,6 +1865,36 @@ def keep_failed_log(name: str) -> str:
         return ""
 
 
+def existing_output_problem(path: Path) -> str:
+    """'' when an output that is already there may stand in for a new build (and so its source may go):
+    a .pkg must pass the full package check, an image must read without errors; else why not"""
+    path = Path(path)
+    if not path.exists():
+        return "it is gone"
+    backend = str(backend_base_dir())
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    if path.is_file() and path.suffix.lower() == ".pkg":
+        import ps5_repair as _p5r
+        v = _p5r.verdict(_p5r.examine(path))
+        return "" if v["state"] == "ok" else ("; ".join(v["reasons"][:2]) or v["state"])
+    if path.is_file() and path.suffix.lower() in (".ffpfsc", ".ffpfs"):
+        import cli as _cli
+        try:
+            listing = _cli.list_game_files(path)
+        except Exception as e:
+            return f"it cannot be read: {e}"
+        if listing.get("errors"):
+            return listing["errors"][0]
+        names = [str(e.get("path", "")) for e in listing.get("entries", [])]
+        if not any(n.lower().endswith("eboot.bin") for n in names):
+            return "it holds no eboot.bin"
+        if any(is_fs_junk_name(part) for n in names for part in n.split("/") if part):
+            return "it holds OS junk files"
+        return ""
+    return ""                                   # a folder or another kind: as before
+
+
 def smart_error_from_log() -> str:
     if not RAW_LOG_FILE.exists():
         return ""
@@ -4687,6 +4717,7 @@ __all__ = [
     "smart_error_from_log",
     "job_problems",
     "keep_failed_log",
+    "existing_output_problem",
     "FAILED_LOGS_DIR",
     "image_unpacks_first",
     "is_problem_line",

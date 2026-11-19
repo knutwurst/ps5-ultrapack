@@ -201,6 +201,12 @@ internal sealed class InnerImage : IDisposable
         }
     }
 
+    // a logical range through the library's own decoder, for bytes no span of ours covers; threads share the stream
+    public byte[] ReadRangeShared(long offset, int length)
+    {
+        lock (_storedGate) return ProsperoNapsImage.DecompressRange(_pfsImage, _layout, offset, length);
+    }
+
     // the bytes of one span as pfs_image.dat holds them; several threads may ask
     public byte[] ReadStored(ProsperoNapsSpan span)
     {

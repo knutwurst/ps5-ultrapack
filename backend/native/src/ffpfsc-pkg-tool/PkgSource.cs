@@ -163,6 +163,12 @@ internal sealed class PkgSource : IDisposable
                || (head[0] == 0x54 && head[1] == 0x14 && head[2] == 0xF5 && head[3] == 0xEE);
     }
 
+    // -1 when no span holds the offset: a small file packed into the block before it (a continuation)
+    int SpanAtOrNone(long logical)
+    {
+        try { return SpanAt(logical); } catch (InvalidDataException) { return -1; }
+    }
+
     int SpanAt(long logical)
     {
         int lo = 0, hi = _spans.Count - 1, hit = -1;
@@ -283,7 +289,8 @@ internal sealed class PkgSource : IDisposable
         {
             if (_window.TryGetValue(index, out var d)) return d;
             _window.Clear();
-            int last = _src.SpanAt(_base + _len - 1);
+            int last = _src.SpanAtOrNone(_base + _len - 1);
+            if (last < 0) last = _src._spans.Count - 1;          // the file ends in a packed block
             int count = Math.Min(last - index + 1, Math.Max(2, Environment.ProcessorCount * 2));
             var got = new byte[count][];
             Parallel.For(0, count, i => got[i] = _src.Decode(index + i));
@@ -297,7 +304,16 @@ internal sealed class PkgSource : IDisposable
             while (count > 0 && _pos < _len)
             {
                 long logical = _base + _pos;
-                int index = _src.SpanAt(logical);
+                int index = _src.SpanAtOrNone(logical);
+                if (index < 0)
+                {
+                    // no span of its own here: the library reads it, nothing to reuse
+                    int m = (int)Math.Min(Math.Min(count, 1 << 20), _len - _pos);
+                    var raw = _src._img.ReadRangeShared(logical, m);
+                    Buffer.BlockCopy(raw, 0, buffer, offset, m);
+                    _pos += m; offset += m; count -= m; done += m;
+                    continue;
+                }
                 var data = Span(index);
                 var span = _src._spans[index];
                 int at = (int)(logical - span.UncompressedOffset);

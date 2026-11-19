@@ -595,6 +595,61 @@ def test_pkg_rebuild_with_packed_small_files(r: Runner):
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_source_never_lost(r: Runner):
+    # the user's original must stay byte for byte until a checked package is in its place: every way a
+    # rebuild or a build can go wrong is forced here and the source compared afterwards
+    if os.name == "nt":
+        r.check("safety.skipped", True, "POSIX shell wrappers"); return
+    src = fetch_hbt(r.work / "hbt")
+    lib = r.work / "safety_lib"; shutil.rmtree(lib, ignore_errors=True); lib.mkdir()
+    ids = ["--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+           "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"]
+    rc, log = r.run_cli([str(src), str(lib), "--fpkg-build", str(src), *ids])
+    built = next(lib.glob("*.pkg"), None)
+    if not r.check("safety.setup", rc == 0 and built is not None, "package built", log[-300:]):
+        return
+    game = built.with_name("Game.pkg"); built.rename(game)
+    before = sha(game)
+    hooks = r.work / "safety_hooks"; hooks.mkdir(exist_ok=True)
+    (hooks / "sitecustomize.py").write_text(
+        "import os, sys\nsys.path.insert(0, %r)\n"
+        "if os.environ.get('SAFETY_VALIDATE_RAISES'):\n"
+        "    import fpkg\n"
+        "    def _boom(*a, **k): raise RuntimeError('validator crashed (test)')\n"
+        "    fpkg.validate = _boom\n"
+        "if os.environ.get('SAFETY_VERDICT_BAD'):\n"
+        "    import ps5_repair\n"
+        "    ps5_repair.verdict = lambda *a, **k: {'state': 'problem', 'reasons': ['forced (test)']}\n" % str(BACKEND))
+    fail_build = r.work / "failing_build.sh"
+    fail_build.write_text(f'#!/bin/sh\nif [ "$1" = build ]; then echo "[error] build died (test)"; exit 1; fi\n'
+                          f'exec "{TOOL}" "$@"\n')
+    fail_build.chmod(0o755)
+    rebuild = [str(game), str(lib), "--to", "pkg", "--rebuild", "--replace-source", "--copy-mode", "keep",
+               "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"]
+    cases = [("validator-crashes", {"SAFETY_VALIDATE_RAISES": "1"}),
+             ("library-check-says-no", {"SAFETY_VERDICT_BAD": "1"}),
+             ("build-dies", {"FFPFSC_PKG_TOOL": str(fail_build)})]
+    for tag, env in cases:
+        e = {**os.environ, **env, "PYTHONPATH": os.pathsep.join([str(hooks), os.environ.get("PYTHONPATH", "")])}
+        proc = subprocess.run([sys.executable, "-u", str(CLI), *rebuild], capture_output=True, text=True,
+                              timeout=300, env=e)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        r.check(f"safety.{tag}.original-kept", game.is_file() and sha(game) == before and proc.returncode != 0,
+                f"rc={proc.returncode}, Game.pkg unchanged", f"rc={proc.returncode}; {out[-400:]}")
+        for p in lib.glob("*.pkg"):
+            if p != game:
+                p.unlink()
+    # a plain build whose check cannot run must fail, so no after-job Delete ever runs on its source
+    out2 = r.work / "safety_out"; shutil.rmtree(out2, ignore_errors=True); out2.mkdir()
+    e = {**os.environ, "SAFETY_VALIDATE_RAISES": "1",
+         "PYTHONPATH": os.pathsep.join([str(hooks), os.environ.get("PYTHONPATH", "")])}
+    proc = subprocess.run([sys.executable, "-u", str(CLI), str(src), str(out2), "--fpkg-build", str(src), *ids],
+                          capture_output=True, text=True, timeout=300, env=e)
+    r.check("safety.unchecked-build-fails", proc.returncode != 0, f"rc={proc.returncode}: the job counts as failed",
+            ((proc.stdout or "") + (proc.stderr or ""))[-300:])
+    shutil.rmtree(lib, ignore_errors=True); shutil.rmtree(out2, ignore_errors=True)
+
+
 def test_planted_junk_never_reaches_an_output(r: Runner):
     # any drive, any OS: OS junk planted in the source must not show up in any result of any route
     sys.path.insert(0, str(REPO))
@@ -1629,6 +1684,7 @@ def main():
         ("sidecars never in the package",   test_sidecars_never_in_the_package),
         ("rebuild replaces only when checked", test_rebuild_replaces_source_only_when_checked),
         ("pkg rebuild, packed small files", test_pkg_rebuild_with_packed_small_files),
+        ("source never lost",               test_source_never_lost),
         ("planted junk never in an output", test_planted_junk_never_reaches_an_output),
         ("exFAT stage builds clean",        test_exfat_stage_builds_clean),
         ("identity: param.json wins",       test_identity_from_param_json),

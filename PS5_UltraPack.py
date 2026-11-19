@@ -16444,6 +16444,30 @@ class App:
             self.log("INFO", f"{name}: skipped, {note[0].lower() + note[1:]}")
             then(False); return
 
+        # the output that is there decides about the source: it must pass the full check first
+        box: dict = {}
+
+        def check():
+            try:
+                box["why"] = existing_output_problem(Path(hit))
+            except Exception as e:
+                box["why"] = str(e) or type(e).__name__
+        threading.Thread(target=check, daemon=True).start()
+
+        def wait_check():
+            if "why" not in box:
+                self.root.after(200, wait_check); return
+            if box["why"]:
+                why = tr("{name} is there but did not pass the check ({why}); the source stays",
+                         name=Path(hit).name, why=box["why"])
+                self._retire_failed(item, "Skipped", why)
+                self.log("WARN", f"{name}: {why}.")
+                self.update_queue_box()
+                then(False); return
+            import types as _t
+            self._run_after_job(item, _t.SimpleNamespace(output_path=str(hit), _is_copy=False,
+                                                         validate_failed=False), after)
+
         def after():
             res = getattr(item, "_after_result", None) or ("failed", "")
             if res[0] == "done":
@@ -16457,8 +16481,7 @@ class App:
                 self._retire_failed(item, "Skipped", tr("{note}; the source stays: {v}", note=note, v=res[1]))
                 self.update_queue_box()
                 then(False)
-        import types as _t
-        self._run_after_job(item, _t.SimpleNamespace(output_path=str(hit), _is_copy=False, validate_failed=False), after)
+        wait_check()
 
     def _publish_patch_backup(self, item, worker, then) -> None:
         """moves the originals the patch replaced beside the output, on a worker. the queue waits"""

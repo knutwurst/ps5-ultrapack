@@ -2116,9 +2116,13 @@ def _place_built_pkg(pkg: Path, out_dir: Path, args) -> Path:
         import fpkg as _fpkg
         failed: list[str] = []
         print(f"[INFO] Checking the new package before it replaces {src.name}...", flush=True)
-        rc = _fpkg.validate(pkg, temp_dir=str(pkg.parent),
-                            on_line=lambda l: (failed.append(" ".join(l.split("[FAIL]", 1)[1].split()))
-                                               if "[FAIL]" in l else None, print(l, flush=True)))
+        try:
+            rc = _fpkg.validate(pkg, temp_dir=str(pkg.parent),
+                                on_line=lambda l: (failed.append(" ".join(l.split("[FAIL]", 1)[1].split()))
+                                                   if "[FAIL]" in l else None, print(l, flush=True)))
+        except Exception as e:              # a check that did not run is no pass
+            rc = 1
+            failed.append(f"the check could not run: {e}")
         if rc == 0:
             # the Library check's own rating too (trophies, AMPR index, junk): only a package it calls fine
             try:
@@ -2142,6 +2146,7 @@ def _place_built_pkg(pkg: Path, out_dir: Path, args) -> Path:
             n += 1
             dest = src.with_name(f"{stem} {n}.pkg")
         _rename_retrying(pkg, dest)
+        args._replace_refused = failed or ["a check failed"]
         print(f"[WARN] The new package failed {len(failed) or '?'} check(s) ({'; '.join(failed[:4])}); "
               f"{src.name} stays as it was, the new one is {dest.name}.", flush=True)
         return dest
@@ -3866,13 +3871,18 @@ def main() -> None:
             try:
                 if built and getattr(args, "_replaced_checked", False):
                     pass                    # checked before it replaced the source
+                elif built and getattr(args, "_replace_refused", None):
+                    validate_rc = 1         # refused before it could replace the source: the job failed
+                    failed_checks += list(args._replace_refused)
                 elif built:
                     print(f"\n[INFO] Auto-validating: {built[-1].name}", flush=True)
                     _fpkg_progress._set_phase("Verifying Output")
                     validate_rc = _fpkg.validate(built[-1], temp_dir=str(fpkg_temp), on_line=_validate_line)
             except Exception as ve:
-                print(f"[warn] Auto-validate skipped: {ve}", flush=True)
-            if validate_rc and pkg_direct and built:
+                # a check that did not run is no pass: the job fails, so no after-job step touches the source
+                validate_rc = 1
+                failed_checks.append(f"the check could not run: {ve}")
+            if validate_rc and pkg_direct and built and not getattr(args, "_replaced_checked", False):
                 # never a broken package: this one goes, the normal route builds it again
                 print(f"[WARN] The package rebuilt straight from {src.name} failed validation; "
                       f"unpacking it and building the normal way.", flush=True)
