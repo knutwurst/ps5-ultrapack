@@ -3921,13 +3921,14 @@ def removable_parts(path, keep) -> list:
     return [q for c in children for q in removable_parts(c, keep)]
 
 
-def strip_written_clutter(path) -> int:
-    """our output's ._ sidecars on exFAT; macOS removes them late, an early eject keeps them"""
+def strip_written_clutter(path, own_only: bool = False) -> int:
+    """our output's ._ sidecars on exFAT; macOS removes them late, an early eject keeps them.
+    own_only: just the output's own sidecar, never its folder's"""
     if not path:
         return 0
     p = Path(path)
     removed = strip_fs_junk(p) if p.is_dir() else 0
-    for q in (p, p.parent):
+    for q in ((p,) if own_only else (p, p.parent)):
         sidecar = q.parent / ("._" + q.name)
         try:
             if q.name and sidecar.is_file():

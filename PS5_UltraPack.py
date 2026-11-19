@@ -3868,9 +3868,10 @@ class CLIWorker(threading.Thread):
     def _strip_written_clutter(self) -> None:
         """sweep '._' sidecars and other OS litter out of what this job wrote"""
         n = 0
+        own_only = bool(getattr(self.item, "in_place_output", False))   # in place: not the game folder's sidecar
         for p in [self.output_path, *self._written]:
             try:
-                n += strip_written_clutter(str(p).strip('"')) if p else 0
+                n += strip_written_clutter(str(p).strip('"'), own_only=own_only) if p else 0
             except Exception:
                 pass
         if n:
@@ -3908,6 +3909,8 @@ class CLIWorker(threading.Thread):
 
     def _place_bundle_siblings(self) -> None:
         """packages sorted into the library by role, the rest copied as is; nothing gets left out"""
+        if getattr(self.item, "in_place_output", False):
+            return      # in place the job writes its one file; the add-ons beside the game stay as they are
         siblings = [Path(x) for x in (getattr(self.item, "bundle_siblings", None) or [])]
         if not siblings or not getattr(self, "copy_siblings", True):
             return self._copy_bundle_siblings()

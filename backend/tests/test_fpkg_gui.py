@@ -1670,6 +1670,18 @@ try:
     _wv = _fake_worker(_outf); _wv.validate_failed = True
     ok("after.failed-checklist-stays", "checklist" in str(app._after_job_plan(_j1, _wv)[3]), "")
     ok("after.missing-output-stays", "not found" in str(app._after_job_plan(_j1, _fake_worker(_aout / "no.pkg"))[3]), "")
+    # In place writes its one file: the add-ons beside the game are never copied out
+    _ipb = S / "after_inplace_bundle" / "Game [PPSA00003] [v01.000.000]"; (_ipb / "Addon").mkdir(parents=True, exist_ok=True)
+    (_ipb / "Addon" / "UP0000-PPSA00003_00-DLCDLCDLCDLCDLC0.pkg").write_bytes(b"D" * 64)
+    _ipbo = _ipb / "Game [PPSA00003] [v01.000].pkg"; _ipbo.write_bytes(b"P" * 64)
+    _ipbi = m.GameItem.from_chain(_ipb / "Game [PPSA00003] [v01.000].ffpfsc", to="pkg")
+    _ipbi.in_place_output = True; _ipbi.bundle_siblings = [str(_ipb / "Addon")]; _ipbi.bundle_release = str(_ipb)
+    _ipbw = m.CLIWorker.__new__(m.CLIWorker)
+    _ipbw.item, _ipbw.app, _ipbw.output_path, _ipbw._written = _ipbi, app, str(_ipbo), []
+    _before = sorted(x.relative_to(_ipb).as_posix() for x in _ipb.rglob("*"))
+    _ipbw._place_bundle_siblings()
+    _after = sorted(x.relative_to(_ipb).as_posix() for x in _ipb.rglob("*"))
+    ok("in-place.addons-untouched", _before == _after, f"{_before} -> {_after}")
     # a failed job names its error, a package check's warning stays on the card
     _je = m.GameItem.from_chain(_g1, to="pkg"); _je.status = "Failed"; _je.status_note = "Backend exited with code 1."
     _je.error_detail = "EndOfStreamException: Unable to read beyond the end of the stream."

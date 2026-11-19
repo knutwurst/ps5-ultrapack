@@ -89,5 +89,18 @@ class JobProblemsTest(unittest.TestCase):
         self.assertFalse(ultra_core.is_problem_line("  [ok  ]  a  b"))
 
 
+class InPlaceSidecarTest(unittest.TestCase):
+    def test_in_place_strips_only_its_own_sidecar(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            game = Path(td) / "Game [PPSA00001]"; game.mkdir()
+            out = game / "Game.pkg"; out.write_bytes(b"P")
+            (game / "._Game.pkg").write_bytes(b"s")
+            (Path(td) / "._Game [PPSA00001]").write_bytes(b"s")     # the folder's, not ours
+            self.assertEqual(ultra_core.strip_written_clutter(out, own_only=True), 1)
+            self.assertTrue((Path(td) / "._Game [PPSA00001]").exists())
+            self.assertFalse((game / "._Game.pkg").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

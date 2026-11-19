@@ -25,6 +25,10 @@ FIXED
     The package keeps the game's own values.
   - The job report no longer opens with an error section when the only
     match was the check summary "0 failed".
+  - In place copied the add-ons from the game's folder (an Addon folder,
+    for example) into it a second time, sorted and renamed. In place now
+    writes its one file and nothing else: add-ons stay where they are,
+    and only the output's own "._" sidecar is swept, never the folder's.
 
 ────────────────────────────────────────────────────────────────────────
   v2.6.1
