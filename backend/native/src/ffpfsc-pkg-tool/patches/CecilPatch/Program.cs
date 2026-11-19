@@ -108,6 +108,11 @@ using (var asm = AssemblyDefinition.ReadAssembly(dll, new ReaderParameters { Rea
     if (p8 < 0) return 3;
     applied++;
 
+    // patch 9: a rebuild can hand the Kraken encoder the block an old package already holds for the same bytes
+    int p9 = PatchKrakenReuse(asm.MainModule);
+    if (p9 < 0) return 3;
+    applied++;
+
     asm.Write();
 }
 Console.WriteLine($"OK: {applied} patch(es) applied to {dll}  (backup: {orig})");
@@ -406,5 +411,109 @@ static int PatchSkipJunk(ModuleDefinition module)
     Add(p.Create(OpCodes.Ldloc, item)); Add(p.Create(OpCodes.Callvirt, getName));
     Add(p.Create(OpCodes.Call, isJunk)); Add(p.Create(OpCodes.Brtrue, loopTest));
     Console.WriteLine($"[8] {walk.Name} skips OS junk (._*, .DS_Store and {JunkNames.Length - 1} more names)");
+    return 1;
+}
+
+static int PatchKrakenReuse(ModuleDefinition module)
+{
+    var hooks = module.GetType("LibProsperoPkg.Util.SourceHooks");
+    var asm = module.GetType("LibProsperoPkg.PFS.ProsperoPs5InnerImageAssembler");
+    var block = module.GetType("LibProsperoPkg.PFS.Compression.Oodle.EncodedBlock");
+    if (hooks == null || asm == null || block == null)
+    { Console.Error.WriteLine("[9] FAILED: SourceHooks, ProsperoPs5InnerImageAssembler or EncodedBlock not found"); return -1; }
+    var encode = asm.Methods.Concat(asm.NestedTypes.SelectMany(t => t.Methods))
+        .Where(m => m.HasBody && m.Name.Contains("g__EncodeKraken|")).ToList();
+    if (encode.Count != 1) { Console.Error.WriteLine($"[9] FAILED: expected one local function EncodeKraken, found {encode.Count}"); return -1; }
+    var enc = encode[0];
+    if (hooks.Methods.Any(m => m.Name == "TryReuse")) { Console.WriteLine($"[9] {enc.Name} already asks SourceHooks.ReuseBlock"); return 1; }
+
+    var input = enc.Parameters.FirstOrDefault(p => p.ParameterType.FullName == "System.ReadOnlySpan`1<System.Byte>");
+    var level = enc.Parameters.FirstOrDefault(p => p.ParameterType.FullName == "System.Int32");
+    var nullable = enc.ReturnType as GenericInstanceType;
+    if (input == null || level == null || nullable == null || nullable.ElementType.FullName != "System.Nullable`1"
+        || nullable.GenericArguments[0].FullName != block.FullName)
+    { Console.Error.WriteLine("[9] FAILED: EncodeKraken is not EncodedBlock? (ReadOnlySpan<byte>, int)"); return -1; }
+    var blockCtor = block.Methods.FirstOrDefault(m => m.IsConstructor && !m.IsStatic && m.Parameters.Count == 4
+        && m.Parameters[0].ParameterType.FullName == "System.Byte[]" && m.Parameters[1].ParameterType.FullName == "System.Boolean");
+    var nullableCtor = module.GetMemberReferences().OfType<MethodReference>()
+        .FirstOrDefault(m => m.Name == ".ctor" && m.DeclaringType.FullName == nullable.FullName);
+    if (blockCtor == null || nullableCtor == null)
+    { Console.Error.WriteLine("[9] FAILED: EncodedBlock(byte[], bool, int, int) or Nullable<EncodedBlock>(EncodedBlock) not found"); return -1; }
+
+    var ts = module.TypeSystem;
+    var mcd = module.GetTypeReferences().FirstOrDefault(t => t.FullName == "System.MulticastDelegate")
+              ?? new TypeReference("System", "MulticastDelegate", module, ts.Object.Scope);
+    var bytes = new ArrayType(ts.Byte);
+
+    // public delegate byte[] KrakenReuse(ReadOnlySpan<byte> input, int level, out bool multiChunk, out int firstChunkSize, out int boundaryFlags)
+    var del = new TypeDefinition("", "KrakenReuse", TypeAttributes.NestedPublic | TypeAttributes.Sealed, mcd);
+    var ctor = new MethodDefinition(".ctor", MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.SpecialName
+        | MethodAttributes.RTSpecialName, ts.Void) { ImplAttributes = MethodImplAttributes.Runtime | MethodImplAttributes.Managed };
+    ctor.Parameters.Add(new ParameterDefinition("object", ParameterAttributes.None, ts.Object));
+    ctor.Parameters.Add(new ParameterDefinition("method", ParameterAttributes.None, ts.IntPtr));
+    del.Methods.Add(ctor);
+    var invoke = new MethodDefinition("Invoke", MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot
+        | MethodAttributes.Virtual, bytes) { ImplAttributes = MethodImplAttributes.Runtime | MethodImplAttributes.Managed };
+    invoke.Parameters.Add(new ParameterDefinition("input", ParameterAttributes.None, input.ParameterType));
+    invoke.Parameters.Add(new ParameterDefinition("level", ParameterAttributes.None, ts.Int32));
+    invoke.Parameters.Add(new ParameterDefinition("multiChunk", ParameterAttributes.Out, new ByReferenceType(ts.Boolean)));
+    invoke.Parameters.Add(new ParameterDefinition("firstChunkSize", ParameterAttributes.Out, new ByReferenceType(ts.Int32)));
+    invoke.Parameters.Add(new ParameterDefinition("boundaryFlags", ParameterAttributes.Out, new ByReferenceType(ts.Int32)));
+    del.Methods.Add(invoke);
+    hooks.NestedTypes.Add(del);
+    var field = new FieldDefinition("ReuseBlock", FieldAttributes.Public | FieldAttributes.Static, del);
+    hooks.Fields.Add(field);
+
+    // TryReuse: false = encode as before; true with null = store the block raw; true with a block = use it
+    var tryReuse = new MethodDefinition("TryReuse", MethodAttributes.Assembly | MethodAttributes.Static | MethodAttributes.HideBySig, ts.Boolean);
+    tryReuse.Parameters.Add(new ParameterDefinition("input", ParameterAttributes.None, input.ParameterType));
+    tryReuse.Parameters.Add(new ParameterDefinition("level", ParameterAttributes.None, ts.Int32));
+    tryReuse.Parameters.Add(new ParameterDefinition("result", ParameterAttributes.Out, new ByReferenceType(nullable)));
+    var vHook = new VariableDefinition(del); var vPay = new VariableDefinition(bytes);
+    var vMulti = new VariableDefinition(ts.Boolean); var vFirst = new VariableDefinition(ts.Int32); var vFlags = new VariableDefinition(ts.Int32);
+    foreach (var v in new[] { vHook, vPay, vMulti, vFirst, vFlags }) tryReuse.Body.Variables.Add(v);
+    tryReuse.Body.InitLocals = true;
+    {
+        var il = tryReuse.Body.GetILProcessor();
+        var miss = il.Create(OpCodes.Ldarg_2);
+        var hit = il.Create(OpCodes.Ldarg_2);
+        il.Append(il.Create(OpCodes.Ldsfld, field)); il.Append(il.Create(OpCodes.Stloc, vHook));
+        il.Append(il.Create(OpCodes.Ldloc, vHook)); il.Append(il.Create(OpCodes.Brfalse, miss));
+        il.Append(il.Create(OpCodes.Ldloc, vHook)); il.Append(il.Create(OpCodes.Ldarg_0)); il.Append(il.Create(OpCodes.Ldarg_1));
+        il.Append(il.Create(OpCodes.Ldloca, vMulti)); il.Append(il.Create(OpCodes.Ldloca, vFirst)); il.Append(il.Create(OpCodes.Ldloca, vFlags));
+        il.Append(il.Create(OpCodes.Callvirt, invoke)); il.Append(il.Create(OpCodes.Stloc, vPay));
+        il.Append(il.Create(OpCodes.Ldloc, vPay)); il.Append(il.Create(OpCodes.Brfalse, miss));
+        il.Append(il.Create(OpCodes.Ldloc, vPay)); il.Append(il.Create(OpCodes.Ldlen)); il.Append(il.Create(OpCodes.Conv_I4));
+        il.Append(il.Create(OpCodes.Brtrue, hit));
+        // an empty payload: the old package stored this block, so no encoding
+        il.Append(il.Create(OpCodes.Ldarg_2)); il.Append(il.Create(OpCodes.Initobj, nullable));
+        il.Append(il.Create(OpCodes.Ldc_I4_1)); il.Append(il.Create(OpCodes.Ret));
+        il.Append(hit);
+        il.Append(il.Create(OpCodes.Ldloc, vPay)); il.Append(il.Create(OpCodes.Ldloc, vMulti));
+        il.Append(il.Create(OpCodes.Ldloc, vFirst)); il.Append(il.Create(OpCodes.Ldloc, vFlags));
+        il.Append(il.Create(OpCodes.Newobj, blockCtor)); il.Append(il.Create(OpCodes.Newobj, nullableCtor));
+        il.Append(il.Create(OpCodes.Stobj, nullable));
+        il.Append(il.Create(OpCodes.Ldc_I4_1)); il.Append(il.Create(OpCodes.Ret));
+        il.Append(miss); il.Append(il.Create(OpCodes.Initobj, nullable));
+        il.Append(il.Create(OpCodes.Ldc_I4_0)); il.Append(il.Create(OpCodes.Ret));
+    }
+    hooks.Methods.Add(tryReuse);
+
+    // EncodeKraken asks TryReuse first and runs the encoder only when it says no
+    {
+        var tmp = new VariableDefinition(nullable);
+        enc.Body.Variables.Add(tmp);
+        enc.Body.InitLocals = true;
+        var il = enc.Body.GetILProcessor();
+        var first = enc.Body.Instructions[0];
+        il.InsertBefore(first, il.Create(OpCodes.Ldarg, input));
+        il.InsertBefore(first, il.Create(OpCodes.Ldarg, level));
+        il.InsertBefore(first, il.Create(OpCodes.Ldloca, tmp));
+        il.InsertBefore(first, il.Create(OpCodes.Call, tryReuse));
+        il.InsertBefore(first, il.Create(OpCodes.Brfalse, first));
+        il.InsertBefore(first, il.Create(OpCodes.Ldloc, tmp));
+        il.InsertBefore(first, il.Create(OpCodes.Ret));
+    }
+    Console.WriteLine($"[9] {enc.Name} asks SourceHooks.ReuseBlock before it encodes a block");
     return 1;
 }
