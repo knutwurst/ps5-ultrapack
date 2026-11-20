@@ -704,12 +704,13 @@ def source_label(item) -> str:
     if not raw:                          # Path("") would be ".", the working folder
         return "Folder"
     p = Path(raw)
-    if p.is_dir():
+    # os.path answers False when macOS denies access; Path.is_dir() raises then and the queue stops drawing
+    if os.path.isdir(p):
         return "Folder"
     label = _CONTAINER_LABELS.get(p.suffix.lower())
     if label:
         return label
-    if p.is_file() and p.suffix and " " not in p.suffix and len(p.suffix) <= 8:
+    if os.path.isfile(p) and p.suffix and " " not in p.suffix and len(p.suffix) <= 8:
         return p.suffix.lower()
     return "Folder"
 
@@ -3935,6 +3936,45 @@ def is_fs_junk_name(name: str) -> bool:
     return name.startswith("._") or name.lower() in FS_JUNK_NAMES
 
 
+def _drive_root(p: Path) -> Path | None:
+    """the mount a removable or network drive hangs at; None for the system drive"""
+    parts = p.parts
+    if sys.platform == "win32":
+        return Path(p.anchor) if p.anchor else None
+    if len(parts) >= 3 and parts[1] in ("Volumes", "mnt"):
+        return Path(*parts[:3])
+    if len(parts) >= 4 and parts[1] == "media":
+        return Path(*parts[:4])
+    if len(parts) >= 5 and parts[1] == "run" and parts[2] == "media":
+        return Path(*parts[:5])
+    return None
+
+
+def source_presence(path) -> str:
+    """'ok', 'offline' (its drive is not connected), 'gone' (the drive is there, the file is not)
+    or 'denied' (no permission, e.g. macOS still asking about removable volumes)"""
+    p = Path(str(path))
+    try:
+        os.stat(p)
+        return "ok"
+    except PermissionError:
+        return "denied"
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    except OSError:
+        return "offline"          # a share that does not answer
+    root = _drive_root(p)
+    if root is None:
+        return "gone"
+    try:
+        os.stat(root)
+    except PermissionError:
+        return "denied"
+    except OSError:
+        return "offline"
+    return "gone"
+
+
 def ident_from_folder_name(archive) -> dict | None:
     """stand-in name from the folder around an unreadable archive: 'PPSA12345 Example Game' gives 'Example Game'"""
     a = Path(archive)
@@ -4790,6 +4830,7 @@ __all__ = [
     "EXTRA_JUNK_EXTS",
     "FS_JUNK_NAMES",
     "is_fs_junk_name",
+    "source_presence",
     "strip_fs_junk",
     "source_label",
     "archive_label",

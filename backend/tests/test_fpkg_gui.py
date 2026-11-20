@@ -2084,6 +2084,22 @@ try:
     _de.update({"status": "Done", "path": str(S / "gone3" / "x"), "archive_path": None})
     m.save_settings({"queue": [_de]}); app.queue.clear(); app._restore_queue()
     ok("queue.restore-keeps-done-record", len(app.queue) == 1 and app.queue[0].status == "Done", str(len(app.queue)))
+    # only an unplugged drive parks a job; a missing file fails on its card, no permission keeps it as it was
+    _lk = S / "locked_src"; _lk.mkdir(exist_ok=True); (_lk / "x.ffpfsc").write_bytes(b"x"); os.chmod(_lk, 0)
+    try:
+        m.save_settings({"queue": [dict(_de, status="Queued", name="Gone", path=str(S / "gone4" / "x.ffpfsc")),
+                                   dict(_de, status="Queued", name="Away", path="/Volumes/__ultrapack_no_drive__/x.ffpfsc"),
+                                   dict(_de, status="Queued", name="Locked", path=str(_lk / "x.ffpfsc"))]})
+        app.queue.clear(); app._queue_missing_saved = []; app._restore_queue()
+    finally:
+        os.chmod(_lk, 0o755)
+    _by = {getattr(o, "name", ""): o for o in app.queue}
+    _pk = [x.get("name") for x in (app._queue_missing_saved or [])]
+    ok("queue.restore-parks-only-offline-drives",
+       _pk == ["Away"] and "Gone" in _by and _by["Gone"].status == "Failed" and "gone4" in _by["Gone"].error_detail
+       and "Locked" in _by and _by["Locked"].status == "Queued",
+       f"parked={_pk} queue={[(k, o.status) for k, o in _by.items()]}")
+    app._queue_missing_saved = []; app.queue.clear()
     _tdir = S / "taken_src"; _tdir.mkdir(exist_ok=True); (_tdir / "eboot.bin").write_bytes(b"x")
     _tarc = S / "taken.7z"; _tarc.write_bytes(b"7z")
     _tk = m.GameItem.from_chain(_tdir, to="ffpfsc", output_path=str(OUT / "job"))

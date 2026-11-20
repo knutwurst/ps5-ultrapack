@@ -13470,7 +13470,7 @@ class App:
                 saved = load_settings().get("queue") or []
             except Exception:
                 saved = []
-        restored = skipped = 0
+        restored = skipped = denied = 0
         for d in saved:
             try:
                 if not isinstance(d, dict):
@@ -13511,11 +13511,20 @@ class App:
                         obj.status = "Pending Extract"
                 probe = getattr(obj, "archive_path", None) or getattr(obj, "path", None)
                 # A finished job is a record: it stays listed when its source is gone.
-                if getattr(obj, "status", "") != "Done" and (not probe or not Path(probe).exists()):
-                    # drive unplugged or share down: keep the entry so the next save doesn't lose it
-                    skipped += 1
-                    missing.append(d)
-                    continue
+                if getattr(obj, "status", "") != "Done":
+                    state = source_presence(probe) if probe else "gone"
+                    if state == "offline":
+                        # drive unplugged or share down: keep the entry so the next save doesn't lose it
+                        skipped += 1
+                        missing.append(d)
+                        continue
+                    if state == "gone":
+                        # the drive is there, the file is not: say so on the job, never "waits for its drive"
+                        obj.status = "Failed"
+                        obj.error_detail = tr("The source is no longer there: {path}").format(path=probe or "?")
+                    elif state == "denied":
+                        # macOS may still be asking for access to the drive; the job stays as it was
+                        denied += 1
                 # a crashed run left emu files in the user's own folder: restore it now
                 if getattr(obj, "ampr_injected", None) or getattr(obj, "ampr_index_path", None):
                     try:
@@ -13533,6 +13542,9 @@ class App:
             except Exception:
                 skipped += 1
         self._queue_missing_saved = missing   # re-persisted by _save_queue, untouched
+        if denied:
+            self.log("WARN", f"{denied} job(s) could not look at their source yet: macOS has not allowed "
+                             f"access to the drive. Allow it when asked; the jobs stay in the queue.")
         # extras a crashed run set aside beside a user's game folder go back in
         for obj in list(self.queue):
             try:

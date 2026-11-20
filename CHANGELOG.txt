@@ -54,6 +54,12 @@ FIXED
     check took the old one with it. The new package is now checked where
     it was built and replaces the old one only after it passed; a failed
     one goes beside it as "(failed check)".
+  - On start, a job whose source the app could not look at was set aside
+    as "waits for its drive", also when the drive was connected and macOS
+    was only asking for access, or when the file itself was gone. Now only
+    a drive that is not connected parks a job. A missing file fails the job
+    with "The source is no longer there", and a job without access yet stays
+    in the queue.
   - A demo (applicationDrmType "demo") got no license and failed its
     check: the package library licenses "standard" only. A demo is now
     built like an upgradable app, as standard with a license.

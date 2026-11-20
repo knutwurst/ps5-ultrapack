@@ -1139,6 +1139,7 @@ GERMAN: dict[str, str] = {
     ', 1 failed': ', 1 fehlgeschlagen',
     ', {n} failed': ', {n} fehlgeschlagen',
     '1 job waits for its drive': '1 Job wartet auf sein Laufwerk',
+    'The source is no longer there: {path}': 'Die Quelle ist nicht mehr da: {path}',
     '{n} jobs wait for their drive': '{n} Jobs warten auf ihr Laufwerk',
     '1 job would write a file that is already there. Skip leaves it out of this run; Overwrite replaces the file once the new build is finished; Keep both gives the new build a numbered name. Settings › General can answer this for every start.': '1 Job würde eine Datei schreiben, die schon da ist. Überspringen lässt ihn in diesem Lauf aus; Überschreiben ersetzt die Datei, sobald der neue Build fertig ist; Beide behalten gibt dem neuen Build einen nummerierten Namen. Unter Einstellungen › Allgemein lässt sich das für jeden Start festlegen.',
     '{n} jobs would write a file that is already there. Skip leaves them out of this run; Overwrite replaces the files once the new build is finished; Keep both gives the new build a numbered name. Settings › General can answer this for every start.': '{n} Jobs würden Dateien schreiben, die schon da sind. Überspringen lässt sie in diesem Lauf aus; Überschreiben ersetzt die Dateien, sobald der neue Build fertig ist; Beide behalten gibt dem neuen Build einen nummerierten Namen. Unter Einstellungen › Allgemein lässt sich das für jeden Start festlegen.',
