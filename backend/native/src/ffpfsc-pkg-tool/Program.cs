@@ -1652,7 +1652,7 @@ internal static partial class Program
 
         // standard-DRM retail dumps need drm_type 16, real license entries and retail SELFs,
         // all done on the stage, never the source. what actually broke launches was PlayGo
-        bool sourceIsStandardApp = false, sourceIsUpgradable = false;
+        bool sourceIsStandardApp = false, sourceIsUpgradable = false, sourceIsDemo = false;
         try
         {
             var srcParam = Path.Combine(srcSceSys, "param.json");
@@ -1663,7 +1663,9 @@ internal static partial class Program
                 {
                     // an upgradable app needs the same license and retail SELFs, the library only covers standard
                     sourceIsUpgradable = string.Equals(dt.GetString(), "upgradable", StringComparison.OrdinalIgnoreCase);
-                    sourceIsStandardApp = sourceIsUpgradable || string.Equals(dt.GetString(), "standard", StringComparison.OrdinalIgnoreCase);
+                    // a demo too: the library licenses "standard" only, so it is built as standard
+                    sourceIsDemo = string.Equals(dt.GetString(), "demo", StringComparison.OrdinalIgnoreCase);
+                    sourceIsStandardApp = sourceIsUpgradable || sourceIsDemo || string.Equals(dt.GetString(), "standard", StringComparison.OrdinalIgnoreCase);
                 }
             }
         }
@@ -1868,8 +1870,10 @@ internal static partial class Program
                     }
                     Console.Error.WriteLine($"  [self-hdr] set retail bit (byte 0x0B: 0x10) on {selfPatched} eboot.bin/*.prx; left {selfLeft} untouched");
 
-                    string? drmTo = sourceIsUpgradable && upgradableDrm == "standard" ? "standard" : null;
+                    string? drmTo = sourceIsDemo || (sourceIsUpgradable && upgradableDrm == "standard") ? "standard" : null;
                     RewriteStagedParamJson(srcSceSys, stagedSceSys, hdrFlag, addKernel: true, tag: "retail", drmTo: drmTo);
+                    if (sourceIsDemo)
+                        Console.Error.WriteLine("  [retail] applicationDrmType demo -> standard (the library licenses standard only)");
                     if (sourceIsUpgradable)
                         Console.Error.WriteLine(drmTo != null ? "  [retail] applicationDrmType upgradable -> standard (--upgradable-drm standard)"
                                                               : "  [retail] applicationDrmType upgradable kept (--upgradable-drm keep)");

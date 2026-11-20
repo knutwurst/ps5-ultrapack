@@ -363,12 +363,14 @@ def test_negative_missing_eboot(r: Runner):
 
 def test_upgradable_gets_license(r: Runner):
     # the library licenses only standard apps; an upgradable one went out without a license (padlock)
-    for mode, want in (("", "standard"), ("keep", "upgradable")):
-        tag = mode or "default"
+    # a demo is the same case: built as standard with a license
+    for mode, want, kind in (("", "standard", "upgradable"), ("keep", "upgradable", "upgradable"),
+                             ("", "standard", "demo")):
+        tag = (mode or "default") + ("" if kind == "upgradable" else f"-{kind}")
         src = r.work / f"upg_{tag}"
         shutil.copytree(fetch_hbt(r.work / "hbt"), src)
         pj = src / "sce_sys" / "param.json"
-        pj.write_text(json.dumps({**json.loads(pj.read_text()), "applicationDrmType": "upgradable"}))
+        pj.write_text(json.dumps({**json.loads(pj.read_text()), "applicationDrmType": kind}))
         out = r.work / f"upg_{tag}_out"; out.mkdir(exist_ok=True)
         rc, log = r.run_cli([str(src), str(out), "--fpkg-build", str(src),
                              "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",

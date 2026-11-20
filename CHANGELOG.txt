@@ -54,6 +54,9 @@ FIXED
     check took the old one with it. The new package is now checked where
     it was built and replaces the old one only after it passed; a failed
     one goes beside it as "(failed check)".
+  - A demo (applicationDrmType "demo") got no license and failed its
+    check: the package library licenses "standard" only. A demo is now
+    built like an upgradable app, as standard with a license.
   - A .pkg build with temp on an exFAT drive could fail with "setting the
     retail bit on ._<module>.prx failed": macOS writes a ._ file beside
     every module there and may drop it when the module is replaced. The
