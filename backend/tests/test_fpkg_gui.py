@@ -2074,6 +2074,29 @@ try:
     app.update_queue_box(select_item=app.queue[0]); root.update()
     ok("multi.single-again-after-plain-click", _ql.marked_rows() == [0] and not app._card_multi.winfo_manager(),
        f"{_ql.marked_rows()}")
+    # a restart does not read every job's source again for a name it already has
+    _nj = [m.GameItem.from_chain(HBT, to="ffpfsc") for _ in range(3)]
+    _art = m.ART_DIR; _art.mkdir(parents=True, exist_ok=True)
+    for _x in _nj[:2]:
+        _x.name_checked, _x.art_key = True, "testcover" + str(id(_x))
+        (_art / f"{_x.art_key}.png").write_bytes(b"\x89PNG")
+    _reads = []
+    _real_gi = app._game_identity
+    app._game_identity = lambda it: (_reads.append(it), None)[1]
+    _real_q = list(app.queue)
+    try:
+        app.queue[:] = _nj
+        app._name_jobs_from_games()
+        for _ in range(50):
+            if _nj[2].name_checked:
+                break
+            time.sleep(0.05)
+    finally:
+        app._game_identity = _real_gi; app.queue[:] = _real_q
+        for _x in _nj[:2]:
+            (_art / f"{_x.art_key}.png").unlink(missing_ok=True)
+    ok("names.restart-reads-only-unchecked-jobs", [id(x) for x in _reads] == [id(_nj[2])] and _nj[2].name_checked,
+       f"read={len(_reads)}")
     # moving several jobs: their order among themselves never changes
     _L = [object() for _ in range(20)]
     _pos = lambda new, xs: [new.index(x) for x in xs]

@@ -4394,6 +4394,7 @@ class GameItem:
     # class defaults, so items made via __new__ or from an old queue have every attribute
     ampr_emu = False  # PlayGo (APR) title
     art_key = ""  # cover key in the art cache, survives a restart
+    name_checked = False  # its game's name was read once; a restart doesn't read the source again
     content_kind = ""  # "ps4" or "organize": copied into the library in its own format
     display_name = None  # queue label from add time; item.name turns into the extracted stem
     output_path = None  # per-job output; None means the global Output

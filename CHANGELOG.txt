@@ -28,6 +28,10 @@ QUEUE
 
 FIXED
 
+  - On every start the app read each queued job's source again (title,
+    firmware) to name it, one short backend run per job: with a long queue
+    on hard disks the drives kept working after launch. A job named from
+    its game once keeps that name and is not read again.
   - The status line at the bottom ("Job 3 of 76 · 2 done · pauses after
     this job") and "about N h left" stayed English in the German interface.
   - The window froze (spinning cursor) while a job wrote to an exFAT

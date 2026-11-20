@@ -12584,7 +12584,10 @@ class App:
         return dict(ident, fw="")
 
     def _name_jobs_from_games(self) -> None:
-        todo = [it for it in self.queue if not getattr(it, "_name_probed", False)]
+        # a job named from its game in an earlier session keeps that name: no reading its source on every start
+        todo = [it for it in self.queue if not getattr(it, "_name_probed", False)
+                and not (getattr(it, "name_checked", False)
+                         and (art_cache_file(getattr(it, "art_key", "") or "") or art_cache_file(art_source_key(it))))]
         if not todo:
             return
         for it in todo:
@@ -12610,6 +12613,7 @@ class App:
                     ident = None
                 if self._take_game_name(it, ident):
                     changed = True
+                it.name_checked = True                     # saved with the queue
                 try:
                     if self._fetch_art(it, pw.get(id(it))):
                         changed = True
