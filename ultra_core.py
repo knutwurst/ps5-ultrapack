@@ -185,6 +185,35 @@ def job_time_left(phases, stage, stage_left, stage_elapsed, size, rates, widths)
     return total
 
 
+def queue_time_left(cur_left, cur_rest_bytes, cur_rate, waiting, fallback) -> float | None:
+    """seconds the whole queue still needs. The running job counts with its own estimate, else its
+    rest at its rate; each waiting job with its bytes times the seconds per byte learned for its
+    kind (whole job: unpack, compress, write), else the fallback pace. None while nothing is known"""
+    total = 0.0
+    if cur_left is not None:
+        total += max(0.0, float(cur_left))
+    elif cur_rest_bytes:
+        r = cur_rate or fallback
+        if not r:
+            return None
+        total += float(cur_rest_bytes) * float(r)
+    for size, rate in waiting:
+        r = rate or fallback
+        if not r:
+            return None
+        total += float(size or 0) * float(r)
+    return total
+
+
+def round_time_left(secs: float) -> int:
+    """minutes, in steps that don't jitter: 5 min past an hour, 30 min past 3 h, whole hours past 10 h"""
+    mins = int(round(secs / 60.0))
+    for above, step in ((600, 60), (180, 30), (60, 5)):
+        if mins >= above:
+            return max(step, int(round(mins / step)) * step)
+    return mins
+
+
 def drive_display_name(path, system: str = "the system drive") -> str:
     """volume name on macOS, 'D: (Games)' on Windows, the share for network paths"""
     p = Path(path)
@@ -4730,6 +4759,8 @@ __all__ = [
     "format_duration",
     "eta_seconds",
     "job_time_left",
+    "queue_time_left",
+    "round_time_left",
     "LONG_STEPS",
     "humanize_eta",
     "get_free_space",

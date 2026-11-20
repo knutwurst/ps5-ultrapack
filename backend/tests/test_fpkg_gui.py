@@ -2469,6 +2469,26 @@ try:
     _e2 = app._estimate_left(200 * _GB, 50 * _GB, 50, _cj2)  # 10 s/GB * 225 GB = 2250 s
     ok("all.estimate-from-pace", _e1 is not None and abs(_e1 - 900) < 5 and _e2 is not None and abs(_e2 - 2250) < 5,
        f"{_e1} {_e2}")
+    # every waiting job at the pace learned for its kind; nothing learned and nothing finished: no number
+    _qa, _qb, _qc = (m.GameItem.from_chain(HBT, to="ffpfsc") for _ in range(3))
+    for _q, _g in ((_qa, 40), (_qb, 100), (_qc, 300)):
+        _q.size, _q.status = _g * _GB, "Queued"
+    _sv_rates, _sv_items = dict(app._job_rates), getattr(app, "_batch_items", None)
+    _sv_since = getattr(app, "_active_since", (None, 0))
+    app._job_rates = {}; app._batch_items = [_qa, _qb, _qc]
+    app._batch_fin_secs, app._batch_fin_bytes = 0.0, 0
+    app._active_since = (id(_qa), time.time() - 10)
+    _n0 = app._queue_left(_qa, 600, 50)
+    app._learn_job_rate(_qb, 1000)                          # 100 GB in 1000 s: 10 s/GB for this kind
+    _k_full, _k_kind = app._rate_keys(_qb)
+    _n1 = app._queue_left(_qa, 600, 50)                     # 600 + 400 GB * 10 s/GB
+    app._job_rates = _sv_rates; app._batch_items = _sv_items; app._active_since = _sv_since
+    try:
+        m.save_settings({"job_rates": _sv_rates})
+    except Exception:
+        pass
+    ok("all.queue-left-by-job-kind", _n0 is None and _n1 is not None and abs(_n1 - 4600) < 5
+       and _k_kind and _k_full.startswith(_k_kind + " @ "), f"{_n0} {_n1} {_k_full!r}")
     _sv = (app._batch_running, app._batch_total, app._batch_done, app._batch_failed)
     app._batch_running, app._batch_total, app._batch_done, app._batch_failed = True, 5, 1, 0
     app._all_frac, app._all_eta = 0.23, 7800

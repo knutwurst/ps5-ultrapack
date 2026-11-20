@@ -10129,6 +10129,9 @@ class App:
         # per-step speeds measured on this machine, bytes of the game per second
         self._stage_rates = {k: float(v) for k, v in (settings.get("stage_rates") or {}).items()
                              if k in LONG_STEPS and isinstance(v, (int, float)) and v > 0}
+        # whole-job seconds per byte, by job kind and by kind plus drives, learned on finished jobs
+        self._job_rates = {str(k): float(v) for k, v in (settings.get("job_rates") or {}).items()
+                           if isinstance(v, (int, float)) and v > 0}
         self.batch_var = tk.BooleanVar(value=False)  # not persisted
         self.unpack_mode_var = tk.BooleanVar(value=False)  # not persisted
         # .ffpfs mounts faster: ShadowMountPlus reads .ffpfsc at only ~150-250 MB/s
@@ -15831,6 +15834,61 @@ class App:
         threading.Thread(target=work, daemon=True).start()
         self._show_add_progress()
 
+    def _rate_keys(self, item) -> tuple[str, str]:
+        """(kind on these drives, kind): a .pkg rebuild and an archive unpack differ a lot per GB"""
+        try:
+            kind = " > ".join(self._job_recipe_parts(item)) or str(getattr(item, "operation", "pack"))
+        except Exception:
+            kind = str(getattr(item, "operation", "pack"))
+
+        def drive(p):
+            if not p:
+                return "-"
+            root = ultra_core._drive_root(Path(str(p)))
+            return root.name if root is not None else "system"
+        temp = (self.temp_var.get() or "").strip()
+        try:
+            out = self._job_output_dir(item)
+        except Exception:
+            out = None
+        return f"{kind} @ {drive(temp)} > {drive(out)}", kind
+
+    def _learned_rate(self, item) -> float | None:
+        full, kind = self._rate_keys(item)
+        return self._job_rates.get(full) or self._job_rates.get(kind)
+
+    def _learn_job_rate(self, item, secs: float) -> None:
+        size = max(0, int(display_size(item) or 0))
+        if secs < 30 or size < (256 << 20):
+            return                                   # too short to say anything about the pace
+        new = secs / size
+        for key in self._rate_keys(item):
+            old = self._job_rates.get(key)
+            self._job_rates[key] = new if not old else 0.5 * old + 0.5 * new
+        try:
+            save_settings({"job_rates": dict(self._job_rates)})
+        except Exception:
+            pass
+
+    def _queue_left(self, cur_item, cur_left: float | None, cur_pct: float) -> float | None:
+        """the running job's own estimate plus every waiting job at the pace learned for its kind"""
+        items = getattr(self, "_batch_items", None) or []
+        waiting = [it for it in items if it is not cur_item
+                   and getattr(it, "status", "") not in self._TERMINAL_STATUSES]
+        sz = lambda it: max(0, int(display_size(it) or 0))
+        fin_s, fin_b = getattr(self, "_batch_fin_secs", 0.0), getattr(self, "_batch_fin_bytes", 0)
+        fallback = fin_s / fin_b if fin_b > 0 and fin_s > 0 else None
+        cur_bytes = sz(cur_item) if cur_item is not None else 0
+        if fallback is None and cur_item is not None and cur_bytes:
+            # nothing finished this run: the running job's projected pace, once it ran a minute
+            since = getattr(self, "_active_since", (None, 0))
+            t0 = since[1] if since[0] == id(cur_item) else None
+            if t0 and cur_left is not None and time.time() - t0 >= 60:
+                fallback = ((time.time() - t0) + cur_left) / cur_bytes
+        rest = cur_bytes * max(0.0, 1.0 - cur_pct / 100.0)
+        return queue_time_left(cur_left, rest, self._learned_rate(cur_item) if cur_item is not None else None,
+                               [(sz(it), self._learned_rate(it)) for it in waiting], fallback)
+
     def _estimate_left(self, left_bytes: int, cur_bytes: int, cur_pct: float, cur_item,
                        cur_left: float | None = None) -> float | None:
         """Seconds the whole run still needs."""
@@ -15903,10 +15961,9 @@ class App:
         """rounded so the number doesn't twitch on every update"""
         if secs < 90:
             return "about a minute left"
-        mins = int(round(secs / 60.0))
+        mins = round_time_left(secs)
         if mins < 60:
             return tr("about {mins} min left", mins=mins)
-        mins = int(round(mins / 5.0)) * 5                  # five-minute steps beyond an hour
         h, m = divmod(mins, 60)
         return tr("about {h} h {m:02d} min left", h=h, m=m) if m else f"about {h} h left"
 
@@ -17680,7 +17737,7 @@ class App:
                         _cur = _sz(_ri) if _ri is not None else 0
                         _jl = (self._job_time_left(_ri, stage, stage_pct, eta, _cur)
                                if _ri is not None and job in (None, _ri) else None)
-                        self._all_eta = self._estimate_left(_left, _cur, overall_pct, _ri, cur_left=_jl)
+                        self._all_eta = self._queue_left(_ri, _jl, overall_pct)
                         if _jl is not None:
                             eta = humanize_eta(f"{int(_jl)}s")      # Left: the job's, not the step's
                     except Exception:
@@ -17810,6 +17867,7 @@ class App:
                         try:
                             self._batch_fin_secs = getattr(self, "_batch_fin_secs", 0.0) + (time.time() - _t0)
                             self._batch_fin_bytes = getattr(self, "_batch_fin_bytes", 0) + max(0, int(display_size(completed_item) or 0))
+                            self._learn_job_rate(completed_item, time.time() - _t0)
                         except Exception:
                             pass
                 self.status_update("Complete", msg, "Complete", 100, 100, " - ", " - ", " - ")

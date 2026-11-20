@@ -18,6 +18,14 @@ QUEUE
   - Retry is in the right-click menu, for one job and for several selected
     ones; before it was only on the details pane.
 
+  - The time left for all jobs counts every waiting job at the pace learned
+    for its kind (.pkg rebuild, .ffpfsc to .pkg, archive to .ffpfsc, ...),
+    measured over whole jobs and kept per kind and per temp and output
+    drive. Without a learned pace it uses the run's pace, and with nothing
+    to go on it says it is still estimating. Before, a run where no job had
+    finished could show only the running job's time, e.g. 30 min for 3 TB.
+    Long times are rounded to 30 min past 3 h and to hours past 10 h.
+
 FIXED
 
   - The window froze (spinning cursor) while a job wrote to an exFAT
