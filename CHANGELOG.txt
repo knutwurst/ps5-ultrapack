@@ -28,6 +28,8 @@ QUEUE
 
 FIXED
 
+  - The status line at the bottom ("Job 3 of 76 · 2 done · pauses after
+    this job") and "about N h left" stayed English in the German interface.
   - The window froze (spinning cursor) while a job wrote to an exFAT
     drive: the details pane asked that drive for its free space on the
     main thread, and a busy exFAT drive (macOS 26 runs it in user space)

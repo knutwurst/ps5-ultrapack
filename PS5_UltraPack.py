@@ -15388,13 +15388,14 @@ class App:
             self.batch_counter_var.set("")
             return
         current = self._batch_done + self._batch_failed + 1
-        extra = "".join(f"  ·  {n} {w}" for n, w in ((self._batch_done, "done"), (self._batch_failed, "failed")) if n)
+        extra = "".join(tr(w, n=n) for n, w in ((self._batch_done, "  ·  {n} done"),
+                                                 (self._batch_failed, "  ·  {n} failed")) if n)
         frac, eta = getattr(self, "_all_frac", None), getattr(self, "_all_eta", None)
         if frac is not None:
             extra += tr("  ·  {v} % of all", v=int(frac * 100)) + (f", {self._fmt_left(eta)}" if eta is not None else "")
-        line = f"Job {current} of {self._batch_total}{extra}"
+        line = tr("Job {current} of {total}", current=current, total=self._batch_total) + extra
         if getattr(self, "_pause_requested", False):
-            line += "  ·  pauses after this job"
+            line += tr("  ·  pauses after this job")
         if self.batch_counter_var.get() != line:
             self.batch_counter_var.set(line)
 
@@ -15960,12 +15961,12 @@ class App:
     def _fmt_left(secs: float) -> str:
         """rounded so the number doesn't twitch on every update"""
         if secs < 90:
-            return "about a minute left"
+            return tr("about a minute left")
         mins = round_time_left(secs)
         if mins < 60:
             return tr("about {mins} min left", mins=mins)
         h, m = divmod(mins, 60)
-        return tr("about {h} h {m:02d} min left", h=h, m=m) if m else f"about {h} h left"
+        return tr("about {h} h {m:02d} min left", h=h, m=m) if m else tr("about {h} h left", h=h)
 
     def _all_jobs_line(self) -> str:
         frac = getattr(self, "_all_frac", None)

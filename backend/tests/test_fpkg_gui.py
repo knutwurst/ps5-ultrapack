@@ -2497,6 +2497,18 @@ try:
     _vis, _top_free = app._all_box.winfo_manager(), app._add_box.winfo_manager() == ""
     _foot = app.batch_counter_var.get()
     _row = int(app._all_box.grid_info().get("row", -1)) if _vis else -1
+    import i18n as _i18n                                   # the status line in German, every piece of it
+    _i18n.use("de")
+    try:
+        app._batch_failed, app._pause_requested = 1, True
+        app._all_eta = 36 * 3600
+        app._update_batch_counter(); _foot_de = app.batch_counter_var.get()
+    finally:
+        _i18n.use("en"); app._batch_failed, app._pause_requested = 0, False
+        app._all_eta = 7800
+    ok("all.status-line-in-german", _foot_de.startswith("Job 3 von 5") and "1 fertig" in _foot_de
+       and "1 fehlgeschlagen" in _foot_de and "noch etwa 36 Std." in _foot_de
+       and "pausiert nach diesem Job" in _foot_de and " of " not in _foot_de and "done" not in _foot_de, _foot_de)
     app._batch_running = False
     app._show_add_progress(); app._update_batch_counter(); root.update()
     _hidden = app._all_box.winfo_manager() == ""
