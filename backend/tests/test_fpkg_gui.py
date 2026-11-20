@@ -2074,6 +2074,63 @@ try:
     app.update_queue_box(select_item=app.queue[0]); root.update()
     ok("multi.single-again-after-plain-click", _ql.marked_rows() == [0] and not app._card_multi.winfo_manager(),
        f"{_ql.marked_rows()}")
+    # moving several jobs: their order among themselves never changes
+    _L = [object() for _ in range(20)]
+    _pos = lambda new, xs: [new.index(x) for x in xs]
+    _pick = [_L[15], _L[17], _L[19]]                       # jobs 16, 18 and 20
+    _top, _bot = app.reorder_jobs(_L, _pick, "top"), app.reorder_jobs(_L, _pick, "bottom")
+    _up = app.reorder_jobs(_L, [_L[0], _L[2]], "up"); _dn = app.reorder_jobs(_L, [_L[19], _L[17]], "down")
+    _by = app.reorder_jobs(_L, [_L[5], _L[8]], "by", -2); _cl = app.reorder_jobs(_L, [_L[1], _L[3]], "by", -5)
+    ok("move.reorder-rules", _pos(_top, _pick) == [0, 1, 2] and _top[3:] == [x for x in _L if x not in _pick]
+       and _pos(_bot, _pick) == [17, 18, 19] and _pos(_up, [_L[0], _L[2]]) == [0, 1]
+       and _pos(_dn, [_L[17], _L[19]]) == [18, 19] and _pos(_by, [_L[5], _L[8]]) == [3, 6]
+       and _pos(_cl, [_L[1], _L[3]]) == [0, 2] and sorted(map(id, _by)) == sorted(map(id, _L)),
+       f"top={_pos(_top, _pick)} bot={_pos(_bot, _pick)} by={_pos(_by, [_L[5], _L[8]])}")
+    _mv = [m.GameItem.from_chain(HBT, to="ffpfsc") for _ in range(6)]
+    app.queue[:] = list(_mv); app.update_queue_box(select_item=_mv[0]); root.update()
+    _ql._click(_ev(3)); _ql._release(_ev(3)); _ql._toggle_click(_ev(5))
+    _ql._shift_key("top"); root.update()
+    _o1 = [app.queue.index(x) for x in (_mv[3], _mv[5])]; _k1 = _ql.marked_rows()
+    _ql._shift_key("down"); root.update()
+    _o2 = [app.queue.index(x) for x in (_mv[3], _mv[5])]; _k2 = _ql.marked_rows()
+    app.queue_move_bottom(); root.update()
+    _o3 = [app.queue.index(x) for x in (_mv[3], _mv[5])]
+    ok("move.keys-and-menu-keep-the-group", _o1 == [0, 1] and _k1 == [0, 1] and _o2 == [1, 2] and _k2 == [1, 2]
+       and _o3 == [4, 5] and _ql.marked_rows() == [4, 5], f"{_o1} {_k1} {_o2} {_k2} {_o3} {_ql.marked_rows()}")
+    _ql._click(_ev(5)); _held = _ql.marked_rows()          # a press on a selected row keeps the group
+    _ql._drop = 1; _ql._release(_ev(1)); root.update()     # dropped above row 1: the grabbed row moves 4 up
+    _o4 = [app.queue.index(x) for x in (_mv[3], _mv[5])]
+    ok("move.drag-moves-the-group", _held == [4, 5] and _o4 == [0, 1] and _ql.marked_rows() == [0, 1],
+       f"held={_held} now={_o4} marked={_ql.marked_rows()}")
+    _ql._click(_ev(1)); _ql._release(_ev(1))
+    ok("move.click-on-group-selects-one", _ql.marked_rows() == [1], f"{_ql.marked_rows()}")
+    # right click offers Retry, for one job and for several
+    _menus = []
+    _real_popup = m.tk.Menu.tk_popup
+    m.tk.Menu.tk_popup = lambda self, *a, **k: _menus.append(self)
+    _real_start = app.start; _started = []
+    app.start = lambda *a, **k: _started.append(k)
+    try:
+        for _x in _mv:
+            _x.status = "Queued"
+        _mv[2].status = "Failed"; _mv[4].status = "Cancelled"
+        app.update_queue_box(select_item=_mv[2]); root.update()
+        _i2 = app.queue.index(_mv[2])
+        app._queue_context_menu(_ty.SimpleNamespace(x_root=0, y_root=0), _i2)
+        _lab1 = {_menus[-1].entrycget(j, "label"): _menus[-1].entrycget(j, "state")
+                 for j in range(_menus[-1].index("end") + 1) if _menus[-1].type(j) == "command"}
+        _ql._click(_ev(_i2)); _ql._release(_ev(_i2)); _ql._toggle_click(_ev(app.queue.index(_mv[4])))
+        app._queue_context_menu(_ty.SimpleNamespace(x_root=0, y_root=0), _i2)
+        _lab2 = [_menus[-1].entrycget(j, "label") for j in range(_menus[-1].index("end") + 1)
+                 if _menus[-1].type(j) == "command"]
+        app._retry_jobs(app._marked_items()); root.update()
+    finally:
+        m.tk.Menu.tk_popup = _real_popup; app.start = _real_start
+    _rt = [m.tr("Retry"), m.tr("Move to top"), m.tr("Move to bottom")]
+    ok("menu.retry-one-and-many", _lab1.get(_rt[0]) == "normal" and _rt[1] in _lab1 and _rt[2] in _lab1
+       and m.plural(2, "Retry 1 job", "Retry {n} jobs") in _lab2
+       and _mv[2].status == "Queued" and _mv[4].status == "Queued" and len(_started) == 1,
+       f"one={list(_lab1)} many={_lab2} st={_mv[2].status}/{_mv[4].status} started={len(_started)}")
     app.queue[:] = [_r1]; app.update_queue_box(); root.update()
     app._batch_running = False
     app.queue[:] = [_r2]; app._sync_primary_action()

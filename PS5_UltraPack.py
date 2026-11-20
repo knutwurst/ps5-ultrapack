@@ -133,7 +133,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.7.0"
+APP_VERSION = "2.7.1"
 # archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
 # copy jobs unpack on the output drive, so a rename follows (or a copy across drives)
@@ -9273,7 +9273,7 @@ class App:
         head.bind("<Configure>", self._fit_queue_header, add="+")
         self.queue_listbox = QueueList(
             left, kit, on_select=lambda i: self._on_queue_clicked(), on_activate=self._on_queue_double_click,
-            on_move=self.move_job,
+            on_move=self.move_job, on_shift=self._shift_marked_jobs,
             on_context=self._queue_context_menu,
             on_delete=self.queue_remove_selected, empty_title="Your queue is empty",
             empty_body="Drop a game folder, archive, disk image, .ffpfs, .ffpfsc or .pkg into this window, "
@@ -9316,6 +9316,12 @@ class App:
         if len(marked) > 1:
             running = self._running_item()
             n = len([it for it in marked if it is not running])
+            _again = [it for it in marked if getattr(it, "status", "") in self._RETRYABLE]
+            m.add_command(label=plural(len(_again), "Retry 1 job", "Retry {n} jobs"),
+                          command=lambda xs=_again: self._retry_jobs(xs), state="normal" if _again else "disabled")
+            m.add_separator()
+            self._add_move_items(m)
+            m.add_separator()
             m.add_command(label=plural(n, "Remove 1 job", "Remove {n} jobs"), command=self.queue_remove_selected,
                           state="normal" if n else "disabled")
             m.add_command(label="Select only this job", command=lambda i=idx: (
@@ -9327,14 +9333,15 @@ class App:
             finally:
                 m.grab_release()
             return
-        m.add_command(label="Edit job…", command=lambda: self._on_queue_double_click(None))
-        m.add_separator()
         _it = self.queue[idx] if 0 <= idx < len(self.queue) else None
+        m.add_command(label="Edit job…", command=lambda: self._on_queue_double_click(None))
+        m.add_command(label="Retry", command=lambda it=_it: self._retry_job(it),
+                      state="normal" if getattr(_it, "status", "") in self._RETRYABLE else "disabled")
+        m.add_separator()
         m.add_command(label="Run next", command=lambda it=_it: self.run_job_next(it),
                       state="normal" if (_it is not None and getattr(_it, "status", "") not in self._TERMINAL_STATUSES
                                          and _it is not self._running_item()) else "disabled")
-        m.add_command(label="Move up", command=self.queue_move_up)
-        m.add_command(label="Move down", command=self.queue_move_down)
+        self._add_move_items(m)
         m.add_separator()
         m.add_command(label="Remove", command=self.queue_remove_selected)
         m.add_separator()
@@ -9343,6 +9350,20 @@ class App:
             m.tk_popup(event.x_root, event.y_root)
         finally:
             m.grab_release()
+
+    def _add_move_items(self, m):
+        """greyed where the selection cannot go further"""
+        rows = self.queue_listbox.marked_rows()
+        n = len(self.queue)
+        at_top = bool(rows) and rows == list(range(len(rows)))
+        at_bottom = bool(rows) and rows == list(range(n - len(rows), n))
+        mod = "⌘" if sys.platform == "darwin" else "Ctrl+"
+        for label, fn, off, keys in (("Move to top", self.queue_move_top, at_top, f"{mod}⇧↑"),
+                                     ("Move up", self.queue_move_up, at_top, f"{mod}↑"),
+                                     ("Move down", self.queue_move_down, at_bottom, f"{mod}↓"),
+                                     ("Move to bottom", self.queue_move_bottom, at_bottom, f"{mod}⇧↓")):
+            m.add_command(label=label, command=fn, accelerator=keys,
+                          state="disabled" if (off or not rows) else "normal")
 
     def _fit_queue_header(self, _e=None):
         try:
@@ -13262,16 +13283,62 @@ class App:
 
     # queue management
     def queue_move_up(self):
-        idx = self._queue_sel_idx()
-        if idx is None or idx == 0:
-            return
-        self.move_job(idx, idx - 1)
+        self.move_jobs(self._marked_items(), "up")
 
     def queue_move_down(self):
-        idx = self._queue_sel_idx()
-        if idx is None or idx >= len(self.queue) - 1:
+        self.move_jobs(self._marked_items(), "down")
+
+    def queue_move_top(self):
+        self.move_jobs(self._marked_items(), "top")
+
+    def queue_move_bottom(self):
+        self.move_jobs(self._marked_items(), "bottom")
+
+    def _shift_marked_jobs(self, rows, how: str, delta: int = 0) -> None:
+        self.move_jobs([self.queue[i] for i in rows if 0 <= i < len(self.queue)], how, delta)
+
+    @staticmethod
+    def reorder_jobs(queue: list, chosen: list, how: str, delta: int = 0) -> list:
+        """the new order; chosen jobs keep their order among themselves.
+        up/down: each one step, a job stops at the end or behind another chosen one that stopped.
+        top/bottom: all together at that end. by: all by delta rows, gaps kept, clamped at both ends"""
+        ids = {id(x) for x in chosen if any(x is q for q in queue)}
+        if not ids:
+            return list(queue)
+        new = list(queue)
+        if how == "top":
+            return [x for x in new if id(x) in ids] + [x for x in new if id(x) not in ids]
+        if how == "bottom":
+            return [x for x in new if id(x) not in ids] + [x for x in new if id(x) in ids]
+        if how == "up":
+            for i in range(1, len(new)):
+                if id(new[i]) in ids and id(new[i - 1]) not in ids:
+                    new[i - 1], new[i] = new[i], new[i - 1]
+            return new
+        if how == "down":
+            for i in range(len(new) - 2, -1, -1):
+                if id(new[i]) in ids and id(new[i + 1]) not in ids:
+                    new[i], new[i + 1] = new[i + 1], new[i]
+            return new
+        if how == "by":
+            pos = [i for i, x in enumerate(new) if id(x) in ids]
+            d = max(-pos[0], min(len(new) - 1 - pos[-1], int(delta)))
+            if d == 0:
+                return new
+            slots: list = [None] * len(new)
+            for i in pos:
+                slots[i + d] = new[i]
+            rest = iter(x for x in new if id(x) not in ids)
+            return [x if x is not None else next(rest) for x in slots]
+        return new
+
+    def move_jobs(self, items, how: str, delta: int = 0) -> None:
+        """moves the selected jobs and keeps them selected; the running job may move too"""
+        new = self.reorder_jobs(self.queue, items, how, delta)
+        if all(a is b for a, b in zip(new, self.queue)):
             return
-        self.move_job(idx, idx + 2)
+        self.queue[:] = new
+        self.update_queue_box()       # a plain refresh keeps focus and marks by job key
 
     def move_job(self, src: int, dst: int) -> None:
         """src goes before the job now at dst (len = the end). the running job may move too"""
@@ -15454,6 +15521,28 @@ class App:
         if n:
             self.update_queue_box()
             self.log("INFO", f"Retry failed: {n} job(s) run again.")
+            self.start(rearm_failed=False)
+
+    def _retry_jobs(self, items) -> None:
+        """several at once: each joins the waiting jobs at its place, the queue starts if it stands"""
+        items = [it for it in items if it in self.queue and getattr(it, "status", "") in self._RETRYABLE]
+        if len(items) == 1:
+            self._retry_job(items[0])
+            return
+        n = 0
+        for it in items:
+            self._rearm_from_archive(it)
+            if self._copy_lacks_files(it):
+                continue
+            it.status = "Pending Extract" if getattr(it, "archive_path", None) else "Queued"
+            it.status_note = ""
+            n += 1
+        if not n:
+            self.update_queue_box()
+            return
+        self.update_queue_box()
+        self.log("INFO", f"Retry: {n} job(s) run again.")
+        if not self._batch_running:
             self.start(rearm_failed=False)
 
     def _retry_selected(self):

@@ -1426,12 +1426,14 @@ class QueueList(tk.Frame):
     DRAG_START = 6     # points the pointer moves before a press turns into a drag
 
     def __init__(self, parent, kit: Kit, on_select=None, on_activate=None, on_context=None,
-                 on_delete=None, on_move=None, bg="surface",
+                 on_delete=None, on_move=None, on_shift=None, bg="surface",
                  empty_title="", empty_body=""):
         super().__init__(parent, bd=0, highlightthickness=0, bg=kit.c(bg))
         self.kit, self._bg = kit, bg
         self.on_select, self.on_activate, self.on_context = on_select, on_activate, on_context
         self.on_move = on_move               # on_move(src, dst): drop row src before row dst
+        self.on_shift = on_shift             # on_shift(rows, how, delta): move every marked row together
+        self._collapse_on_release = False    # a press on a marked row keeps the group until it was no drag
         self._press = None                   # (row, y) of a left press that may become a drag
         self._drop = None                    # insertion index (0..len) while dragging
         self.on_delete = on_delete
@@ -1478,6 +1480,11 @@ class QueueList(tk.Frame):
         cv.bind("<Down>", lambda e: self._step(1))
         cv.bind("<Shift-Up>", lambda e: self._step(-1, extend=True))
         cv.bind("<Shift-Down>", lambda e: self._step(1, extend=True))
+        # Command (Ctrl elsewhere) with an arrow moves the selected jobs, with Shift to the very top or bottom
+        cv.bind(f"<{mod}-Up>", lambda e: self._shift_key("up"))
+        cv.bind(f"<{mod}-Down>", lambda e: self._shift_key("down"))
+        cv.bind(f"<{mod}-Shift-Up>", lambda e: self._shift_key("top"))
+        cv.bind(f"<{mod}-Shift-Down>", lambda e: self._shift_key("bottom"))
         cv.bind("<BackSpace>", lambda e: self._key(self.on_delete))
         cv.bind("<Delete>", lambda e: self._key(self.on_delete))
 
@@ -1582,6 +1589,16 @@ class QueueList(tk.Frame):
         i = self._index_at(e.y)
         self._press = (i, e.y) if i is not None else None
         self._drop = None
+        self._collapse_on_release = False
+        if i is not None and i in self.marked and len(self.marked) > 1:
+            # a press on a selected row may start dragging the whole group; a plain click selects it alone
+            self._collapse_on_release = True
+            if i != self.sel:
+                self.sel = i
+                self._draw()
+            if self.on_select:
+                self.on_select(i)
+            return
         if i is not None and (i != self.sel or self.marked != {i}):
             self.sel, self.marked, self._anchor = i, {i}, i
             self._draw()
@@ -1665,12 +1682,24 @@ class QueueList(tk.Frame):
 
     def _release(self, e):
         press, drop = self._press, self._drop
+        collapse, self._collapse_on_release = self._collapse_on_release, False
         self._press, self._drop = None, None
         if drop is None:
+            if collapse and press is not None and self.marked != {press[0]}:
+                self.sel, self.marked, self._anchor = press[0], {press[0]}, press[0]
+                self._draw()
+                if self.on_select:
+                    self.on_select(press[0])
             return
         self.cv.configure(cursor="")
         self._draw()
-        if press is not None and self.on_move is not None and drop not in (press[0], press[0] + 1):
+        if press is None or drop in (press[0], press[0] + 1):
+            return
+        rows = self.marked_rows()
+        if collapse and len(rows) > 1 and self.on_shift is not None:
+            # the group keeps its gaps and moves as far as the grabbed row
+            self.on_shift(rows, "by", (drop - 1 if drop > press[0] else drop) - press[0])
+        elif self.on_move is not None:
             self.on_move(press[0], drop)
 
     def _double(self, e):
@@ -1720,6 +1749,12 @@ class QueueList(tk.Frame):
         self.see(i)
         if self.on_select:
             self.on_select(i)
+        return "break"
+
+    def _shift_key(self, how: str):
+        rows = self.marked_rows()
+        if rows and self.on_shift is not None:
+            self.on_shift(rows, how, 0)
         return "break"
 
     def _key(self, fn):

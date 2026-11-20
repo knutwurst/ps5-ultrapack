@@ -3,6 +3,22 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.7.1
+────────────────────────────────────────────────────────────────────────
+
+QUEUE
+
+  - Several selected jobs move together. Drag one of them and the whole
+    selection follows, gaps kept. The right-click menu has Move to top,
+    Move up, Move down and Move to bottom for one job or the selection;
+    the selected jobs keep their order among themselves (jobs 16, 18 and
+    20 to the top become 1, 2 and 3). Keys: Command+Up/Down (Ctrl on
+    Windows and Linux) moves them one step, with Shift to the very top or
+    bottom. A plain click on a selected row selects it alone, as before.
+  - Retry is in the right-click menu, for one job and for several selected
+    ones; before it was only on the details pane.
+
+────────────────────────────────────────────────────────────────────────
   v2.7.0
 ────────────────────────────────────────────────────────────────────────
 
