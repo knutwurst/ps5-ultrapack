@@ -1706,7 +1706,7 @@ internal static partial class Program
 
             // non-JSON sce_sys/*.json is a mislabeled dump leftover, drop it
             var badJson = Directory.Exists(srcSceSys)
-                ? Directory.EnumerateFiles(srcSceSys, "*.json").Where(p =>
+                ? Directory.EnumerateFiles(srcSceSys, "*.json").Where(p => !FsJunk.IsJunkName(Path.GetFileName(p)!)).Where(p =>
                     { try { return !LooksLikeJsonText(File.ReadAllBytes(p)); } catch { return false; } })
                   .Select(p => Path.GetFileName(p)!).ToArray()
                 : Array.Empty<string>();
@@ -1723,6 +1723,7 @@ internal static partial class Program
             if (File.Exists(ebootSrc) && new FileInfo(ebootSrc).Length < 64)
                 throw new InvalidDataException($"eboot.bin is {new FileInfo(ebootSrc).Length} bytes — truncated or empty; nothing was built.");
             foreach (var m in Directory.EnumerateFiles(effectiveSource, "*", SearchOption.AllDirectories)
+                         .Where(f => !FsJunk.PathHasJunk(Path.GetRelativePath(effectiveSource, f)))
                          .Where(f => f.EndsWith(".prx", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".sprx", StringComparison.OrdinalIgnoreCase))
                          .Where(f => { try { return LibProsperoPkg.Util.SourceHooks.LengthOf(new FileInfo(f)) == 0; } catch { return false; } }))
                 Console.Error.WriteLine($"[warn] {Path.GetRelativePath(effectiveSource, m).Replace('\\', '/')} is an empty file (truncated copy?); a game that loads it will crash");
@@ -1834,6 +1835,8 @@ internal static partial class Program
                         var name = Path.GetFileName(relPath);
                         var ext = Path.GetExtension(relPath).ToLowerInvariant();
                         var relFromRoot = Path.GetRelativePath(autoStage, relPath).Replace('\\','/');
+                        // macOS writes ._ sidecars on exFAT and may drop them when the file is renamed
+                        if (FsJunk.PathHasJunk(relFromRoot)) continue;
                         bool isLoadable = name == "eboot.bin" || ext == ".prx" || ext == ".sprx";
                         if (!isLoadable) continue;
                         if (relFromRoot.StartsWith("sce_sys/about/", StringComparison.OrdinalIgnoreCase)) continue;

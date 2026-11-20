@@ -858,6 +858,28 @@ def test_exfat_stage_builds_clean(r: Runner):
             junk = [n for n in names if n.rsplit("/", 1)[-1].startswith("._") or n.endswith(".DS_Store")]
             r.check(f"exfat.{tag}.clean", rc == 0 and names and not junk and "inner.junk" in log,
                     f"{len(names)} entries, no OS junk, checked by validate", f"rc={rc}; junk={junk[:5]}; {log[-300:]}")
+        # retail steps on an exFAT stage: macOS writes ._x.prx beside each module and may drop it
+        # when the module is renamed; reading it failed whole builds, junk is never read
+        rsrc = vol / "retail"; shutil.copytree(fetch_hbt(r.work / "hbt"), rsrc)
+        pj = rsrc / "sce_sys" / "param.json"
+        d = json.loads(pj.read_text()); d["applicationDrmType"] = "standard"; pj.write_text(json.dumps(d, indent=2))
+        (rsrc / "sce_module").mkdir()
+        shutil.copyfile(rsrc / "eboot.bin", rsrc / "sce_module" / "libraw.prx")
+        for n in ("libdebug_a.prx", "libdebug_b.sprx"):
+            (rsrc / "sce_module" / n).write_bytes(bytes([0x54, 0x14, 0xF5, 0xEE]) + bytes(60))
+        rff = vol / "rff"; rff.mkdir()
+        rc, log = r.run_cli([str(rsrc), str(rff), "--pack", "--overwrite", "--temp-dir", str(temp)])
+        rimg = next((p for p in rff.glob("*.ffpfsc") if not p.name.startswith("._")), None)
+        r.check("exfat.retail.sidecars", any(p.name.startswith("._") for p in (rsrc / "sce_module").iterdir()),
+                "macOS wrote ._ files beside the modules", "no ._ files: the test would prove nothing")
+        for tag, source in [("folder", rsrc)] + ([("image", rimg)] if rimg else []):
+            out = vol / f"rpkg_{tag}"; out.mkdir()
+            rc, log = r.run_cli([str(source), str(out), "--to", "pkg", "--temp-dir", str(temp), "--overwrite",
+                                 "--fpkg-inner", "kraken", "--fpkg-kraken-backend", "builtin", "--compression-level", "0"])
+            m = re.search(r"\[self-hdr\] set retail bit \(byte 0x0B: 0x10\) on (\d+) eboot\.bin/\*\.prx; left (\d+)", log)
+            seen = (int(m.group(1)) + int(m.group(2))) if m else -1
+            r.check(f"exfat.retail.{tag}", rc == 0 and seen == 4 and "mislabeled non-JSON" not in log,
+                    "4 modules checked, no ._ file read", f"rc={rc}; modules seen={seen}; {log[-400:]}")
     finally:
         subprocess.run(["hdiutil", "detach", str(vol), "-force", "-quiet"], capture_output=True)
         dmg.unlink(missing_ok=True); shutil.rmtree(vol, ignore_errors=True)

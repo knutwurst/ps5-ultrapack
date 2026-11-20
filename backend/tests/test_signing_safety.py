@@ -40,5 +40,22 @@ class TruncatedElf(unittest.TestCase):
             self.assertEqual(eboot.read_bytes()[:4], make_fself.SignedElfFile.MAGIC)
 
 
+class JunkNeverRead(unittest.TestCase):
+    # macOS writes ._x.prx beside every module on exFAT; such a file is never a module
+    def test_walks_skip_os_junk(self):
+        from backend import backport
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "sce_module").mkdir(); (root / "__MACOSX" / "sce_module").mkdir(parents=True)
+            for rel in ("eboot.bin", "sce_module/a.prx", "sce_module/._a.prx", "._eboot.bin",
+                        "__MACOSX/sce_module/b.prx"):
+                (root / rel).write_bytes(b"\x7fELF" + bytes(60))
+            targets, _ = fake_sign.find_targets(str(root))
+            self.assertEqual(sorted(Path(t).relative_to(root).as_posix() for t in targets),
+                             ["eboot.bin", "sce_module/a.prx"])
+            self.assertEqual(sorted(p.relative_to(root).as_posix() for p in backport.iter_source_elfs(root)),
+                             ["eboot.bin", "sce_module/a.prx"])
+
+
 if __name__ == "__main__":
     unittest.main()

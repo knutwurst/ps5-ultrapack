@@ -367,8 +367,15 @@ _ELF_SUFFIXES = (".prx", ".sprx", ".elf", ".self")
 def iter_source_elfs(root: Path):
     """eboot.bin plus .prx/.sprx/.elf/.self; symlinks skipped, staging covers them"""
     root = Path(root)
+    try:
+        from ultra_core import is_fs_junk_name
+    except ImportError:                             # the backend on its own
+        def is_fs_junk_name(name: str) -> bool:
+            return name.startswith("._") or name.lower() in (".ds_store", "thumbs.db", "desktop.ini")
     for p in sorted(root.rglob("*")):
         if not p.is_file() or p.is_symlink():
+            continue
+        if any(is_fs_junk_name(part) for part in p.relative_to(root).parts):
             continue
         name = p.name.lower()
         if name == "eboot.bin" or name.endswith(_ELF_SUFFIXES):

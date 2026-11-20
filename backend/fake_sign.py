@@ -75,12 +75,23 @@ def fake_sign_file(path: str) -> None:
             raise
 
 
+def _is_junk(name: str) -> bool:
+    try:
+        from ultra_core import is_fs_junk_name
+    except ImportError:                             # the backend on its own
+        return name.startswith("._") or name.lower() in (".ds_store", "thumbs.db", "desktop.ini")
+    return is_fs_junk_name(name)
+
+
 def find_targets(root: str):
     """(sorted candidate paths, found_eboot_bin)"""
     targets = []
     found_eboot = False
-    for dirpath, _dirnames, filenames in os.walk(root):   # followlinks=False: never escape the tree
+    for dirpath, dirnames, filenames in os.walk(root):   # followlinks=False: never escape the tree
+        dirnames[:] = [d for d in dirnames if not _is_junk(d)]
         for name in filenames:
+            if _is_junk(name):
+                continue  # OS junk is never read; macOS writes ._ sidecars on exFAT
             if name.lower() == "eboot.bin":
                 found_eboot = True
             if name.startswith(_TMP_PREFIX):
