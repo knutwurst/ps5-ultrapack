@@ -11257,6 +11257,8 @@ class App:
         probe = copy.copy(item)
         try:
             self._resolve_extract_root(probe, quiet=True)
+        except FreeSpacePending:
+            raise                                  # not measured yet: no plan cached from a guess
         except Exception:
             probe = item
         cache[id(item)] = (item, now, probe)
@@ -13913,6 +13915,15 @@ class App:
         if not rows or item is None:
             return
         info = self._card_info_text(item)
+        if info.get("Space") == tr("Checking free space…") and not getattr(self, "_space_retry", False):
+            # measured on a worker; look again shortly instead of waiting on the drive
+            self._space_retry = True
+
+            def _again(it=item):
+                self._space_retry = False
+                if getattr(self, "_details_item", None) is it:
+                    self._fill_card_info(it)
+            self.root.after(1500, _again)
         for key, (var, k, v) in rows.items():
             text = info.get(key, "")
             if var.get() != text:
@@ -14050,6 +14061,14 @@ class App:
         self.temp_space_var.set(self._space_text(item))
 
     def _space_text(self, item) -> str:
+        """the space line for this job; free space from the last measurement, never waiting on a drive"""
+        try:
+            with quick_free_space():
+                return self._space_text_now(item)
+        except FreeSpacePending:
+            return tr("Checking free space…")
+
+    def _space_text_now(self, item) -> str:
         """the space line for this job, on the drives its plan uses right now"""
         if item is None or getattr(item, "size", 0) == 0:
             return ("Temp Needed: - ")
@@ -14065,6 +14084,8 @@ class App:
                     return ("  |  ".join(tr("{label}: ~{need}, {free} free", label=tr(label), need=format_size(n),
                                                             free=format_size(get_free_space(d))) for label, d, n in needs)
                                             + "  |  " + tr("fits" if ok else "LOW, may not fit"))
+            except FreeSpacePending:
+                raise
             except Exception:
                 return (tr("Needs: ~{size}", size=format_size(_build_size_of(item))))
         if getattr(item, "operation", "pack") == "unpack":
@@ -14075,6 +14096,8 @@ class App:
                 return (
                     tr("Extract Needs: ~{size}+  |  Out Free: {free}", size=format_size(item.size), free=format_size(out_free))
                 )
+            except FreeSpacePending:
+                raise
             except Exception:
                 return (tr("Extract Needs: ~{size}+", size=format_size(item.size)))
         out_dir = self._job_output_dir(item)
@@ -14098,6 +14121,8 @@ class App:
                                         drive=_drive_colon(Path(str(d))), need=format_size(n),
                                         free=format_size(get_free_space(d))) for label, d, n in needs)
                         + "  |  " + tr("fits" if ok else "LOW, may not fit"))
+            except FreeSpacePending:
+                raise
             except Exception:
                 pass
         try:
@@ -14124,6 +14149,8 @@ class App:
             return (tr("{label}: ~{need}  |  Temp Free: {free}  |  Out Free: {out_free}  |  {flag}",
                                        label=tr(need_label), need=format_size(image_need), free=format_size(free),
                                        out_free=format_size(out_free), flag=flag))
+        except FreeSpacePending:
+            raise
         except Exception:
             return (tr("Peak Needed: ~{size}", size=format_size(item.size * 2.2)))
 
@@ -16222,8 +16249,13 @@ class App:
                         need = estimate_peak_space_needed(_sz, _peak_factor_for(item),
                                                           same_drive(Path(bt), od) and not chain_unpacks_to_folder(item))
                         kind = "full scratch"
+                    try:
+                        with quick_free_space():       # a log line must not hold up the window
+                            _bt_free = format_size(get_free_space(bt))
+                    except FreeSpacePending:
+                        _bt_free = "?"
                     self.log("INFO", f"Space check - {item.name}: {kind} on {bt} | "
-                                     f"need ~{format_size(need)} | free {format_size(get_free_space(bt))} | {gate}")
+                                     f"need ~{format_size(need)} | free {_bt_free} | {gate}")
                 if gate == "cancel":
                     self._batch_running = False
                     self.start_btn.configure(state="normal")

@@ -293,13 +293,62 @@ def ram_temp_free() -> int:
     return max(0, min(budget, shm_free, _mem_available() - RAM_TEMP_RESERVE))
 
 
+# a busy exFAT drive (macOS 26 runs it in user space) answered one free-space query after 47 s
+# while a job wrote to it; the window must never wait for that. Inside quick_free_space() a
+# call returns the last measured value and measures again on a worker
+_FREE_TTL = 15.0
+_free_cache: dict = {}            # folder -> (time measured, free bytes)
+_free_busy: set = set()
+_free_lock = threading.Lock()
+_free_quick = threading.local()
+
+
+class FreeSpacePending(Exception):
+    """quick mode, and this drive was never measured yet"""
+
+
+def _measure_free(key: str) -> int:
+    try:
+        free = shutil.disk_usage(key).free
+    except Exception:
+        free = 0
+    with _free_lock:
+        _free_cache[key] = (time.monotonic(), free)
+        _free_busy.discard(key)
+    return free
+
+
+class quick_free_space:
+    """with quick_free_space(): get_free_space never blocks this thread"""
+    def __enter__(self):
+        self._old = getattr(_free_quick, "on", False)
+        _free_quick.on = True
+        return self
+
+    def __exit__(self, *exc):
+        _free_quick.on = self._old
+        return False
+
+
 def get_free_space(path: Path) -> int:
     if is_ram_temp(path):
         return ram_temp_free()
     try:
-        return shutil.disk_usage(str(_existing_ancestor(path))).free
+        key = str(_existing_ancestor(path))
     except Exception:
         return 0
+    if not getattr(_free_quick, "on", False):
+        return _measure_free(key)
+    with _free_lock:
+        hit = _free_cache.get(key)
+        start = key not in _free_busy and (hit is None or time.monotonic() - hit[0] > _FREE_TTL)
+        if start:
+            _free_busy.add(key)
+    if start:
+        threading.Thread(target=_measure_free, args=(key,), daemon=True).start()
+    if hit is None:
+        raise FreeSpacePending(key)
+    return hit[1]
 
 
 def get_total_space(path: Path) -> int:
@@ -4684,6 +4733,8 @@ __all__ = [
     "LONG_STEPS",
     "humanize_eta",
     "get_free_space",
+    "quick_free_space",
+    "FreeSpacePending",
     "ram_temp_gb",
     "ram_temp_root",
     "ram_temp_free",

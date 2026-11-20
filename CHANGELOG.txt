@@ -18,6 +18,16 @@ QUEUE
   - Retry is in the right-click menu, for one job and for several selected
     ones; before it was only on the details pane.
 
+FIXED
+
+  - The window froze (spinning cursor) while a job wrote to an exFAT
+    drive: the details pane asked that drive for its free space on the
+    main thread, and a busy exFAT drive (macOS 26 runs it in user space)
+    took up to 47 s to answer. The pane now shows the last measured value
+    and measures again on a worker; a drive not measured yet shows
+    "Checking free space…" until the number is in. The start-of-job space
+    check still measures for real.
+
 ────────────────────────────────────────────────────────────────────────
   v2.7.0
 ────────────────────────────────────────────────────────────────────────

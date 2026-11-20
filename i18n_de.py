@@ -463,6 +463,7 @@ GERMAN: dict[str, str] = {
     "Move down": "Nach unten",
     "Move to top": "Ganz nach oben",
     "Move to bottom": "Ganz nach unten",
+    "Checking free space…": "Freier Platz wird geprüft …",
     "Retry 1 job": "1 Job erneut versuchen",
     "Retry {n} jobs": "{n} Jobs erneut versuchen",
     "Remove": "Entfernen",
