@@ -13301,7 +13301,8 @@ class App:
     def reorder_jobs(queue: list, chosen: list, how: str, delta: int = 0) -> list:
         """the new order; chosen jobs keep their order among themselves.
         up/down: each one step, a job stops at the end or behind another chosen one that stopped.
-        top/bottom: all together at that end. by: all by delta rows, gaps kept, clamped at both ends"""
+        top/bottom: all together at that end. at: together as one block before row delta (a drop).
+        by: all by delta rows, gaps kept, clamped at both ends"""
         ids = {id(x) for x in chosen if any(x is q for q in queue)}
         if not ids:
             return list(queue)
@@ -13320,6 +13321,12 @@ class App:
                 if id(new[i]) in ids and id(new[i + 1]) not in ids:
                     new[i], new[i + 1] = new[i + 1], new[i]
             return new
+        if how == "at":
+            at = max(0, min(len(new), int(delta)))
+            before = sum(1 for x in new[:at] if id(x) in ids)
+            rest = [x for x in new if id(x) not in ids]
+            at -= before
+            return rest[:at] + [x for x in new if id(x) in ids] + rest[at:]
         if how == "by":
             pos = [i for i, x in enumerate(new) if id(x) in ids]
             d = max(-pos[0], min(len(new) - 1 - pos[-1], int(delta)))

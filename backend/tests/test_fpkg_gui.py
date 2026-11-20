@@ -2098,12 +2098,18 @@ try:
     ok("move.keys-and-menu-keep-the-group", _o1 == [0, 1] and _k1 == [0, 1] and _o2 == [1, 2] and _k2 == [1, 2]
        and _o3 == [4, 5] and _ql.marked_rows() == [4, 5], f"{_o1} {_k1} {_o2} {_k2} {_o3} {_ql.marked_rows()}")
     _ql._click(_ev(5)); _held = _ql.marked_rows()          # a press on a selected row keeps the group
-    _ql._drop = 1; _ql._release(_ev(1)); root.update()     # dropped above row 1: the grabbed row moves 4 up
+    _ql._drop = 1; _ql._release(_ev(1)); root.update()     # dropped above row 1: both land there as a block
     _o4 = [app.queue.index(x) for x in (_mv[3], _mv[5])]
-    ok("move.drag-moves-the-group", _held == [4, 5] and _o4 == [0, 1] and _ql.marked_rows() == [0, 1],
-       f"held={_held} now={_o4} marked={_ql.marked_rows()}")
-    _ql._click(_ev(1)); _ql._release(_ev(1))
-    ok("move.click-on-group-selects-one", _ql.marked_rows() == [1], f"{_ql.marked_rows()}")
+    _ga, _gb = app.queue[0], app.queue[3]
+    _ql._click(_ev(0)); _ql._release(_ev(0)); _ql._toggle_click(_ev(3)); _ql._click(_ev(3))
+    _ql._drop = 6; _ql._release(_ev(5)); root.update()     # spread out (rows 0 and 3), dropped at the end
+    _o5 = [app.queue.index(x) for x in (_ga, _gb)]
+    _blk = app.reorder_jobs(_L, [_L[2], _L[9], _L[14]], "at", 6)
+    ok("move.drag-moves-the-group-as-a-block", _held == [4, 5] and _o4 == [1, 2] and _o5 == [4, 5]
+       and _ql.marked_rows() == [4, 5] and _pos(_blk, [_L[2], _L[9], _L[14]]) == [5, 6, 7],
+       f"held={_held} now={_o4} end={_o5} marked={_ql.marked_rows()} blk={_pos(_blk, [_L[2], _L[9], _L[14]])}")
+    _ql._click(_ev(4)); _ql._release(_ev(4))
+    ok("move.click-on-group-selects-one", _ql.marked_rows() == [4], f"{_ql.marked_rows()}")
     # right click offers Retry, for one job and for several
     _menus = []
     _real_popup = m.tk.Menu.tk_popup

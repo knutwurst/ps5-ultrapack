@@ -1693,13 +1693,13 @@ class QueueList(tk.Frame):
             return
         self.cv.configure(cursor="")
         self._draw()
-        if press is None or drop in (press[0], press[0] + 1):
+        if press is None:
             return
         rows = self.marked_rows()
         if collapse and len(rows) > 1 and self.on_shift is not None:
-            # the group keeps its gaps and moves as far as the grabbed row
-            self.on_shift(rows, "by", (drop - 1 if drop > press[0] else drop) - press[0])
-        elif self.on_move is not None:
+            # the group lands as one block where it was dropped, in its own order
+            self.on_shift(rows, "at", drop)
+        elif self.on_move is not None and drop not in (press[0], press[0] + 1):
             self.on_move(press[0], drop)
 
     def _double(self, e):
