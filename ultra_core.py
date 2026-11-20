@@ -672,6 +672,15 @@ def _peak_factor_for(item) -> float:
             and chain_source_kind(item) in ("ffpfs", "ffpfsc") and getattr(item, "pkg_content_size", 0)
             and not chain_changes(item)):
         return image_pkg_peak_factor(item)
+    if (getattr(item, "operation", "pack") == "chain" and getattr(item, "chain_to", None) == "pkg"
+            and chain_source_kind(item) == "pkg" and getattr(item, "pkg_content_size", 0)
+            and not chain_changes(item)):
+        # a plain .pkg rebuild reads the old package in place: temp holds the new inner image
+        # (about the old package's size) and the small files written out, never the unpacked game
+        content = int(item.pkg_content_size)
+        packed = int(getattr(item, "size", 0) or 0) or content
+        kept = int(getattr(item, "pkg_kept_bytes", 0) or 0)
+        return min(PKG_UNPACK_PEAK_FACTOR, max(0.2, (packed * 1.05 + kept) / content + PKG_CONSUME_MARGIN))
     if getattr(item, "operation", "pack") == "chain" and chain_needs_unpack(item):
         if chain_source_kind(item) == "pkg" and getattr(item, "pkg_content_size", 0):
             if chain_unpacks_to_folder(item):

@@ -2074,6 +2074,24 @@ try:
     app.update_queue_box(select_item=app.queue[0]); root.update()
     ok("multi.single-again-after-plain-click", _ql.marked_rows() == [0] and not app._card_multi.winfo_manager(),
        f"{_ql.marked_rows()}")
+    # Start with a first job that does not fit: it is skipped and the queue goes on with the next
+    _sk = [m.GameItem.from_chain(HBT, to="ffpfsc") for _ in range(2)]
+    _real_gate, _real_auto, _real_ex = app._space_gate, app._batch_auto_start, app._check_existing_outputs
+    _real_q2 = list(app.queue); _advanced = []
+    def _gate(it, od):
+        it._skip_reason = "Temp drive full: test"
+        return "skip" if it is _sk[0] else "proceed"
+    app._space_gate = _gate
+    app._batch_auto_start = lambda: _advanced.append(1)
+    app._check_existing_outputs = lambda: True
+    try:
+        app.queue[:] = _sk; app._batch_running = False
+        app.start(); root.update(); time.sleep(0.7); root.update()
+        _st = (_sk[0].status, app._batch_running, bool(_advanced))
+    finally:
+        app._space_gate, app._batch_auto_start, app._check_existing_outputs = _real_gate, _real_auto, _real_ex
+        app._batch_running = False; app._active_item = None; app.queue[:] = _real_q2; app.update_queue_box()
+    ok("start.first-job-too-big-skips-and-goes-on", _st == ("Skipped", True, True), str(_st))
     # a restart does not read every job's source again for a name it already has
     _nj = [m.GameItem.from_chain(HBT, to="ffpfsc") for _ in range(3)]
     _art = m.ART_DIR; _art.mkdir(parents=True, exist_ok=True)

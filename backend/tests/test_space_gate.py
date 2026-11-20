@@ -204,6 +204,22 @@ class SpaceGateAgreesWithDialog(unittest.TestCase):
         reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
         self.assertEqual(reqs[TEMP], m.estimate_peak_space_needed(60 * GB, m._peak_factor_for(item), False))
 
+    def test_a_pkg_rebuild_needs_the_new_image_not_the_unpacked_game(self):
+        # read in place: temp holds the new inner image (about the old package) and the small files.
+        # 2.7.1 asked 561 GB for a 148 GB package holding 274 GB and skipped it
+        src = self._container(".pkg", 4096)
+        item = m.GameItem.from_chain(src, to="pkg")
+        item.chain_rebuild = True
+        item.size, item.pkg_content_size, item.pkg_kept_bytes = 148 * GB, 274 * GB, 1 * GB
+        item.pkg_largest_file, item.extracted_size = 20 * GB, 274 * GB
+        f = m._peak_factor_for(item)
+        self.assertAlmostEqual(f, (148 * 1.05 + 1) / 274 + m.PKG_CONSUME_MARGIN)
+        reqs = dict((d, n) for _l, d, n in m._space_requirements(item, TEMP, OUT))
+        self.assertLess(reqs[TEMP], 200 * GB)
+        # anything that changes the game still unpacks it
+        item.chain_sign = True
+        self.assertEqual(m._peak_factor_for(item), m.PKG_UNPACK_PEAK_FACTOR)
+
     def _copy_item(self, mode: str):
         src = self._container(".ffpfsc", 4096)
         return types.SimpleNamespace(size=80 * GB, extracted_size=80 * GB, operation="copy",

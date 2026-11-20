@@ -16993,6 +16993,10 @@ class App:
             return
         if gate == "skip":
             self._cleanup_after_failure(item)
+            if not self._batch_running and any(it is not item and getattr(it, "status", "") not in self._TERMINAL_STATUSES
+                                               for it in self.queue):
+                # the first job of a Start doesn't fit: the queue goes on with the next one
+                self._ensure_batch_started()
             if self._batch_running:
                 self._retire_failed(item, "Skipped", getattr(item, "_skip_reason", ""))
                 self._batch_failed += 1

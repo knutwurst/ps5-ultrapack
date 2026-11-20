@@ -28,6 +28,13 @@ QUEUE
 
 FIXED
 
+  - A first job that did not fit its drives stopped the queue when it was
+    the first one after Start; it is skipped now and the queue goes on, as
+    it always did in the middle of a run.
+  - A plain .pkg rebuild was sized as if the game were unpacked (2.2 times
+    its content), so a 148 GB package holding 274 GB asked for 561 GB of
+    temp and was skipped. It reads the old package in place: temp needs
+    about the old package plus the small files.
   - On every start the app read each queued job's source again (title,
     firmware) to name it, one short backend run per job: with a long queue
     on hard disks the drives kept working after launch. A job named from
