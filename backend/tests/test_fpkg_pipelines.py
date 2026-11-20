@@ -389,6 +389,31 @@ def test_upgradable_gets_license(r: Runner):
             shutil.rmtree(d, ignore_errors=True)
 
 
+def test_short_tail_segment(r: Runner):
+    # dump tools often leave out a module's trailing version/comment block; the signer drops it and the
+    # console never loads it, so that builds with a warning. A cut code or data segment still fails
+    for tag, idx, fatal in (("version-block", 11, False), ("load-segment", 9, True)):
+        src = r.work / f"tail_{tag}"; shutil.rmtree(src, ignore_errors=True)
+        shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+        (src / "sce_module").mkdir()
+        b = bytearray((src / "eboot.bin").read_bytes())
+        ph = struct.unpack_from("<Q", b, 0x20)[0] + idx * 56
+        struct.pack_into("<Q", b, ph + 0x08, len(b) - 10)          # starts 10 bytes before the end
+        (src / "sce_module" / "libtail.prx").write_bytes(bytes(b))
+        out = r.work / f"tail_{tag}_out"; shutil.rmtree(out, ignore_errors=True); out.mkdir()
+        rc, log = r.run_cli([str(src), str(out), "--fpkg-build", str(src),
+                             "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000", "--title-id", "PPSA99099",
+                             "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+        if fatal:
+            r.check(f"tail.{tag}", rc != 0 and "libtail.prx is cut short" in log and "(LOAD)" in log,
+                    "a cut code segment stops the build", f"rc={rc}; {log[-300:]}")
+        else:
+            r.check(f"tail.{tag}", rc == 0 and "libtail.prx ends before its segment 11 (SCE_VERSION)" in log,
+                    "built, with a warning naming the block", f"rc={rc}; {log[-300:]}")
+        for d in (src, out):
+            shutil.rmtree(d, ignore_errors=True)
+
+
 def test_big_folder_image_to_pkg(r: Runner):
     # a folder over one 64 KiB block: entries stay inside their block, so the package builder reads the
     # image directly; an image packed the old way (entries across blocks) is unpacked first
@@ -1841,6 +1866,7 @@ def main():
         ("negative: no-eboot pkg fails validate", test_no_eboot_caught_by_validate),
         ("negative: bad content id",        test_negative_bad_content_id),
         ("upgradable app gets a license",   test_upgradable_gets_license),
+        ("short tail segment",              test_short_tail_segment),
         ("big folder: image to .pkg",       test_big_folder_image_to_pkg),
         ("title id mismatch warns",         test_title_id_mismatch_warns),
         ("sidecars never in the package",   test_sidecars_never_in_the_package),

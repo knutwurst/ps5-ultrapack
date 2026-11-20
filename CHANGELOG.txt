@@ -54,6 +54,10 @@ FIXED
     check took the old one with it. The new package is now checked where
     it was built and replaces the old one only after it passed; a failed
     one goes beside it as "(failed check)".
+  - A module whose trailing version or comment block lies past its end
+    (dump tools often leave it out; the console never loads it) stopped
+    the build as "cut short". Only a missing code or data segment stops it
+    now; a missing trailing block is a warning naming it.
   - On start, a job whose source the app could not look at was set aside
     as "waits for its drive", also when the drive was connected and macOS
     was only asking for access, or when the file itself was gone. Now only

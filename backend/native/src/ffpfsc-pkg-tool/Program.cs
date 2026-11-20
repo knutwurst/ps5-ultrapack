@@ -1053,22 +1053,39 @@ internal static partial class Program
     }
 
     // ELF64 with headers or segments past EOF: the signer would zero-fill the gap
-    static string? TruncatedSegment(byte[] b)
+    // code and data the module needs; the signer drops a segment past the end without a word
+    static readonly uint[] NeededSegments = { 1 /* LOAD */, 2 /* DYNAMIC */, 0x61000000 /* SCE_DYNLIBDATA */, 0x61000010 /* SCE_RELRO */ };
+
+    static string SegmentTypeName(uint t) => t switch
     {
-        if (b.Length < 0x40 || b[4] != 2) return null;            // not ELF64: the signer decides
+        1 => "LOAD", 2 => "DYNAMIC", 0x61000000 => "SCE_DYNLIBDATA", 0x61000010 => "SCE_RELRO",
+        0x6FFFFF00 => "SCE_COMMENT", 0x6FFFFF01 => "SCE_VERSION", _ => $"0x{t:X}",
+    };
+
+    // (fatal, note): a needed segment cut short is fatal; a comment or version block past the end
+    // is often left out by dump tools, the console never loads it
+    static (string? Fatal, string? Note) TruncatedSegment(byte[] b)
+    {
+        if (b.Length < 0x40 || b[4] != 2) return (null, null);            // not ELF64: the signer decides
         ulong phoff = BitConverter.ToUInt64(b, 0x20);
         int phentsize = BitConverter.ToUInt16(b, 0x36), phnum = BitConverter.ToUInt16(b, 0x38);
-        if (phnum == 0) return null;
+        if (phnum == 0) return (null, null);
         if (phentsize < 0x38 || phoff + (ulong)phentsize * (ulong)phnum > (ulong)b.Length)
-            return "program headers";
+            return ("program headers", null);
+        string? note = null;
         for (int i = 0; i < phnum; i++)
         {
             int at = (int)phoff + i * phentsize;
+            uint type = BitConverter.ToUInt32(b, at);
             ulong off = BitConverter.ToUInt64(b, at + 0x08), size = BitConverter.ToUInt64(b, at + 0x20);
             if (size > 0 && (off > (ulong)b.Length || size > (ulong)b.Length - off))
-                return $"segment {i}: {off + size} of {b.Length} bytes";
+            {
+                var what = $"segment {i} ({SegmentTypeName(type)}): {off + size} of {b.Length} bytes";
+                if (Array.IndexOf(NeededSegments, type) >= 0) return (what, null);
+                note ??= what;
+            }
         }
-        return null;
+        return (null, note);
     }
 
     static void MakeWritable(string path)
@@ -1787,9 +1804,11 @@ internal static partial class Program
                         byte[] fself;
                         var bytes = File.ReadAllBytes(srcFile);
                         if (!ProsperoFself.IsElf(bytes) || ProsperoFself.IsSelf(bytes)) { skipped++; continue; }
-                        var cut = TruncatedSegment(bytes);
+                        var (cut, tail) = TruncatedSegment(bytes);
                         if (cut != null)
                             throw new InvalidOperationException($"{relPath} is cut short ({cut}); the game copy is incomplete");
+                        if (tail != null)
+                            Console.Error.WriteLine($"[warn] {relPath} ends before its {tail}; the console does not load that block, signed without it");
                         try
                         {
                             fself = ProsperoFself.MakeFself(bytes, new FselfOptions());
