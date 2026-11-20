@@ -2085,10 +2085,14 @@ try:
     m.save_settings({"queue": [_de]}); app.queue.clear(); app._restore_queue()
     ok("queue.restore-keeps-done-record", len(app.queue) == 1 and app.queue[0].status == "Done", str(len(app.queue)))
     # only an unplugged drive parks a job; a missing file fails on its card, no permission keeps it as it was
+    if sys.platform == "win32":     # a drive letter nothing is mounted at
+        _offline_path = next(f"{c}:\\Game\\x.ffpfsc" for c in "ZYXWVUTSRQPONMLKJ" if not os.path.exists(f"{c}:\\"))
+    else:
+        _offline_path = "/Volumes/__ultrapack_no_drive__/x.ffpfsc"
     _lk = S / "locked_src"; _lk.mkdir(exist_ok=True); (_lk / "x.ffpfsc").write_bytes(b"x"); os.chmod(_lk, 0)
     try:
         m.save_settings({"queue": [dict(_de, status="Queued", name="Gone", path=str(S / "gone4" / "x.ffpfsc")),
-                                   dict(_de, status="Queued", name="Away", path="/Volumes/__ultrapack_no_drive__/x.ffpfsc"),
+                                   dict(_de, status="Queued", name="Away", path=_offline_path),
                                    dict(_de, status="Queued", name="Locked", path=str(_lk / "x.ffpfsc"))]})
         app.queue.clear(); app._queue_missing_saved = []; app._restore_queue()
     finally:

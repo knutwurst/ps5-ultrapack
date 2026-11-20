@@ -894,6 +894,8 @@ def test_exfat_stage_builds_clean(r: Runner):
         shutil.copyfile(rsrc / "eboot.bin", rsrc / "sce_module" / "libraw.prx")
         for n in ("libdebug_a.prx", "libdebug_b.sprx"):
             (rsrc / "sce_module" / n).write_bytes(bytes([0x54, 0x14, 0xF5, 0xEE]) + bytes(60))
+        for f in [*(rsrc / "sce_module").iterdir(), pj]:      # CI files carry no xattr, so no sidecar on their own
+            subprocess.run(["xattr", "-w", "com.ultrapack.test", "1", str(f)], capture_output=True)
         rff = vol / "rff"; rff.mkdir()
         rc, log = r.run_cli([str(rsrc), str(rff), "--pack", "--overwrite", "--temp-dir", str(temp)])
         rimg = next((p for p in rff.glob("*.ffpfsc") if not p.name.startswith("._")), None)
