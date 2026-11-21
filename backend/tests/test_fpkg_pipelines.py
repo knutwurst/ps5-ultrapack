@@ -494,6 +494,24 @@ def test_ampr_index_after_self_normalising(r: Runner):
     ampr = _pr.examine(pkg).get("ampr") if pkg else None
     r.check("ampr.self-normalised-sizes", rc == 0 and ampr is not None and ampr.get("emu") and ampr.get("bad") == [],
             "the index holds the size the package does", f"rc={rc} ampr={ampr} {log[-300:]}")
+    # the same game as an .ffpfsc that still holds a dump's decrypted/, built straight from the image
+    (src / "decrypted").mkdir(); (src / "decrypted" / "eboot.bin").write_bytes(bytes(self_))
+    ff = r.work / "ampr_self_ff"; shutil.rmtree(ff, ignore_errors=True); ff.mkdir()
+    os.environ["ULTRAPACK_KEEP_DUMP_LEFTOVERS"] = "1"
+    try:
+        r.run_cli([str(src), str(ff), "--pack", "--overwrite"])
+    finally:
+        os.environ.pop("ULTRAPACK_KEEP_DUMP_LEFTOVERS", None)
+    img = next(ff.glob("*.ffpfsc"), None)
+    out2 = r.work / "ampr_self_out2"; shutil.rmtree(out2, ignore_errors=True); out2.mkdir()
+    rc2, log2 = r.run_cli([str(img), str(out2), "--to", "pkg", "--fpkg-inner", "none", "--fpkg-kraken-backend",
+                           "builtin", "--overwrite"]) if img else (1, "no image")
+    pkg2 = next(out2.glob("*.pkg"), None)
+    ampr2 = _pr.examine(pkg2).get("ampr") if pkg2 else None
+    r.check("ampr.self-normalised-from-image", rc2 == 0 and ampr2 is not None and ampr2.get("bad") == [],
+            "from an .ffpfsc too, decrypted/ left out of the index", f"rc={rc2} ampr={ampr2} {log2[-300:]}")
+    for d in (ff, out2):
+        shutil.rmtree(d, ignore_errors=True)
     for d in (base, out0, x, src, out):
         shutil.rmtree(d, ignore_errors=True)
 
