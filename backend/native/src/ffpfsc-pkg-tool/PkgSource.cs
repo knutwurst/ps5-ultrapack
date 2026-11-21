@@ -184,10 +184,15 @@ internal sealed class PkgSource : IDisposable
         return hit;
     }
 
-    byte[] Decode(int index)
+    byte[] Decode(int index) => Decode(index, _img.ReadStored(_spans[index]));
+
+    // the stored bytes of spans first..first+count-1, read in disk order in one pass
+    byte[][] ReadStoredBatch(int first, int count)
+        => _img.ReadStoredBatch(Enumerable.Range(first, count).Select(i => _spans[i]).ToList());
+
+    byte[] Decode(int index, byte[] stored)
     {
         var span = _spans[index];
-        var stored = _img.ReadStored(span);
         var data = NapsBlockReader.DecodeStored(_img.Layout, span, stored);
         if (data.Length != span.UncompressedLength) throw new InvalidDataException($"NAPS span {span.Index} decoded to the wrong size.");
         if (_reuse) Remember(span, stored, data);
@@ -290,15 +295,18 @@ internal sealed class PkgSource : IDisposable
         public override long Length => _len;
         public override long Position { get => _pos; set => _pos = value; }
 
-        byte[] Span(int index)
+        byte[] Span(int index, bool probe)
         {
             if (_window.TryGetValue(index, out var d)) return d;
             _window.Clear();
             int last = _src.SpanAtOrNone(_base + _len - 1);
             if (last < 0) last = _src._spans.Count - 1;          // the file ends in a packed block
-            int count = Math.Min(last - index + 1, Math.Max(2, Environment.ProcessorCount * 2));
+            // a header probe (a few bytes) takes its one span, not a whole batch it would throw away
+            int count = probe ? 1 : Math.Min(last - index + 1, Math.Max(2, Environment.ProcessorCount * 2));
             var got = new byte[count][];
-            Parallel.For(0, count, i => got[i] = _src.Decode(index + i));
+            // read the batch from the disk in order first, then decode it on all cores
+            var stored = _src.ReadStoredBatch(index, count);
+            Parallel.For(0, count, i => got[i] = _src.Decode(index + i, stored[i]));
             for (int i = 0; i < count; i++) _window[index + i] = got[i];
             return got[0];
         }
@@ -319,7 +327,7 @@ internal sealed class PkgSource : IDisposable
                     _pos += m; offset += m; count -= m; done += m;
                     continue;
                 }
-                var data = Span(index);
+                var data = Span(index, done == 0 && count < 4096);
                 var span = _src._spans[index];
                 int at = (int)(logical - span.UncompressedOffset);
                 int n = (int)Math.Min(Math.Min(count, data.Length - at), _len - _pos);

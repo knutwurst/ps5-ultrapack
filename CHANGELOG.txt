@@ -26,6 +26,15 @@ QUEUE
     finished could show only the running job's time, e.g. 30 min for 3 TB.
     Long times are rounded to 30 min past 3 h and to hours past 10 h.
 
+  - A .pkg rebuild reads the old package's blocks sorted by their place on
+    the disk, neighbours in one read, and decodes them afterwards on all
+    cores; before, each core fetched its block on its own in no particular
+    order, which makes a hard disk seek. A header probe of a few bytes
+    fetches one block instead of a batch it threw away.
+  - A .pkg built straight from an .ffpfsc no longer parses the whole image
+    again for every file it reads from it: a closed reader hands its parsed
+    image to the next one.
+
 FIXED
 
   - A first job that did not fit its drives stopped the queue when it was

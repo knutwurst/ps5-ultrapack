@@ -221,6 +221,47 @@ internal sealed class InnerImage : IDisposable
         return buf;
     }
 
+    // several spans in one pass: sorted by place, neighbours read as one range, so a hard disk streams
+    public byte[][] ReadStoredBatch(IReadOnlyList<ProsperoNapsSpan> spans)
+    {
+        const long Gap = 1 << 20;                 // a hole this small is read through rather than skipped
+        const long MaxRun = 32L << 20;
+        var result = new byte[spans.Count][];
+        var order = Enumerable.Range(0, spans.Count).OrderBy(i => spans[i].StoredOffset).ToArray();
+        foreach (var i in order)
+        {
+            var span = spans[i];
+            if (span.StoredOffset < 0 || span.CompressedLength < 0 || span.StoredOffset + span.CompressedLength > _pfsImage.Length)
+                throw new InvalidDataException($"NAPS span {span.Index} lies outside pfs_image.dat.");
+        }
+        int k = 0;
+        lock (_storedGate)
+        {
+            while (k < order.Length)
+            {
+                long start = spans[order[k]].StoredOffset, end = start + spans[order[k]].CompressedLength;
+                int j = k + 1;
+                while (j < order.Length)
+                {
+                    var n = spans[order[j]];
+                    if (n.StoredOffset > end + Gap || Math.Max(end, n.StoredOffset + n.CompressedLength) - start > MaxRun) break;
+                    end = Math.Max(end, n.StoredOffset + n.CompressedLength);
+                    j++;
+                }
+                var run = new byte[end - start];
+                _pfsImage.Position = start;
+                _pfsImage.ReadExactly(run);
+                for (int m = k; m < j; m++)
+                {
+                    var sp = spans[order[m]];
+                    result[order[m]] = run.AsSpan((int)(sp.StoredOffset - start), (int)sp.CompressedLength).ToArray();
+                }
+                k = j;
+            }
+        }
+        return result;
+    }
+
     public void Dispose()
     {
         _pfsImage?.Dispose();

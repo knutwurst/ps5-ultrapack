@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using LibProsperoPkg.PFS;
 using LibProsperoPkg.Util;
 
@@ -22,6 +23,9 @@ internal sealed class SourceImage : IDisposable
     readonly ConcurrentDictionary<string, string> _standIns = new(StringComparer.Ordinal);   // stub path -> image path
     readonly ConcurrentDictionary<string, long> _sizes = new(StringComparer.Ordinal);
     readonly string _rootInImage;
+    // parsed images ready for the next stand-in: an open costs one parse per reader at a time, not one per file
+    readonly ConcurrentBag<Opened> _pool = new();
+    bool _disposed;
 
     public string Root { get; }
     public int Written { get; private set; }
@@ -150,15 +154,18 @@ internal sealed class SourceImage : IDisposable
         }
     }
 
-    // every open gets its own handle and readers: the library may read several files at once
+    // every stream gets a handle and readers of its own (the library may read several files at once);
+    // a closed stream hands its parsed image to the next open instead of parsing the image again
     Stream OpenFile(string inImage)
     {
-        var open = OpenInner(_image);
+        if (!_pool.TryTake(out var open)) open = OpenInner(_image);
         try
         {
-            var f = open.Inner.GetAllFiles().FirstOrDefault(x => string.Equals(x.FullName, inImage, StringComparison.Ordinal))
-                    ?? throw new FileNotFoundException("not in the image: " + inImage);
-            return new OwnedStream(new StreamWrapper(f.GetView(), f.size), open);
+            open.Files ??= open.Inner.GetAllFiles().GroupBy(x => x.FullName, StringComparer.Ordinal)
+                               .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            if (!open.Files.TryGetValue(inImage, out var f))
+                throw new FileNotFoundException("not in the image: " + inImage);
+            return new OwnedStream(new StreamWrapper(f.GetView(), f.size), new Lease(this, open));
         }
         catch
         {
@@ -167,10 +174,31 @@ internal sealed class SourceImage : IDisposable
         }
     }
 
+    void Return(Opened open)
+    {
+        lock (_pool)
+        {
+            if (!_disposed) { _pool.Add(open); return; }
+        }
+        open.Dispose();
+    }
+
+    sealed class Lease : IDisposable
+    {
+        readonly SourceImage _owner; Opened? _open;
+        public Lease(SourceImage owner, Opened open) { _owner = owner; _open = open; }
+        public void Dispose()
+        {
+            var o = Interlocked.Exchange(ref _open, null);
+            if (o != null) _owner.Return(o);
+        }
+    }
+
     sealed class Opened : IDisposable
     {
         public FileStream File = null!;
         public PfsReader Inner = null!;
+        public Dictionary<string, PfsReader.File>? Files;
         public void Dispose() => File.Dispose();
     }
 
@@ -226,5 +254,10 @@ internal sealed class SourceImage : IDisposable
         SourceHooks.Length = null;
         _standIns.Clear();
         _sizes.Clear();
+        lock (_pool)
+        {
+            _disposed = true;
+            while (_pool.TryTake(out var o)) o.Dispose();
+        }
     }
 }
