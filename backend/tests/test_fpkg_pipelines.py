@@ -463,6 +463,41 @@ def test_ampr_index_without_leftovers(r: Runner):
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_ampr_index_after_self_normalising(r: Runner):
+    # a SELF from a dump whose version trailer starts a few bytes before the header says: the package
+    # library moves it while packing and the file grows (4-12 bytes in real games); the index must say so
+    base = r.work / "ampr_self_base"; shutil.rmtree(base, ignore_errors=True)
+    shutil.copytree(fetch_hbt(r.work / "hbt"), base)
+    out0 = r.work / "ampr_self_o0"; shutil.rmtree(out0, ignore_errors=True); out0.mkdir()
+    r.run_cli([str(base), str(out0), "--fpkg-build", str(base), "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
+               "--title-id", "PPSA99099", "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+    x = r.work / "ampr_self_x"; shutil.rmtree(x, ignore_errors=True)
+    pkg0 = next(out0.glob("*.pkg"), None)
+    if not r.check("ampr.self-fixture", pkg0 is not None, "a signed eboot to start from", ""):
+        return
+    r.run_tool(["extract-inner", str(pkg0), str(x)])
+    self_ = bytearray((x / "eboot.bin").read_bytes())
+    struct.pack_into("<Q", self_, 16, struct.unpack_from("<Q", self_, 16)[0] + 4)     # trailer 4 bytes off
+    src = r.work / "ampr_self_src"; shutil.rmtree(src, ignore_errors=True); shutil.copytree(base, src)
+    pj = src / "sce_sys" / "param.json"
+    pj.write_text(json.dumps({**json.loads(pj.read_text()), "applicationDrmType": "standard"}))
+    (src / "fakelib").mkdir(); (src / "sce_module").mkdir()
+    for rel in ("eboot.bin", "fakelib/libSceAmpr.sprx", "sce_module/libA.prx"):
+        (src / rel).write_bytes(bytes(self_))
+    (src / "ampr_emu.index").write_bytes(b"old")
+    out = r.work / "ampr_self_out"; shutil.rmtree(out, ignore_errors=True); out.mkdir()
+    rc, log = r.run_cli([str(src), str(out), "--fpkg-build", str(src), "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
+                         "--title-id", "PPSA99099", "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+    pkg = next(out.glob("*.pkg"), None)
+    sys.path.insert(0, str(BACKEND))
+    import ps5_repair as _pr
+    ampr = _pr.examine(pkg).get("ampr") if pkg else None
+    r.check("ampr.self-normalised-sizes", rc == 0 and ampr is not None and ampr.get("emu") and ampr.get("bad") == [],
+            "the index holds the size the package does", f"rc={rc} ampr={ampr} {log[-300:]}")
+    for d in (base, out0, x, src, out):
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_completeness_against_the_original_list(r: Runner):
     # a dump against the file list of the package it came from (playgo-hash-table.dat): files missing
     # are counted, files that are not in it are named; a .pkg build logs the same
@@ -1982,6 +2017,7 @@ def main():
         ("dump leftovers left out",         test_dump_leftovers_left_out),
         ("completeness against the list",  test_completeness_against_the_original_list),
         ("ampr index without leftovers",    test_ampr_index_without_leftovers),
+        ("ampr index after SELF fixes",     test_ampr_index_after_self_normalising),
         ("big folder: image to .pkg",       test_big_folder_image_to_pkg),
         ("title id mismatch warns",         test_title_id_mismatch_warns),
         ("sidecars never in the package",   test_sidecars_never_in_the_package),

@@ -1978,7 +1978,10 @@ internal static partial class Program
                     long pkgTime = (long)opts.TimeStamp.ToUniversalTime().Subtract(DateTime.UnixEpoch).TotalSeconds;
                     // the builder rewrites param.json while packing; do it now so the index sees the real size
                     PublishParamJson(autoStage, opts);
-                    int rows = AmprIndex.Write(autoStage, pkgTime, packageView: true);
+                    // the builder still rewrites SELFs (SDK version trailer): index the size it will write
+                    ulong? sdk = opts.SdkVersionOverride;
+                    int rows = AmprIndex.Write(autoStage, pkgTime, packageView: true,
+                                               finalSize: (rel, full, size) => BuilderSelfSize(rel, full, size, sdk));
                     Console.Error.WriteLine(rows > 0
                         ? $"  [ampr] rebuilt ampr_emu.index over the packed files ({rows:N0} file(s))"
                         : "  [ampr] nothing to index; ampr_emu.index left as it is");
@@ -2272,6 +2275,49 @@ internal static partial class Program
     }
 
     // best effort: replays the builder's private param.json rewrite, warns when it can't
+    // LibProsperoPkg normalises the SELFs of /eboot.bin, every .prx, fakelib/, sce_module/ and sce_sys/about/
+    // while it packs (BuildNormalizedSelf): a missing version trailer gets an SDK version record. Same calls,
+    // same answer, so ampr_emu.index holds the size the package does. Any failure keeps the size on disk
+    static long BuilderSelfSize(string rel, string full, long size, ulong? sdk)
+    {
+        rel = rel.Replace('\\', '/');
+        var lower = rel.ToLowerInvariant();
+        bool touched = lower == "eboot.bin" || lower.EndsWith(".prx", StringComparison.Ordinal)
+                       || lower.StartsWith("fakelib/", StringComparison.Ordinal) || lower.StartsWith("sce_module/", StringComparison.Ordinal)
+                       || lower.StartsWith("sce_sys/about/", StringComparison.Ordinal);
+        if (!touched || size <= 0) return size;
+        try
+        {
+            using var fs = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+            var head = new byte[Math.Min(64, (int)Math.Min(size, 64))];
+            fs.ReadExactly(head);
+            fs.Position = 0;
+            if (!ProsperoFself.IsSelf(head)) return size;
+            var t = typeof(ProsperoFself);
+            var planFn = t.GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .First(m => m.Name == "TryBuildSelfRewritePlan" && m.GetParameters().Length == 4
+                            && m.GetParameters()[0].ParameterType == typeof(Stream));
+            var args = new object?[] { fs, sdk, null, default(System.Threading.CancellationToken) };
+            if (!(bool)planFn.Invoke(null, args)! || args[2] == null) return size;
+            var plan = args[2]!;
+            var pt = plan.GetType();
+            bool hasTrailer = (bool)pt.GetProperty("HasVersionTrailer")!.GetValue(plan)!;
+            if (sdk.HasValue && !hasTrailer)
+            {
+                var rec = (byte[])t.GetMethod("BuildSdkVersionRecord", BindingFlags.NonPublic | BindingFlags.Static)!
+                    .Invoke(null, new object[] { Path.GetFileNameWithoutExtension(full), sdk.Value })!;
+                return size + rec.Length;
+            }
+            if (!(bool)pt.GetProperty("RequiresRewrite")!.GetValue(plan)!) return size;
+            var patch = (byte[])pt.GetProperty("Patch")!.GetValue(plan)!;
+            return patch.Length == 0 ? size : (long)pt.GetProperty("PatchOffset")!.GetValue(plan)! + patch.Length;
+        }
+        catch
+        {
+            return size;
+        }
+    }
+
     static void PublishParamJson(string stage, ProsperoBuildOptions opts)
     {
         var path = Path.Combine(stage, "sce_sys", "param.json");

@@ -30,6 +30,12 @@ QUEUE
     files fPKG tools change after packing (npbind.dat, param) are a note.
     "Thorough" also hashes all game data, which reads every byte: one
     flipped byte in a sample package was found only that way.
+  - ampr_emu.index gave executables 4-12 bytes too few in games whose dump
+    held executables signed by another tool: their version trailer starts
+    up to 15 bytes before the place their header names, and LibProsperoPkg
+    moves it there while packing (zero bytes in front, the file grows). The
+    index was written before that; it now counts the size the package will
+    hold, using the library's own rewrite plan.
   - ampr_emu.index listed a dump's decrypted/ folder that the package
     library leaves out of the package, so the library check called such
     packages broken; the index now leaves out what the package leaves out.

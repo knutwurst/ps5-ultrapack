@@ -49,8 +49,11 @@ internal static class AmprIndex
     sealed record Row(long Size, long Mtime, string Path, byte[] Key);
 
     // temp + rename: an index hard-linked into the user's source must never be written through
-    public static int Write(string root, long? fixedMtime = null, bool packageView = false)
+    // finalSize(rel, full, size): the size the package will hold, when the builder still changes the file
+    public static int Write(string root, long? fixedMtime = null, bool packageView = false,
+                            Func<string, string, long, long>? finalSize = null)
     {
+        _finalSize = finalSize;
         root = Path.GetFullPath(root);
         var output = Path.Combine(root, FileName);
         var tmp = output + ".tmp";
@@ -132,6 +135,8 @@ internal static class AmprIndex
     }
 
     // same order as os.walk in the reference builder; dir symlinks are not followed
+    [ThreadStatic] static Func<string, string, long, long>? _finalSize;
+
     static void Walk(string root, string dir, List<Row> rows, HashSet<string> seen, string output, string tmp, bool packageView)
     {
         var files = new List<string>();
@@ -181,7 +186,9 @@ internal static class AmprIndex
             var keyStr = Convert.ToHexString(key);
             if (!seen.Add(keyStr)) continue;   // case-insensitive collision: keep the first
             long mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-            rows.Add(new Row(LibProsperoPkg.Util.SourceHooks.LengthOf(fi), mtime, indexed, key));   // a stand-in has the size of its file in the image
+            long size = LibProsperoPkg.Util.SourceHooks.LengthOf(fi);   // a stand-in has the size of its file in the image
+            if (_finalSize != null) size = _finalSize(rel, full, size);
+            rows.Add(new Row(size, mtime, indexed, key));
         }
         foreach (var d in dirs) Walk(root, d, rows, seen, output, tmp, packageView);
     }
