@@ -2560,6 +2560,12 @@ try:
        and _k_kind and _k_full.startswith(_k_kind + " @ "), f"{_n0} {_n1} {_k_full!r}")
     _sv = (app._batch_running, app._batch_total, app._batch_done, app._batch_failed)
     app._batch_running, app._batch_total, app._batch_done, app._batch_failed = True, 5, 1, 0
+    # the line counts the whole queue: one done, the running job second of five
+    _sq5 = [m.GameItem.from_chain(HBT, to="ffpfsc") for _ in range(5)]
+    for _x, _st in zip(_sq5, ("Done", "Running", "Queued", "Queued", "Queued")):
+        _x.status = _st
+    _sv_q5, _sv_act = list(app.queue), getattr(app, "_active_item", None)
+    app.queue[:] = _sq5; app._active_item = _sq5[1]
     app._all_frac, app._all_eta = 0.23, 7800
     app._show_add_progress(); app._update_batch_counter(); root.update()
     _line = f"{app._all_left_var.get()} | {app._all_right_var.get()}"
@@ -2569,11 +2575,13 @@ try:
     import i18n as _i18n                                   # the status line in German, every piece of it
     _i18n.use("de")
     try:
-        app._batch_failed, app._pause_requested = 1, True
+        _sq5[2].status, app._active_item = "Failed", _sq5[3]
+        app._pause_requested = True
         app._all_eta = 36 * 3600
         app._update_batch_counter(); _foot_de = app.batch_counter_var.get()
     finally:
-        _i18n.use("en"); app._batch_failed, app._pause_requested = 0, False
+        _i18n.use("en"); app._pause_requested = False
+        _sq5[2].status, app._active_item = "Queued", _sq5[1]
         app._all_eta = 7800
     ok("all.status-line-in-german", _foot_de.startswith("Job 3 von 5") and "1 fertig" in _foot_de
        and "1 fehlgeschlagen" in _foot_de and "noch etwa 36 Std." in _foot_de
@@ -2582,6 +2590,7 @@ try:
     app._show_add_progress(); app._update_batch_counter(); root.update()
     _hidden = app._all_box.winfo_manager() == ""
     app._batch_running, app._batch_total, app._batch_done, app._batch_failed = _sv
+    app.queue[:] = _sv_q5; app._active_item = _sv_act
     app._all_frac = app._all_eta = None
     ok("all.summary-at-the-foot-of-the-list", _vis == "grid" and _row == 3 and _top_free
        and _line == "All jobs  23 % | about 2 h 10 min left" and _hidden and app._all_bar._fill == "muted",

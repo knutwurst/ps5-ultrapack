@@ -133,7 +133,7 @@ except Exception:
     _HAS_DND = False
 
 APP_NAME = "PS5 UltraPack"
-APP_VERSION = "2.7.1"
+APP_VERSION = "2.7.2"
 # archive unpack fills the first slice of overall progress so it never goes back
 ARCHIVE_EXTRACT_OVERALL_PCT = 25
 # copy jobs unpack on the output drive, so a rename follows (or a copy across drives)
@@ -15411,13 +15411,17 @@ class App:
         if not self._batch_running:
             self.batch_counter_var.set("")
             return
-        current = self._batch_done + self._batch_failed + 1
-        extra = "".join(tr(w, n=n) for n, w in ((self._batch_done, "  ·  {n} done"),
-                                                 (self._batch_failed, "  ·  {n} failed")) if n)
+        # counted over the whole queue, like the bar: jobs done before this Start are in it
+        run = self._running_item()
+        done = sum(1 for it in self.queue if it is not run and getattr(it, "status", "") == "Done")
+        failed = sum(1 for it in self.queue if it is not run
+                     and getattr(it, "status", "") in ("Failed", "Skipped", "Cancelled"))
+        current = min(len(self.queue), done + failed + 1)
+        extra = "".join(tr(w, n=n) for n, w in ((done, "  ·  {n} done"), (failed, "  ·  {n} failed")) if n)
         frac, eta = getattr(self, "_all_frac", None), getattr(self, "_all_eta", None)
         if frac is not None:
             extra += tr("  ·  {v} % of all", v=int(frac * 100)) + (f", {self._fmt_left(eta)}" if eta is not None else "")
-        line = tr("Job {current} of {total}", current=current, total=self._batch_total) + extra
+        line = tr("Job {current} of {total}", current=current, total=len(self.queue)) + extra
         if getattr(self, "_pause_requested", False):
             line += tr("  ·  pauses after this job")
         if self.batch_counter_var.get() != line:
@@ -17750,11 +17754,11 @@ class App:
                 self.stage_detail_var.set(detail)
                 self.stage_pct_var.set(f"{int(stage_pct)}%")
                 self.stage_bar.set(max(0, min(1, stage_pct / 100)))
-                # queue bar is size-weighted, falls back to counting games
-                _total = max(1, getattr(self, "_batch_total", 1))
-                _done  = getattr(self, "_batch_done", 0) + getattr(self, "_batch_failed", 0)
-                # by job, not by list position (the list can be reordered)
-                _items = getattr(self, "_batch_items", None) or []
+                # the whole queue, size-weighted: jobs finished before this Start count too
+                _items = list(self.queue)
+                _total = max(1, len(_items))
+                _done  = sum(1 for it in _items if it is not _ri
+                             and getattr(it, "status", "") in self._TERMINAL_STATUSES)
                 def _sz(it):
                     try:
                         return max(0, int(display_size(it) or 0))
