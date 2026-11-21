@@ -8198,6 +8198,11 @@ class LibraryCheckView:
         ctk.CTkCheckBox(bottom, text="Show only packages with problems", variable=self.only_bad_var, fg_color=ACCENT,
                         hover_color=ACCENT_HOVER, text_color=MUTED, checkbox_width=16, checkbox_height=16,
                         command=self._render).pack(side="left")
+        # PS4 packages carry a checksum over all game data; checking it reads every byte
+        self.deep_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(bottom, text="Thorough: read all game data of PS4 packages (slow)", variable=self.deep_var,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=MUTED, checkbox_width=16,
+                        checkbox_height=16).pack(side="left", padx=(16, 0))
         self.rebuild_btn = ctk.CTkButton(bottom, text="Rebuild broken", width=160, fg_color=ACCENT,
                                          hover_color=ACCENT_HOVER, text_color=ON_ACCENT, command=self.rebuild,
                                          state="disabled")
@@ -8247,6 +8252,7 @@ class LibraryCheckView:
         self.status_var.set("Looking for packages…")
         fw = _ps5_console_fw()
         scratch = None                            # examine() writes only a few small files
+        deep = bool(self.deep_var.get())          # a Tk variable: read it here, not on the worker
 
         def work():
             m = _ps5_repair_module()
@@ -8260,12 +8266,19 @@ class LibraryCheckView:
             for p in [*pkgs, *images]:
                 if self._stop.is_set():
                     break
+                info = None
                 try:
-                    info = m.examine_image(p) if p in images else m.examine(p, scratch=scratch)
+                    if p in images:
+                        info = m.examine_image(p)
+                    elif m.fpkg.is_ps4(p):
+                        info = m.examine_ps4(p, full=deep)
+                    else:
+                        info = m.examine(p, scratch=scratch)
                     res = m.verdict(info, fw)
                 except Exception as e:
                     res = {"state": "error", "game": False, "reasons": [str(e)], "rows": []}
                 res["path"] = str(p)
+                res["ps4"] = bool(info and info.get("ps4"))
                 self._q.put(("one", res))
             self._q.put(("done", ""))
         threading.Thread(target=work, daemon=True).start()
@@ -8326,6 +8339,10 @@ class LibraryCheckView:
                 if x["level"] == "warn" and str(x["check"]).startswith(("inner.leftover.", "inner.complete"))]
 
     def _label(self, r: dict) -> str:
+        text = self._label_text(r)
+        return tr("PS4: {text}", text=text) if r.get("ps4") else text
+
+    def _label_text(self, r: dict) -> str:
         if r["state"] == "ok":
             hints = self._hints(r)
             return tr("Fine, hint: {why}", why="; ".join(hints)) if hints else tr("Fine")

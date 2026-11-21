@@ -55,6 +55,7 @@ internal static partial class Program
                 "ps4-keystone" => CmdPs4Keystone(args),
                 "ps4-rebind" => CmdPs4Rebind(args),
                 "ps4-sfo" => CmdPs4Sfo(args),
+                "ps4-verify" => CmdPs4Verify(args),
                 _ => Bad("unknown command: " + args[0]),
             };
         }
@@ -2458,6 +2459,7 @@ internal static partial class Program
 [System.Text.Json.Serialization.JsonSerializable(typeof(Program.ExtractResultDoc))]
 [System.Text.Json.Serialization.JsonSerializable(typeof(Program.ValidateReportDoc))]
 [System.Text.Json.Serialization.JsonSerializable(typeof(Program.CompletenessDoc))]
+[System.Text.Json.Serialization.JsonSerializable(typeof(Program.Ps4VerifyDoc))]
 internal sealed partial class PkgToolJsonContext : System.Text.Json.Serialization.JsonSerializerContext
 {
     static PkgToolJsonContext? _indented;

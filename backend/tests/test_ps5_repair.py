@@ -239,6 +239,33 @@ class Completeness(unittest.TestCase):
         self.assertEqual((v["state"], row["level"]), ("ok", "info"))
 
 
+class Ps4Checksums(unittest.TestCase):
+    # data checksums decide; digests of system files fPKG tools change are only a note
+    def info(self, **res):
+        names = ["PKG Size", "Content Digest", "NPBIND_DAT digest", "PFS Signed Digest", "PFS Image Digest",
+                 "Body Digest", "PKG Header Signature"]
+        checks = [{"name": n, "kind": "signature" if "Signature" in n else "hash", "result": res.get(n, "ok")}
+                  for n in names]
+        return {"ps4": True, "ident": {"content_type": 32}, "ps4_checks": checks}
+
+    def test_changed_system_files_keep_it_fine(self):
+        v = r.verdict(self.info(**{"Content Digest": "fail", "NPBIND_DAT digest": "fail",
+                                   "PFS Image Digest": "skipped", "PKG Header Signature": "nokey"}))
+        rows = {x["check"]: x for x in v["rows"]}
+        self.assertEqual(v["state"], "ok")
+        self.assertEqual(rows["ps4.changed"]["level"], "info")
+        self.assertIn("thorough", rows["ps4.data"]["text"])
+
+    def test_damaged_game_data_is_a_problem(self):
+        v = r.verdict(self.info(**{"PFS Image Digest": "fail"}))
+        self.assertEqual(v["state"], "problem")
+        self.assertIn("PFS Image Digest", v["reasons"][0])
+
+    def test_a_full_pass_says_every_byte(self):
+        v = r.verdict(self.info())
+        self.assertIn("every byte", next(x for x in v["rows"] if x["check"] == "ps4.data")["text"])
+
+
 class AmprIndex(unittest.TestCase):
     def test_index_against_the_files(self):
         idx = r.ampr_index_rows(_ampr_index({"/app0/eboot.bin": 10, "/app0/data/a.bin": 5,

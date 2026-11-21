@@ -430,6 +430,30 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
     return out
 
 
+# PS4 checksums that cover the game data and the package structure: a wrong one means damage.
+# The other digests cover system files (param.sfo, npbind.dat, ...) that fPKG tools often change
+# after packing without updating every digest; a working retail-sample PS4 fPKG fails three of them
+PS4_DATA_CHECKS = ("PKG Size", "Game Digest", "PFS Signed Digest", "PFS Image Digest", "Body Digest",
+                   "Digest Table Hash", "SC Entries Hash 1", "SC Entries Hash 2", "PKG Header Digest",
+                   "ENTRY_KEYS digest", "IMAGE_KEY digest", "GENERAL_DIGESTS digest", "METAS digest",
+                   "ENTRY_NAMES digest")
+
+
+def examine_ps4(pkg, full: bool = False) -> dict:
+    """a PS4 package checked against its own checksums; full reads the whole package"""
+    out = {"ps4": True, "ident": {}, "results": [], "ps4_full": full}
+    try:
+        doc = fpkg.ps4_verify(Path(pkg), full=full)
+    except Exception as e:
+        out["error"] = f"not a readable PS4 package: {e}"
+        return out
+    ct = int(doc.get("content_type") or 0)
+    out["ident"] = {"content_id": doc.get("content_id", ""), "ps4_content_type": ct,
+                    "content_type": 32 if ct == 0x1A else ct}      # 0x1A: a PS4 game
+    out["ps4_checks"] = doc.get("checks") or []
+    return out
+
+
 def library_images(root) -> list[Path]:
     """every .ffpfs/.ffpfsc below root: dumps that can still be checked against their original list"""
     from mkpfs.utils import is_ignored_name
@@ -476,6 +500,24 @@ def findings(info: dict, console_fw: str | None = None) -> list[dict]:
             need=need, fw=console_fw)
     elif need:
         own("console.firmware", "Firmware", "pass", None, "needs system software {need}", need=need)
+    if info.get("ps4"):
+        bad_data = [c["name"] for c in info.get("ps4_checks") or [] if c["name"] in PS4_DATA_CHECKS
+                    and c["result"] in ("fail", "error")]
+        changed = [c["name"] for c in info.get("ps4_checks") or [] if c["name"] not in PS4_DATA_CHECKS
+                   and c.get("kind") == "hash" and c["result"] == "fail"]
+        whole = next((c for c in info.get("ps4_checks") or [] if c["name"] == "PFS Image Digest"), None)
+        if bad_data:
+            own("ps4.data", "Package", "fail", None,
+                "PS4 package damaged: {checks} do not match", checks=", ".join(bad_data))
+        elif whole and whole["result"] == "ok":
+            own("ps4.data", "Package", "pass", None, "PS4 package: every byte of the game data checked, all checksums match")
+        else:
+            own("ps4.data", "Package", "pass", None,
+                "PS4 package: structure checksums match; the game data itself is read only in a thorough check")
+        if changed:
+            own("ps4.changed", "Package", "info", None,
+                "system files changed after packing ({checks}); usual for fake packages",
+                checks=", ".join(changed))
     c = info.get("complete") or {}
     img = bool(info.get("image"))
     if c.get("checkable"):

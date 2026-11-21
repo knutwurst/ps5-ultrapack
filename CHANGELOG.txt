@@ -24,6 +24,12 @@ QUEUE
     files that were never in it. Library check does the same for every .pkg
     and now also for .ffpfs/.ffpfsc dumps; a dump with missing files is a
     problem a rebuild cannot fix. New tool command: completeness.
+  - Library check knows PS4 packages and checks them against their own
+    checksums (LibOrbisPkg's validator, new tool command ps4-verify).
+    Checksums of game data and package structure decide; digests of system
+    files fPKG tools change after packing (npbind.dat, param) are a note.
+    "Thorough" also hashes all game data, which reads every byte: one
+    flipped byte in a sample package was found only that way.
   - "All jobs" and "Job X of Y" count the whole queue, size-weighted, not
     only the jobs that were waiting at the last Start: after a restart of
     the queue the bar showed 10 % although most of the list was done.

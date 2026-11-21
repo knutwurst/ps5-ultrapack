@@ -208,6 +208,18 @@ def completeness(source: Path) -> dict:
     return json.loads(r.stdout)
 
 
+def ps4_verify(pkg: Path, *, full: bool = False) -> dict:
+    """a PS4 package's own checksums (LibOrbisPkg's validator); full=True also hashes the whole
+    content image, which reads every byte of the package"""
+    argv = [str(tool_path()), "ps4-verify", str(pkg)] + (["--full"] if full else [])
+    r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=None if full else 600, **_NO_WINDOW)
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or "").strip().splitlines()
+        raise RuntimeError(msg[-1] if msg else f"ps4-verify failed (rc={r.returncode})")
+    return json.loads(r.stdout)
+
+
 def extract_members(pkg: Path, out_dir: Path, members_file: Path,
                     *, passcode: str = "0" * 32, on_line=None) -> int:
     """one inner path per line, a folder means its whole subtree; decoded block-wise"""
