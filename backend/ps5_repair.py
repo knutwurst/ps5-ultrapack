@@ -336,6 +336,18 @@ def _size_text(n: int) -> str:
     return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{max(1, round(n / 1e6))} MB" if n >= 1e6 else f"{n / 1e3:.0f} KB"
 
 
+def leftover_total(verdicts) -> tuple[int, int]:
+    """(packages with dump-tool leftovers, bytes they hold) over a library check"""
+    n = total = 0
+    for v in verdicts:
+        got = [x["args"].get("bytes", 0) for x in v.get("rows") or []
+               if str(x.get("check", "")).startswith("inner.leftover.") and x.get("args")]
+        if got:
+            n += 1
+            total += sum(got)
+    return n, total
+
+
 def dump_leftovers(entries) -> list[dict]:
     """per leftover folder: files, bytes, and how many are copies of a file the game has elsewhere"""
     files = {str(e.get("path", "")).strip("/"): int(e.get("size") or 0)
@@ -441,7 +453,7 @@ def findings(info: dict, console_fw: str | None = None) -> list[dict]:
         own("console.firmware", "Firmware", "pass", None, "needs system software {need}", need=need)
     for lo in info.get("leftovers") or []:
         # a hint only: nothing shows such a folder harms a game, so no rebuild is offered
-        args = {"name": lo["name"], "files": lo["files"], "size": _size_text(lo["bytes"])}
+        args = {"name": lo["name"], "files": lo["files"], "size": _size_text(lo["bytes"]), "bytes": lo["bytes"]}
         if lo.get("dups"):
             own("inner.leftover." + lo["name"].lower(), "Image", "warn", None,
                 "{name}/: {files} file(s), {size}, most likely left by the dump tool; {dups} are copies of "

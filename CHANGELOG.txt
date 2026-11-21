@@ -12,6 +12,11 @@ QUEUE
     dump tool left in a package, with its size and how many files are copies
     of the game's own. Packages built by the app never hold one: the
     package library leaves a top-level decrypted/ out.
+  - Packing a game folder leaves out a top-level decrypted/ a dump tool left
+    in it, as the package library already does for every .pkg; the log
+    names files and size. Settings, Drives & space can keep it.
+  - Library check sums the dump-tool leftovers over all checked packages
+    and says what a rebuild would free.
   - "All jobs" and "Job X of Y" count the whole queue, size-weighted, not
     only the jobs that were waiting at the last Start: after a restart of
     the queue the bar showed 10 % although most of the list was done.

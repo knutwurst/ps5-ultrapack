@@ -2506,6 +2506,10 @@ class SettingsView:
                                  "(faster when the output is a hard disk)",
                          variable=self.app.pkg_image_in_temp_var, fg_color=ACCENT,
                          hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=(0, 4))
+        ctk.CTkCheckBox(ds, text="Keep a decrypted/ folder the dump tool left in a game when packing "
+                                 "(.pkg builds always leave it out)",
+                         variable=self.app.keep_dump_leftovers_var, fg_color=ACCENT,
+                         hover_color=ACCENT_HOVER, text_color=WHITE, checkbox_width=18, checkbox_height=18).pack(anchor="w", padx=14, pady=(0, 4))
 
         ctk.CTkLabel(ds, text="Extra temp drives (pool, one path per line):",
                       text_color=MUTED, anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
@@ -3142,6 +3146,11 @@ class CLIWorker(threading.Thread):
             env["TEMP"] = str(self.temp_dir)
             env["TMP"] = str(self.temp_dir)
             env["TMPDIR"] = str(self.temp_dir)
+            try:                                  # Settings, Packing: keep a dump tool's decrypted/ folder
+                if load_settings().get("keep_dump_leftovers", False):
+                    env["ULTRAPACK_KEEP_DUMP_LEFTOVERS"] = "1"
+            except Exception:
+                pass
 
             self.proc = subprocess.Popen(
                 self.cmd,
@@ -8297,7 +8306,17 @@ class LibraryCheckView:
         text = plural(n, "1 package checked: {ok} fine, {bad} to rebuild, {other} with problems a rebuild cannot fix.",
                       "{n} packages checked: {ok} fine, {bad} to rebuild, {other} with problems a rebuild cannot fix.",
                       ok=n - bad - other, bad=bad, other=other)
+        text += " " + self._ballast_text()
         return text + " " + tr("Report: {path}", path=str(self._report_path()))
+
+    def _ballast_text(self) -> str:
+        """what dump-tool leftovers take in the checked packages, and so what a rebuild would free"""
+        n, size = _ps5_repair_module().leftover_total(self._results)
+        if not n:
+            return tr("No dump-tool leftovers.")
+        return plural(n, "Dump-tool leftovers in 1 package: {size}; a rebuild frees that.",
+                      "Dump-tool leftovers in {n} packages: {size}; rebuilding them frees that.",
+                      size=format_size(size))
 
     @staticmethod
     def _hints(r: dict) -> list[str]:
@@ -8345,6 +8364,7 @@ class LibraryCheckView:
             lines.append(f"[{r['state'].upper():7}] {r['path']}")
             lines += [f"          {x}" for x in r["reasons"]]
             lines += [f"          hint: {x}" for x in self._hints(r)]
+        lines += ["", self._ballast_text()]
         try:
             self._report_path().write_text("\n".join(lines) + "\n", encoding="utf-8")
         except OSError:
@@ -10248,6 +10268,7 @@ class App:
         # ping faster than WD IntelliPark's 8 s park timer; slower only adds load cycles
         self.keep_drives_awake_var = self._persisted_bool(settings, "keep_drives_awake", False)
         self.pkg_image_in_temp_var = self._persisted_bool(settings, "pkg_image_in_temp", True)
+        self.keep_dump_leftovers_var = self._persisted_bool(settings, "keep_dump_leftovers", False)
         self.compression_level_var = tk.IntVar(value=self._saved_compression_level)
         self.cpu_count_var         = tk.IntVar(value=self._saved_cpu_count)
         self.verbose_var           = self._persisted_bool(settings, "verbose", False)

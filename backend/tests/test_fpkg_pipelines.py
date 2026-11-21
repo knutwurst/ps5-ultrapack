@@ -414,6 +414,32 @@ def test_short_tail_segment(r: Runner):
             shutil.rmtree(d, ignore_errors=True)
 
 
+def test_dump_leftovers_left_out(r: Runner):
+    # a dump tool's decrypted/ never goes into a .ffpfsc unless Settings keep it; a .pkg never holds it
+    for keep in (False, True):
+        tag = "kept" if keep else "dropped"
+        src = r.work / f"lo_{tag}"; shutil.rmtree(src, ignore_errors=True)
+        shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+        (src / "decrypted" / "sce_module").mkdir(parents=True)
+        (src / "decrypted" / "sce_module" / "libA.prx").write_bytes(b"x" * 5000)
+        out = r.work / f"lo_{tag}_out"; shutil.rmtree(out, ignore_errors=True); out.mkdir()
+        rc, log = r.run_cli([str(src), str(out), "--pack", "--overwrite"],
+                            env={"ULTRAPACK_KEEP_DUMP_LEFTOVERS": "1"} if keep else None)
+        img = next(out.glob("*.ffpfsc"), None)
+        rc2, listing = r.run_tool(["list-inner", str(img)]) if img else (1, "")
+        names = []
+        if img is not None:
+            sys.path.insert(0, str(BACKEND))
+            import cli as _cli
+            names = [e.get("path", "") for e in _cli.list_pfs_image(img).get("entries", [])]
+        has = any(str(n).strip("/").lower().startswith("decrypted") for n in names)
+        r.check(f"leftovers.{tag}", rc == 0 and img is not None and has == keep
+                and (keep or "Left out decrypted/" in log),
+                "kept on request" if keep else "left out, and the log says so", f"rc={rc} has={has} {log[-300:]}")
+        for d in (src, out):
+            shutil.rmtree(d, ignore_errors=True)
+
+
 def test_big_folder_image_to_pkg(r: Runner):
     # a folder over one 64 KiB block: entries stay inside their block, so the package builder reads the
     # image directly; an image packed the old way (entries across blocks) is unpacked first
@@ -1869,6 +1895,7 @@ def main():
         ("negative: bad content id",        test_negative_bad_content_id),
         ("upgradable app gets a license",   test_upgradable_gets_license),
         ("short tail segment",              test_short_tail_segment),
+        ("dump leftovers left out",         test_dump_leftovers_left_out),
         ("big folder: image to .pkg",       test_big_folder_image_to_pkg),
         ("title id mismatch warns",         test_title_id_mismatch_warns),
         ("sidecars never in the package",   test_sidecars_never_in_the_package),

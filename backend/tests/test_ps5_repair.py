@@ -196,6 +196,11 @@ class DumpLeftovers(unittest.TestCase):
                          [{"name": "decrypted", "files": 2, "bytes": 40_300_000, "dups": 1}])
         self.assertEqual(r.dump_leftovers([e for e in self.ENTRIES if not e.get("path", "").startswith("decrypted")]), [])
 
+    def test_library_total(self):
+        info = {"leftovers": r.dump_leftovers(self.ENTRIES), "ident": {"content_type": 32}}
+        clean = {"leftovers": [], "ident": {"content_type": 32}}
+        self.assertEqual(r.leftover_total([r.verdict(info), r.verdict(clean), r.verdict(info)]), (2, 80_600_000))
+
     def test_a_hint_that_keeps_the_package_fine(self):
         info = {"leftovers": r.dump_leftovers(self.ENTRIES), "ident": {"content_type": 32}}
         row = next(x for x in r.findings(info) if x["check"] == "inner.leftover.decrypted")

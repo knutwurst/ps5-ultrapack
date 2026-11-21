@@ -2667,6 +2667,34 @@ def _compute_file_storage_worker(
     )
 
 
+# folders a dump tool leaves in a game folder; LibProsperoPkg leaves a top-level decrypted/ out of
+# every package as "host decryption artifacts", and the packer does the same unless told to keep it
+DUMP_LEFTOVER_DIRS = ("decrypted",)
+
+
+def drop_dump_leftovers(root: Path, abs_files: list, abs_dirs: list) -> tuple[list, list]:
+    """game folders only (sce_sys/ beside it); ULTRAPACK_KEEP_DUMP_LEFTOVERS=1 keeps them"""
+    if os.environ.get("ULTRAPACK_KEEP_DUMP_LEFTOVERS") == "1" or not (Path(root) / "sce_sys").is_dir():
+        return abs_files, abs_dirs
+
+    def leftover(p) -> bool:
+        parts = Path(p).relative_to(root).parts
+        return bool(parts) and parts[0].lower() in DUMP_LEFTOVER_DIRS
+    gone = [p for p in abs_files if leftover(p)]
+    if not gone and not any(leftover(d) for d in abs_dirs):
+        return abs_files, abs_dirs
+    size = 0
+    for p in gone:
+        try:
+            size += Path(p).stat().st_size
+        except OSError:
+            pass
+    names = sorted({Path(p).relative_to(root).parts[0] for p in gone} or {"decrypted"})
+    info(f"Left out {', '.join(n + '/' for n in names)}: {len(gone)} file(s), {size / 1e6:.0f} MB "
+         f"the dump tool left in the game (to keep it: Settings, Drives & space)")
+    return [p for p in abs_files if not leftover(p)], [d for d in abs_dirs if not leftover(d)]
+
+
 def scan_source_tree(root: Path, progress: Progress) -> tuple[dict[str, DirNode], dict[str, FileNode], int]:
     """Scan a source directory tree and return DirNode/FileNode maps.
 
@@ -2686,6 +2714,7 @@ def scan_source_tree(root: Path, progress: Progress) -> tuple[dict[str, DirNode]
     # Exclude OS-generated metadata (.DS_Store, ._*, Thumbs.db, __MACOSX, ...) so it
     # never ends up in the image.
     abs_files, abs_dirs = gather_tree_scandir(root)
+    abs_files, abs_dirs = drop_dump_leftovers(root, abs_files, abs_dirs)
     abs_files.sort(key=lambda p: p.relative_to(root).as_posix().lower())
 
     # Validate filenames before compression work begins; non-ASCII names are unsupported.
