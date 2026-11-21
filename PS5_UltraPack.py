@@ -14118,8 +14118,7 @@ class App:
                 return (tr("Needs: ~{size}", size=format_size(_build_size_of(item))))
         if getattr(item, "operation", "pack") == "unpack":
             try:
-                op = self.output_var.get().strip()
-                out_dir = Path(op) if op else None
+                out_dir = self._job_output_dir(item)
                 out_free = get_free_space(out_dir) if out_dir else 0
                 return (
                     tr("Extract Needs: ~{size}+  |  Out Free: {free}", size=format_size(item.size), free=format_size(out_free))
@@ -15872,7 +15871,7 @@ class App:
                 return "-"
             root = ultra_core._drive_root(Path(str(p)))
             return root.name if root is not None else "system"
-        temp = (self.temp_var.get() or "").strip()
+        temp = str(getattr(item, "_build_temp", None) or (self.temp_var.get() or "").strip())
         try:
             out = self._job_output_dir(item)
         except Exception:
@@ -16948,11 +16947,19 @@ class App:
                                0, 0, "00:00", " - ", " - ", side=True)
             self.log("INFO", "Start: the queue starts as soon as every new job has been added.")
             return
-        if not self.output_var.get().strip():
+        if not self.output_var.get().strip() and any(
+                not getattr(it, "output_path", None) for it in self.queue
+                if getattr(it, "status", "") not in self._TERMINAL_STATUSES):
             messagebox.showerror("Missing output", "Select an output folder.")
             return
         if not self.temp_var.get().strip():
-            self.temp_var.set(str(Path(self.output_var.get()) / TEMP_DIR))
+            # no temp set: beside the output, the global one or else the first job's own
+            _base = self.output_var.get().strip() or next(
+                (str(it.output_path) for it in self.queue if getattr(it, "output_path", None)), "")
+            if not _base:
+                messagebox.showerror("Missing output", "Select an output folder.")
+                return
+            self.temp_var.set(str(Path(_base) / TEMP_DIR))
         if not self.queue:
             # an async scan from Add may still be running, re-adding would queue a duplicate
             if getattr(self, "_scan_in_flight", 0) > 0:
@@ -17365,7 +17372,9 @@ class App:
                 return
         except Exception:
             pass
-        p = self.output_var.get()
+        item = self._running_item() or getattr(self, "_details_item", None)
+        od = self._job_output_dir(item) if item is not None and item in self.queue else None
+        p = str(od) if od else self.output_var.get()
         if p and Path(p).exists():
             open_path(p)
 

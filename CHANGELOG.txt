@@ -41,6 +41,11 @@ FIXED
     free" for a drive that wasn't even connected, while the job wrote
     elsewhere. It shows the running job's drives now (else the selected
     job's), and an unplugged drive as "not connected".
+  - Open output folder opened the folder from Settings; it opens the
+    running or selected job's output now. The space line of an unpack job,
+    and the time-left learning, also use the job's own drives. Start no
+    longer asks for an output folder in Settings when every waiting job has
+    its own.
   - A first job that did not fit its drives stopped the queue when it was
     the first one after Start; it is skipped now and the queue goes on, as
     it always did in the middle of a run.

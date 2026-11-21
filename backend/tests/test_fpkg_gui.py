@@ -2110,6 +2110,16 @@ try:
     finally:
         app.queue[:] = _real_q3; app._details_item = _real_det
     ok("status.drives-of-the-job", "not connected" in _sb[1] and "free" in _sb[0], str(_sb))
+    _oj = m.GameItem.from_chain(HBT, to="ffpfsc"); _oj.output_path = S
+    _opened, _real_openp, _real_w = [], m.open_path, getattr(app, "worker", None)
+    m.open_path = lambda p: _opened.append(str(p))
+    try:
+        app.queue[:] = [_oj]; app._details_item = _oj; app.worker = None
+        app.open_output_folder()
+    finally:
+        m.open_path = _real_openp; app.worker = _real_w
+        app.queue[:] = _real_q3; app._details_item = _real_det
+    ok("status.open-output-of-the-job", _opened == [str(S)], str(_opened))
     # a restart does not read every job's source again for a name it already has
     _nj = [m.GameItem.from_chain(HBT, to="ffpfsc") for _ in range(3)]
     _art = m.ART_DIR; _art.mkdir(parents=True, exist_ok=True)
