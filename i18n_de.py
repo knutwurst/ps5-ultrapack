@@ -1126,7 +1126,7 @@ GERMAN: dict[str, str] = {
     '{name}: checksum matches': '{name}: Prüfsumme stimmt',
     'the AMPR emulator is in fakelib but ampr_emu.index is missing: the game exits at start': 'der AMPR-Emulator liegt in fakelib, aber ampr_emu.index fehlt: das Spiel beendet sich beim Start',
     'ampr_emu.index cannot be read: {why}': 'ampr_emu.index lässt sich nicht lesen: {why}',
-    'ampr_emu.index does not match {n} game files (first: {first})': 'ampr_emu.index passt zu {n} Spieldateien nicht (zuerst: {first})',
+    'ampr_emu.index does not match {n} game files (first: {first}, index {have}, package {real})': 'ampr_emu.index passt zu {n} Spieldateien nicht (zuerst: {first}, Index {have}, Paket {real})',
     'ampr_emu.index matches the game files': 'ampr_emu.index passt zu den Spieldateien',
     'not newer than the game next to it (v{base}): the console does not install it over the game': 'nicht neuer als das Spiel daneben (v{base}): die Konsole installiert es nicht über das Spiel',
     'newer than the game next to it (v{base})': 'neuer als das Spiel daneben (v{base})',

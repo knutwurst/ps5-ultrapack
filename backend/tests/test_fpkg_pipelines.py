@@ -440,6 +440,29 @@ def test_dump_leftovers_left_out(r: Runner):
             shutil.rmtree(d, ignore_errors=True)
 
 
+def test_ampr_index_without_leftovers(r: Runner):
+    # the package library drops decrypted/; ampr_emu.index listed it anyway and the library check
+    # called such packages broken (63 files in one real game)
+    src = r.work / "ampr_lo"; shutil.rmtree(src, ignore_errors=True)
+    shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    pj = src / "sce_sys" / "param.json"
+    pj.write_text(json.dumps({**json.loads(pj.read_text()), "applicationDrmType": "standard"}))
+    (src / "fakelib").mkdir(); shutil.copyfile(src / "eboot.bin", src / "fakelib" / "libSceAmpr.sprx")
+    (src / "ampr_emu.index").write_bytes(b"old")
+    (src / "decrypted").mkdir(); shutil.copyfile(src / "eboot.bin", src / "decrypted" / "eboot.bin")
+    out = r.work / "ampr_lo_out"; shutil.rmtree(out, ignore_errors=True); out.mkdir()
+    rc, log = r.run_cli([str(src), str(out), "--fpkg-build", str(src), "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
+                         "--title-id", "PPSA99099", "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+    pkg = next(out.glob("*.pkg"), None)
+    sys.path.insert(0, str(BACKEND))
+    import ps5_repair as _pr
+    ampr = _pr.examine(pkg).get("ampr") if pkg else None
+    r.check("ampr.no-decrypted-in-index", rc == 0 and ampr is not None and ampr.get("emu") and ampr.get("bad") == [],
+            "the index lists only what the package holds", f"rc={rc} ampr={ampr} {log[-300:]}")
+    for d in (src, out):
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_completeness_against_the_original_list(r: Runner):
     # a dump against the file list of the package it came from (playgo-hash-table.dat): files missing
     # are counted, files that are not in it are named; a .pkg build logs the same
@@ -1958,6 +1981,7 @@ def main():
         ("short tail segment",              test_short_tail_segment),
         ("dump leftovers left out",         test_dump_leftovers_left_out),
         ("completeness against the list",  test_completeness_against_the_original_list),
+        ("ampr index without leftovers",    test_ampr_index_without_leftovers),
         ("big folder: image to .pkg",       test_big_folder_image_to_pkg),
         ("title id mismatch warns",         test_title_id_mismatch_warns),
         ("sidecars never in the package",   test_sidecars_never_in_the_package),

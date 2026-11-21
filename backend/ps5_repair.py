@@ -332,6 +332,27 @@ def related(pkg, title_id: str, scratch=None, limit: int = 30, max_read: int = 1
 LEFTOVER_DIRS = ("decrypted",)
 
 
+def _bytes_or_none(n) -> str:
+    return "none" if n is None else f"{int(n):,} B"
+
+
+def _magic_text(path) -> str:
+    """what a file that is not a package starts with, so a report says what it is"""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+    except OSError as e:
+        return f"unreadable ({e})"
+    known = ((b"PK\x03\x04", "a ZIP archive"), (b"7z\xbc\xaf\x27\x1c", "a 7z archive"), (b"Rar!", "a RAR archive"),
+             (b"\x7fCNT", "a PS4/PS5 package"), (b"\x7fELF", "an ELF file"))
+    for sig, what in known:
+        if head.startswith(sig):
+            return what
+    if head[3:8] == b"EXFAT":
+        return "an exFAT image"
+    return "starts with " + head.hex(" ")
+
+
 def _size_text(n: int) -> str:
     return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{max(1, round(n / 1e6))} MB" if n >= 1e6 else f"{n / 1e3:.0f} KB"
 
@@ -372,7 +393,7 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
     try:
         out["ident"] = fpkg.inspect_json(pkg)
     except Exception as e:
-        out["error"] = f"not a readable PS5 package: {e}"
+        out["error"] = f"not a readable PS5 package: {e}; the file is {_magic_text(pkg)}"
         return out
     with tempfile.TemporaryDirectory(prefix="ultrapack_ps5check_", dir=scratch) as td:
         lines: list[str] = []
@@ -407,7 +428,11 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
                 sizes = {p: int(e.get("size") or 0) for p, e in lower.items() if e.get("type") == "file"}
                 if "ampr_zstd.index" in lower:
                     sizes = _with_zstd_packed(sizes, _pkg_member(pkg, "ampr_zstd.index", entries, Path(td)))
-                out["ampr"]["bad"] = ampr_mismatch(ampr_index_rows(data or b""), sizes)
+                rows_ = ampr_index_rows(data or b"")
+                out["ampr"]["bad"] = ampr_mismatch(rows_, sizes)
+                if out["ampr"]["bad"]:
+                    first = out["ampr"]["bad"][0]
+                    out["ampr"]["first_sizes"] = (rows_.get("/app0/" + first), sizes.get(first))
             except ValueError as e:
                 out["ampr"]["error"] = str(e)
         out["sfo"] = any(str(e.get("path", "")).lower() == "sce_sys/param.sfo" for e in entries)
@@ -574,7 +599,10 @@ def findings(info: dict, console_fw: str | None = None) -> list[dict]:
             "ampr_emu.index cannot be read: {why}", why=ampr["error"])
     elif ampr.get("index") and ampr.get("bad"):
         own("ampr.index", "AMPR", "fail" if ampr.get("emu") else "warn", FIX_REBUILD if ampr.get("emu") else None,
-            "ampr_emu.index does not match {n} game files (first: {first})", n=len(ampr["bad"]), first=ampr["bad"][0])
+            "ampr_emu.index does not match {n} game files (first: {first}, index {have}, package {real})",
+            n=len(ampr["bad"]), first=ampr["bad"][0],
+            have=_bytes_or_none((ampr.get("first_sizes") or (None, None))[0]),
+            real=_bytes_or_none((ampr.get("first_sizes") or (None, None))[1]))
     elif ampr.get("index"):
         own("ampr.index", "AMPR", "pass", None, "ampr_emu.index matches the game files")
     mine = _version(param.get("contentVersion"))

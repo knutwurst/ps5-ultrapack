@@ -30,6 +30,12 @@ QUEUE
     files fPKG tools change after packing (npbind.dat, param) are a note.
     "Thorough" also hashes all game data, which reads every byte: one
     flipped byte in a sample package was found only that way.
+  - ampr_emu.index listed a dump's decrypted/ folder that the package
+    library leaves out of the package, so the library check called such
+    packages broken; the index now leaves out what the package leaves out.
+  - Library check names the first AMPR mismatch with both sizes (index and
+    package) and says what a file that is no package starts with (ZIP, 7z,
+    RAR, exFAT image or its first bytes).
   - "All jobs" and "Job X of Y" count the whole queue, size-weighted, not
     only the jobs that were waiting at the last Start: after a restart of
     the queue the bar showed 10 % although most of the list was done.

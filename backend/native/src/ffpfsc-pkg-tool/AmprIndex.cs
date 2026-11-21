@@ -158,6 +158,10 @@ internal static class AmprIndex
             string lower = indexed.ToLowerInvariant();
             if (lower == "/app0/ampr_commands.bin" || lower == "/app0/apr_emu.log") continue;
             if (packageView && PackageTimeFiles.Contains(lower)) continue;
+            // what LibProsperoPkg leaves out of every package must not be indexed either
+            if (packageView && (lower.StartsWith("/app0/decrypted/", StringComparison.Ordinal)
+                                || lower.EndsWith(".gp4", StringComparison.Ordinal) || lower.EndsWith(".gp5", StringComparison.Ordinal)
+                                || lower == "/app0/sce_sys/ext_info.dat")) continue;
             if (indexed.IndexOfAny(new[] { '\t', '\n', '\r' }) >= 0) continue;
             FileInfo fi;
             try
