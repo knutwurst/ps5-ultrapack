@@ -37,6 +37,10 @@ QUEUE
 
 FIXED
 
+  - The status bar showed the output and temp from Settings, e.g. "0 B
+    free" for a drive that wasn't even connected, while the job wrote
+    elsewhere. It shows the running job's drives now (else the selected
+    job's), and an unplugged drive as "not connected".
   - A first job that did not fit its drives stopped the queue when it was
     the first one after Start; it is skipped now and the queue goes on, as
     it always did in the middle of a run.

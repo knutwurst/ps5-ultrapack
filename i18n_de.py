@@ -516,6 +516,7 @@ GERMAN: dict[str, str] = {
     "Diagnostics": "Diagnose",
     "Save a report for a bug report": "Einen Bericht für eine Fehlermeldung speichern",
     "{kind}: not reachable": "{kind}: nicht erreichbar",
+    "{kind}: {drive}  ·  not connected": "{kind}: {drive}  ·  nicht angeschlossen",
     "Add Job…": "Job hinzufügen…",
     "Look Inside…": "Inhalt ansehen…",
     "Organize…": "Organisieren…",

@@ -9949,6 +9949,23 @@ class App:
         self._footer_plain_var.trace_add("write", _run_state)
         return bar
 
+    def _status_drive_paths(self) -> tuple[str, str]:
+        """the drives of the running job, else of the job in the details pane, else the Settings"""
+        item = self._running_item() or getattr(self, "_details_item", None)
+        temp = (self.temp_var.get() or "").strip()
+        out = (self.output_var.get() or "").strip()
+        if item is not None and item in self.queue:
+            bt = getattr(item, "_build_temp", None)
+            if bt:
+                temp = str(bt)
+            try:
+                od = self._job_output_dir(item)
+            except Exception:
+                od = None
+            if od:
+                out = str(od)
+        return temp, out
+
     def _tick_space_status(self):
         """disk_usage runs on a worker, a sleeping HDD can take seconds; Tk stays here."""
         res = self._space_result
@@ -9957,18 +9974,22 @@ class App:
             self.status_temp_var.set(res[0])
             self.status_out_var.set(res[1])
         self._space_tick += 1
-        if self._space_tick % 50 != 1 or self._space_busy:
+        paths = self._status_drive_paths()
+        moved = paths != getattr(self, "_space_paths", None)      # another job: show its drives at once
+        if (self._space_tick % 50 != 1 and not moved) or self._space_busy:
             return
-        paths = ((self.temp_var.get() or "").strip(), (self.output_var.get() or "").strip())
+        self._space_paths = paths
 
         def _label(kind, p):
             if not p:
                 return ""
+            drive = ultra_core.drive_display_name(p, system="Mac")
+            if not ultra_core.drive_attached(p):
+                return tr("{kind}: {drive}  ·  not connected", kind=tr(kind), drive=drive)
             try:
                 free = get_free_space(Path(p))
             except Exception:
                 return tr("{kind}: not reachable", kind=kind)
-            drive = ultra_core.drive_display_name(p, system="Mac")
             return tr("{kind}: {drive}  ·  {free} free", kind=tr(kind), drive=drive, free=format_size(free))
 
         def _work():

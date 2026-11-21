@@ -2092,6 +2092,24 @@ try:
         app._space_gate, app._batch_auto_start, app._check_existing_outputs = _real_gate, _real_auto, _real_ex
         app._batch_running = False; app._active_item = None; app.queue[:] = _real_q2; app.update_queue_box()
     ok("start.first-job-too-big-skips-and-goes-on", _st == ("Skipped", True, True), str(_st))
+    # the status bar shows the drives of the job at hand, an unplugged one as not connected
+    _sj = m.GameItem.from_chain(HBT, to="ffpfsc")
+    _sj.output_path = Path("/Volumes/__ultrapack_no_drive__/out") if sys.platform != "win32" else Path("Q:\\out")
+    _sj._build_temp = str(S)
+    _real_q3, _real_det = list(app.queue), getattr(app, "_details_item", None)
+    try:
+        app.queue[:] = [_sj]; app._details_item = _sj
+        app._space_busy, app._space_result = False, None
+        app._tick_space_status()
+        for _ in range(100):
+            if app._space_result is not None:
+                break
+            time.sleep(0.02)
+        app._tick_space_status()
+        _sb = (app.status_temp_var.get(), app.status_out_var.get())
+    finally:
+        app.queue[:] = _real_q3; app._details_item = _real_det
+    ok("status.drives-of-the-job", "not connected" in _sb[1] and "free" in _sb[0], str(_sb))
     # a restart does not read every job's source again for a name it already has
     _nj = [m.GameItem.from_chain(HBT, to="ffpfsc") for _ in range(3)]
     _art = m.ART_DIR; _art.mkdir(parents=True, exist_ok=True)
