@@ -328,6 +328,30 @@ def related(pkg, title_id: str, scratch=None, limit: int = 30, max_read: int = 1
     return out
 
 
+# folders a dump tool leaves in the game: copies the game never loads. only ones seen in real dumps
+LEFTOVER_DIRS = ("decrypted",)
+
+
+def _size_text(n: int) -> str:
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{max(1, round(n / 1e6))} MB" if n >= 1e6 else f"{n / 1e3:.0f} KB"
+
+
+def dump_leftovers(entries) -> list[dict]:
+    """per leftover folder: files, bytes, and how many are copies of a file the game has elsewhere"""
+    files = {str(e.get("path", "")).strip("/"): int(e.get("size") or 0)
+             for e in entries if e.get("type") == "file" and e.get("source", "pfs") == "pfs"}
+    lower = {p.lower() for p in files}
+    out = []
+    for name in LEFTOVER_DIRS:
+        under = {p: n for p, n in files.items() if p.lower().startswith(name + "/")}
+        if not under:
+            continue
+        dups = sum(1 for p in under if p[len(name) + 1:].lower() in lower)
+        out.append({"name": next(p for p in under).split("/")[0], "files": len(under),
+                    "bytes": sum(under.values()), "dups": dups})
+    return out
+
+
 def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
     """reads the package in place; scratch only gets a few small files"""
     pkg = Path(pkg)
@@ -357,6 +381,7 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
         entries = [e for e in entries
                    if not any(is_ignored_name(part) for part in str(e.get("path", "")).split("/") if part)]
         lower = {str(e.get("path", "")).lower(): e for e in entries}
+        out["leftovers"] = dump_leftovers(entries)
         out["ucp"] = []
         for path in sorted(p for p in lower if p.endswith(".ucp") and p.startswith(UCP_DIRS)):
             data = _pkg_member(pkg, path, entries, Path(td))
@@ -414,6 +439,16 @@ def findings(info: dict, console_fw: str | None = None) -> list[dict]:
             need=need, fw=console_fw)
     elif need:
         own("console.firmware", "Firmware", "pass", None, "needs system software {need}", need=need)
+    for lo in info.get("leftovers") or []:
+        # a hint only: nothing shows such a folder harms a game, so no rebuild is offered
+        args = {"name": lo["name"], "files": lo["files"], "size": _size_text(lo["bytes"])}
+        if lo.get("dups"):
+            own("inner.leftover." + lo["name"].lower(), "Image", "warn", None,
+                "{name}/: {files} file(s), {size}, most likely left by the dump tool; {dups} are copies of "
+                "files the game has elsewhere", dups=lo["dups"], **args)
+        else:
+            own("inner.leftover." + lo["name"].lower(), "Image", "warn", None,
+                "{name}/: {files} file(s), {size}, most likely left by the dump tool", **args)
     patch = is_update(info)
     for u in info.get("ucp") or []:
         name = u["path"].split("/")[-1]

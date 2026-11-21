@@ -182,6 +182,29 @@ class Trophies(unittest.TestCase):
         self.assertEqual((rows["ucp.trophy01.ucp"]["level"], rows["ucp.trophy01.ucp"]["fix"]), ("fail", None))
 
 
+class DumpLeftovers(unittest.TestCase):
+    # a folder the dump tool left in the game is a hint, never a reason to rebuild
+    ENTRIES = [{"type": "file", "path": "eboot.bin", "size": 5_000_000, "source": "pfs"},
+               {"type": "file", "path": "sce_module/libA.prx", "size": 300_000, "source": "pfs"},
+               {"type": "file", "path": "decrypted/sce_module/libA.prx", "size": 300_000, "source": "pfs"},
+               {"type": "file", "path": "decrypted/sce_sys/about/right.sprx", "size": 40_000_000, "source": "pfs"},
+               {"type": "dir", "path": "decrypted"},
+               {"type": "file", "path": "sce_sys/param.json", "size": 4_000, "source": "cnt"}]
+
+    def test_found_with_size_and_copies(self):
+        self.assertEqual(r.dump_leftovers(self.ENTRIES),
+                         [{"name": "decrypted", "files": 2, "bytes": 40_300_000, "dups": 1}])
+        self.assertEqual(r.dump_leftovers([e for e in self.ENTRIES if not e.get("path", "").startswith("decrypted")]), [])
+
+    def test_a_hint_that_keeps_the_package_fine(self):
+        info = {"leftovers": r.dump_leftovers(self.ENTRIES), "ident": {"content_type": 32}}
+        row = next(x for x in r.findings(info) if x["check"] == "inner.leftover.decrypted")
+        self.assertEqual(row["level"], "warn")
+        self.assertIn("decrypted/: 2 file(s), 40 MB", row["text"])
+        self.assertIn("1 are copies", row["text"])
+        self.assertEqual(r.verdict(info)["state"], "ok")
+
+
 class AmprIndex(unittest.TestCase):
     def test_index_against_the_files(self):
         idx = r.ampr_index_rows(_ampr_index({"/app0/eboot.bin": 10, "/app0/data/a.bin": 5,

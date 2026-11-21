@@ -8299,9 +8299,16 @@ class LibraryCheckView:
                       ok=n - bad - other, bad=bad, other=other)
         return text + " " + tr("Report: {path}", path=str(self._report_path()))
 
+    @staticmethod
+    def _hints(r: dict) -> list[str]:
+        """hints that leave a package fine, e.g. a folder the dump tool left in it"""
+        return [tr(x["tmpl"], **x["args"]) if x.get("tmpl") else x["text"] for x in r.get("rows") or []
+                if x["level"] == "warn" and str(x["check"]).startswith("inner.leftover.")]
+
     def _label(self, r: dict) -> str:
         if r["state"] == "ok":
-            return tr("Fine")
+            hints = self._hints(r)
+            return tr("Fine, hint: {why}", why="; ".join(hints)) if hints else tr("Fine")
         why = "; ".join(r["reasons"][:3]) + (" …" if len(r["reasons"]) > 3 else "")
         if r["state"] == "rebuild":
             return tr("Rebuild: {why}", why=why)
@@ -8337,6 +8344,7 @@ class LibraryCheckView:
         for r in self._results:
             lines.append(f"[{r['state'].upper():7}] {r['path']}")
             lines += [f"          {x}" for x in r["reasons"]]
+            lines += [f"          hint: {x}" for x in self._hints(r)]
         try:
             self._report_path().write_text("\n".join(lines) + "\n", encoding="utf-8")
         except OSError:

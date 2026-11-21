@@ -8,6 +8,10 @@
 
 QUEUE
 
+  - Library check gives a hint (never a rebuild) for a decrypted/ folder a
+    dump tool left in a package, with its size and how many files are copies
+    of the game's own. Packages built by the app never hold one: the
+    package library leaves a top-level decrypted/ out.
   - "All jobs" and "Job X of Y" count the whole queue, size-weighted, not
     only the jobs that were waiting at the last Start: after a restart of
     the queue the bar showed 10 % although most of the list was done.
