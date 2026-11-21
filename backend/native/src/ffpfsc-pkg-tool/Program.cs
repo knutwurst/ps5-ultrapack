@@ -49,6 +49,7 @@ internal static partial class Program
                 "build" => CmdBuild(args),
                 "validate" => CmdValidate(args),
                 "ampr-index" => CmdAmprIndex(args),
+                "completeness" => CmdCompleteness(args),
                 "ps4-list" => CmdPs4List(args),
                 "ps4-extract" => CmdPs4Extract(args),
                 "ps4-keystone" => CmdPs4Keystone(args),
@@ -1747,6 +1748,29 @@ internal static partial class Program
                          .Where(f => { try { return LibProsperoPkg.Util.SourceHooks.LengthOf(new FileInfo(f)) == 0; } catch { return false; } }))
                 Console.Error.WriteLine($"[warn] {Path.GetRelativePath(effectiveSource, m).Replace('\\', '/')} is an empty file (truncated copy?); a game that loads it will crash");
 
+            // the dump against the original package's file list, when the dump still has it
+            try
+            {
+                var tp = Path.Combine(srcSceSys, "playgo-hash-table.dat");
+                var dumpFiles = Directory.EnumerateFiles(effectiveSource, "*", SearchOption.AllDirectories)
+                    .Select(f =>
+                    {
+                        long n = LibProsperoPkg.Util.SourceHooks.Length?.Invoke(f) ?? -1;
+                        return (Path.GetRelativePath(effectiveSource, f), n >= 0 ? n : new FileInfo(f).Length);
+                    }).ToList();
+                var c = Completeness(dumpFiles, File.Exists(tp) ? File.ReadAllBytes(tp) : null);
+                if (!c.checkable)
+                    Console.Error.WriteLine($"  [complete] not checked: {c.reason}");
+                else if (c.missing > 0)
+                    Console.Error.WriteLine($"[warn] {c.missing} of the {c.listed} files of the original package are missing in this dump; the game may be incomplete");
+                else
+                    Console.Error.WriteLine($"  [complete] every file of the original package is in the dump ({c.listed:N0})");
+                if (c.extra_count > 0)
+                    Console.Error.WriteLine($"  [complete] {c.extra_count} file(s), {c.extra_bytes / 1e6:F0} MB, are not in the original package: "
+                        + string.Join(", ", c.extra.Take(5)) + (c.extra_count > 5 ? ", ..." : ""));
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"  [complete] not checked: {ex.GetType().Name}: {ex.Message}"); }
+
             // a regenerated keystone makes every existing save look corrupt; the library keeps a present one
             if (keystoneFile != null)
                 Console.Error.WriteLine($"  [keystone] replaced with {keystoneFile} (saves of the game it came from stay readable)");
@@ -2433,6 +2457,7 @@ internal static partial class Program
 [System.Text.Json.Serialization.JsonSerializable(typeof(Program.InspectDoc))]
 [System.Text.Json.Serialization.JsonSerializable(typeof(Program.ExtractResultDoc))]
 [System.Text.Json.Serialization.JsonSerializable(typeof(Program.ValidateReportDoc))]
+[System.Text.Json.Serialization.JsonSerializable(typeof(Program.CompletenessDoc))]
 internal sealed partial class PkgToolJsonContext : System.Text.Json.Serialization.JsonSerializerContext
 {
     static PkgToolJsonContext? _indented;

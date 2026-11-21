@@ -421,8 +421,33 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
                 out["param"] = json.loads(pj.decode("utf-8", errors="replace"))
             except ValueError:
                 pass
+    try:
+        out["complete"] = fpkg.completeness(pkg)
+    except Exception as e:
+        out["complete"] = {"checkable": False, "reason": str(e)}
     if neighbours:
         out["related"] = related(pkg, str(out["ident"].get("title_id") or ""), scratch)
+    return out
+
+
+def library_images(root) -> list[Path]:
+    """every .ffpfs/.ffpfsc below root: dumps that can still be checked against their original list"""
+    from mkpfs.utils import is_ignored_name
+    found = []
+    for dp, dns, fns in os.walk(root):
+        dns[:] = sorted(d for d in dns if not is_ignored_name(d) and d not in SCAN_SKIP_DIRS)
+        found += [Path(dp) / f for f in sorted(fns)
+                  if f.lower().endswith((".ffpfs", ".ffpfsc")) and not is_ignored_name(f)]
+    return found
+
+
+def examine_image(img) -> dict:
+    """an .ffpfs/.ffpfsc in the library: only its completeness, the rest is checked when it becomes a .pkg"""
+    out = {"image": True, "ident": {"content_type": 32}, "results": []}
+    try:
+        out["complete"] = fpkg.completeness(Path(img))
+    except Exception as e:
+        out["complete"] = {"checkable": False, "reason": str(e)}
     return out
 
 
@@ -451,6 +476,32 @@ def findings(info: dict, console_fw: str | None = None) -> list[dict]:
             need=need, fw=console_fw)
     elif need:
         own("console.firmware", "Firmware", "pass", None, "needs system software {need}", need=need)
+    c = info.get("complete") or {}
+    img = bool(info.get("image"))
+    if c.get("checkable"):
+        if c.get("missing"):
+            # a rebuild cannot bring missing files back: the dump itself is incomplete
+            own("inner.complete", "Image", "fail" if img else "warn", None,
+                "{missing} of the {listed} files of the original package are missing: the game may be incomplete"
+                if img else "{missing} of the {listed} files in its PlayGo list are missing: the game may be incomplete",
+                missing=c["missing"], listed=c["listed"])
+        else:
+            own("inner.complete", "Image", "pass", None,
+                "every file of the original package is there ({listed})" if img
+                else "every file in its PlayGo list is there ({listed})", listed=c["listed"])
+        if c.get("extra_count"):
+            own("inner.extra", "Image", "info", None,
+                "{n} file(s), {size}, are not in the original package, e.g. {first}" if img
+                else "{n} file(s), {size}, are not in its PlayGo list, e.g. {first}",
+                n=c["extra_count"], size=_size_text(int(c.get("extra_bytes") or 0)),
+                first=", ".join((c.get("extra") or [])[:3]))
+        if c.get("leftover_bytes") and img:
+            own("inner.leftover.decrypted", "Image", "warn", None,
+                "decrypted/: {size}, most likely left by the dump tool; a .pkg build leaves it out",
+                size=_size_text(int(c["leftover_bytes"])), bytes=int(c["leftover_bytes"]))
+    elif img:
+        own("inner.complete", "Image", "info", None, "completeness not checkable: {why}",
+            why=c.get("reason") or "unknown")
     for lo in info.get("leftovers") or []:
         # a hint only: nothing shows such a folder harms a game, so no rebuild is offered
         args = {"name": lo["name"], "files": lo["files"], "size": _size_text(lo["bytes"]), "bytes": lo["bytes"]}

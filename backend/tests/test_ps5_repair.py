@@ -210,6 +210,35 @@ class DumpLeftovers(unittest.TestCase):
         self.assertEqual(r.verdict(info)["state"], "ok")
 
 
+class Completeness(unittest.TestCase):
+    # against Sony's file list: a dump with holes is a problem, a .pkg only warns (its list may be rebuilt)
+    HOLES = {"checkable": True, "listed": 10, "files": 10, "missing": 1, "extra_count": 1, "extra_bytes": 2_000_000,
+             "leftover_bytes": 2_000_000, "extra": ["decrypted/sce_module/libA.prx"]}
+
+    def test_an_image_with_holes_is_a_problem(self):
+        v = r.verdict({"image": True, "ident": {"content_type": 32}, "complete": self.HOLES})
+        rows = {x["check"]: x for x in v["rows"]}
+        self.assertEqual(v["state"], "problem")
+        self.assertEqual(rows["inner.complete"]["level"], "fail")
+        self.assertIn("1 of the 10 files of the original package are missing", rows["inner.complete"]["text"])
+        self.assertIn("decrypted/sce_module/libA.prx", rows["inner.extra"]["text"])
+        self.assertEqual(r.leftover_total([v]), (1, 2_000_000))
+
+    def test_a_package_only_warns_and_whole_is_a_pass(self):
+        v = r.verdict({"ident": {"content_type": 32}, "complete": dict(self.HOLES, extra_count=0, extra=[])})
+        self.assertEqual(v["state"], "ok")
+        self.assertEqual(next(x for x in v["rows"] if x["check"] == "inner.complete")["level"], "warn")
+        whole = r.verdict({"image": True, "ident": {"content_type": 32},
+                           "complete": {"checkable": True, "listed": 7, "missing": 0, "extra_count": 0}})
+        self.assertEqual(whole["state"], "ok")
+
+    def test_no_list_is_said_for_an_image(self):
+        v = r.verdict({"image": True, "ident": {"content_type": 32},
+                       "complete": {"checkable": False, "reason": "no playgo-hash-table.dat"}})
+        row = next(x for x in v["rows"] if x["check"] == "inner.complete")
+        self.assertEqual((v["state"], row["level"]), ("ok", "info"))
+
+
 class AmprIndex(unittest.TestCase):
     def test_index_against_the_files(self):
         idx = r.ampr_index_rows(_ampr_index({"/app0/eboot.bin": 10, "/app0/data/a.bin": 5,

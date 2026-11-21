@@ -196,6 +196,18 @@ def list_inner(pkg: Path, *, passcode: str = "0" * 32) -> dict:
     return json.loads(r.stdout)
 
 
+def completeness(source: Path) -> dict:
+    """a game folder, .ffpfs/.ffpfsc or .pkg against the file list of the package it came from
+    (playgo-hash-table.dat): {'checkable', 'reason', 'listed', 'files', 'missing', 'extra_count',
+    'extra_bytes', 'leftover_bytes', 'extra'}; reads the directory and that one small file only"""
+    r = subprocess.run([str(tool_path()), "completeness", str(source)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=600, **_NO_WINDOW)
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or "").strip().splitlines()
+        raise RuntimeError(msg[-1] if msg else f"completeness failed (rc={r.returncode})")
+    return json.loads(r.stdout)
+
+
 def extract_members(pkg: Path, out_dir: Path, members_file: Path,
                     *, passcode: str = "0" * 32, on_line=None) -> int:
     """one inner path per line, a folder means its whole subtree; decoded block-wise"""

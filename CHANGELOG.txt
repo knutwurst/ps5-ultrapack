@@ -17,6 +17,13 @@ QUEUE
     names files and size. Settings, Drives & space can keep it.
   - Library check sums the dump-tool leftovers over all checked packages
     and says what a rebuild would free.
+  - Completeness against the original package: most dumps still hold Sony's
+    file list of the retail package (sce_sys/playgo-hash-table.dat, one hash
+    per path). A .pkg build compares the dump with it and warns when files
+    of the original are missing (counted; the list has no names) and names
+    files that were never in it. Library check does the same for every .pkg
+    and now also for .ffpfs/.ffpfsc dumps; a dump with missing files is a
+    problem a rebuild cannot fix. New tool command: completeness.
   - "All jobs" and "Job X of Y" count the whole queue, size-weighted, not
     only the jobs that were waiting at the last Start: after a restart of
     the queue the bar showed 10 % although most of the list was done.

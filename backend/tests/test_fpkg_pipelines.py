@@ -440,6 +440,67 @@ def test_dump_leftovers_left_out(r: Runner):
             shutil.rmtree(d, ignore_errors=True)
 
 
+def test_completeness_against_the_original_list(r: Runner):
+    # a dump against the file list of the package it came from (playgo-hash-table.dat): files missing
+    # are counted, files that are not in it are named; a .pkg build logs the same
+    src = r.work / "cpl_src"; shutil.rmtree(src, ignore_errors=True)
+    shutil.copytree(fetch_hbt(r.work / "hbt"), src)
+    (src / "data").mkdir(); (src / "data" / "a.bin").write_bytes(b"a" * 3000); (src / "data" / "b.bin").write_bytes(b"b" * 4000)
+    out = r.work / "cpl_pkg"; shutil.rmtree(out, ignore_errors=True); out.mkdir()
+    r.run_cli([str(src), str(out), "--fpkg-build", str(src), "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
+               "--title-id", "PPSA99099", "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+    pkg = next(out.glob("*.pkg"), None)
+    dump = r.work / "cpl_dump"; shutil.rmtree(dump, ignore_errors=True)
+    if not r.check("complete.fixture", pkg is not None, "package built", ""):
+        return
+    r.run_tool(["extract-inner", str(pkg), str(dump)])
+    def cpl(path):
+        rc, outp = r.run_tool(["completeness", str(path)])
+        try:
+            return json.loads(outp[outp.index("{"):outp.rindex("}") + 1])
+        except ValueError:
+            return {"rc": rc, "out": outp[-300:]}
+    whole = cpl(dump)
+    (dump / "data" / "b.bin").unlink()
+    (dump / "decrypted" / "sce_module").mkdir(parents=True)
+    (dump / "decrypted" / "sce_module" / "libA.prx").write_bytes(b"x" * 1000)
+    holes = cpl(dump)
+    r.check("complete.whole-dump", whole.get("checkable") and whole.get("missing") == 0 and whole.get("extra_count") == 0,
+            f"{whole.get('listed')} files, all there", str(whole))
+    r.check("complete.missing-and-extra", holes.get("missing") == 1 and holes.get("extra") == ["decrypted/sce_module/libA.prx"],
+            "1 missing counted, the stray file named", str(holes))
+    ofp = cpl(pkg)
+    ff = r.work / "cpl_ff"; shutil.rmtree(ff, ignore_errors=True); ff.mkdir()
+    os.environ["ULTRAPACK_KEEP_DUMP_LEFTOVERS"] = "1"          # the stray folder stays in the image for this check
+    try:
+        r.run_cli([str(dump), str(ff), "--pack", "--overwrite"])
+    finally:
+        os.environ.pop("ULTRAPACK_KEEP_DUMP_LEFTOVERS", None)
+    img = next(ff.glob("*.ffpfsc"), None)
+    ofi = cpl(img) if img else {}
+    sys.path.insert(0, str(BACKEND))
+    import ps5_repair as _pr
+    _found = _pr.library_images(ff) if img else []
+    _v = _pr.verdict(_pr.examine_image(img)) if img else {}
+    r.check("complete.library-check", _found == [img] and _v.get("state") == "problem"
+            and any(x["check"] == "inner.complete" and x["level"] == "fail" for x in _v.get("rows", [])),
+            "the library check finds the .ffpfsc and calls it incomplete", str(_v)[:300])
+    r.check("complete.pkg-and-ffpfsc", ofp.get("checkable") and ofp.get("missing") == 0
+            and ofi.get("missing") == 1 and ofi.get("extra") == ["decrypted/sce_module/libA.prx"],
+            "same answer from a .pkg and from an .ffpfsc", f"pkg={ofp} ffpfsc={ofi}")
+    shutil.rmtree(ff, ignore_errors=True)
+    nolist = r.work / "cpl_nolist"; shutil.rmtree(nolist, ignore_errors=True); shutil.copytree(fetch_hbt(r.work / "hbt"), nolist)
+    r.check("complete.no-list", cpl(nolist).get("checkable") is False, "a dump without the list is not judged", "")
+    out2 = r.work / "cpl_pkg2"; shutil.rmtree(out2, ignore_errors=True); out2.mkdir()
+    rc, log = r.run_cli([str(dump), str(out2), "--fpkg-build", str(dump), "--content-id", "UP9000-PPSA99099_00-PROSPERO00000000",
+                         "--title-id", "PPSA99099", "--fpkg-inner", "none", "--fpkg-kraken-backend", "builtin"])
+    r.check("complete.build-warns", "1 of the" in log and "files of the original package are missing" in log
+            and "not in the original package: decrypted/sce_module/libA.prx" in log,
+            "the build says so in its log", log[-400:])
+    for d in (src, out, dump, nolist, out2):
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_big_folder_image_to_pkg(r: Runner):
     # a folder over one 64 KiB block: entries stay inside their block, so the package builder reads the
     # image directly; an image packed the old way (entries across blocks) is unpacked first
@@ -1896,6 +1957,7 @@ def main():
         ("upgradable app gets a license",   test_upgradable_gets_license),
         ("short tail segment",              test_short_tail_segment),
         ("dump leftovers left out",         test_dump_leftovers_left_out),
+        ("completeness against the list",  test_completeness_against_the_original_list),
         ("big folder: image to .pkg",       test_big_folder_image_to_pkg),
         ("title id mismatch warns",         test_title_id_mismatch_warns),
         ("sidecars never in the package",   test_sidecars_never_in_the_package),

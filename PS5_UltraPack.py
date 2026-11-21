@@ -8252,15 +8252,16 @@ class LibraryCheckView:
             m = _ps5_repair_module()
             try:
                 pkgs = m.library_packages(root)
+                images = m.library_images(root)      # dumps not yet built: checked for completeness only
             except Exception as e:
                 self._q.put(("done", str(e)))
                 return
-            self._q.put(("total", len(pkgs)))
-            for p in pkgs:
+            self._q.put(("total", len(pkgs) + len(images)))
+            for p in [*pkgs, *images]:
                 if self._stop.is_set():
                     break
                 try:
-                    info = m.examine(p, scratch=scratch)
+                    info = m.examine_image(p) if p in images else m.examine(p, scratch=scratch)
                     res = m.verdict(info, fw)
                 except Exception as e:
                     res = {"state": "error", "game": False, "reasons": [str(e)], "rows": []}
@@ -8322,7 +8323,7 @@ class LibraryCheckView:
     def _hints(r: dict) -> list[str]:
         """hints that leave a package fine, e.g. a folder the dump tool left in it"""
         return [tr(x["tmpl"], **x["args"]) if x.get("tmpl") else x["text"] for x in r.get("rows") or []
-                if x["level"] == "warn" and str(x["check"]).startswith("inner.leftover.")]
+                if x["level"] == "warn" and str(x["check"]).startswith(("inner.leftover.", "inner.complete"))]
 
     def _label(self, r: dict) -> str:
         if r["state"] == "ok":

@@ -95,6 +95,34 @@ internal sealed class SourceImage : IDisposable
             ? OpenFile(inImage) : null;
     }
 
+    // every file of the game in the image (path below the game root, size) and the original
+    // package's playgo-hash-table.dat when the image holds it readable
+    public static (List<(string Rel, long Size)> Files, byte[]? Table) FilesAndHashTable(string image)
+    {
+        using var open = OpenInner(Path.GetFullPath(image));
+        var all = open.Inner.GetAllFiles().ToList();
+        var root = GameRoot(all.Select(f => Rel(f.FullName)).ToList());
+        var files = new List<(string, long)>();
+        byte[]? table = null;
+        foreach (var f in all)
+        {
+            var rel = Rel(f.FullName);
+            if (root.Length > 0)
+            {
+                if (!rel.StartsWith(root + "/", StringComparison.Ordinal)) continue;
+                rel = rel.Substring(root.Length + 1);
+            }
+            files.Add((rel, f.size));
+            if (rel == "sce_sys/playgo-hash-table.dat" && !f.flags.HasFlag(InodeFlags.compressed) && f.size < (64 << 20))
+            {
+                using var ms = new MemoryStream();
+                Copy(f, ms);
+                table = ms.ToArray();
+            }
+        }
+        return (files, table);
+    }
+
     // executables, the system and module folders and anything small are real files: the library
     // and the tool read and change those in place (signing, retail fixes, icons, PlayGo)
     bool WriteOut(string rel, PfsReader.File f)
