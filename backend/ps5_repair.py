@@ -332,6 +332,18 @@ def related(pkg, title_id: str, scratch=None, limit: int = 30, max_read: int = 1
 LEFTOVER_DIRS = ("decrypted",)
 
 
+LIH_MAGIC = b"\x7fLIH"
+
+
+def is_lih(path) -> bool:
+    """an LIH package (0x7F 'LIH'): the wrapper scene backports and patch packages come in"""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == LIH_MAGIC
+    except OSError:
+        return False
+
+
 def _bytes_or_none(n) -> str:
     return "none" if n is None else f"{int(n):,} B"
 
@@ -390,6 +402,10 @@ def examine(pkg, scratch=None, neighbours: bool = False) -> dict:
     pkg = Path(pkg)
     out = {"ident": {}, "results": [], "param": None, "files": 0, "keystone": None, "keystone_fp": "",
            "sfo": False, "error": ""}
+    if is_lih(pkg):
+        # a scene backport or patch wrapper: not a regular package, nothing here can read or rebuild it
+        out["lih"] = True
+        return out
     try:
         out["ident"] = fpkg.inspect_json(pkg)
     except Exception as e:
@@ -525,6 +541,10 @@ def findings(info: dict, console_fw: str | None = None) -> list[dict]:
             need=need, fw=console_fw)
     elif need:
         own("console.firmware", "Firmware", "pass", None, "needs system software {need}", need=need)
+    if info.get("lih"):
+        own("package.lih", "Package", "info", None,
+            "LIH package (a backport or patch wrapper): not a regular PS5 package, not checked; install it as its release says")
+        return rows
     if info.get("ps4"):
         bad_data = [c["name"] for c in info.get("ps4_checks") or [] if c["name"] in PS4_DATA_CHECKS
                     and c["result"] in ("fail", "error")]

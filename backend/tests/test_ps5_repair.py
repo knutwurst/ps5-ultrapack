@@ -266,6 +266,25 @@ class Ps4Checksums(unittest.TestCase):
         self.assertIn("every byte", next(x for x in v["rows"] if x["check"] == "ps4.data")["text"])
 
 
+class LihAndBackportMagic(unittest.TestCase):
+    def test_an_lih_wrapper_is_named_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "game-4xx.pkg"
+            p.write_bytes(b"\x7fLIH" + bytes(60))
+            info = r.examine(p)
+            v = r.verdict(info)
+            self.assertTrue(info.get("lih"))
+            self.assertEqual(v["state"], "ok")
+            self.assertEqual(v["rows"][0]["check"], "package.lih")
+
+    def test_ps4_style_magic_is_a_warning(self):
+        info = {"results": [{"Check": "eboot.magic", "Level": "warn",
+                             "Message": "PS4-style SELF magic (0x1D3D154F) as backport tools write it"}],
+                "ident": {"content_type": 32}}
+        v = r.verdict(info)
+        self.assertEqual(v["state"], "ok")
+
+
 class AmprIndex(unittest.TestCase):
     def test_index_against_the_files(self):
         idx = r.ampr_index_rows(_ampr_index({"/app0/eboot.bin": 10, "/app0/data/a.bin": 5,

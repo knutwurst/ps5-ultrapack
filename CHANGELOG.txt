@@ -30,6 +30,13 @@ QUEUE
     files fPKG tools change after packing (npbind.dat, param) are a note.
     "Thorough" also hashes all game data, which reads every byte: one
     flipped byte in a sample package was found only that way.
+  - Library check names LIH packages (0x7F "LIH", the wrapper scene
+    backports and patch packages come in) instead of calling them
+    unreadable; they are not checked and never rebuilt.
+  - An eboot.bin with the PS4-style SELF magic 0x1D3D154F, as backport
+    tools write it, is a warning, not a failed check: LibProsperoPkg turns
+    it into the PS5 magic when the app builds (checked on a real build); a
+    package built elsewhere keeps it.
   - ampr_emu.index gave executables 4-12 bytes too few in games whose dump
     held executables signed by another tool: their version trailer starts
     up to 15 bytes before the place their header names, and LibProsperoPkg

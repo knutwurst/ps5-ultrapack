@@ -1088,6 +1088,8 @@ GERMAN: dict[str, str] = {
     'needs system software {need}': 'braucht Systemsoftware {need}',
     'Fine, hint: {why}': 'In Ordnung, Hinweis: {why}',
     'PS4: {text}': 'PS4: {text}',
+    'LIH package (backport or patch), not checked': 'LIH-Paket (Backport oder Patch), nicht geprüft',
+    'LIH package (a backport or patch wrapper): not a regular PS5 package, not checked; install it as its release says': 'LIH-Paket (Hülle für Backport oder Patch): kein normales PS5-Paket, nicht geprüft; installiere es so, wie die Veröffentlichung es angibt',
     'Thorough: read all game data of PS4 packages (slow)': 'Gründlich: alle Spieldaten von PS4-Paketen lesen (langsam)',
     'PS4 package damaged: {checks} do not match': 'PS4-Paket beschädigt: {checks} stimmen nicht',
     'PS4 package: every byte of the game data checked, all checksums match': 'PS4-Paket: alle Spieldaten Byte für Byte geprüft, alle Prüfsummen stimmen',

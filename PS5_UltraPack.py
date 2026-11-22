@@ -8279,6 +8279,7 @@ class LibraryCheckView:
                     res = {"state": "error", "game": False, "reasons": [str(e)], "rows": []}
                 res["path"] = str(p)
                 res["ps4"] = bool(info and info.get("ps4"))
+                res["lih"] = bool(info and info.get("lih"))
                 self._q.put(("one", res))
             self._q.put(("done", ""))
         threading.Thread(target=work, daemon=True).start()
@@ -8336,13 +8337,15 @@ class LibraryCheckView:
     def _hints(r: dict) -> list[str]:
         """hints that leave a package fine, e.g. a folder the dump tool left in it"""
         return [tr(x["tmpl"], **x["args"]) if x.get("tmpl") else x["text"] for x in r.get("rows") or []
-                if x["level"] == "warn" and str(x["check"]).startswith(("inner.leftover.", "inner.complete"))]
+                if x["level"] == "warn" and str(x["check"]).startswith(("inner.leftover.", "inner.complete", "eboot.magic"))]
 
     def _label(self, r: dict) -> str:
         text = self._label_text(r)
         return tr("PS4: {text}", text=text) if r.get("ps4") else text
 
     def _label_text(self, r: dict) -> str:
+        if r.get("lih"):
+            return tr("LIH package (backport or patch), not checked")
         if r["state"] == "ok":
             hints = self._hints(r)
             return tr("Fine, hint: {why}", why="; ".join(hints)) if hints else tr("Fine")

@@ -846,9 +846,11 @@ internal static partial class Program
                 var head = ms.GetBuffer();
                 uint magic = ms.Length < 4 ? 0u : (uint)(head[0] | (head[1] << 8) | (head[2] << 16) | (head[3] << 24));
                 Ok("inner.decode", $"eboot.bin read through the PFS ({eboot.size:N0} bytes)");
-                // 0xEEF51454 = fake-self (MakeFself, Sony SELFs); 0x1D3D154F = PS4 SELF, won't load on PS5
+                // 0xEEF51454 = fake-self (MakeFself, Sony SELFs). 0x1D3D154F is the PS4 magic that backport
+                // tools write; LibProsperoPkg turns it into the PS5 one when it builds (rewriteMagic), a package
+                // built elsewhere keeps it. Whether a console starts such a package is not known: a warning
                 if      (magic == 0xEEF51454u) Ok("eboot.magic", "SCE fake-self (0xEEF51454) — good");
-                else if (magic == 0x1D3D154Fu) Fail("eboot.magic", "PS4 SELF magic (0x1D3D154F) — not a PS5 executable");
+                else if (magic == 0x1D3D154Fu) Warn("eboot.magic", "PS4-style SELF magic (0x1D3D154F) as backport tools write it; a package built by this app gets the PS5 magic, this one was built elsewhere");
                 else if (magic == 0x464C457Fu) Fail("eboot.magic", "raw ELF (0x7F454C46) — not fake-signed; kstuff-fpkg install path will refuse");
                 else Warn("eboot.magic", $"unrecognized 0x{magic:X8}");
             }
