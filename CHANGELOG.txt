@@ -3,6 +3,21 @@
 ════════════════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────────────────
+  v2.7.3
+────────────────────────────────────────────────────────────────────────
+
+QUEUE
+
+  - A full or unplugged output or temp drive stops the queue instead of
+    skipping job after job. The job keeps waiting, its card says why, and
+    one message names the drive and the space it needs; Start goes on from
+    there. Settings, Drives & space: "Skip the game" is now "Stop the
+    queue" (a saved "skip" reads as stop).
+  - Jobs skipped on purpose from the space dialog collect in a window of
+    fixed size: one line per drive, every job in a list that scrolls. It no
+    longer grew past the screen with a long queue.
+
+────────────────────────────────────────────────────────────────────────
   v2.7.2
 ────────────────────────────────────────────────────────────────────────
 
