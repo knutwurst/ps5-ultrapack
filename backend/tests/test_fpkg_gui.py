@@ -669,7 +669,7 @@ try:
         ok("space-gate.fpkg-extract-proceeds", app._space_gate(ie, OUT) == "proceed", "")
     gone = Path("Q:\\NoSuchDrive_ultrapack") if os.name == "nt" else Path("/Volumes/NoSuchDrive_ultrapack/PS4 Games")
     gi = m.GameItem(HBT); gi.output_path = str(gone)
-    ok("space-gate.unplugged-output-is-not-full", app._space_gate(gi, gone) == "skip"
+    ok("space-gate.unplugged-output-is-not-full", app._space_gate(gi, gone) == "stop"
        and "not connected" in gi._skip_reason.lower() and "full" not in gi._skip_reason.lower(), gi._skip_reason)
     sw = getattr(app, "_space_skip_win", None)
     ok("space-gate.unplugged-window-says-so", sw is not None and sw.winfo_exists() and m._drive_name(gone) in sw.text(),
@@ -2016,12 +2016,22 @@ try:
     _skw = getattr(app, "_space_skip_win", None)
     _skt = _skw.text() if _skw is not None and _skw.winfo_exists() else ""
     _skinfo = app._card_info_text(_sk[0]).get("Status", "")
-    ok("space-skip.names-the-drive", all(j.status == "Skipped" for j in _sk)
-       and _skinfo.startswith("Skipped: Output drive full") and _skw is not None
-       and _skw.title() == "Output drive full" and _skt.count("was skipped") == 2
-       and any("output drive full" in x.lower() and "free" in x for x in _sklog),
-       f"status={[j.status for j in _sk]} info={_skinfo!r} title={_skw.title() if _skw else None} "
-       f"text={_skt[:160]!r} log={[x for x in _sklog if 'pace' in x][:2]}")
+    ok("space-stop.names-the-drive-and-stops", all(j.status.startswith("Pending") for j in _sk)
+       and not app._batch_running
+       and _sk[0].status_note.startswith("Output drive full") and _sk[1].status_note == ""
+       and _skw is not None and _skw.title() == "Output drive full" and _skt.count("did not start") == 1
+       and any("output drive full" in x.lower() and "queue stopped" in x for x in _sklog),
+       f"status={[j.status for j in _sk]} running={app._batch_running} note={_sk[0].status_note!r} "
+       f"title={_skw.title() if _skw else None} text={_skt[:160]!r} log={[x for x in _sklog if 'pace' in x or 'full' in x][:2]}")
+    _bw = m.SpaceSkipWindow(app.root)
+    for _i in range(64):
+        _bw.add(f"Game {_i} was skipped. Drive needs about 100 GB and has 14 GB free.", "output", "PS5 Games 1",
+                "14 GB", f"Game {_i}: needs about 100 GB")
+    root.update()
+    _bh = _bw.winfo_height() / max(1, getattr(m.ui_kit, "SCALE", 1) or 1)
+    ok("space-skip.window-stays-bounded", _bh < 700 and "64 jobs skipped" in _bw._body.cget("text"),
+       f"height={_bh} body={_bw._body.cget('text')!r}")
+    _bw.destroy()
     if _skw is not None:
         _skw.destroy()
     app.queue[:] = []; app._active_item = None

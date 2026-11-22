@@ -1726,43 +1726,88 @@ class QueueReportWindow(MessageWindow):
 
 
 class SpaceSkipWindow(MessageWindow):
+    """one line per drive on top, every job in a list that scrolls: a long queue never grows the window"""
     _HINTS = {"missing": "Connect the drive, or pick another output with Edit, then Retry.",
               "output": "Free up space there, or pick another output with Edit, then Retry.",
               "temp": "Free up space there, or add a temp drive in Settings, then Retry."}
     _HEADS = {"missing": "Drive not connected", "output": "Output drive full", "temp": "Temp drive full"}
+    LIST_MAX = 260   # height of the job list before it scrolls
 
-    def __init__(self, parent):
+    def __init__(self, parent, on_close=None, stopped: bool = False):
         super().__init__(parent)
         self.configure(fg_color=BLACK)
         self.resizable(True, False)
-        self._lines, self._kinds = [], []
+        self.stopped = stopped
+        self._lines, self._kinds, self._groups = [], [], {}
+        self._on_close = on_close
         self._head = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=15, weight="bold"), text_color=YELLOW)
         self._head.pack(anchor="w", padx=20, pady=(16, 6))
         btns = ctk.CTkFrame(self, fg_color=BLACK)
         btns.pack(side="bottom", fill="x", padx=20, pady=(0, 14))
         ctk.CTkButton(btns, text="Close", width=100, fg_color=ACCENT, text_color=ON_ACCENT,
-                      hover_color=ACCENT_HOVER, command=self.destroy).pack(side="right")
+                      hover_color=ACCENT_HOVER, command=self._close).pack(side="right")
         self._body = ctk.CTkLabel(self, text="", text_color=WHITE, wraplength=500, justify="left",
                                   font=ctk.CTkFont(size=13))
         self._body.pack(anchor="w", padx=20, pady=(0, 8))
+        self._list = ctk.CTkTextbox(self, height=60, wrap="word", fg_color=PANEL, text_color=MUTED,
+                                    font=ctk.CTkFont(size=12), activate_scrollbars=True)
+        self._list.pack(fill="x", padx=20, pady=(0, 8))
+        self._list.configure(state="disabled")
         self._hint = ctk.CTkLabel(self, text="", text_color=MUTED, wraplength=500, justify="left",
                                   font=ctk.CTkFont(size=12))
         self._hint.pack(anchor="w", padx=20, pady=(0, 12))
+        self.protocol("WM_DELETE_WINDOW", self._close)
         for seq in ("<Return>", "<KP_Enter>"):
-            self.bind(seq, lambda e: self.destroy())
+            self.bind(seq, lambda e: self._close())
 
-    def add(self, line: str, kind: str) -> None:
+    def groups(self) -> set:
+        return set(self._groups)
+
+    def _close(self) -> None:
+        if self._on_close is not None:
+            try:
+                self._on_close(self.groups())
+            except Exception:
+                pass
+        self.destroy()
+
+    def add(self, line: str, kind: str, drive: str = "", free: str = "", entry: str = "") -> None:
         self._lines.append(line)
         self._kinds.append(kind)
+        self._groups[(kind, drive)] = (self._groups.get((kind, drive), (0, ""))[0] + 1, free)
         kinds = set(self._kinds)
         head = (self._HEADS[next(iter(kinds))] if len(kinds) == 1 else
                 "Not enough space" if "missing" not in kinds else "Jobs skipped")
         self.title(head)
         self._head.configure(text=head)
-        self._body.configure(text="\n\n".join(self._lines))
-        self._hint.configure(text=" ".join(self._HINTS[k] for k in ("missing", "output", "temp") if k in kinds))
+        summary = [tr("The queue stopped. The job keeps waiting; press Start when the drive is ready.")] if self.stopped else []
+        for (k, d), (n, f) in ([] if self.stopped else self._groups.items()):
+            v = (d[:1].upper() + d[1:]) if d else tr("The drive")
+            if k == "missing":
+                summary.append(plural(n, "1 job skipped: {drive} is not connected.",
+                                      "{n} jobs skipped: {drive} is not connected.", drive=v))
+            else:
+                summary.append(plural(n, "1 job skipped: {drive} has {free} free, too little for it.",
+                                      "{n} jobs skipped: {drive} has {free} free, too little for each of them.",
+                                      drive=v, free=f))
+        if self.stopped:
+            summary.append(line)
+            self._list.pack_forget()
+        self._body.configure(text="\n\n".join(summary) if self.stopped else "\n".join(summary))
+        self._list.configure(state="normal")
+        self._list.insert("end", ("\n" if len(self._lines) > 1 else "") + (entry or line))
+        self._list.configure(state="disabled")
+        self._hint.configure(text=" ".join(tr(self._HINTS[k].replace("then Retry", "then Start") if self.stopped
+                                              else self._HINTS[k]) for k in ("missing", "output", "temp") if k in kinds))
         self.update_idletasks()
-        self.geometry(f"540x{max(180, self.winfo_reqheight())}")
+        try:
+            rows = int(self._list._textbox.count("1.0", "end", "displaylines")[0])
+        except Exception:
+            rows = len(self._lines)
+        self._list.configure(height=min(self.LIST_MAX, 12 + 18 * max(1, rows)))
+        self.update_idletasks()
+        h = min(max(180, self.winfo_reqheight()), max(300, self.winfo_screenheight() - 160))
+        self.geometry(f"560x{h}")
 
     def text(self) -> str:
         return "\n\n".join(self._lines)
@@ -2488,12 +2533,13 @@ class SettingsView:
                          text_color=MUTED, font=ctk.CTkFont(size=12), anchor="w", justify="left",
                          wraplength=640).pack(anchor="w", padx=14, pady=(0, 4))
 
-        lp_labels = {"ask": "Ask me", "auto": "Proceed anyway", "skip": "Skip the game"}
+        lp_labels = {"ask": "Ask me", "auto": "Proceed anyway", "stop": "Stop the queue"}
         lp_rev = {v: k for k, v in lp_labels.items()}
         lp_menu = ctk.CTkOptionMenu(
             _ds_row("When space is low:"), values=list(lp_labels.values()), width=200,
             command=lambda disp: save_settings({"low_space_policy": lp_rev.get(disp, "ask")}))
-        lp_menu.set(lp_labels.get(s.get("low_space_policy", "ask"), "Ask me"))
+        _lp = s.get("low_space_policy", "ask")
+        lp_menu.set(lp_labels.get("stop" if _lp == "skip" else _lp, "Ask me"))
         lp_menu.pack(side="left")
 
         ctk.CTkCheckBox(ds, text="Show the drive space check before each pack",
@@ -15488,7 +15534,7 @@ class App:
         g = (self.output_var.get() or "").strip()
         return Path(g) if g else None
 
-    def _note_space_skip(self, item, short) -> None:
+    def _note_space_skip(self, item, short, stopped: bool = False) -> None:
         name = getattr(item, "display_name", None) or item.name
         if short is None:
             item._skip_reason = "not enough free space"
@@ -15500,20 +15546,18 @@ class App:
         item._skip_reason = (tr("Output drive full: {drive} needs ~{need}, {free} free", drive=drive, need=format_size(need), free=format_size(free))
                              if kind == "output" else
                              tr("Temp drive full: {drive} needs ~{need}, {free} free", drive=drive, need=format_size(need), free=format_size(free)))
-        self.log("WARN", f"{kind.capitalize()} drive full: {name} skipped, {drive} needs ~{format_size(need)} "
-                         f"and has {format_size(free)} free (policy: skip).")
+        self.log("WARN", f"{kind.capitalize()} drive full: {name} " + ("did not start, the queue stopped" if stopped else "skipped")
+                         + f", {drive} needs ~{format_size(need)} and has {format_size(free)} free.")
         to = getattr(item, "chain_to", None) or {"fpkg-build": "pkg", "copy": "copy"}.get(
             getattr(item, "operation", "pack")) or ("ffpfsc" if getattr(item, "output_compressed", True) else "ffpfs")
         what = (" for the copy" if to in ("copy", "organize") else " for the folder" if to == "folder"
                 else tr(" for the .{to}", to=to)) if kind == "output" else ""
-        line = (tr("{name} was skipped. {v} needs about {need}{what} and has {free} free.", name=name, v=drive[:1].upper() + drive[1:], need=format_size(need), what=what, free=format_size(free)))
-        win = getattr(self, "_space_skip_win", None)
-        try:
-            if win is None or not win.winfo_exists():
-                win = self._space_skip_win = SpaceSkipWindow(self.root)
-            win.add(line, kind)
-        except tk.TclError:
-            pass
+        v = drive[:1].upper() + drive[1:]
+        line = (tr("{name} did not start, the queue stopped. {v} needs about {need}{what} and has {free} free.", name=name, v=v, need=format_size(need), what=what, free=format_size(free))
+                if stopped else
+                tr("{name} was skipped. {v} needs about {need}{what} and has {free} free.", name=name, v=v, need=format_size(need), what=what, free=format_size(free)))
+        self._show_space_skip(line, kind, drive, format_size(free),
+                              tr("{name}: needs about {need}", name=name, need=format_size(need)), stopped=stopped)
 
     def _note_drive_missing(self, item, folder: Path, kind: str) -> None:
         """an unplugged drive is not a full one: say which drive to connect"""
@@ -15521,22 +15565,47 @@ class App:
         drive = _drive_name(folder)
         item._skip_reason = (tr("Output drive not connected: {drive}", drive=drive) if kind == "output"
                              else tr("Temp drive not connected: {drive}", drive=drive))
-        self.log("WARN", f"{kind.capitalize()} drive not connected: {name} skipped, {drive} ({folder}) is not attached.")
-        line = tr("{name} was skipped. {drive} is not connected.", name=name, drive=drive)
+        self.log("WARN", f"{kind.capitalize()} drive not connected: {name} did not start, the queue stopped. "
+                         f"{drive} ({folder}) is not attached.")
+        line = tr("{name} did not start, the queue stopped. {drive} is not connected.", name=name, drive=drive)
+        self._show_space_skip(line, "missing", drive, "", name, stopped=True)
+
+    def _show_space_skip(self, line, kind, drive, free, entry, stopped: bool = False) -> None:
+        """skips the user chose to let through collect in one window; a stop always shows"""
         win = getattr(self, "_space_skip_win", None)
         try:
+            if stopped and win is not None and win.winfo_exists() and not getattr(win, "stopped", False):
+                win.destroy(); win = None
             if win is None or not win.winfo_exists():
-                win = self._space_skip_win = SpaceSkipWindow(self.root)
-            win.add(line, "missing")
+                if not stopped and (kind, drive) in getattr(self, "_space_skip_dismissed", set()):
+                    return
+                win = self._space_skip_win = SpaceSkipWindow(
+                    self.root, on_close=lambda g: self._space_skip_dismissed.update(g), stopped=stopped)
+            win.add(line, kind, drive, free, entry)
         except tk.TclError:
             pass
+
+    def _stop_for_space(self, item) -> None:
+        """a drive that is full or gone stops the queue; the job keeps waiting for the next Start"""
+        item.status = "Pending"
+        item.status_note = getattr(item, "_skip_reason", "")
+        if self._active_item is item:
+            self._active_item = None
+        self._batch_running = False
+        self._pause_requested = False
+        self.start_btn.configure(state="normal")
+        self.cancel_btn.configure(state="disabled")
+        self._update_batch_counter()
+        self.update_queue_box()
+        self.status_update("Ready", tr("Stopped: {why}", why=item.status_note or tr("not enough free space")),
+                           "Ready", 0, 0, "00:00", " - ", " - ")
 
     def _space_gate(self, item, out_dir):
         """place the run by its REAL footprint, then go/skip/cancel against that drive"""
         if out_dir and not ultra_core.drive_attached(out_dir):
             item._skip_reason = ""
             self._note_drive_missing(item, Path(out_dir), "output")
-            return "skip"
+            return "stop"
         op = getattr(item, "operation", "pack")
         # unpack, fPKG extract and fake-sign build no image, no space gate needed
         if op in ("unpack", "fake-sign", "fpkg-extract", "ps4-keystone"):
@@ -15555,7 +15624,7 @@ class App:
                         or (self.temp_var.get().strip() or str(Path.home())))
         if not ultra_core.drive_attached(temp_dir):
             self._note_drive_missing(item, temp_dir, "temp")
-            return "skip"
+            return "stop"
         try:
             ok = _space_preflight_ok(item, temp_dir, out_dir)
         except Exception as e:
@@ -15576,9 +15645,9 @@ class App:
         if policy == "auto":
             self.log("WARN", f"Low space - proceeding anyway (policy: auto): {item.name}")
             return "proceed"
-        if policy == "skip":
-            self._note_space_skip(item, space_shortfall(item, temp_dir, out_dir))
-            return "skip"
+        if policy in ("stop", "skip"):          # "skip" is the old name: a full drive stops the queue
+            self._note_space_skip(item, space_shortfall(item, temp_dir, out_dir), stopped=True)
+            return "stop"
         return _ask()
 
     _TERMINAL_STATUSES = ("Done", "Failed", "Skipped", "Cancelled")
@@ -16398,6 +16467,9 @@ class App:
                     self.cancel_btn.configure(state="disabled")
                     self._update_batch_counter()
                     return
+                if gate == "stop":
+                    self._stop_for_space(item)
+                    return
                 if gate == "skip":
                     self._cleanup_after_failure(item)
                     self._retire_failed(item, "Skipped", getattr(item, "_skip_reason", ""))
@@ -16902,6 +16974,7 @@ class App:
 
     def _queue_finished(self) -> None:
         """the run ended on its own, not by Stop"""
+        self._space_skip_dismissed = set()
         aj = _after_job_module()
         total, done, fail = self._batch_total, self._batch_done, self._batch_failed
         if self.notify_var.get() == "queue" or (self.notify_var.get() == "job" and total > 1):
@@ -17072,6 +17145,9 @@ class App:
             self.cancel_btn.configure(state="disabled")
             self._update_batch_counter()
             self.status_update("Ready", "Drive check cancelled.", "Ready", 0, 0, "00:00", " - ", " - ")
+            return
+        if gate == "stop":
+            self._stop_for_space(item)
             return
         if gate == "skip":
             self._cleanup_after_failure(item)
